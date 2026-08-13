@@ -289,12 +289,12 @@ body {
 
 /* ── Pin Down 跟随按钮 ─────────────────── */
 .pin-btn {
-  position: absolute; right: 20px; bottom: 16px;
+  position: absolute; right: 20px; bottom: 176px;
   width: 34px; height: 34px; border-radius: 9px;
   border: 1px solid var(--border); background: var(--surface);
   cursor: pointer; z-index: 20; font-size: 17px; line-height: 1;
   display: inline-flex; align-items: center; justify-content: center;
-  box-shadow: var(--shadow); transition: all .15s;
+  box-shadow: var(--shadow); transition: background .15s, border-color .15s;
 }
 .pin-btn:hover { border-color: var(--primary); }
 .pin-btn.active { background: var(--primary); border-color: var(--primary); box-shadow: 0 2px 8px rgba(79,70,229,.35); }

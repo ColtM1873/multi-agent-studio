@@ -686,7 +686,8 @@ async function renderChatView() {
       <select id="subgraphSel" class="btn small" style="max-width:220px;"><option value="">主会话</option></select>
     </div>
     <div class="chat-body">
-      <div class="history-pane" id="historyPane"><div class="md-body markdown-body" id="historyMd"><div class="muted">加载历史中…</div></div><button id="pinBtn" class="pin-btn" title="跟随最新输出">📌</button></div>
+      <div class="history-pane" id="historyPane"><div class="md-body markdown-body" id="historyMd"><div class="muted">加载历史中…</div></div></div>
+      <button id="pinBtn" class="pin-btn" title="跟随最新输出">📌</button>
       <div class="input-pane" id="inputPane">
         <div class="input-toolbar"><span class="muted">输入消息（Enter 发送，Shift+Enter 换行）</span><div class="spacer" style="flex:1;"></div></div>
         <textarea id="msgInput" placeholder="输入消息…"></textarea>
@@ -695,8 +696,14 @@ async function renderChatView() {
       <div id="doneBubble" class="done-bubble done-bubble-float" style="display:none;"></div>
     </div>`;
 
+  const updatePinBtnPos = () => {
+    const inputPane = $("#inputPane");
+    const pinBtnEl = $("#pinBtn");
+    if (inputPane && pinBtnEl) pinBtnEl.style.bottom = (inputPane.offsetHeight + 16) + "px";
+  };
+
   if (window.Split) {
-    Split(["#historyPane", "#inputPane"], { direction: "vertical", sizes: [72, 28], minSize: [100, 80], gutterSize: 8, cursor: "row-resize" });
+    Split(["#historyPane", "#inputPane"], { direction: "vertical", sizes: [72, 28], minSize: [100, 80], gutterSize: 8, cursor: "row-resize", onDragEnd: updatePinBtnPos });
   }
 
   applyZoom();
@@ -710,6 +717,7 @@ async function renderChatView() {
   const pinBtn = $("#pinBtn");
   const updatePinBtn = () => { pinBtn.classList.toggle("active", pinned); };
   updatePinBtn();
+  updatePinBtnPos();
   pinBtn.onclick = () => {
     pinned = !pinned;
     localStorage.setItem("pin-follow", pinned ? "1" : "0");
