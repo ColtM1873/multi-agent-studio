@@ -724,7 +724,7 @@ async function renderChatView() {
       <div class="history-pane" id="historyPane"><div class="md-body markdown-body" id="historyMd"><div class="muted">加载历史中…</div></div></div>
       <button id="pinBtn" class="pin-btn" title="跟随最新输出 · 按住可拖动">📌</button>
       <div class="input-pane" id="inputPane">
-        <div class="input-toolbar"><span class="muted">输入消息（Enter 发送，Shift+Enter 换行）</span><div class="spacer" style="flex:1;"></div></div>
+        <div class="input-toolbar"><span class="muted" id="inputHint">输入消息（Enter 发送，Shift+Enter 换行）</span><div class="spacer" style="flex:1;"></div></div>
         <textarea id="msgInput" placeholder="输入消息…"></textarea>
         <div class="input-actions"><button class="btn" id="stopBtn" style="display:none;">停止</button><button class="btn primary" id="sendBtn">发送</button></div>
       </div>
@@ -761,7 +761,16 @@ async function renderChatView() {
   }
 
   applyZoom();
-  getSettings().catch(() => {});
+  getSettings().then(s => {
+    if (!s) return;
+    const keyLabel = k => ({ enter: "Enter", shift_enter: "Shift+Enter", ctrl_enter: "Ctrl+Enter" })[k] || k;
+    const hint = $("#inputHint");
+    if (hint) {
+      hint.textContent = s.send_key === "mouse_only"
+        ? "输入消息（点击发送，Enter 换行）"
+        : `输入消息（${keyLabel(s.send_key)} 发送，${keyLabel(s.newline_key)} 换行）`;
+    }
+  }).catch(() => {});
   const zoomPctEl = $("#zoomPct");
   const updateZoomLabel = () => { if (zoomPctEl) zoomPctEl.textContent = zoomPct + "%"; };
   updateZoomLabel();
