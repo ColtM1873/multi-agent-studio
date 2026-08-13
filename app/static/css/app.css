@@ -160,7 +160,7 @@ body {
 }
 .chat-head .thread-name { font-weight: 700; font-size: 16px; }
 .chat-body { flex: 1; display: flex; flex-direction: column; overflow: hidden; position: relative; }
-.history-pane { flex: 1; overflow: auto; padding: 18px 22px; }
+.history-pane { flex: 1; overflow: auto; padding: 18px 22px; position: relative; }
 .input-pane {
   flex: 0 0 auto; height: 160px; border-top: 1px solid var(--border);
   display: flex; flex-direction: column; background: var(--surface);
@@ -286,6 +286,18 @@ body {
 
 /* ── 完成气泡浮层（输入框上方居中） ─────── */
 .done-bubble-float { position: absolute; left: 50%; transform: translateX(-50%); bottom: 14px; z-index: 60; }
+
+/* ── Pin Down 跟随按钮 ─────────────────── */
+.pin-btn {
+  position: absolute; right: 20px; bottom: 16px;
+  width: 34px; height: 34px; border-radius: 9px;
+  border: 1px solid var(--border); background: var(--surface);
+  cursor: pointer; z-index: 20; font-size: 17px; line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center;
+  box-shadow: var(--shadow); transition: all .15s;
+}
+.pin-btn:hover { border-color: var(--primary); }
+.pin-btn.active { background: var(--primary); border-color: var(--primary); box-shadow: 0 2px 8px rgba(79,70,229,.35); }
 
 /* ── 消息抽屉 ───────────────────────────── */
 .msg-drawer-panel { position: absolute; right: 0; top: 110%; width: 280px; max-height: 340px; overflow: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow-lg); z-index: 100; padding: 6px; }

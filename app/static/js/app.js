@@ -166,6 +166,7 @@ let isRunning = false;
 let currentReplyEl = null;
 let editorDirty = false;
 let settingsCache = null;
+let pinned = localStorage.getItem("pin-follow") === "1";
 
 /* ================= 顶栏 ================= */
 function topbar(backLabel, backAction) {
@@ -685,7 +686,7 @@ async function renderChatView() {
       <select id="subgraphSel" class="btn small" style="max-width:220px;"><option value="">主会话</option></select>
     </div>
     <div class="chat-body">
-      <div class="history-pane" id="historyPane"><div class="md-body markdown-body" id="historyMd"><div class="muted">加载历史中…</div></div></div>
+      <div class="history-pane" id="historyPane"><div class="md-body markdown-body" id="historyMd"><div class="muted">加载历史中…</div></div><button id="pinBtn" class="pin-btn" title="跟随最新输出">📌</button></div>
       <div class="input-pane" id="inputPane">
         <div class="input-toolbar"><span class="muted">输入消息（Enter 发送，Shift+Enter 换行）</span><div class="spacer" style="flex:1;"></div></div>
         <textarea id="msgInput" placeholder="输入消息…"></textarea>
@@ -705,6 +706,16 @@ async function renderChatView() {
   $("#zoomOut").onclick = () => { changeZoom(-10); updateZoomLabel(); };
   $("#zoomIn").onclick = () => { changeZoom(10); updateZoomLabel(); };
   $("#msgDirBtn").onclick = (e) => toggleMsgDrawer(e);
+
+  const pinBtn = $("#pinBtn");
+  const updatePinBtn = () => { pinBtn.classList.toggle("active", pinned); };
+  updatePinBtn();
+  pinBtn.onclick = () => {
+    pinned = !pinned;
+    localStorage.setItem("pin-follow", pinned ? "1" : "0");
+    updatePinBtn();
+    if (pinned) { const pane = $("#historyPane"); if (pane) pane.scrollTop = pane.scrollHeight; }
+  };
 
   const historyEl = $("#historyMd");
   const scrollToLastUserMsg = () => {
@@ -806,17 +817,15 @@ function openChatWs(content) {
 
     function renderStream() {
       if (!currentReplyEl) return;
+      const pane = $("#historyPane");
+      const atBottom = pane && (pane.scrollHeight - pane.scrollTop - pane.clientHeight < 48);
       let html = "";
       if (buffers.main) html += `<div>${renderMd(buffers.main)}</div>`;
       for (const [name, txt] of Object.entries(buffers.sub)) {
         if (txt) html += `<div style="margin-top:12px;"><span class="sub-tag">🧩 子 agent · ${esc(name)}</span><div>${renderMd(txt)}</div></div>`;
       }
       currentReplyEl.innerHTML = html;
-      const pane = $("#historyPane");
-      if (pane) {
-        const atBottom = pane.scrollHeight - pane.scrollTop - pane.clientHeight < 48;
-        if (atBottom) pane.scrollTop = pane.scrollHeight;
-      }
+      if (pane && (pinned || atBottom)) pane.scrollTop = pane.scrollHeight;
     }
 
     ws.onopen = () => ws.send(JSON.stringify({ type: "send", content }));
