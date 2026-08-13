@@ -687,7 +687,7 @@ async function renderChatView() {
     </div>
     <div class="chat-body" id="chatBody">
       <div class="history-pane" id="historyPane"><div class="md-body markdown-body" id="historyMd"><div class="muted">加载历史中…</div></div></div>
-      <button id="pinBtn" class="pin-btn" title="跟随最新输出">📌</button>
+      <button id="pinBtn" class="pin-btn" title="跟随最新输出 · 按住可拖动">📌</button>
       <div class="input-pane" id="inputPane">
         <div class="input-toolbar"><span class="muted">输入消息（Enter 发送，Shift+Enter 换行）</span><div class="spacer" style="flex:1;"></div></div>
         <textarea id="msgInput" placeholder="输入消息…"></textarea>
@@ -736,21 +736,20 @@ async function renderChatView() {
   const updatePinBtn = () => { pinBtn.classList.toggle("active", pinned); };
   updatePinBtn();
 
-  let dragState = null, dragged = false, suppressClick = false;
+  let dragState = null, dragged = false;
 
   pinBtn.onclick = () => {
-    if (suppressClick) return;
+    if (dragged) { dragged = false; return; }
     pinned = !pinned;
     localStorage.setItem("pin-follow", pinned ? "1" : "0");
     updatePinBtn();
     if (pinned) { const pane = $("#historyPane"); if (pane) pane.scrollTop = pane.scrollHeight; }
   };
 
-  // Ctrl + 拖动移动按钮
+  // 按住拖动移动按钮
   pinBtn.addEventListener("mousedown", (e) => {
-    if (!e.ctrlKey) return;
-    suppressClick = true;
     dragState = { x: e.clientX, y: e.clientY, left: pinBtn.offsetLeft, top: pinBtn.offsetTop };
+    dragged = false;
     e.preventDefault();
   });
   window.addEventListener("mousemove", (e) => {
@@ -769,9 +768,7 @@ async function renderChatView() {
         localStorage.setItem("pin-pos", JSON.stringify(customPos));
       }
       dragState = null;
-      dragged = false;
     }
-    setTimeout(() => { suppressClick = false; }, 0);
   });
 
   const historyEl = $("#historyMd");
