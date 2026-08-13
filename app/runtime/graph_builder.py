@@ -349,7 +349,10 @@ async def build_world(
                     break
         if beginning_human_iter <= 0:
             return {}
-        return {"messages": [RemoveMessage(id=msg.id) for msg in msg_list[0:beginning_human_iter]]}
+        return {
+            "messages": [RemoveMessage(id=msg.id) for msg in msg_list[0:beginning_human_iter]],
+            "next_summerize_thresh_hold": sum_gap,
+        }
 
     async def should_continue_main_summery_period(state):
         if state["messages"][-1].tool_calls:
