@@ -7,6 +7,8 @@ from datetime import datetime
 
 from langgraph.checkpoint.base import CheckpointTuple
 
+from app.runtime.prompts import MEMORY_ATTACH_MARKER, USER_MSG_PREFIX
+
 
 def _find_messages_channel(channel_values: dict):
     """自动探测 channel_values 里哪个 key 是消息列表。"""
@@ -166,10 +168,22 @@ def render_messages_to_markdown_string(
     return buf.getvalue()
 
 
+def _extract_user_summary(content: str) -> str:
+    """从（可能被记忆吸附包装过的）用户消息里提取真正的原文。"""
+    s = str(content)
+    if USER_MSG_PREFIX in s:
+        rest = s.split(USER_MSG_PREFIX, 1)[1]
+        if MEMORY_ATTACH_MARKER in rest:
+            rest = rest.split(MEMORY_ATTACH_MARKER, 1)[0]
+        return rest.strip()
+    return s.strip()
+
+
 def _render_human(msg, w, idx: int):
     content = str(msg.content)
     escaped = _escape_html(content).replace("\n", "<br>")
-    w(f'<div id="user-msg-{idx}" class="user-msg-block">\n')
+    summary = _escape_html(_extract_user_summary(content))
+    w(f'<div id="user-msg-{idx}" class="user-msg-block" data-summary="{summary}">\n')
     w('<div class="user-msg-head">🧑 <strong>用户</strong></div>\n')
     w(f'<blockquote class="user-msg-quote">{escaped}</blockquote>\n')
     w("</div>\n")

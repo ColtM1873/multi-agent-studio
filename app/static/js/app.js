@@ -648,7 +648,8 @@ function toggleMsgDrawer(e) {
     panel.innerHTML = '<div class="muted" style="padding:8px;">暂无用户消息</div>';
   } else {
     panel.innerHTML = blocks.map((b, i) => {
-      const raw = b.querySelector(".user-msg-quote")?.innerText || "";
+      const summary = b.dataset.summary || "";
+      const raw = summary || (b.querySelector(".user-msg-quote")?.innerText || "");
       const first = raw.split("\n").map(s => s.trim()).filter(Boolean)[0] || "";
       const label = first.length > 24 ? first.slice(0, 24) + "…" : first;
       return `<div class="msg-drawer-item" data-i="${i}">${esc(label || "（空消息）")}</div>`;

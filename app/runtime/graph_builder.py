@@ -15,7 +15,7 @@ from langgraph.graph.state import CompiledStateGraph, StateGraph, START, END
 from langgraph.types import Command, RetryPolicy, interrupt
 
 from app.config.models import DEFAULT_HTML_REPORT_PROMPT, MCPServerConfig, MultiAgentConfig, SubAgentConfig
-from app.runtime.prompts import ReAct_system_prompt, summery_promt
+from app.runtime.prompts import MEMORY_ATTACH_MARKER, USER_MSG_PREFIX, ReAct_system_prompt, summery_promt
 from app.runtime.state_factory import make_main_state, make_sub_agent_state
 
 
@@ -292,11 +292,7 @@ async def build_world(
             retrieved_memory = None
         if retrieved_memory:
             human_message = HumanMessage(
-                content="用户此次发送的信息如下：\n"
-                + human_message_content
-                + "\n与用户此次发送信息相关联的记忆如下："
-                + retrieved_memory
-                + "\n"
+                content=USER_MSG_PREFIX + human_message_content + MEMORY_ATTACH_MARKER + retrieved_memory + "\n"
             )
         else:
             human_message = HumanMessage(content=human_message_content)
