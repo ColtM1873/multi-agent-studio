@@ -685,7 +685,7 @@ async function renderChatView() {
       <button class="btn small" id="msgDirBtn" style="position:relative;">☰ 消息目录</button>
       <select id="subgraphSel" class="btn small" style="max-width:220px;"><option value="">主会话</option></select>
     </div>
-    <div class="chat-body">
+    <div class="chat-body" id="chatBody">
       <div class="history-pane" id="historyPane"><div class="md-body markdown-body" id="historyMd"><div class="muted">加载历史中…</div></div></div>
       <button id="pinBtn" class="pin-btn" title="跟随最新输出">📌</button>
       <div class="input-pane" id="inputPane">
@@ -696,14 +696,33 @@ async function renderChatView() {
       <div id="doneBubble" class="done-bubble done-bubble-float" style="display:none;"></div>
     </div>`;
 
-  const updatePinBtnPos = () => {
+  const chatBody = $("#chatBody");
+  const pinBtn = $("#pinBtn");
+
+  const defaultPinPos = () => {
     const inputPane = $("#inputPane");
-    const pinBtnEl = $("#pinBtn");
-    if (inputPane && pinBtnEl) pinBtnEl.style.bottom = (inputPane.offsetHeight + 16) + "px";
+    if (!chatBody || !pinBtn) return { left: 0, top: 0 };
+    const bw = pinBtn.offsetWidth || 34, bh = pinBtn.offsetHeight || 34;
+    const inp = inputPane ? inputPane.offsetHeight : 0;
+    return { left: chatBody.clientWidth - bw - 28, top: chatBody.clientHeight - inp - bh - 24 };
+  };
+  const applyPinPos = (pos) => {
+    pinBtn.style.left = pos.left + "px";
+    pinBtn.style.top = pos.top + "px";
+    pinBtn.style.right = "auto";
+    pinBtn.style.bottom = "auto";
   };
 
+  let customPos = null;
+  try { customPos = JSON.parse(localStorage.getItem("pin-pos") || "null"); } catch (e) {}
+  if (customPos && typeof customPos.left === "number") applyPinPos(customPos);
+  else applyPinPos(defaultPinPos());
+
   if (window.Split) {
-    Split(["#historyPane", "#inputPane"], { direction: "vertical", sizes: [72, 28], minSize: [100, 80], gutterSize: 8, cursor: "row-resize", onDragEnd: updatePinBtnPos });
+    Split(["#historyPane", "#inputPane"], {
+      direction: "vertical", sizes: [72, 28], minSize: [100, 80], gutterSize: 8, cursor: "row-resize",
+      onDragEnd: () => { if (!customPos) applyPinPos(defaultPinPos()); },
+    });
   }
 
   applyZoom();
@@ -714,16 +733,46 @@ async function renderChatView() {
   $("#zoomIn").onclick = () => { changeZoom(10); updateZoomLabel(); };
   $("#msgDirBtn").onclick = (e) => toggleMsgDrawer(e);
 
-  const pinBtn = $("#pinBtn");
   const updatePinBtn = () => { pinBtn.classList.toggle("active", pinned); };
   updatePinBtn();
-  updatePinBtnPos();
+
+  let dragState = null, dragged = false, suppressClick = false;
+
   pinBtn.onclick = () => {
+    if (suppressClick) return;
     pinned = !pinned;
     localStorage.setItem("pin-follow", pinned ? "1" : "0");
     updatePinBtn();
     if (pinned) { const pane = $("#historyPane"); if (pane) pane.scrollTop = pane.scrollHeight; }
   };
+
+  // Ctrl + 拖动移动按钮
+  pinBtn.addEventListener("mousedown", (e) => {
+    if (!e.ctrlKey) return;
+    suppressClick = true;
+    dragState = { x: e.clientX, y: e.clientY, left: pinBtn.offsetLeft, top: pinBtn.offsetTop };
+    e.preventDefault();
+  });
+  window.addEventListener("mousemove", (e) => {
+    if (!dragState) return;
+    const dx = e.clientX - dragState.x, dy = e.clientY - dragState.y;
+    if (!dragged && (Math.abs(dx) > 3 || Math.abs(dy) > 3)) dragged = true;
+    if (!dragged) return;
+    const bw = pinBtn.offsetWidth, bh = pinBtn.offsetHeight;
+    pinBtn.style.left = Math.min(Math.max(0, dragState.left + dx), chatBody.clientWidth - bw) + "px";
+    pinBtn.style.top = Math.min(Math.max(0, dragState.top + dy), chatBody.clientHeight - bh) + "px";
+  });
+  window.addEventListener("mouseup", () => {
+    if (dragState) {
+      if (dragged) {
+        customPos = { left: pinBtn.offsetLeft, top: pinBtn.offsetTop };
+        localStorage.setItem("pin-pos", JSON.stringify(customPos));
+      }
+      dragState = null;
+      dragged = false;
+    }
+    setTimeout(() => { suppressClick = false; }, 0);
+  });
 
   const historyEl = $("#historyMd");
   const scrollToLastUserMsg = () => {
