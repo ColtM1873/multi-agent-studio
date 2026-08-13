@@ -871,12 +871,16 @@ async function renderChatView() {
   async function send() {
     const content = input.value.trim();
     if (!content || isRunning) return;
-    input.value = "";
     setRunning(true);
     appendReplyHeader();
-    await openChatWs(content);
+    const ok = await openChatWs(content);
     setRunning(false);
-    showDoneBubble();
+    if (ok) {
+      if (input.value.trim() === content) input.value = "";
+      showDoneBubble();
+    } else {
+      toast("发送失败，消息已保留在输入框", true);
+    }
   }
 
   sendBtn.onclick = send;
@@ -961,17 +965,17 @@ function openChatWs(content) {
           break;
         }
         case "done":
-          resolve();
+          resolve(true);
           break;
         case "error":
           buffers.main += `\n\n> ⚠️ ${esc(msg.message)}\n\n`;
           schedule();
-          resolve();
+          resolve(false);
           break;
       }
     };
-    ws.onerror = () => { toast("WebSocket 连接失败", true); resolve(); };
-    ws.onclose = () => resolve();
+    ws.onerror = () => { toast("WebSocket 连接失败", true); resolve(false); };
+    ws.onclose = () => resolve(false);
   });
 }
 
