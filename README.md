@@ -2,6 +2,8 @@
 
 A **LangGraph-based Supervisor-Worker multi-agent framework** with a modern web GUI.
 
+This studio is built on top of the [LangGraph General-Use Multi-Agent Framework](https://github.com/ColtM1873/LangGraph-General-Use-Multi-Agent-Framework).
+
 ## Features
 
 - **Visual multi-agent configuration** — create / edit / delete multi-agent configs in the browser; each config is a JSON file bound to a PostgreSQL checkpoint database.
@@ -101,6 +103,8 @@ folder_of_MCPs/  local MCP servers
 # Multi-Agent Studio
 
 一个基于 **LangGraph 的 Supervisor-Worker 多智能体框架**，配一套现代 Web 图形界面。
+
+本 Studio 基于 [LangGraph General-Use Multi-Agent Framework](https://github.com/ColtM1873/LangGraph-General-Use-Multi-Agent-Framework) 框架构建。
 
 ## 特性
 
