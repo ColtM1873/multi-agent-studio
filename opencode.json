@@ -1,0 +1,13 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "langchain_official_docs" :{
+        "type": "remote",
+        "url": "https://docs.langchain.com/mcp"
+    },
+    "langchain_official_api_reference" :{
+        "type": "remote",
+        "url": "https://reference.langchain.com/mcp"
+    }
+  }
+}

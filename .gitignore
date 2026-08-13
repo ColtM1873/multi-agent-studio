@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+venv/
+.venv/
+
+# 敏感配置（本地保留，不入库）
+.env
+configs/*.json
+
+# 构建产物
+dist/
+build/
+*.exe
+*.spec
+
+# 日志 / IDE / 缓存
+logs/
+.vs/
+.vscode/
+.idea/
