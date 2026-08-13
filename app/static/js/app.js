@@ -284,6 +284,23 @@ async function openSettings() {
           <option value="chime" ${s.notification_sound === "chime" ? "selected" : ""}>chime（双音上行）</option>
         </select>
       </div>
+      <div class="switch-row">
+        <span class="sw-label">发送键 <i class="info-icon">!<span class="tip">聊天输入框里，按该键发送消息。</span></i></span>
+        <select id="set_send">
+          <option value="enter" ${s.send_key === "enter" ? "selected" : ""}>Enter</option>
+          <option value="shift_enter" ${s.send_key === "shift_enter" ? "selected" : ""}>Shift + Enter</option>
+          <option value="ctrl_enter" ${s.send_key === "ctrl_enter" ? "selected" : ""}>Ctrl + Enter</option>
+          <option value="mouse_only" ${s.send_key === "mouse_only" ? "selected" : ""}>仅鼠标（Enter 只换行）</option>
+        </select>
+      </div>
+      <div class="switch-row">
+        <span class="sw-label">换行键 <i class="info-icon">!<span class="tip">除发送键外，其余 Enter 组合均换行。</span></i></span>
+        <select id="set_newline">
+          <option value="enter" ${s.newline_key === "enter" ? "selected" : ""}>Enter</option>
+          <option value="shift_enter" ${s.newline_key === "shift_enter" ? "selected" : ""}>Shift + Enter</option>
+          <option value="ctrl_enter" ${s.newline_key === "ctrl_enter" ? "selected" : ""}>Ctrl + Enter</option>
+        </select>
+      </div>
       <div class="modal-actions">
         <button class="btn" id="setCancel">取消</button>
         <button class="btn primary" id="setSave">保存</button>
@@ -292,6 +309,19 @@ async function openSettings() {
   document.body.appendChild(mask);
   mask.querySelector("#set_mem").addEventListener("change", e => { mask.querySelector("#set_memnum").disabled = !e.target.checked; });
   mask.querySelector("#set_sound").addEventListener("change", e => playSound(e.target.value));
+
+  const sendSel = mask.querySelector("#set_send");
+  const newlineSel = mask.querySelector("#set_newline");
+  const updateNewline = () => {
+    const sk = sendSel.value;
+    newlineSel.querySelectorAll("option").forEach(o => { o.disabled = (o.value === sk && sk !== "mouse_only"); });
+    if (newlineSel.selectedOptions[0] && newlineSel.selectedOptions[0].disabled) {
+      newlineSel.value = newlineSel.querySelector("option:not([disabled])").value;
+    }
+  };
+  sendSel.addEventListener("change", updateNewline);
+  updateNewline();
+
   mask.querySelector("#setCancel").onclick = () => mask.remove();
   mask.querySelector("#setSave").onclick = async () => {
     try {
@@ -300,6 +330,8 @@ async function openSettings() {
         memory_attach: mask.querySelector("#set_mem").checked,
         num_memories_attached: +mask.querySelector("#set_memnum").value || 3,
         notification_sound: mask.querySelector("#set_sound").value,
+        send_key: sendSel.value,
+        newline_key: newlineSel.value,
       });
       mask.remove();
       toast("设置已保存");
@@ -729,6 +761,7 @@ async function renderChatView() {
   }
 
   applyZoom();
+  getSettings().catch(() => {});
   const zoomPctEl = $("#zoomPct");
   const updateZoomLabel = () => { if (zoomPctEl) zoomPctEl.textContent = zoomPct + "%"; };
   updateZoomLabel();
@@ -847,7 +880,21 @@ async function renderChatView() {
   }
 
   sendBtn.onclick = send;
-  input.onkeydown = e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } };
+  input.onkeydown = e => {
+    if (e.key !== "Enter") return;
+    const combo = e.ctrlKey ? "ctrl_enter" : (e.shiftKey ? "shift_enter" : "enter");
+    const sendKey = (settingsCache && settingsCache.send_key) || "enter";
+    if (sendKey !== "mouse_only" && combo === sendKey) {
+      e.preventDefault();
+      send();
+      return;
+    }
+    // 非发送键一律换行（手动插入，兼容 Ctrl+Enter）
+    e.preventDefault();
+    const start = input.selectionStart, end = input.selectionEnd;
+    input.value = input.value.slice(0, start) + "\n" + input.value.slice(end);
+    input.selectionStart = input.selectionEnd = start + 1;
+  };
   stopBtn.onclick = () => { if (ws) ws.send(JSON.stringify({ type: "stop" })); };
   updateSendState();
 }

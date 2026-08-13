@@ -19,6 +19,8 @@ class Settings(BaseModel):
     num_memories_attached: int = 3
     warn_unsaved_changes: bool = True
     notification_sound: str = "ber"
+    send_key: str = "enter"
+    newline_key: str = "shift_enter"
 
 
 def settings_path(config_dir: Path | str) -> Path:
