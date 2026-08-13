@@ -90,10 +90,7 @@ app/
 configs/         multi-agent configs (not committed)
 scripts/         dev_server · verify_phase1
 folder_of_MCPs/  local MCP servers
-docs/            module mapping
 ```
-
-See [`docs/模块对照.md`](docs/模块对照.md) for a mapping from the original script modules to the new structure.
 
 ## License
 
@@ -193,10 +190,7 @@ app/
 configs/         multi-agent 配置（不入库）
 scripts/         dev_server · verify_phase1
 folder_of_MCPs/  本地 MCP 服务器
-docs/            模块对照表
 ```
-
-原脚本模块到新结构的对应关系见 [`docs/模块对照.md`](docs/模块对照.md)。
 
 ## 许可证
 
