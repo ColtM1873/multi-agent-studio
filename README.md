@@ -43,10 +43,13 @@ On first run the BGE-M3 embedding model is downloaded from Hugging Face (or poin
 
 ## Quick Start
 
-```bash
-python run.py               # tray mode (right-click the tray icon → "Open")
-python run.py --console     # foreground mode (auto-opens browser + console logs)
-```
+The recommended way to run Multi-Agent Studio:
+
+1. Double-click `build_exe.bat` to build the packaged app (produces `MultiAgentStudio.exe` in the project root).
+2. Double-click `MultiAgentStudio.exe`.
+3. Click the tray icon in the bottom-right system tray and choose **Open** to launch the web UI.
+
+> Running from source (development): `python run.py` (tray mode) or `python run.py --console` (foreground — auto-opens browser + console logs).
 
 Then in the browser:
 
@@ -68,7 +71,7 @@ Configs live in `configs/<agent_id>.json` (not committed). Use the GUI to create
 ## Packaging
 
 ```bash
-python build_exe.py     # or double-click build_exe.bat
+build_exe.bat               # double-click, or run: python build_exe.py
 ```
 
 Produces `dist/MultiAgentStudio.exe` and copies it to the project root. The launcher locates `run.py` and `venv` relative to its own directory — no absolute paths are hard-coded.
@@ -145,10 +148,13 @@ pip install -r requirements.txt
 
 ## 快速开始
 
-```bash
-python run.py               # 托盘模式（右下角图标 → 右键「打开」）
-python run.py --console     # 前台模式（自动开浏览器 + 控制台日志）
-```
+推荐方式：
+
+1. 双击 `build_exe.bat` 打包（生成项目根目录下的 `MultiAgentStudio.exe`）。
+2. 双击 `MultiAgentStudio.exe`。
+3. 单击右下角系统托盘图标，选择「打开」进入网页界面。
+
+> 从源码运行（开发用）：`python run.py`（托盘模式）或 `python run.py --console`（前台模式，自动开浏览器 + 控制台日志）。
 
 浏览器里：
 
@@ -170,7 +176,7 @@ python run.py --console     # 前台模式（自动开浏览器 + 控制台日�
 ## 打包
 
 ```bash
-python build_exe.py     # 或双击 build_exe.bat
+build_exe.bat               # 双击运行，或：python build_exe.py
 ```
 
 生成 `dist/MultiAgentStudio.exe` 并复制到项目根目录。启动器相对自身目录定位 `run.py` 与 `venv`，不写死任何绝对路径。
