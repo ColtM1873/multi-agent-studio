@@ -459,23 +459,19 @@ function buildForm(cfg, canEditSubs) {
 
   const embInOptions = EMB_OPTIONS.includes(emb.model_name);
   const embSelect = `
-    <div class="unit-row">
-      <select id="f_emb_model_sel">
-        ${EMB_OPTIONS.map(m => `<option value="${esc(m)}" ${m === emb.model_name ? "selected" : ""}>${esc(m)}</option>`).join("")}
-        <option value="__custom__" ${!embInOptions ? "selected" : ""}>自定义…</option>
-      </select>
-    </div>
+    <select id="f_emb_model_sel" style="width:100%;">
+      ${EMB_OPTIONS.map(m => `<option value="${esc(m)}" ${m === emb.model_name ? "selected" : ""}>${esc(m)}</option>`).join("")}
+      <option value="__custom__" ${!embInOptions ? "selected" : ""}>自定义…</option>
+    </select>
     <input id="f_emb_model_custom" placeholder="自定义模型名" value="${embInOptions ? "" : esc(emb.model_name)}" style="${embInOptions ? "display:none;" : ""} margin-top:6px;">`;
 
   const hfEndpoint = emb.hf_endpoint || "";
   const hfInOptions = HF_OPTIONS.some(o => o.v === hfEndpoint);
   const hfSelect = `
-    <div class="unit-row">
-      <select id="f_hf_endpoint_sel">
-        ${HF_OPTIONS.map(o => `<option value="${esc(o.v)}" ${hfEndpoint === o.v ? "selected" : ""}>${esc(o.label)}</option>`).join("")}
-        <option value="__custom__" ${!hfInOptions ? "selected" : ""}>自定义…</option>
-      </select>
-    </div>
+    <select id="f_hf_endpoint_sel" style="width:100%;">
+      ${HF_OPTIONS.map(o => `<option value="${esc(o.v)}" ${hfEndpoint === o.v ? "selected" : ""}>${esc(o.label)}</option>`).join("")}
+      <option value="__custom__" ${!hfInOptions ? "selected" : ""}>自定义…</option>
+    </select>
     <input id="f_hf_endpoint_custom" placeholder="自定义镜像地址" value="${hfInOptions ? "" : esc(hfEndpoint)}" style="${hfInOptions ? "display:none;" : ""} margin-top:6px;">`;
 
   const htmlReport = main.html_report;
