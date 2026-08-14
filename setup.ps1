@@ -72,6 +72,17 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
+# 检测 mcp 版本（langchain-mcp-adapters 0.3.x 要求 mcp<2.0）
+$mcpVer = & "$PSScriptRoot\venv\Scripts\python.exe" -c "import importlib.metadata as md; print(md.version('mcp'))" 2>$null
+if ($mcpVer -and ([version]$mcpVer -ge [version]'2.0.0')) {
+    Write-Host "       检测到不兼容的 mcp $mcpVer，正在重装兼容版本 mcp==1.28.0..."
+    & "$PSScriptRoot\venv\Scripts\python.exe" -m pip install "mcp==1.28.0" -i https://pypi.tuna.tsinghua.edu.cn/simple
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host '[错误] 重装 mcp 失败，请截图上方报错信息反馈。'
+        exit 1
+    }
+}
+
 # ---------- 5. 打包 exe ----------
 Write-Host '[5/5] 打包 MultiAgentStudio.exe（首次会自动安装打包工具）...'
 & "$PSScriptRoot\venv\Scripts\python.exe" "$PSScriptRoot\build_exe.py"
