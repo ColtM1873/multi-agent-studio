@@ -16,7 +16,6 @@ ICON = ROOT / "icon.ico"
 NAME = "MultiAgentStudio"
 DIST_DIR = ROOT / "dist"
 BUILD_DIR = ROOT / "build"
-PIP_INDEX = "https://pypi.tuna.tsinghua.edu.cn/simple"
 
 
 def ensure_icon() -> None:
@@ -40,9 +39,9 @@ def ensure_pyinstaller() -> None:
     )
     if r.returncode == 0:
         return
-    print("未检测到 pyinstaller，正在安装（清华源）…")
+    print("未检测到 pyinstaller，正在安装…")
     subprocess.run(
-        [str(VENV_PY), "-m", "pip", "install", "pyinstaller", "-i", PIP_INDEX],
+        [str(VENV_PY), "-m", "pip", "install", "pyinstaller"],
         check=True,
     )
 

@@ -76,6 +76,8 @@ build_exe.bat               # double-click, or run: python build_exe.py
 
 Produces `dist/MultiAgentStudio.exe` and copies it to the project root. The launcher locates `run.py` and `venv` relative to its own directory — no absolute paths are hard-coded.
 
+> If `build_exe.bat` fails with `The system cannot find the path specified`, the `venv` hasn't been created yet — run the [Install](#install) steps first.
+
 ## Local MCP servers
 
 `folder_of_MCPs/` contains standalone FastMCP servers (Caiyun weather, AMap). Run them separately and reference them in a sub-agent's `mcp_servers` via `http` or `stdio` transport. Their tokens are read from environment variables — see `.env.example`.
@@ -180,6 +182,8 @@ build_exe.bat               # 双击运行，或：python build_exe.py
 ```
 
 生成 `dist/MultiAgentStudio.exe` 并复制到项目根目录。启动器相对自身目录定位 `run.py` 与 `venv`，不写死任何绝对路径。
+
+> 若双击 `build_exe.bat` 报「系统找不到指定的路径」，说明尚未创建 `venv`，请先执行上面的[安装](#安装)步骤。
 
 ## 本地 MCP
 
