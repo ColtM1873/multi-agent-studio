@@ -1075,5 +1075,48 @@ function openChatWs(content) {
   });
 }
 
+/* ================= 模型下载进度横幅 ================= */
+function formatSize(bytes) {
+  if (!bytes || bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let i = 0, n = bytes;
+  while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+  return n.toFixed(i === 0 ? 0 : 1) + " " + units[i];
+}
+
+function initDlBanner() {
+  const banner = document.createElement("div");
+  banner.id = "dlBanner";
+  banner.className = "dl-banner";
+  banner.style.display = "none";
+  banner.innerHTML = `
+    <div class="dl-text">⬇ 正在下载 embedding 模型：<span id="dlModel"></span></div>
+    <div class="dl-bar"><div class="dl-bar-fill" id="dlFill"></div></div>
+    <div class="dl-info"><span id="dlSize"></span><span id="dlSpeed"></span></div>`;
+  document.body.appendChild(banner);
+}
+
+async function pollDownload() {
+  try {
+    const r = await api("/api/download-status");
+    const cur = r && r.current;
+    const banner = $("#dlBanner");
+    if (!banner) return;
+    if (cur && cur.status === "downloading") {
+      const pct = cur.total ? Math.round((cur.downloaded / cur.total) * 100) : 0;
+      $("#dlModel").textContent = cur.model || "";
+      $("#dlFill").style.width = pct + "%";
+      $("#dlSize").textContent = `${formatSize(cur.downloaded)} / ${formatSize(cur.total)}`;
+      $("#dlSpeed").textContent = formatSize(cur.speed) + "/s";
+      banner.style.display = "block";
+    } else {
+      banner.style.display = "none";
+    }
+  } catch (e) {}
+}
+
+initDlBanner();
+setInterval(pollDownload, 1000);
+
 /* ================= 启动 ================= */
 render();

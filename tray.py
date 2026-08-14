@@ -74,6 +74,37 @@ def _quit(icon, _item) -> None:
     icon.stop()
 
 
+def _fmt_size(n) -> str:
+    if not n or n <= 0:
+        return "0 B"
+    units = ["B", "KB", "MB", "GB", "TB"]
+    i = 0
+    while n >= 1024 and i < len(units) - 1:
+        n /= 1024
+        i += 1
+    return f"{n:.1f} {units[i]}"
+
+
+def _update_download_menu(icon, item) -> None:
+    """每秒更新托盘菜单里的下载进度项。"""
+    from app.services.downloads import download_manager
+
+    while True:
+        try:
+            cur = download_manager.current()
+            if cur and cur["status"] == "downloading":
+                item.text = (
+                    f"下载模型：{_fmt_size(cur['downloaded'])} / {_fmt_size(cur['total'])}"
+                    f" · {_fmt_size(cur['speed'])}/s"
+                )
+            else:
+                item.text = "下载模型：就绪"
+            icon.update_menu()
+        except Exception:
+            pass
+        time.sleep(1)
+
+
 def _open_browser_later(url: str, delay: float = 2.0) -> None:
     """后台延迟打开浏览器（等服务先起来）。"""
 
@@ -92,6 +123,7 @@ def main() -> None:
 
     _open_browser_later(URL, 2.0)
 
+    download_item = pystray.MenuItem("下载模型：就绪", None, enabled=False)
     icon = pystray.Icon(
         "multi_agent_studio",
         _create_image(),
@@ -99,9 +131,12 @@ def main() -> None:
         menu=pystray.Menu(
             pystray.MenuItem("打开", _open, default=True),
             pystray.MenuItem("查看状态", _status),
+            download_item,
             pystray.MenuItem("退出", _quit),
         ),
     )
+
+    threading.Thread(target=_update_download_menu, args=(icon, download_item), daemon=True).start()
     icon.run()
 
 

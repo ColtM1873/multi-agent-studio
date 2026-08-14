@@ -17,7 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api import agents, chat_ws, settings, threads
+from app.api import agents, chat_ws, downloads, settings, threads
 
 app = FastAPI(title="Multi-Agent Studio")
 
@@ -41,6 +41,7 @@ app.include_router(agents.router)
 app.include_router(threads.router)
 app.include_router(chat_ws.router)
 app.include_router(settings.router)
+app.include_router(downloads.router)
 
 
 @app.get("/api/health")

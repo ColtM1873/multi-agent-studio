@@ -320,6 +320,18 @@ body {
 .status-dot.answering { background: #22c55e; animation: pulse .7s infinite; }
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .3; } }
 
+/* ── 模型下载进度横幅 ───────────────────── */
+.dl-banner {
+  position: fixed; top: 62px; left: 50%; transform: translateX(-50%);
+  width: 440px; max-width: 90vw;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 12px; box-shadow: var(--shadow-lg); padding: 12px 16px; z-index: 1000;
+}
+.dl-banner .dl-text { font-size: 13px; font-weight: 600; margin-bottom: 8px; }
+.dl-banner .dl-bar { height: 8px; background: #e5e7eb; border-radius: 4px; overflow: hidden; }
+.dl-banner .dl-bar-fill { height: 100%; background: var(--primary); width: 0; transition: width .3s; }
+.dl-banner .dl-info { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-muted); margin-top: 6px; }
+
 /* ── 设置弹窗行 ─────────────────────────── */
 .switch-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--border); }
 .switch-row:last-child { border-bottom: none; }

@@ -65,7 +65,7 @@ class ChatManager:
         from app.config.settings import load_settings
 
         settings = load_settings(self.config_store._dir)
-        saver, store = build_persistence(config)
+        saver, store = await build_persistence(config)
         stack = AsyncExitStack()
         checkpointer = await stack.enter_async_context(saver)
         store_ctx = await stack.enter_async_context(store)
