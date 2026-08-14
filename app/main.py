@@ -28,6 +28,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def no_cache_frontend(request, call_next):
+    """前端静态资源不缓存，避免更新后浏览器仍显示旧界面。"""
+    response = await call_next(request)
+    if request.url.path.startswith("/static") or request.url.path == "/":
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    return response
+
 app.include_router(agents.router)
 app.include_router(threads.router)
 app.include_router(chat_ws.router)
