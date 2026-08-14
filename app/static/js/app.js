@@ -3,6 +3,11 @@
 /* ================= 常量 ================= */
 const DEFAULT_HTML_PROMPT = "不错，请把你的回答输出为一份html文件，使用你所拥有的FileTools，自拟文件名。";
 const EMB_OPTIONS = ["BAAI/bge-m3", "BAAI/bge-large-zh-v1.5", "BAAI/bge-small-zh-v1.5"];
+
+const HF_OPTIONS = [
+  { v: "", label: "官方 huggingface.co" },
+  { v: "https://hf-mirror.com", label: "hf-mirror（国内镜像）" },
+];
 const SSL_OPTIONS = [
   { v: "", label: "无字符串（视数据库设置启用/关闭 SSL）" },
   { v: "?sslmode=prefer", label: "prefer（有 SSL 就启用，无则明文）" },
@@ -462,6 +467,17 @@ function buildForm(cfg, canEditSubs) {
     </div>
     <input id="f_emb_model_custom" placeholder="自定义模型名" value="${embInOptions ? "" : esc(emb.model_name)}" style="${embInOptions ? "display:none;" : ""} margin-top:6px;">`;
 
+  const hfEndpoint = emb.hf_endpoint || "";
+  const hfInOptions = HF_OPTIONS.some(o => o.v === hfEndpoint);
+  const hfSelect = `
+    <div class="unit-row">
+      <select id="f_hf_endpoint_sel">
+        ${HF_OPTIONS.map(o => `<option value="${esc(o.v)}" ${hfEndpoint === o.v ? "selected" : ""}>${esc(o.label)}</option>`).join("")}
+        <option value="__custom__" ${!hfInOptions ? "selected" : ""}>自定义…</option>
+      </select>
+    </div>
+    <input id="f_hf_endpoint_custom" placeholder="自定义镜像地址" value="${hfInOptions ? "" : esc(hfEndpoint)}" style="${hfInOptions ? "display:none;" : ""} margin-top:6px;">`;
+
   const htmlReport = main.html_report;
   const htmlPrompt = main.html_report_prompt || DEFAULT_HTML_PROMPT;
 
@@ -485,6 +501,11 @@ function buildForm(cfg, canEditSubs) {
       <div class="field"><label>embedding 模型 <i class="info-icon">!<span class="tip">无需提前下载，首次配置会自动下载（需连接 Hugging Face Hub，国内网络可能连不上）。若已离线缓存过，可在下方缓存目录直接使用。</span></i></label>${embSelect}</div>
       <div class="field"><label>embedding 缓存目录 ${info("本地模型缓存路径，留空用 Hugging Face 默认缓存。")}</label><input id="f_emb_cache" value="${esc(emb.cache_folder)}"${ph("emb_cache")}></div>
       <div class="field"><label>embedding 维度 ${info("向量维度；bge-m3 为 1024，换模型需对应调整。")}</label><input id="f_emb_dims" value="${esc(emb.dims)}" type="number"></div>
+      <div class="field"><label>embedding 镜像 ${info("下载 embedding 模型时使用的 HuggingFace 镜像源；国内推荐 hf-mirror。")}</label>${hfSelect}</div>
+      <div class="field full">
+        <label style="flex-direction:row;align-items:center;gap:8px;"><input type="checkbox" id="f_emb_offline" ${emb.local_files_only ? "checked" : ""}> Embedding 模型离线模式 ${info("离线模式 = 只从本地缓存加载 embedding 模型、不联网校验。没有缓存时请勿开启（会报错）；已有缓存时建议开启，跳过每次联网校验。")}</label>
+        <span class="hint">没有缓存时请勿开启；已有缓存时建议开启，跳过每次联网校验。</span>
+      </div>
       ${unitField("f_sum_gap", gap.v, gap.u, "阶段性总结阈值", "累计 token 达到该值时触发一次阶段性总结。")}
       ${unitField("f_sum_flush", flush.v, flush.u, "清空历史阈值", "累计 token 达到该值时清空历史（只保留最近几轮）。")}
       <div class="field"><label>清空时保留轮数 ${info("清空历史时保留最近几轮对话。")}</label><input id="f_sum_reserve" value="${esc(sum.reserve_message_round)}" type="number"></div>
@@ -514,6 +535,18 @@ function buildForm(cfg, canEditSubs) {
   // embedding 下拉 ↔ 自定义
   const embSel = $("#f_emb_model_sel"), embCustom = $("#f_emb_model_custom");
   embSel.onchange = () => { embCustom.style.display = embSel.value === "__custom__" ? "" : "none"; };
+
+  // 镜像下拉 ↔ 自定义
+  const hfSel = $("#f_hf_endpoint_sel"), hfCustom = $("#f_hf_endpoint_custom");
+  hfSel.onchange = () => { hfCustom.style.display = hfSel.value === "__custom__" ? "" : "none"; };
+
+  // 离线模式开关：关闭时提醒
+  const embOffline = $("#f_emb_offline");
+  embOffline.onchange = (e) => {
+    if (!e.target.checked) {
+      toast("已关闭 Embedding 模型离线模式：每次打开会联网校验。若已获取模型缓存，建议重新开启以跳过校验。", true);
+    }
+  };
 
   $("#resetHtmlBtn").onclick = () => { $("#f_html_prompt").value = DEFAULT_HTML_PROMPT; };
 
@@ -610,6 +643,11 @@ function embModelValue() {
   return sel === "__custom__" ? $("#f_emb_model_custom").value : sel;
 }
 
+function hfEndpointValue() {
+  const sel = $("#f_hf_endpoint_sel").value;
+  return sel === "__custom__" ? $("#f_hf_endpoint_custom").value : sel;
+}
+
 function buildPayload(cfg) {
   const val = id => $(`#${id}`).value;
   return {
@@ -632,7 +670,9 @@ function buildPayload(cfg) {
         cache_folder: val("f_emb_cache"),
         dims: +val("f_emb_dims"),
         device: (cfg.main_agent.embedding || {}).device || "cpu",
-        local_files_only: (cfg.main_agent.embedding || {}).local_files_only ?? true,
+        encode_normalize: (cfg.main_agent.embedding || {}).encode_normalize ?? true,
+        local_files_only: $("#f_emb_offline").checked,
+        hf_endpoint: hfEndpointValue(),
       },
       summary: {
         summarize_gap_tokenwise: unitToTok(val("f_sum_gap"), val("f_sum_gap_unit")),

@@ -33,10 +33,11 @@ class PostgresConfig(BaseModel):
 class EmbeddingConfig(BaseModel):
     model_name: str = "BAAI/bge-m3"
     device: str = "cpu"
-    local_files_only: bool = True
+    local_files_only: bool = False
     cache_folder: str = ""
     encode_normalize: bool = True
     dims: int = 1024
+    hf_endpoint: str = "https://hf-mirror.com"
 
 
 class SummaryConfig(BaseModel):

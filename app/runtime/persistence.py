@@ -13,8 +13,16 @@ from app.config.models import EmbeddingConfig, MultiAgentConfig
 
 
 def build_embeddings(cfg: EmbeddingConfig) -> HuggingFaceEmbeddings:
-    os.environ.setdefault("HF_HUB_OFFLINE", "1")
-    os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+    # 离线与否只由 local_files_only 控制，不写死环境变量
+    if cfg.local_files_only:
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        os.environ["TRANSFORMERS_OFFLINE"] = "1"
+        os.environ.pop("HF_ENDPOINT", None)
+    else:
+        os.environ.pop("HF_HUB_OFFLINE", None)
+        os.environ.pop("TRANSFORMERS_OFFLINE", None)
+        if cfg.hf_endpoint:
+            os.environ["HF_ENDPOINT"] = cfg.hf_endpoint
     return HuggingFaceEmbeddings(
         model_name=cfg.model_name,
         model_kwargs={
