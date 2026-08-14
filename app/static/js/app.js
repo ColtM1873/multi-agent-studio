@@ -395,13 +395,13 @@ const PH = {
   name: "例如 研究助理",
   checkpoint_database: "例如 my_agent_checkpoints",
   prefix: "例如 postgresql://user:passwd@localhost:5432/",
-  main_system_prompt: "你是一名研究助理，负责理解用户问题，将复杂任务拆解并委派给合适的子 agent，汇总后给出结构化、准确的回答。请使用中文。",
+  main_system_prompt: "例如：你是一名研究助理，负责理解用户问题，将复杂任务拆解并委派给合适的子 agent，汇总后给出结构化、准确的回答。请使用中文。",
   main_api_key: "例如 sk-...",
   root_dir: "例如 C:\\Agent_WorkPlace",
   emb_cache: "留空则使用默认缓存目录",
   sub_name: "例如 web_search_agent",
-  sub_description: "负责联网搜索，将需要查询的内容与注意事项告知它，它会返回检索到的原文片段。",
-  sub_system_prompt: "你是一名联网搜索子 agent，负责为主 agent 检索网页信息，最终输出检索到的原文或相关片段。",
+  sub_description: "例如：负责联网搜索，将需要查询的内容与注意事项告知它，它会返回检索到的原文片段。",
+  sub_system_prompt: "例如：你是一名联网搜索子 agent，负责为主 agent 检索网页信息，最终输出检索到的原文或相关片段。",
   sub_api_key: "例如 sk-...",
 };
 const ph = (key) => (settingsCache && settingsCache.show_placeholders !== false) ? ` placeholder="${esc(PH[key])}"` : "";
