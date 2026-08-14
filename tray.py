@@ -13,6 +13,7 @@ import os
 import selectors
 import sys
 import threading
+import time
 import webbrowser
 from pathlib import Path
 
@@ -73,11 +74,23 @@ def _quit(icon, _item) -> None:
     icon.stop()
 
 
+def _open_browser_later(url: str, delay: float = 2.0) -> None:
+    """后台延迟打开浏览器（等服务先起来）。"""
+
+    def _open() -> None:
+        time.sleep(delay)
+        webbrowser.open(url)
+
+    threading.Thread(target=_open, daemon=True).start()
+
+
 def main() -> None:
     _redirect_std_streams()
 
     server_thread = threading.Thread(target=_run_server, daemon=True, name="uvicorn")
     server_thread.start()
+
+    _open_browser_later(URL, 2.0)
 
     icon = pystray.Icon(
         "multi_agent_studio",

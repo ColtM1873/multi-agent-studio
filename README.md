@@ -1,112 +1,5 @@
 # Multi-Agent Studio
 
-A **LangGraph-based Supervisor-Worker multi-agent framework** with a modern web GUI.
-
-This studio is built on top of the [LangGraph General-Use Multi-Agent Framework](https://github.com/ColtM1873/LangGraph-General-Use-Multi-Agent-Framework).
-
-## Features
-
-- **Visual multi-agent configuration** — create / edit / delete multi-agent configs in the browser; each config is a JSON file bound to a PostgreSQL checkpoint database.
-- **Conversation threads** — list / delete / resume threads backed by LangGraph's Postgres checkpointer; history is rendered as Markdown.
-- **Streaming chat** — real-time Markdown rendering of agent / sub-agent output over WebSocket; sub-agent history is aggregated by sub-agent name.
-- **Long-term memory** — semantic memory with BGE-M3 embeddings + Postgres (pgvector).
-- **Configurable summaries / history flush** — token thresholds for periodic summarization and history flushing.
-- **System tray** — run in the background with a Windows tray icon (optional packaged `.exe`).
-
-## Architecture
-
-```
-Supervisor (main agent)                 Workers (sub-agents)
-  ├─ file tools                          ├─ MCP tools (http / stdio)
-  ├─ memory tools (write/read)           └─ subgraph with checkpointer=True
-  ├─ sub-agent tools (as tools)
-  └─ summarization / history flush
-```
-
-- The main agent is a Supervisor that plans and delegates; each sub-agent is a **subgraph** compiled with `checkpointer=True` and mounted as a node, keeping memory across calls within a thread.
-- The main graph and each subgraph share `subagents_reports_submit` / `instructions_for_subagents` channels (intentionally same-named) for passing reports / instructions, while their message channels must be unique.
-
-## Requirements
-
-- Python 3.13+
-- PostgreSQL with the `pgvector` extension (for the checkpoint saver and semantic memory store)
-
-## Install
-
-```bash
-python -m venv venv
-venv\Scripts\activate            # Windows
-pip install -r requirements.txt
-```
-
-On first run the BGE-M3 embedding model is downloaded from Hugging Face (or point `embedding.cache_folder` at a local cache).
-
-## Quick Start
-
-The recommended way to run Multi-Agent Studio:
-
-1. Double-click `build_exe.bat` to build the packaged app (produces `MultiAgentStudio.exe` in the project root).
-2. Double-click `MultiAgentStudio.exe`.
-3. Click the tray icon in the bottom-right system tray and choose **Open** to launch the web UI.
-
-> Running from source (development): `python run.py` (tray mode) or `python run.py --console` (foreground — auto-opens browser + console logs).
-
-Then in the browser:
-
-1. Click **＋ New multi-agent** and fill in the form (API key, system prompts, sub-agents, MCP servers, PostgreSQL databases).
-2. Create the checkpoint database in pgAdmin first (the form reminds you and pre-checks connectivity).
-3. Open an agent → pick/create a thread → chat with streaming Markdown.
-
-> Each multi-agent's identity is bound to `checkpoint_database`. After creation, sub-agents cannot be added / removed / renamed, but their prompts / description / MCP tools / models can still be edited.
-
-## Configuration
-
-Configs live in `configs/<agent_id>.json` (not committed). Use the GUI to create them; key fields:
-
-- `postgres`: `prefix` / `suffix` / `store_database` / `checkpoint_database` / `store_namespace`
-- `main_agent`: `system_prompt`, `api_key`, `llm_provider_name`, `file_tools.root_dir`, `embedding.*`, `summary.*`, `html_report`, `html_report_prompt`
-- `sub_agents[]`: `name`, `description`, `system_prompt`, `api_key`, `llm_provider_name`, `mcp_servers[]`, `summary.*`
-- Global settings (`configs/settings.json`): `memory_attach`, `num_memories_attached`, `notification_sound`, `warn_unsaved_changes`
-
-## Packaging
-
-```bash
-build_exe.bat               # double-click, or run: python build_exe.py
-```
-
-Produces `dist/MultiAgentStudio.exe` and copies it to the project root. The launcher locates `run.py` and `venv` relative to its own directory — no absolute paths are hard-coded.
-
-> If `build_exe.bat` fails with `The system cannot find the path specified`, the `venv` hasn't been created yet — run the [Install](#install) steps first.
-
-## Local MCP servers
-
-`folder_of_MCPs/` contains standalone FastMCP servers (Caiyun weather, AMap). Run them separately and reference them in a sub-agent's `mcp_servers` via `http` or `stdio` transport. Their tokens are read from environment variables — see `.env.example`.
-
-## Project structure
-
-```
-run.py           entry point (tray mode by default; --console for foreground)
-tray.py          system tray
-launcher.py      thin launcher (packaged into an exe by build_exe.py)
-app/
-  config/        models · store · edits · settings
-  runtime/       state_factory · graph_builder · streaming · persistence · prompts
-  services/      threads · chat · history_render
-  api/           agents · threads · chat_ws · settings
-  static/        index.html · css · js
-configs/         multi-agent configs (not committed)
-scripts/         dev_server · verify_phase1
-folder_of_MCPs/  local MCP servers
-```
-
-## License
-
-[GPL-3.0](LICENSE)
-
----
-
-# Multi-Agent Studio
-
 一个基于 **LangGraph 的 Supervisor-Worker 多智能体框架**，配一套现代 Web 图形界面。
 
 本 Studio 基于 [LangGraph General-Use Multi-Agent Framework](https://github.com/ColtM1873/LangGraph-General-Use-Multi-Agent-Framework) 框架构建。
@@ -118,7 +11,7 @@ folder_of_MCPs/  local MCP servers
 - **流式对话** —— 通过 WebSocket 实时渲染主 / 子 agent 输出；子 agent 历史按子 agent 名聚合。
 - **长期记忆** —— 用 BGE-M3 embedding + Postgres（pgvector）做语义记忆。
 - **可配置的总结 / 清空历史** —— token 阈值控制阶段性总结与历史清空。
-- **系统托盘** —— 后台常驻 + Windows 托盘图标（可选打包成 exe）。
+- **系统托盘** —— 后台常驻 + Windows 托盘图标。
 
 ## 架构
 
@@ -133,32 +26,43 @@ Supervisor（主 agent）                    Workers（子 agent）
 - 主 agent 是负责调度规划的 Supervisor；每个子 agent 是一个 `checkpointer=True` 编译的**子图**，作为节点挂载，在线程内跨调用保持记忆。
 - 主图与各子图共享 `subagents_reports_submit` / `instructions_for_subagents`（故意同名）用于报告 / 指令穿透，而各自的消息通道键必须唯一。
 
-## 依赖
+## 快速开始（小白版，从零到跑起来）
 
-- Python 3.13+
-- 安装了 `pgvector` 扩展的 PostgreSQL（用于 checkpoint 与语义记忆）
+### 第一步：安装前置软件
 
-## 安装
+1. **安装 Python 3.13**：到 https://www.python.org/downloads/ 下载并安装，安装时**务必勾选「Add python.exe to PATH」**。
+2. **安装 PostgreSQL**（需启用 `pgvector` 扩展）：程序用它保存会话历史和长期记忆。
 
-```bash
-python -m venv venv
-venv\Scripts\activate            # Windows
-pip install -r requirements.txt
-```
+### 第二步：下载
 
-首次运行会从 Hugging Face 下载 BGE-M3 模型（或把 `embedding.cache_folder` 指向本地缓存）。
+1. 打开本仓库页面，点右侧 **Releases**，在最新版本下点击 **Source code (zip)** 下载。
 
-## 快速开始
+### 第三步：解压
 
-推荐方式：
+1. 把 zip 解压到**任意位置**，得到一个 `multi-agent-studio-*` 文件夹。
 
-1. 双击 `build_exe.bat` 打包（生成项目根目录下的 `MultiAgentStudio.exe`）。
-2. 双击 `MultiAgentStudio.exe`。
-3. 单击右下角系统托盘图标，选择「打开」进入网页界面。
+### 第四步：进入项目文件夹
 
-> 从源码运行（开发用）：`python run.py`（托盘模式）或 `python run.py --console`（前台模式，自动开浏览器 + 控制台日志）。
+1. 双击点进去，一直点到能看到 `setup.bat`、`build_exe.bat` 的那一层。
 
-浏览器里：
+### 第五步：一键安装 + 打包
+
+1. 在文件夹空白处**右键** → 选「**在终端中打开**」（Windows 11）或「**Open in Terminal**」。
+2. 输入 `setup.bat` 回车（或直接双击 `setup.bat`）。
+3. 首次会弹出「用户账户控制」，点「**是**」——这是为了启用 Windows 长路径支持，防止安装时报「路径过长」。
+4. 脚本会自动：创建虚拟环境 → 安装全部依赖（首次约几分钟）→ 打包出 `MultiAgentStudio.exe`。
+5. 看到「安装完成！已生成 MultiAgentStudio.exe」即可。
+
+> 安装脚本会自动启用 Windows 长路径，因此项目解压到任意目录都能正常安装，不必特意放到 C 盘根目录。
+
+### 第六步：启动
+
+1. 双击项目文件夹里的 `MultiAgentStudio.exe`。
+2. 浏览器会自动打开界面，同时右下角出现托盘图标（右键图标可「打开 / 查看状态 / 退出」）。
+
+> 从源码运行（开发用）：`python run.py --console`（前台，自动开浏览器 + 控制台日志）。
+
+### 第七步：开始使用
 
 1. 点「＋ 新建 multi-agent」填表单（API key、system prompt、子 agent、MCP、PostgreSQL 库）。
 2. 先在 pgAdmin 建好 checkpoint 库（表单会提醒并做连通预检）。
@@ -175,15 +79,15 @@ pip install -r requirements.txt
 - `sub_agents[]`：`name`、`description`、`system_prompt`、`api_key`、`llm_provider_name`、`mcp_servers[]`、`summary.*`
 - 全局设置（`configs/settings.json`）：记忆吸附、吸附条数、完成提示音、未保存提醒等。
 
-## 打包
+## 重新打包
+
+改动代码后想重新生成 exe：
 
 ```bash
 build_exe.bat               # 双击运行，或：python build_exe.py
 ```
 
 生成 `dist/MultiAgentStudio.exe` 并复制到项目根目录。启动器相对自身目录定位 `run.py` 与 `venv`，不写死任何绝对路径。
-
-> 若双击 `build_exe.bat` 报「系统找不到指定的路径」，说明尚未创建 `venv`，请先执行上面的[安装](#安装)步骤。
 
 ## 本地 MCP
 
@@ -195,6 +99,7 @@ build_exe.bat               # 双击运行，或：python build_exe.py
 run.py           入口（默认托盘，--console 前台）
 tray.py          系统托盘
 launcher.py      薄启动器（被 build_exe.py 打成 exe）
+setup.bat        一键安装 + 打包
 app/
   config/        models · store · edits · settings
   runtime/       state_factory · graph_builder · streaming · persistence · prompts
@@ -207,5 +112,122 @@ folder_of_MCPs/  本地 MCP 服务器
 ```
 
 ## 许可证
+
+[GPL-3.0](LICENSE)
+
+---
+
+# Multi-Agent Studio
+
+A **LangGraph-based Supervisor-Worker multi-agent framework** with a modern web GUI.
+
+This studio is built on top of the [LangGraph General-Use Multi-Agent Framework](https://github.com/ColtM1873/LangGraph-General-Use-Multi-Agent-Framework).
+
+## Features
+
+- **Visual multi-agent configuration** — create / edit / delete multi-agent configs in the browser; each config is a JSON file bound to a PostgreSQL checkpoint database.
+- **Conversation threads** — list / delete / resume threads backed by LangGraph's Postgres checkpointer; history is rendered as Markdown.
+- **Streaming chat** — real-time Markdown rendering of agent / sub-agent output over WebSocket; sub-agent history is aggregated by sub-agent name.
+- **Long-term memory** — semantic memory with BGE-M3 embeddings + Postgres (pgvector).
+- **Configurable summaries / history flush** — token thresholds for periodic summarization and history flushing.
+- **System tray** — run in the background with a Windows tray icon.
+
+## Architecture
+
+```
+Supervisor (main agent)                 Workers (sub-agents)
+  ├─ file tools                          ├─ MCP tools (http / stdio)
+  ├─ memory tools (write/read)           └─ subgraph with checkpointer=True
+  ├─ sub-agent tools (as tools)
+  └─ summarization / history flush
+```
+
+- The main agent is a Supervisor that plans and delegates; each sub-agent is a **subgraph** compiled with `checkpointer=True` and mounted as a node, keeping memory across calls within a thread.
+- The main graph and each subgraph share `subagents_reports_submit` / `instructions_for_subagents` channels (intentionally same-named) for passing reports / instructions, while their message channels must be unique.
+
+## Quick Start (from zero to running)
+
+### 1. Prerequisites
+
+1. Install **Python 3.13** from https://www.python.org/downloads/ — be sure to check **"Add python.exe to PATH"**.
+2. Install **PostgreSQL** with the `pgvector` extension (for checkpoints and long-term memory).
+
+### 2. Download
+
+1. Open the **Releases** page and download the latest **Source code (zip)**.
+
+### 3. Extract
+
+1. Extract the zip anywhere — you'll get a `multi-agent-studio-*` folder.
+
+### 4. Enter the project folder
+
+1. Drill down until you see `setup.bat` and `build_exe.bat`.
+
+### 5. One-click install + build
+
+1. Right-click an empty area → **Open in Terminal**.
+2. Run `setup.bat` (or double-click it).
+3. On the first UAC prompt, click **Yes** — this enables Windows long-path support so torch installs without the "path too long" error.
+4. The script creates the venv, installs all dependencies (a few minutes the first time), and builds `MultiAgentStudio.exe`.
+5. Wait for "安装完成！已生成 MultiAgentStudio.exe".
+
+> The installer enables Windows long paths automatically, so the project can be extracted anywhere.
+
+### 6. Launch
+
+1. Double-click `MultiAgentStudio.exe`.
+2. The browser opens automatically, and a tray icon appears (right-click for Open / Status / Quit).
+
+> Running from source (development): `python run.py --console` (foreground — auto-opens browser + console logs).
+
+### 7. Use
+
+1. Click **＋ New multi-agent** and fill in the form (API key, system prompts, sub-agents, MCP servers, PostgreSQL databases).
+2. Create the checkpoint database in pgAdmin first (the form reminds you and pre-checks connectivity).
+3. Open an agent → pick/create a thread → chat with streaming Markdown.
+
+> Each multi-agent's identity is bound to `checkpoint_database`. After creation, sub-agents cannot be added / removed / renamed, but their prompts / description / MCP tools / models can still be edited.
+
+## Configuration
+
+Configs live in `configs/<agent_id>.json` (not committed). Use the GUI to create them; key fields:
+
+- `postgres`: `prefix` / `suffix` / `store_database` / `checkpoint_database` / `store_namespace`
+- `main_agent`: `system_prompt`, `api_key`, `llm_provider_name`, `file_tools.root_dir`, `embedding.*`, `summary.*`, `html_report`, `html_report_prompt`
+- `sub_agents[]`: `name`, `description`, `system_prompt`, `api_key`, `llm_provider_name`, `mcp_servers[]`, `summary.*`
+- Global settings (`configs/settings.json`): `memory_attach`, `num_memories_attached`, `notification_sound`, `warn_unsaved_changes`
+
+## Rebuild
+
+```bash
+build_exe.bat               # double-click, or run: python build_exe.py
+```
+
+Produces `dist/MultiAgentStudio.exe` and copies it to the project root. The launcher locates `run.py` and `venv` relative to its own directory — no absolute paths are hard-coded.
+
+## Local MCP servers
+
+`folder_of_MCPs/` contains standalone FastMCP servers (Caiyun weather, AMap). Run them separately and reference them in a sub-agent's `mcp_servers` via `http` or `stdio` transport. Their tokens are read from environment variables — see `.env.example`.
+
+## Project structure
+
+```
+run.py           entry point (tray mode by default; --console for foreground)
+tray.py          system tray
+launcher.py      thin launcher (packaged into an exe by build_exe.py)
+setup.bat        one-click install + build
+app/
+  config/        models · store · edits · settings
+  runtime/       state_factory · graph_builder · streaming · persistence · prompts
+  services/      threads · chat · history_render
+  api/           agents · threads · chat_ws · settings
+  static/        index.html · css · js
+configs/         multi-agent configs (not committed)
+scripts/         dev_server · verify_phase1
+folder_of_MCPs/  local MCP servers
+```
+
+## License
 
 [GPL-3.0](LICENSE)
