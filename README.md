@@ -26,11 +26,11 @@ Supervisor（主 agent）                    Workers（子 agent）
 - 主 agent 是负责调度规划的 Supervisor；每个子 agent 是一个 `checkpointer=True` 编译的**子图**，作为节点挂载，在线程内跨调用保持记忆。
 - 主图与各子图共享 `subagents_reports_submit` / `instructions_for_subagents`（故意同名）用于报告 / 指令穿透，而各自的消息通道键必须唯一。
 
-## 快速开始（小白版，从零到跑起来）
+## 快速开始
 
 ### 第一步：安装前置软件
 
-1. **安装 Python 3.13**：到 https://www.python.org/downloads/ 下载并安装，安装时**务必勾选「Add python.exe to PATH」**。
+1. **安装 Python 3.13**：到 https://www.python.org/downloads/ 下载并安装，安装时**请勾选「Add python.exe to PATH」**。
 2. **安装 PostgreSQL**（需启用 `pgvector` 扩展）：程序用它保存会话历史和长期记忆。
 
 ### 第二步：下载
@@ -47,11 +47,10 @@ Supervisor（主 agent）                    Workers（子 agent）
 
 ### 第五步：一键安装 + 打包
 
-1. 在文件夹空白处**右键** → 选「**在终端中打开**」（Windows 11）或「**Open in Terminal**」。
-2. 输入 `setup.bat` 回车（或直接双击 `setup.bat`）。
-3. 首次会弹出「用户账户控制」，点「**是**」——这是为了启用 Windows 长路径支持，防止安装时报「路径过长」。
-4. 脚本会自动：创建虚拟环境 → 安装全部依赖（首次约几分钟）→ 打包出 `MultiAgentStudio.exe`。
-5. 看到「安装完成！已生成 MultiAgentStudio.exe」即可。
+1. 双击 `setup.bat`（或在文件夹空白处**右键** →「**在终端中打开**」→ 输入 `setup.bat` 回车）。
+2. 首次会弹出「用户账户控制」，点「**是**」——这是为了启用 Windows 长路径支持，防止安装时报「路径过长」。
+3. 脚本会自动：创建虚拟环境 → 安装全部依赖（首次约几分钟）→ 打包出 `MultiAgentStudio.exe`。
+4. 看到「安装完成！已生成 MultiAgentStudio.exe」即可。
 
 > 安装脚本会自动启用 Windows 长路径，因此项目解压到任意目录都能正常安装，不必特意放到 C 盘根目录。
 
@@ -145,11 +144,11 @@ Supervisor (main agent)                 Workers (sub-agents)
 - The main agent is a Supervisor that plans and delegates; each sub-agent is a **subgraph** compiled with `checkpointer=True` and mounted as a node, keeping memory across calls within a thread.
 - The main graph and each subgraph share `subagents_reports_submit` / `instructions_for_subagents` channels (intentionally same-named) for passing reports / instructions, while their message channels must be unique.
 
-## Quick Start (from zero to running)
+## Quick Start
 
 ### 1. Prerequisites
 
-1. Install **Python 3.13** from https://www.python.org/downloads/ — be sure to check **"Add python.exe to PATH"**.
+1. Install **Python 3.13** from https://www.python.org/downloads/ — please check **"Add python.exe to PATH"**.
 2. Install **PostgreSQL** with the `pgvector` extension (for checkpoints and long-term memory).
 
 ### 2. Download
@@ -166,11 +165,10 @@ Supervisor (main agent)                 Workers (sub-agents)
 
 ### 5. One-click install + build
 
-1. Right-click an empty area → **Open in Terminal**.
-2. Run `setup.bat` (or double-click it).
-3. On the first UAC prompt, click **Yes** — this enables Windows long-path support so torch installs without the "path too long" error.
-4. The script creates the venv, installs all dependencies (a few minutes the first time), and builds `MultiAgentStudio.exe`.
-5. Wait for "安装完成！已生成 MultiAgentStudio.exe".
+1. Double-click `setup.bat` (or right-click an empty area → **Open in Terminal** → run `setup.bat`).
+2. On the first UAC prompt, click **Yes** — this enables Windows long-path support so torch installs without the "path too long" error.
+3. The script creates the venv, installs all dependencies (a few minutes the first time), and builds `MultiAgentStudio.exe`.
+4. Wait for "安装完成！已生成 MultiAgentStudio.exe".
 
 > The installer enables Windows long paths automatically, so the project can be extracted anywhere.
 
