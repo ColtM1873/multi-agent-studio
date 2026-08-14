@@ -926,7 +926,7 @@ function openChatWs(content) {
     const proto = location.protocol === "https:" ? "wss" : "ws";
     ws = new WebSocket(`${proto}://${location.host}/api/agents/${S.agentId}/threads/${encodeURIComponent(S.threadId)}/chat`);
 
-    const buffers = { main: "", sub: {} };
+    const buffers = { main: "", main_user: "", sub: {} };
     let rafPending = false;
     let answered = false;
     const flush = () => { rafPending = false; renderStream(); };
@@ -937,6 +937,7 @@ function openChatWs(content) {
       const pane = $("#historyPane");
       const atBottom = pane && (pane.scrollHeight - pane.scrollTop - pane.clientHeight < 48);
       let html = "";
+      if (buffers.main_user) html += `<div class="user-msg-block"><div class="user-msg-head">🧑 <strong>用户</strong></div><blockquote class="user-msg-quote">${esc(buffers.main_user).replace(/\n/g, "<br>")}</blockquote></div>`;
       if (buffers.main) html += `<div>${renderMd(buffers.main)}</div>`;
       for (const [name, txt] of Object.entries(buffers.sub)) {
         if (txt) html += `<div style="margin-top:12px;"><span class="sub-tag">🧩 子 agent · ${esc(name)}</span><div>${renderMd(txt)}</div></div>`;
@@ -951,8 +952,9 @@ function openChatWs(content) {
       const msg = JSON.parse(ev.data);
       switch (msg.type) {
         case "text":
-          if (!answered) { answered = true; setStatusIndicator("answering"); }
-          if (msg.source === "main") buffers.main += msg.text;
+          if (msg.source === "main" && !answered) { answered = true; setStatusIndicator("answering"); }
+          if (msg.source === "main_user") buffers.main_user += msg.text;
+          else if (msg.source === "main") buffers.main += msg.text;
           else { const n = msg.source.replace(/^sub:/, ""); buffers.sub[n] = (buffers.sub[n] || "") + msg.text; }
           schedule();
           break;

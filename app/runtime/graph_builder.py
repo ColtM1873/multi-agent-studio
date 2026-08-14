@@ -295,7 +295,7 @@ async def build_world(
                 content=USER_MSG_PREFIX + human_message_content + MEMORY_ATTACH_MARKER + retrieved_memory + "\n"
             )
         else:
-            human_message = HumanMessage(content=human_message_content)
+            human_message = HumanMessage(content=human_message_content + "\n")
         return {"messages": [human_message]}
 
     async def period_summerize_evaluate(state):

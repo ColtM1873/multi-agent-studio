@@ -52,8 +52,13 @@ async def run_agent_stream(
 async def _consume_messages(stream, emit: Emit):
     """主图（主 agent）的文本流。"""
     async for message in stream.messages:
+        is_user = message.node == "merge_human_message_with_memory"
         async for token in message.text:
-            await emit({"type": "text", "source": "main", "text": token})
+            await emit({
+                "type": "text",
+                "source": "main_user" if is_user else "main",
+                "text": token,
+            })
 
 
 async def _consume_subgraphs(stream, emit: Emit):
