@@ -46,6 +46,9 @@ async def create_agent(cfg: MultiAgentConfig):
     if not checkpoint_db.strip():
         raise HTTPException(status_code=400, detail="必须填写 checkpoint_database（会话历史归属的数据库名）")
 
+    if not cfg.agent_id.strip():
+        raise HTTPException(status_code=400, detail="必须填写 agent_id（或名称）")
+
     existing_ids = {c.agent_id for c in config_store.list()}
     if cfg.agent_id in existing_ids:
         raise HTTPException(status_code=400, detail=f"agent_id 已存在: {cfg.agent_id}")

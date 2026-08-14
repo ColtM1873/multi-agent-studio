@@ -373,7 +373,7 @@ async def build_world(
 
     async def call_main_llm(state):
         existing = state.get("messages", [])
-        concate_sys_messages = [SystemMessage(content=main_system_prompt + ReAct_system_prompt)] + existing
+        concate_sys_messages = [SystemMessage(content=main_system_prompt + "You may not invoke the same sub-agent multiple times in a single message.\n" + ReAct_system_prompt)] + existing
         response = await main_model_with_tools.ainvoke(concate_sys_messages)
         return {"messages": [response]}
 

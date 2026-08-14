@@ -21,6 +21,7 @@ class Settings(BaseModel):
     notification_sound: str = "ber"
     send_key: str = "enter"
     newline_key: str = "shift_enter"
+    show_placeholders: bool = True
 
 
 def settings_path(config_dir: Path | str) -> Path:

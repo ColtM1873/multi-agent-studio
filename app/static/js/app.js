@@ -268,6 +268,10 @@ async function openSettings() {
         <label class="toggle"><input type="checkbox" id="set_warn" ${s.warn_unsaved_changes ? "checked" : ""}><span class="track"></span></label>
       </div>
       <div class="switch-row">
+        <span class="sw-label">显示输入示例（灰色占位字） <i class="info-icon">!<span class="tip">新建 / 编辑 multi-agent 时，空输入框显示灰色示例文字，帮助快速上手。</span></i></span>
+        <label class="toggle"><input type="checkbox" id="set_ph" ${s.show_placeholders ? "checked" : ""}><span class="track"></span></label>
+      </div>
+      <div class="switch-row">
         <span class="sw-label">记忆吸附 <i class="info-icon">!<span class="tip">开启后，主 agent 收到用户消息时会先从记忆库语义检索 N 条相关记忆，附在用户消息里一起传入。此设置影响图编译，进入某个 multi-agent 后不可改动，需退回主界面。</span></i></span>
         <label class="toggle"><input type="checkbox" id="set_mem" ${s.memory_attach ? "checked" : ""}><span class="track"></span></label>
       </div>
@@ -332,6 +336,7 @@ async function openSettings() {
         notification_sound: mask.querySelector("#set_sound").value,
         send_key: sendSel.value,
         newline_key: newlineSel.value,
+        show_placeholders: mask.querySelector("#set_ph").checked,
       });
       mask.remove();
       toast("设置已保存");
@@ -378,11 +383,50 @@ async function renderEditorView() {
     </div>`;
   $("#cancelBtn").onclick = () => leave();
   $("#saveBtn").onclick = () => saveConfig(cfg, isNew, isDefault);
+  await getSettings().catch(() => {});
   buildForm(cfg, canEditSubs);
   bindDirty(view);
 }
 
 const info = (tip) => `<i class="info-icon">!<span class="tip">${tip}</span></i>`;
+
+const PH = {
+  agent_id: "例如 my-agent",
+  name: "例如 研究助理",
+  checkpoint_database: "例如 my_agent_checkpoints",
+  prefix: "例如 postgresql://user:passwd@localhost:5432/",
+  main_system_prompt: "你是一名研究助理，负责理解用户问题，将复杂任务拆解并委派给合适的子 agent，汇总后给出结构化、准确的回答。请使用中文。",
+  main_api_key: "例如 sk-...",
+  root_dir: "例如 C:\\Agent_WorkPlace",
+  emb_cache: "留空则使用默认缓存目录",
+  sub_name: "例如 web_search_agent",
+  sub_description: "负责联网搜索，将需要查询的内容与注意事项告知它，它会返回检索到的原文片段。",
+  sub_system_prompt: "你是一名联网搜索子 agent，负责为主 agent 检索网页信息，最终输出检索到的原文或相关片段。",
+  sub_api_key: "例如 sk-...",
+};
+const ph = (key) => (settingsCache && settingsCache.show_placeholders !== false) ? ` placeholder="${esc(PH[key])}"` : "";
+const slugify = (s) => (s || "").trim().replace(/[^0-9a-zA-Z\u4e00-\u9fa5_-]+/g, "-").replace(/^-+|-+$/g, "").toLowerCase() || "agent";
+
+// tooltip 自动感知边界：右侧放不下翻到左侧（事件委托，覆盖动态创建的 info-icon）
+document.addEventListener("mouseover", (e) => {
+  const icon = e.target.closest && e.target.closest(".info-icon");
+  if (!icon) return;
+  const tip = icon.querySelector(".tip");
+  if (!tip) return;
+  tip.classList.remove("tip-left");
+  tip.style.visibility = "hidden";
+  tip.style.display = "block";
+  const rect = icon.getBoundingClientRect();
+  const tw = tip.offsetWidth;
+  if (rect.right + 16 + tw > window.innerWidth) tip.classList.add("tip-left");
+  tip.style.display = "";
+  tip.style.visibility = "";
+  icon.classList.add("show");
+});
+document.addEventListener("mouseout", (e) => {
+  const icon = e.target.closest && e.target.closest(".info-icon");
+  if (icon) icon.classList.remove("show");
+});
 
 function unitField(id, val, unit, extraLabel, tip) {
   return `<div class="field"><label>${esc(extraLabel || "")}${tip ? info(tip) : ""}</label>
@@ -423,27 +467,27 @@ function buildForm(cfg, canEditSubs) {
 
   form.innerHTML = `
     <div class="form-card"><h4>基本信息</h4><div class="form-grid">
-      <div class="field"><label>agent_id ${info("唯一标识，用作配置文件名 configs/&lt;id&gt;.json，创建后不可改。")}</label><input id="f_agent_id" value="${esc(cfg.agent_id)}" ${canEditSubs ? "" : "disabled"}></div>
-      <div class="field"><label>名称 name ${info("显示名称，创建后不可改（与历史会话绑定）。")}</label><input id="f_name" value="${esc(cfg.name)}" ${canEditSubs ? "" : "disabled"}><span class="lock-hint">${canEditSubs ? "" : "创建后不可改"}</span></div>
-      <div class="field"><label>checkpoint 数据库（会话历史绑定） ${info("会话历史归属的库名，需先在 pgAdmin 建库，创建后不可改。")}</label><input id="f_cpdb" value="${esc(pg.checkpoint_database)}" ${canEditSubs ? "" : "disabled"}><span class="lock-hint">${canEditSubs ? "需先在 pgAdmin 建库" : "创建后不可改"}</span></div>
+      <div class="field"><label>agent_id ${info("唯一标识，用作配置文件名 configs/&lt;id&gt;.json，创建后不可改。")}</label><input id="f_agent_id" value="${esc(cfg.agent_id)}" ${canEditSubs ? "" : "disabled"}${ph("agent_id")}></div>
+      <div class="field"><label>名称 name ${info("显示名称，创建后不可改（与历史会话绑定）。")}</label><input id="f_name" value="${esc(cfg.name)}" ${canEditSubs ? "" : "disabled"}${ph("name")}><span class="lock-hint">${canEditSubs ? "" : "创建后不可改"}</span></div>
+      <div class="field"><label>checkpoint 数据库（会话历史绑定） ${info("会话历史归属的库名，需先在 pgAdmin 建库，创建后不可改。")}</label><input id="f_cpdb" value="${esc(pg.checkpoint_database)}" ${canEditSubs ? "" : "disabled"}${ph("checkpoint_database")}><span class="lock-hint">${canEditSubs ? "需先在 pgAdmin 建库" : "创建后不可改"}</span></div>
       <div class="field"><label>store 数据库 ${info("长期记忆存储的库名，可与 checkpoint 库相同或不同。")}</label><input id="f_sdb" value="${esc(pg.store_database)}"></div>
       <div class="field"><label>store_namespace（逗号分隔） ${info("记忆存储命名空间，逗号分隔多个层级。")}</label><input id="f_ns" value="${esc(ns)}"></div>
-      <div class="field full"><label>连接前缀 prefix <i class="info-icon">!<span class="tip">格式：postgresql://用户名:密码@主机:端口/<br/>例如 postgresql://user:passwd@localhost:5432/<br/><br/>下面会实时显示完整连接串。程序会根据主机自动判断是否本地回环。</span></i></label><input id="f_prefix" value="${esc(pg.prefix)}"></div>
+      <div class="field full"><label>连接前缀 prefix <i class="info-icon">!<span class="tip">格式：postgresql://用户名:密码@主机:端口/<br/>例如 postgresql://user:passwd@localhost:5432/<br/><br/>下面会实时显示完整连接串。程序会根据主机自动判断是否本地回环。</span></i></label><input id="f_prefix" value="${esc(pg.prefix)}"${ph("prefix")}></div>
       <div class="field"><label>连接后缀 suffix <i class="info-icon">!<span class="tip">本地 postgres（localhost/127.0.0.1）自动用 sslmode=disable，省一次 SSL 握手。<br/><br/>云端或企业级 postgres 请选择对应 SSL 模式；「无字符串」表示交由数据库设置决定。</span></i></label>${suffixCtrl}</div>
       <div class="field full"><label>完整连接串示例</label><div class="conn-example" id="connExample"></div></div>
     </div></div>
 
     <div class="form-card"><h4>主 agent</h4><div class="form-grid">
       <div class="field"><label>模型 provider ${info("格式「供应商:模型名」，如 deepseek:deepseek-v4-pro。")}</label><input id="f_llm" value="${esc(main.llm_provider_name)}"></div>
-      <div class="field"><label>API Key ${info("该模型供应商的 API 密钥（明文存本地配置）。")}</label><input id="f_apikey" value="${esc(main.api_key)}" type="password"></div>
-      <div class="field"><label>文件工具根目录 ${info("主 agent 文件工具读写文件的根目录。")}</label><input id="f_rootdir" value="${esc(ft.root_dir)}"></div>
+      <div class="field"><label>API Key ${info("该模型供应商的 API 密钥（明文存本地配置）。")}</label><input id="f_apikey" value="${esc(main.api_key)}" type="password"${ph("main_api_key")}></div>
+      <div class="field"><label>文件工具根目录 ${info("主 agent 文件工具读写文件的根目录。")}</label><input id="f_rootdir" value="${esc(ft.root_dir)}"${ph("root_dir")}></div>
       <div class="field"><label>embedding 模型 <i class="info-icon">!<span class="tip">无需提前下载，首次配置会自动下载（需连接 Hugging Face Hub，国内网络可能连不上）。若已离线缓存过，可在下方缓存目录直接使用。</span></i></label>${embSelect}</div>
-      <div class="field"><label>embedding 缓存目录 ${info("本地模型缓存路径，留空用 Hugging Face 默认缓存。")}</label><input id="f_emb_cache" value="${esc(emb.cache_folder)}"></div>
+      <div class="field"><label>embedding 缓存目录 ${info("本地模型缓存路径，留空用 Hugging Face 默认缓存。")}</label><input id="f_emb_cache" value="${esc(emb.cache_folder)}"${ph("emb_cache")}></div>
       <div class="field"><label>embedding 维度 ${info("向量维度；bge-m3 为 1024，换模型需对应调整。")}</label><input id="f_emb_dims" value="${esc(emb.dims)}" type="number"></div>
       ${unitField("f_sum_gap", gap.v, gap.u, "阶段性总结阈值", "累计 token 达到该值时触发一次阶段性总结。")}
       ${unitField("f_sum_flush", flush.v, flush.u, "清空历史阈值", "累计 token 达到该值时清空历史（只保留最近几轮）。")}
       <div class="field"><label>清空时保留轮数 ${info("清空历史时保留最近几轮对话。")}</label><input id="f_sum_reserve" value="${esc(sum.reserve_message_round)}" type="number"></div>
-      <div class="field full"><label>System Prompt ${info("主 agent 的系统提示词，定义其角色与行为。")}</label><textarea id="f_prompt" rows="8">${esc(main.system_prompt)}</textarea></div>
+      <div class="field full"><label>System Prompt ${info("主 agent 的系统提示词，定义其角色与行为。")}</label><textarea id="f_prompt" rows="8"${ph("main_system_prompt")}>${esc(main.system_prompt)}</textarea></div>
       <div class="field full" style="border-top:1px solid var(--border);padding-top:14px;">
         <label style="flex-direction:row;align-items:center;gap:8px;"><input type="checkbox" id="f_html_report" ${htmlReport ? "checked" : ""}> 启用 HTML 报告 ${info("主 agent 输出完后，询问是否将结果生成 HTML 报告。")}</label>
       </div>
@@ -487,13 +531,13 @@ function subAgentBox(s, key, canEdit) {
   div.innerHTML = `
     <div class="sub-head"><span class="name">🧩 子 agent</span>${canEdit ? `<button class="btn danger small" data-act="remove" type="button">移除</button>` : ""}</div>
     <div class="form-grid">
-      <div class="field"><label>名称 name ${info("子 agent 标识，会作为工具名呈现给主 agent，创建后不可改。")}</label><input data-f="name" value="${esc(s.name)}" ${canEdit ? "" : "disabled"}></div>
+      <div class="field"><label>名称 name ${info("子 agent 标识，会作为工具名呈现给主 agent，创建后不可改。")}</label><input data-f="name" value="${esc(s.name)}" ${canEdit ? "" : "disabled"}${ph("sub_name")}></div>
       <div class="field"><label>模型 provider ${info("格式「供应商:模型名」，如 deepseek:deepseek-v4-pro。")}</label><input data-f="llm_provider_name" value="${esc(s.llm_provider_name)}"></div>
-      <div class="field"><label>API Key ${info("该子 agent 所用模型的 API 密钥（明文存本地配置）。")}</label><input data-f="api_key" value="${esc(s.api_key)}" type="password"></div>
+      <div class="field"><label>API Key ${info("该子 agent 所用模型的 API 密钥（明文存本地配置）。")}</label><input data-f="api_key" value="${esc(s.api_key)}" type="password"${ph("sub_api_key")}></div>
       <div class="field"><label>清空历史阈值 ${info("该子 agent 累计 token 达到该值时清空历史（只保留最近几轮）。")}</label><div class="unit-row"><input data-f="flush" value="${esc(flush.v)}" type="number"><select data-f="flush_unit"><option value="万" ${flush.u === "万" ? "selected" : ""}>万</option><option value="千" ${flush.u === "千" ? "selected" : ""}>千</option></select></div></div>
       <div class="field"><label>保留轮数 ${info("清空历史时保留最近几轮对话。")}</label><input data-f="reserve" value="${esc((s.summary || {}).reserve_message_round)}" type="number"></div>
-      <div class="field full"><label>Description ${info("描述该子 agent 能力，作为工具描述呈现给主 agent。")}</label><textarea data-f="description" rows="3">${esc(s.description)}</textarea></div>
-      <div class="field full"><label>System Prompt ${info("该子 agent 的系统提示词。")}</label><textarea data-f="system_prompt" rows="6">${esc(s.system_prompt)}</textarea></div>
+      <div class="field full"><label>Description ${info("描述该子 agent 能力，作为工具描述呈现给主 agent。")}</label><textarea data-f="description" rows="3"${ph("sub_description")}>${esc(s.description)}</textarea></div>
+      <div class="field full"><label>System Prompt ${info("该子 agent 的系统提示词。")}</label><textarea data-f="system_prompt" rows="6"${ph("sub_system_prompt")}>${esc(s.system_prompt)}</textarea></div>
       <div class="field full"><label>MCP 服务器 ${info("该子 agent 可用的工具来源；程序不负责启动，需外部自行启动。")}</label><div data-f="mcp"></div></div>
     </div>`;
 
@@ -568,7 +612,7 @@ function embModelValue() {
 function buildPayload(cfg) {
   const val = id => $(`#${id}`).value;
   return {
-    agent_id: val("f_agent_id") || cfg.agent_id,
+    agent_id: val("f_agent_id") || slugify(val("f_name")),
     name: val("f_name"),
     postgres: {
       prefix: val("f_prefix"),

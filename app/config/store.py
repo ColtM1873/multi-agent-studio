@@ -34,8 +34,8 @@ def slugify(name: str) -> str:
 def build_default_config() -> MultiAgentConfig:
     """系统内置的合理默认配置，供"新建向导"预填。"""
     return MultiAgentConfig(
-        agent_id="__new__",
-        name="新 multi-agent",
+        agent_id="",
+        name="",
         postgres=PostgresConfig(
             prefix="",
             suffix="?sslmode=disable",

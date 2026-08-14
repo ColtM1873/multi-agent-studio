@@ -20,3 +20,7 @@ logs/
 .vs/
 .vscode/
 .idea/
+
+# 内部交接文档（不入库）
+HANDOFF.md
+tencent_ai_skill.md

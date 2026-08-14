@@ -206,15 +206,16 @@ body {
   display: inline-flex; align-items: center; justify-content: center;
   width: 16px; height: 16px; border-radius: 50%;
   background: #e5e7eb; color: #6b7280; font-size: 11px; font-weight: 700;
-  cursor: help; position: relative; flex-shrink: 0; user-select: none; font-style: normal;
+  cursor: default; position: relative; flex-shrink: 0; user-select: none; font-style: normal;
 }
 .info-icon .tip {
-  display: none; position: absolute; left: 24px; top: 50%; transform: translateY(-50%);
+  display: none; position: absolute; left: calc(100% + 16px); top: 50%; transform: translateY(-50%);
   background: #111827; color: #fff; padding: 10px 12px; border-radius: 8px;
-  font-size: 12px; line-height: 1.5; width: 280px; z-index: 100; box-shadow: var(--shadow-lg);
-  white-space: normal; font-weight: 400; text-align: left;
+  font-size: 12px; line-height: 1.5; width: 280px; z-index: 1000; box-shadow: var(--shadow-lg);
+  white-space: normal; font-weight: 400; text-align: left; pointer-events: none;
 }
-.info-icon:hover .tip { display: block; }
+.info-icon .tip.tip-left { left: auto; right: calc(100% + 16px); }
+.info-icon.show .tip { display: block; }
 
 /* ── 状态点 ─────────────────────────────── */
 .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex-shrink: 0; cursor: pointer; }
