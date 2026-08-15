@@ -52,10 +52,25 @@ def _load_embeddings(cfg: EmbeddingConfig) -> HuggingFaceEmbeddings:
     )
 
 
+IGNORE_PATTERNS = [
+    "*.DS_Store",
+    "imgs/*",
+    "images/*",
+    "*.md",
+    "*.png",
+    "*.jpg",
+    "*.jpeg",
+    "*.gif",
+    "*.webp",
+    "*.svg",
+]
+
+
 async def _ensure_model_downloaded(cfg: EmbeddingConfig) -> None:
     """确保 embedding 模型已缓存；无缓存则下载并上报进度。"""
     model = cfg.model_name
     cache = cfg.cache_folder or None
+    endpoint = cfg.hf_endpoint or None
 
     # 先离线快查缓存
     try:
@@ -66,7 +81,7 @@ async def _ensure_model_downloaded(cfg: EmbeddingConfig) -> None:
     except Exception:
         pass
 
-    # 下载（走镜像，带进度）
+    # 下载（走镜像，带进度，跳过垃圾文件）
     download_manager.start(model)
     try:
         await asyncio.to_thread(
@@ -74,6 +89,8 @@ async def _ensure_model_downloaded(cfg: EmbeddingConfig) -> None:
             repo_id=model,
             cache_dir=cache,
             local_files_only=False,
+            endpoint=endpoint,
+            ignore_patterns=IGNORE_PATTERNS,
             tqdm_class=make_progress_tqdm(model),
             max_workers=4,
         )
