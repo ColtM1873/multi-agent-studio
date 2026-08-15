@@ -25,6 +25,21 @@ def _set_offline(offline: bool) -> None:
         os.environ.pop("TRANSFORMERS_OFFLINE", None)
 
 
+def _apply_hf_endpoint(endpoint: str) -> None:
+    """运行时修改 huggingface_hub 的 endpoint 常量。
+
+    huggingface_hub 的 ENDPOINT 是 import 时读环境变量的模块级常量，
+    运行时改 os.environ 不生效，必须直接改常量。
+    """
+    if not endpoint:
+        return
+    import huggingface_hub.constants as _c
+
+    ep = endpoint.rstrip("/")
+    _c.ENDPOINT = ep
+    _c.HUGGINGFACE_CO_URL_TEMPLATE = ep + "/{repo_id}/resolve/{revision}/{filename}"
+
+
 def _load_embeddings(cfg: EmbeddingConfig) -> HuggingFaceEmbeddings:
     return HuggingFaceEmbeddings(
         model_name=cfg.model_name,
@@ -73,8 +88,7 @@ async def build_embeddings(cfg: EmbeddingConfig) -> HuggingFaceEmbeddings:
         _set_offline(True)
     else:
         _set_offline(False)
-        if cfg.hf_endpoint:
-            os.environ["HF_ENDPOINT"] = cfg.hf_endpoint
+        _apply_hf_endpoint(cfg.hf_endpoint)
         await _ensure_model_downloaded(cfg)
     return await asyncio.to_thread(_load_embeddings, cfg)
 
