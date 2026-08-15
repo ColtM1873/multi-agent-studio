@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import fnmatch
 import os
 
-from huggingface_hub import snapshot_download
+from huggingface_hub import HfApi, snapshot_download
 from langchain_huggingface import HuggingFaceEmbeddings
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from langgraph.store.base import IndexConfig
@@ -73,6 +74,24 @@ IGNORE_PATTERNS = [
 ]
 
 
+def _get_total_size(model: str, endpoint: str | None) -> int:
+    """获取模型需要下载的文件总大小（用于进度条预显示分母）。"""
+    try:
+        api = HfApi(endpoint=endpoint)
+        info = api.model_info(model)
+        total = 0
+        for s in info.siblings or []:
+            name = s.rfilename or ""
+            if not name:
+                continue
+            if any(fnmatch.fnmatch(name, p) for p in IGNORE_PATTERNS):
+                continue
+            total += s.size or 0
+        return total
+    except Exception:
+        return 0
+
+
 async def _ensure_model_downloaded(cfg: EmbeddingConfig) -> None:
     """确保 embedding 模型已缓存；无缓存则下载并上报进度。"""
     model = cfg.model_name
@@ -88,8 +107,9 @@ async def _ensure_model_downloaded(cfg: EmbeddingConfig) -> None:
     except Exception:
         pass
 
-    # 下载（走镜像，带进度，跳过垃圾文件）
-    download_manager.start(model)
+    # 预取总大小，进入"准备中"状态
+    total = await asyncio.to_thread(_get_total_size, model, endpoint)
+    download_manager.start(model, total)
     try:
         await asyncio.to_thread(
             snapshot_download,

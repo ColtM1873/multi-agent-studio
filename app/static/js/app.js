@@ -1098,12 +1098,18 @@ async function pollDownload() {
     const cur = r && r.current;
     const banner = $("#dlBanner");
     if (!banner) return;
-    if (cur && cur.status === "downloading") {
-      const pct = cur.total ? Math.round((cur.downloaded / cur.total) * 100) : 0;
+    if (cur && (cur.status === "preparing" || cur.status === "downloading")) {
       $("#dlModel").textContent = cur.model || "";
-      $("#dlFill").style.width = pct + "%";
-      $("#dlSize").textContent = `${formatSize(cur.downloaded)} / ${formatSize(cur.total)}`;
-      $("#dlSpeed").textContent = formatSize(cur.speed) + "/s";
+      if (cur.status === "preparing") {
+        $("#dlFill").style.width = "0%";
+        $("#dlSize").textContent = cur.total ? `共 ${formatSize(cur.total)}` : "";
+        $("#dlSpeed").textContent = "正在准备 / 校验缓存…";
+      } else {
+        const pct = cur.total ? Math.round((cur.downloaded / cur.total) * 100) : 0;
+        $("#dlFill").style.width = pct + "%";
+        $("#dlSize").textContent = `${formatSize(cur.downloaded)} / ${formatSize(cur.total)}`;
+        $("#dlSpeed").textContent = formatSize(cur.speed) + "/s";
+      }
       banner.style.display = "block";
     } else {
       banner.style.display = "none";

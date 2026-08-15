@@ -20,7 +20,7 @@ class DownloadManager:
                 "downloaded": 0,
                 "total": total,
                 "speed": 0.0,
-                "status": "downloading",
+                "status": "preparing",
                 "error": None,
             }
 
@@ -64,10 +64,10 @@ class DownloadManager:
             return dict(st) if st else None
 
     def current(self) -> dict | None:
-        """当前正在下载的任务（若有）。"""
+        """当前正在进行（准备中或下载中）的任务（若有）。"""
         with self._lock:
             for st in self._status.values():
-                if st["status"] == "downloading":
+                if st["status"] in ("preparing", "downloading"):
                     return dict(st)
             return None
 

@@ -92,7 +92,9 @@ def _update_download_menu(icon, item) -> None:
     while True:
         try:
             cur = download_manager.current()
-            if cur and cur["status"] == "downloading":
+            if cur and cur["status"] == "preparing":
+                item.text = "下载模型：准备中…"
+            elif cur and cur["status"] == "downloading":
                 item.text = (
                     f"下载模型：{_fmt_size(cur['downloaded'])} / {_fmt_size(cur['total'])}"
                     f" · {_fmt_size(cur['speed'])}/s"
