@@ -49,6 +49,11 @@ async def create_agent(cfg: MultiAgentConfig):
     if not cfg.agent_id.strip():
         raise HTTPException(status_code=400, detail="必须填写 agent_id（或名称）")
 
+    # 清理 agent_id 中的特殊字符，保证文件名与 URL 安全
+    cfg.agent_id = slugify(cfg.agent_id)
+    if not cfg.agent_id:
+        raise HTTPException(status_code=400, detail="agent_id 清理后为空，请使用字母/数字/中文/下划线/连字符")
+
     existing_ids = {c.agent_id for c in config_store.list()}
     if cfg.agent_id in existing_ids:
         raise HTTPException(status_code=400, detail=f"agent_id 已存在: {cfg.agent_id}")

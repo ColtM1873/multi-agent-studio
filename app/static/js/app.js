@@ -16,6 +16,209 @@ const SSL_OPTIONS = [
   { v: "?sslmode=verify-full", label: "verify-full（校验 CA + 主机名）" },
 ];
 
+/* ================= i18n ================= */
+let lang = localStorage.getItem("lang") || "zh";
+const I18N_EN = {
+  "<数据库名>": "<database name>",
+  "Agent 回答中…": "Agent is answering…",
+  "Agent 思考中…": "Agent is thinking…",
+  "Embedding 模型离线模式": "Embedding offline mode",
+  "HTML 报告生成 prompt": "HTML report generation prompt",
+  "MCP 服务器": "MCP server",
+  "Multi-Agent 配置": "Multi-Agent configurations",
+  "SSL 模式": "SSL mode",
+  "WebSocket 连接失败": "WebSocket connection failed",
+  "agent 回复完成时播放的提示音，切换即试听。": "Chime played when the agent finishes replying; switch to preview.",
+  "ber（下滑音）": "ber (descending)",
+  "checkpoint 库": "checkpoint database",
+  "checkpoint 数据库（会话历史绑定）": "checkpoint database (bound to conversation history)",
+  "chime（双音上行）": "chime (rising two-tone)",
+  "ding（清脆单音）": "ding (crisp single tone)",
+  "embedding 模型": "embedding model",
+  "embedding 维度": "embedding dimension",
+  "embedding 缓存目录": "embedding cache directory",
+  "embedding 镜像": "embedding mirror",
+  "hf-mirror（国内镜像）": "hf-mirror (China mirror)",
+  "prefer（有 SSL 就启用，无则明文）": "prefer (SSL if available, plaintext otherwise)",
+  "require（必须 SSL，不校验证书）": "require (SSL required, no certificate verification)",
+  "store 数据库": "store database",
+  "store_namespace（逗号分隔）": "store_namespace (comma-separated)",
+  "verify-ca（校验 CA 证书）": "verify-ca (verify CA certificate)",
+  "verify-full（校验 CA + 主机名）": "verify-full (verify CA + hostname)",
+  "✅ 回复已完成": "✅ Reply completed",
+  "一栏填库名（与上面填的 checkpoint 库名保持一致）。": "Enter the database name here (keep it consistent with the checkpoint database above).",
+  "万": "×10,000",
+  "下载 embedding 模型时使用的 HuggingFace 镜像源；国内推荐 hf-mirror。": "HuggingFace mirror used when downloading the embedding model; hf-mirror is recommended in China.",
+  "不会删除数据库里的会话历史": "Conversation history in the database will not be deleted",
+  "个": "",
+  "主 agent": "main agent",
+  "主 agent 文件工具读写文件的根目录。": "Root directory for the main agent's file tool.",
+  "主 agent 的系统提示词，定义其角色与行为。": "System prompt for the main agent, defining its role and behavior.",
+  "主 agent 输出完后，询问是否将结果生成 HTML 报告。": "After the main agent finishes, ask whether to generate an HTML report from the result.",
+  "主会话": "Main conversation",
+  "主机:port": "host:port",
+  "主模型": "Main model",
+  "云端/企业库请选择 SSL 模式": "For cloud/enterprise databases, choose an SSL mode",
+  "仅鼠标（Enter 只换行）": "Mouse only (Enter adds a newline)",
+  "会话": "Conversations",
+  "会话历史归属的库名，需先在 pgAdmin 建库，创建后不可改。": "Database that holds the conversation history; create it in pgAdmin first. Cannot be changed after creation.",
+  "例如 C:\\Agent_WorkPlace": "e.g. C:\\Agent_WorkPlace",
+  "例如 my-agent": "e.g. my-agent",
+  "例如 my_agent_checkpoints": "e.g. my_agent_checkpoints",
+  "例如 postgresql://user:passwd@localhost:5432/": "e.g. postgresql://user:passwd@localhost:5432/",
+  "例如 sk-...": "e.g. sk-...",
+  "例如 web_search_agent": "e.g. web_search_agent",
+  "例如 研究助理": "e.g. Research Assistant",
+  "例如：你是一名研究助理，负责理解用户问题，将复杂任务拆解并委派给合适的子 agent，汇总后给出结构化、准确的回答。请使用中文。": "e.g. You are a research assistant who understands user questions, breaks down complex tasks and delegates them to suitable sub-agents, then summarizes into structured, accurate answers. Please respond in Chinese.",
+  "例如：你是一名联网搜索子 agent，负责为主 agent 检索网页信息，最终输出检索到的原文或相关片段。": "e.g. You are a web search sub-agent that retrieves web information for the main agent and outputs the original text or relevant excerpts.",
+  "例如：负责联网搜索，将需要查询的内容与注意事项告知它，它会返回检索到的原文片段。": "e.g. Handles web search; tell it what to search and any caveats, and it returns the retrieved excerpts.",
+  "保存": "Save",
+  "保留轮数": "Keep turns",
+  "修改未保存时提醒": "Warn on unsaved changes",
+  "停止": "Stop",
+  "共": "Total",
+  "创建后不可增删改名": "Sub-agents cannot be added/removed/renamed after creation",
+  "创建后不可改": "Cannot be changed after creation",
+  "删除": "Delete",
+  "加载中…": "Loading…",
+  "加载历史中…": "Loading history…",
+  "千": "×1,000",
+  "协议": "Protocol",
+  "参数，逗号分隔（stdio）": "Arguments, comma-separated (stdio)",
+  "发送": "Send",
+  "发送失败，消息已保留在输入框": "Send failed; message kept in the input box",
+  "发送键": "Send key",
+  "发送，": "to send, ",
+  "取消": "Cancel",
+  "可增删": "Can add/remove",
+  "右键": "Right-click",
+  "名称": "Name",
+  "向量维度；bge-m3 为 1024，换模型需对应调整。": "Vector dimension; 1024 for bge-m3, adjust if you change models.",
+  "否": "No",
+  "启用 HTML 报告": "Enable HTML report",
+  "吸附记忆条数": "Memories to attach",
+  "命令（stdio）": "Command (stdio)",
+  "唯一标识，用作配置文件名 configs/&lt;id&gt;.json，创建后不可改。": "Unique ID, used as the config filename configs/&lt;id&gt;.json. Cannot be changed after creation.",
+  "回到本页，点「保存」。": "Come back here and click 'Save'.",
+  "回复完成提示音": "Reply completion chime",
+  "在": "In the",
+  "基本信息": "Basic info",
+  "子 agent": "sub-agent",
+  "子 agent 标识，会作为工具名呈现给主 agent，创建后不可改。": "Sub-agent ID, shown to the main agent as a tool name. Cannot be changed after creation.",
+  "完整连接串示例": "Full connection string example",
+  "官方 huggingface.co": "Official huggingface.co",
+  "工具结果": "Tool result",
+  "工具调用": "Tool call",
+  "左侧展开": "Expand on the left",
+  "已保存": "Saved",
+  "已关闭 Embedding 模型离线模式：每次打开会联网校验。若已获取模型缓存，建议重新开启以跳过校验。": "Embedding offline mode disabled: it verifies online every time it opens. If you already have the model cached, re-enable it to skip verification.",
+  "已创建": "Created",
+  "已删除": "Deleted",
+  "已设为默认配置": "Set as default configuration",
+  "库名": "Database name",
+  "开启后，主 agent 收到用户消息时会先从记忆库语义检索 N 条相关记忆，附在用户消息里一起传入。此设置影响图编译，进入某个 multi-agent 后不可改动，需退回主界面。": "When enabled, the main agent retrieves N relevant memories from the memory store and attaches them to the user message. This affects graph compilation and cannot be changed after entering a multi-agent; go back to the main screen.",
+  "恢复默认": "Restore default",
+  "打开": "Open",
+  "换行键": "Newline key",
+  "换行）": "to break)",
+  "描述该子 agent 能力，作为工具描述呈现给主 agent。": "Describes the sub-agent's capability, shown to the main agent as a tool description.",
+  "数据库名": "Database name",
+  "数据库地址": "Database address",
+  "文件工具根目录": "File tool root directory",
+  "新会话名称：": "New conversation name:",
+  "新建 / 编辑 multi-agent 时，空输入框显示灰色示例文字，帮助快速上手。": "When creating/editing a multi-agent, empty inputs show gray example text to help you get started.",
+  "新建 multi-agent": "New multi-agent",
+  "新建会话": "New conversation",
+  "无": "None",
+  "无字符串（视数据库设置启用/关闭 SSL）": "No string (SSL enabled/disabled by database settings)",
+  "无需提前下载，首次配置会自动下载（需连接 Hugging Face Hub，国内网络可能连不上）。若已离线缓存过，可在下方缓存目录直接使用。": "No need to download in advance; it downloads automatically on first setup (requires connecting to Hugging Face Hub, which may be blocked in China). If already cached, use the cache directory below.",
+  "是": "Yes",
+  "显示名称，创建后不可改（与历史会话绑定）。": "Display name, cannot be changed after creation (bound to conversation history).",
+  "显示输入示例（灰色占位字）": "Show input examples (gray placeholders)",
+  "暂无会话": "No conversations yet",
+  "暂无用户消息": "No user messages yet",
+  "有未保存的修改，确定离开？": "You have unsaved changes. Leave anyway?",
+  "本地 postgres（localhost/127.0.0.1）自动用 sslmode=disable，省一次 SSL 握手。<br/><br/>云端或企业级 postgres 请选择对应 SSL 模式；「无字符串」表示交由数据库设置决定。": "Local postgres (localhost/127.0.0.1) automatically uses sslmode=disable to skip an SSL handshake.<br/><br/>For cloud or enterprise postgres, choose the corresponding SSL mode; 'No string' leaves it to the database settings.",
+  "本地模型缓存路径，留空用 Hugging Face 默认缓存。": "Local model cache path; leave empty to use Hugging Face's default cache.",
+  "本地连接，自动使用 sslmode=disable": "Local connection, auto sslmode=disable",
+  "格式「供应商:模型名」，如 deepseek:deepseek-v4-pro。": "Format 'provider:model', e.g. deepseek:deepseek-v4-pro.",
+  "格式：postgresql://用户名:密码@主机:端口/<br/>例如 postgresql://user:passwd@localhost:5432/<br/><br/>下面会实时显示完整连接串。程序会根据主机自动判断是否本地回环。": "Format: postgresql://user:passwd@host:port/<br/>e.g. postgresql://user:passwd@localhost:5432/<br/><br/>The full connection string is shown below in real time. The program auto-detects loopback hosts.",
+  "模型 provider": "Model provider",
+  "正在下载 embedding 模型": "Downloading embedding model",
+  "正在准备 / 校验缓存…": "Preparing / verifying cache…",
+  "此操作不可撤销。": "This action cannot be undone.",
+  "没有缓存时请勿开启；已有缓存时建议开启，跳过每次联网校验。": "Do not enable without a cache; if cached, enable it to skip online verification every time.",
+  "消息目录": "Message directory",
+  "添加 MCP": "Add MCP",
+  "添加子 agent": "Add sub-agent",
+  "清空历史时保留最近几轮对话。": "Keep the most recent turns when clearing history.",
+  "清空历史阈值": "Clear-history threshold",
+  "清空时保留轮数": "Turns to keep when clearing",
+  "点": "Click",
+  "点击检测健康状态": "Click to check health",
+  "用户": "User",
+  "用户名:passwd": "user:passwd",
+  "留空则使用默认缓存目录": "Leave empty to use the default cache directory",
+  "登录凭据": "Credentials",
+  "确定删除会话": "Delete conversation?",
+  "确定删除配置": "Delete configuration?",
+  "确认": "Confirm",
+  "确认生成后注入给主 agent 的提示词（可恢复默认）。": "Prompt injected into the main agent after confirmation (can restore default).",
+  "离线模式 = 只从本地缓存加载 embedding 模型、不联网校验。没有缓存时请勿开启（会报错）；已有缓存时建议开启，跳过每次联网校验。": "Offline mode = load the embedding model only from the local cache without online verification. Do not enable without a cache (it will error); if cached, enable it to skip verification each time.",
+  "移除": "Remove",
+  "系统设置": "Settings",
+  "URL（http）": "URL (http)",
+  "组成：": "Consists of:",
+  "编辑": "Edit",
+  "编辑 multi-agent 配置时，若做了改动但未保存就离开，弹窗确认。": "When editing a multi-agent config, prompt on leaving with unsaved changes.",
+  "编辑默认配置": "Edit default configuration",
+  "聊天输入框里，按该键发送消息。": "Press this key in the chat input to send.",
+  "自定义…": "Custom…",
+  "自定义模型名": "Custom model name",
+  "自定义镜像地址": "Custom mirror URL",
+  "表单已按默认配置预填，请修改差异项。创建后子 agent 不可增删改名。": "The form is pre-filled from the default configuration; modify the differences. Sub-agents cannot be added/removed/renamed after creation.",
+  "记忆吸附": "Memory attachment",
+  "记忆存储命名空间，逗号分隔多个层级。": "Memory store namespace, comma-separated for multiple levels.",
+  "记忆库（store 数据库）还需启用 pgvector：选中刚建的库 → 点上方「Query Tool」图标 → 粘贴下面这句 → 点执行（或按 F5）：": "The memory store (store database) also needs pgvector: select the database you just created → click the 'Query Tool' icon → paste the line below → click Execute (or press F5):",
+  "设为默认": "Set as default",
+  "设置已保存": "Settings saved",
+  "该子 agent 可用的工具来源；程序不负责启动，需外部自行启动。": "Tool sources available to this sub-agent; the program does not start them—start them externally.",
+  "该子 agent 所用模型的 API 密钥（明文存本地配置）。": "API key for this sub-agent's model (stored in plain text locally).",
+  "该子 agent 的系统提示词。": "System prompt for this sub-agent.",
+  "该子 agent 累计 token 达到该值时清空历史（只保留最近几轮）。": "Clear this sub-agent's history when accumulated tokens reach this value (keep recent turns).",
+  "该模型供应商的 API 密钥（明文存本地配置）。": "API key for this model provider (stored in plain text locally).",
+  "请填写 checkpoint 数据库名": "Please fill in the checkpoint database name",
+  "请填写名称": "Please fill in the name",
+  "请确认": "Please confirm",
+  "跟随最新输出 · 按住可拖动": "Follow latest output · hold to drag",
+  "输入消息…": "Type a message…",
+  "输入消息（": "Type a message (",
+  "输入消息（Enter 发送，Shift+Enter 换行）": "Type a message (Enter to send, Shift+Enter for newline)",
+  "输入消息（点击发送，Enter 换行）": "Type a message (click to send, Enter for newline)",
+  "返回会话": "Back to conversation",
+  "还没有任何 multi-agent 配置": "No multi-agent configurations yet",
+  "连接前缀": "Connection prefix",
+  "连接后缀": "Connection suffix",
+  "长期记忆存储的库名，可与 checkpoint 库相同或不同。": "Database for long-term memory; can be the same as or different from the checkpoint database.",
+  "阶段性总结阈值": "Stage summary threshold",
+  "除发送键外，其余 Enter 组合均换行。": "All Enter combos except the send key insert a newline.",
+  "需先在 pgAdmin 建库": "Create the database in pgAdmin first",
+  "默认配置已保存": "Default configuration saved",
+  "（在开始菜单里搜索「pgAdmin」）。": "(search for 'pgAdmin' in the Start menu).",
+  "（无历史）": "(no history)",
+  "（空消息）": "(empty message)",
+  "，双击连接，输入安装 PostgreSQL 时设置的密码。": ", double-click to connect and enter the password set when installing PostgreSQL.",
+  "📖 不会建数据库？点这里看步骤": "📖 Don't know how to create a database? Click for steps",
+  "、": ", ",
+  "。": ".",
+};
+const t = (s) => (lang === "zh" || !I18N_EN[s]) ? s : I18N_EN[s];
+function setLang(l) {
+  lang = l;
+  localStorage.setItem("lang", l);
+  render();
+}
+
 /* ================= 工具 ================= */
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -68,11 +271,11 @@ function askConfirm(prompt) {
     mask.className = "modal-mask";
     mask.innerHTML = `
       <div class="modal">
-        <h3>确认</h3>
+        <h3>${t("确认")}</h3>
         <div class="modal-body">${esc(prompt)}</div>
         <div class="modal-actions">
-          <button class="btn" data-v="no">否</button>
-          <button class="btn primary" data-v="yes">是</button>
+          <button class="btn" data-v="no">${t("否")}</button>
+          <button class="btn primary" data-v="yes">${t("是")}</button>
         </div>
       </div>`;
     document.body.appendChild(mask);
@@ -141,7 +344,7 @@ function bindDirty(container) {
 async function confirmLeave() {
   if (!editorDirty) return true;
   try { const s = await getSettings(); if (!s.warn_unsaved_changes) return true; } catch (e) {}
-  return confirm("有未保存的修改，确定离开？");
+  return confirm(t("有未保存的修改，确定离开？"));
 }
 function maskedPrefix(p) {
   return String(p || "")
@@ -175,7 +378,7 @@ let pinned = localStorage.getItem("pin-follow") === "1";
 
 /* ================= 顶栏 ================= */
 function topbar(backLabel, backAction) {
-  const back = backAction ? `<button class="btn small" id="backBtn">← 返回</button>` : "";
+  const back = backAction ? `<button class="btn small" id="backBtn">← ${t(backLabel || "返回")}</button>` : "";
   return `<div class="topbar">
     <div class="logo">Multi-Agent Studio</div>
     <div class="crumb">${S.agentName || ""}</div>
@@ -205,24 +408,26 @@ async function renderAgents() {
   app.appendChild(view);
   view.innerHTML = `
     <div style="display:flex;align-items:center;margin-bottom:20px;gap:12px;">
-      <h2 class="section-title" style="margin:0;">Multi-Agent 配置</h2>
+      <h2 class="section-title" style="margin:0;">${t("Multi-Agent 配置")}</h2>
       <div class="spacer" style="flex:1;"></div>
-      <button class="gear-btn" id="gearBtn" title="系统设置">⚙️</button>
-      <button class="btn small" id="editDefaultBtn">编辑默认配置</button>
-      <button class="btn primary" id="newBtn">+ 新建 multi-agent</button>
+      <button class="btn small" id="langBtn" title="切换语言 / Switch language">${lang === "zh" ? "EN" : "中文"}</button>
+      <button class="gear-btn" id="gearBtn" title="${t("系统设置")}">⚙️</button>
+      <button class="btn small" id="editDefaultBtn">${t("编辑默认配置")}</button>
+      <button class="btn primary" id="newBtn">+ ${t("新建 multi-agent")}</button>
     </div>
-    <div id="agentGrid" class="card-grid"><div class="muted">加载中…</div></div>`;
+    <div id="agentGrid" class="card-grid"><div class="muted">${t("加载中…")}</div></div>`;
 
   $("#newBtn").onclick = () => { S.editingDefault = false; S.agentId = null; S.view = "editor"; render(); };
   $("#editDefaultBtn").onclick = () => { S.editingDefault = true; S.agentId = null; S.view = "editor"; render(); };
   $("#gearBtn").onclick = () => openSettings();
+  $("#langBtn").onclick = () => setLang(lang === "zh" ? "en" : "zh");
 
   let agents;
   try { agents = await api("/api/agents"); }
   catch (e) { $("#agentGrid").innerHTML = `<div class="empty"><div class="big">⚠️</div>${esc(e.message)}</div>`; return; }
 
   if (!agents.length) {
-    $("#agentGrid").innerHTML = `<div class="empty"><div class="big">📦</div>还没有任何 multi-agent 配置<br/><br/><button class="btn primary" id="newBtn2">+ 新建 multi-agent</button></div>`;
+    $("#agentGrid").innerHTML = `<div class="empty"><div class="big">📦</div>${t("还没有任何 multi-agent 配置")}<br/><br/><button class="btn primary" id="newBtn2">+ ${t("新建 multi-agent")}</button></div>`;
     const n = $("#newBtn2"); if (n) n.onclick = () => { S.editingDefault = false; S.agentId = null; S.view = "editor"; render(); };
     return;
   }
@@ -231,15 +436,15 @@ async function renderAgents() {
     <div class="agent-card" data-id="${esc(a.agent_id)}">
       <h3>${esc(a.name)}</h3>
       <div class="meta">
-        checkpoint 库：<code>${esc(a.postgres.checkpoint_database)}</code><br/>
-        子 agent：${a.sub_agents.length} 个（${a.sub_agents.map(s => esc(s.name)).join("、") || "无"}）<br/>
-        主模型：<code>${esc(a.main_agent.llm_provider_name)}</code>
+        ${t("checkpoint 库")}：<code>${esc(a.postgres.checkpoint_database)}</code><br/>
+        ${t("子 agent")}：${a.sub_agents.length} ${t("个")}（${a.sub_agents.map(s => esc(s.name)).join(t("、")) || t("无")}）<br/>
+        ${t("主模型")}：<code>${esc(a.main_agent.llm_provider_name)}</code>
       </div>
       <div class="actions">
-        <button class="btn primary small" data-act="open">打开</button>
-        <button class="btn small" data-act="edit">编辑</button>
-        <button class="btn small" data-act="default">设为默认</button>
-        <button class="btn danger small" data-act="del">删除</button>
+        <button class="btn primary small" data-act="open">${t("打开")}</button>
+        <button class="btn small" data-act="edit">${t("编辑")}</button>
+        <button class="btn small" data-act="default">${t("设为默认")}</button>
+        <button class="btn danger small" data-act="del">${t("删除")}</button>
       </div>
     </div>`).join("");
 
@@ -267,43 +472,43 @@ async function openSettings() {
   mask.className = "modal-mask";
   mask.innerHTML = `
     <div class="modal" style="width:480px;">
-      <h3>⚙️ 系统设置</h3>
+      <h3>⚙️ ${t("系统设置")}</h3>
       <div class="switch-row">
-        <span class="sw-label">修改未保存时提醒 <i class="info-icon">!<span class="tip">编辑 multi-agent 配置时，若做了改动但未保存就离开，弹窗确认。</span></i></span>
+        <span class="sw-label">${t("修改未保存时提醒")} <i class="info-icon">!<span class="tip">${t("编辑 multi-agent 配置时，若做了改动但未保存就离开，弹窗确认。")}</span></i></span>
         <label class="toggle"><input type="checkbox" id="set_warn" ${s.warn_unsaved_changes ? "checked" : ""}><span class="track"></span></label>
       </div>
       <div class="switch-row">
-        <span class="sw-label">显示输入示例（灰色占位字） <i class="info-icon">!<span class="tip">新建 / 编辑 multi-agent 时，空输入框显示灰色示例文字，帮助快速上手。</span></i></span>
+        <span class="sw-label">${t("显示输入示例（灰色占位字）")} <i class="info-icon">!<span class="tip">${t("新建 / 编辑 multi-agent 时，空输入框显示灰色示例文字，帮助快速上手。")}</span></i></span>
         <label class="toggle"><input type="checkbox" id="set_ph" ${s.show_placeholders ? "checked" : ""}><span class="track"></span></label>
       </div>
       <div class="switch-row">
-        <span class="sw-label">记忆吸附 <i class="info-icon">!<span class="tip">开启后，主 agent 收到用户消息时会先从记忆库语义检索 N 条相关记忆，附在用户消息里一起传入。此设置影响图编译，进入某个 multi-agent 后不可改动，需退回主界面。</span></i></span>
+        <span class="sw-label">${t("记忆吸附")} <i class="info-icon">!<span class="tip">${t("开启后，主 agent 收到用户消息时会先从记忆库语义检索 N 条相关记忆，附在用户消息里一起传入。此设置影响图编译，进入某个 multi-agent 后不可改动，需退回主界面。")}</span></i></span>
         <label class="toggle"><input type="checkbox" id="set_mem" ${s.memory_attach ? "checked" : ""}><span class="track"></span></label>
       </div>
       <div class="switch-row">
-        <span class="sw-label">吸附记忆条数</span>
+        <span class="sw-label">${t("吸附记忆条数")}</span>
         <input type="number" id="set_memnum" value="${s.num_memories_attached}" min="1" max="20" ${s.memory_attach ? "" : "disabled"}>
       </div>
       <div class="switch-row">
-        <span class="sw-label">回复完成提示音 <i class="info-icon">!<span class="tip">agent 回复完成时播放的提示音，切换即试听。</span></i></span>
+        <span class="sw-label">${t("回复完成提示音")} <i class="info-icon">!<span class="tip">${t("agent 回复完成时播放的提示音，切换即试听。")}</span></i></span>
         <select id="set_sound">
-          <option value="none" ${s.notification_sound === "none" ? "selected" : ""}>无</option>
-          <option value="ber" ${s.notification_sound === "ber" ? "selected" : ""}>ber（下滑音）</option>
-          <option value="ding" ${s.notification_sound === "ding" ? "selected" : ""}>ding（清脆单音）</option>
-          <option value="chime" ${s.notification_sound === "chime" ? "selected" : ""}>chime（双音上行）</option>
+          <option value="none" ${s.notification_sound === "none" ? "selected" : ""}>${t("无")}</option>
+          <option value="ber" ${s.notification_sound === "ber" ? "selected" : ""}>${t("ber（下滑音）")}</option>
+          <option value="ding" ${s.notification_sound === "ding" ? "selected" : ""}>${t("ding（清脆单音）")}</option>
+          <option value="chime" ${s.notification_sound === "chime" ? "selected" : ""}>${t("chime（双音上行）")}</option>
         </select>
       </div>
       <div class="switch-row">
-        <span class="sw-label">发送键 <i class="info-icon">!<span class="tip">聊天输入框里，按该键发送消息。</span></i></span>
+        <span class="sw-label">${t("发送键")} <i class="info-icon">!<span class="tip">${t("聊天输入框里，按该键发送消息。")}</span></i></span>
         <select id="set_send">
           <option value="enter" ${s.send_key === "enter" ? "selected" : ""}>Enter</option>
           <option value="shift_enter" ${s.send_key === "shift_enter" ? "selected" : ""}>Shift + Enter</option>
           <option value="ctrl_enter" ${s.send_key === "ctrl_enter" ? "selected" : ""}>Ctrl + Enter</option>
-          <option value="mouse_only" ${s.send_key === "mouse_only" ? "selected" : ""}>仅鼠标（Enter 只换行）</option>
+          <option value="mouse_only" ${s.send_key === "mouse_only" ? "selected" : ""}>${t("仅鼠标（Enter 只换行）")}</option>
         </select>
       </div>
       <div class="switch-row">
-        <span class="sw-label">换行键 <i class="info-icon">!<span class="tip">除发送键外，其余 Enter 组合均换行。</span></i></span>
+        <span class="sw-label">${t("换行键")} <i class="info-icon">!<span class="tip">${t("除发送键外，其余 Enter 组合均换行。")}</span></i></span>
         <select id="set_newline">
           <option value="enter" ${s.newline_key === "enter" ? "selected" : ""}>Enter</option>
           <option value="shift_enter" ${s.newline_key === "shift_enter" ? "selected" : ""}>Shift + Enter</option>
@@ -311,8 +516,8 @@ async function openSettings() {
         </select>
       </div>
       <div class="modal-actions">
-        <button class="btn" id="setCancel">取消</button>
-        <button class="btn primary" id="setSave">保存</button>
+        <button class="btn" id="setCancel">${t("取消")}</button>
+        <button class="btn primary" id="setSave">${t("保存")}</button>
       </div>
     </div>`;
   document.body.appendChild(mask);
@@ -344,18 +549,18 @@ async function openSettings() {
         show_placeholders: mask.querySelector("#set_ph").checked,
       });
       mask.remove();
-      toast("设置已保存");
+      toast(t("设置已保存"));
     } catch (e) { toast(e.message, true); }
   };
 }
 
 async function setDefault(id) {
-  try { const cfg = await api("/api/agents/" + id); await api("/api/default", { method: "PUT", body: JSON.stringify(cfg) }); toast("已设为默认配置"); }
+  try { const cfg = await api("/api/agents/" + encodeURIComponent(id)); await api("/api/default", { method: "PUT", body: JSON.stringify(cfg) }); toast(t("已设为默认配置")); }
   catch (e) { toast(e.message, true); }
 }
 async function deleteAgent(id, name) {
-  if (!confirm(`确定删除配置「${name}」？\n（不会删除数据库里的会话历史）`)) return;
-  try { await api("/api/agents/" + id, { method: "DELETE" }); toast("已删除"); renderAgents(); }
+  if (!confirm(`${t("确定删除配置")}「${name}」？\n（${t("不会删除数据库里的会话历史")}）`)) return;
+  try { await api("/api/agents/" + encodeURIComponent(id), { method: "DELETE" }); toast(t("已删除")); renderAgents(); }
   catch (e) { toast(e.message, true); }
 }
 
@@ -372,19 +577,19 @@ async function renderEditorView() {
   const isDefault = S.editingDefault;
   let cfg;
   if (S.editingDefault) cfg = await api("/api/default");
-  else if (S.agentId) cfg = await api("/api/agents/" + S.agentId);
+  else if (S.agentId) cfg = await api("/api/agents/" + encodeURIComponent(S.agentId));
   else cfg = await api("/api/default");
 
   const canEditSubs = isNew || isDefault;
-  const title = isDefault ? "编辑默认配置" : (isNew ? "新建 multi-agent" : `编辑「${cfg.name}」`);
+  const title = isDefault ? t("编辑默认配置") : (isNew ? t("新建 multi-agent") : `${t("编辑")}「${cfg.name}」`);
 
   view.innerHTML = `
     <h2 class="section-title">${esc(title)}</h2>
-    ${isNew ? `<div class="muted" style="margin-bottom:16px;">表单已按默认配置预填，请修改差异项。创建后子 agent 不可增删改名。</div>` : ""}
+    ${isNew ? `<div class="muted" style="margin-bottom:16px;">${t("表单已按默认配置预填，请修改差异项。创建后子 agent 不可增删改名。")}</div>` : ""}
     <div id="editorForm"></div>
     <div style="margin-top:20px;display:flex;gap:12px;justify-content:flex-end;">
-      <button class="btn" id="cancelBtn">取消</button>
-      <button class="btn primary" id="saveBtn">保存</button>
+      <button class="btn" id="cancelBtn">${t("取消")}</button>
+      <button class="btn primary" id="saveBtn">${t("保存")}</button>
     </div>`;
   $("#cancelBtn").onclick = () => leave();
   $("#saveBtn").onclick = () => saveConfig(cfg, isNew, isDefault);
@@ -393,7 +598,7 @@ async function renderEditorView() {
   bindDirty(view);
 }
 
-const info = (tip) => `<i class="info-icon">!<span class="tip">${tip}</span></i>`;
+const info = (tip) => `<i class="info-icon">!<span class="tip">${t(tip)}</span></i>`;
 
 const PH = {
   agent_id: "例如 my-agent",
@@ -409,7 +614,7 @@ const PH = {
   sub_system_prompt: "例如：你是一名联网搜索子 agent，负责为主 agent 检索网页信息，最终输出检索到的原文或相关片段。",
   sub_api_key: "例如 sk-...",
 };
-const ph = (key) => (settingsCache && settingsCache.show_placeholders !== false) ? ` placeholder="${esc(PH[key])}"` : "";
+const ph = (key) => (settingsCache && settingsCache.show_placeholders !== false) ? ` placeholder="${esc(t(PH[key]))}"` : "";
 const slugify = (s) => (s || "").trim().replace(/[^0-9a-zA-Z\u4e00-\u9fa5_-]+/g, "-").replace(/^-+|-+$/g, "").toLowerCase() || "agent";
 
 // tooltip 自动感知边界：右侧放不下翻到左侧（事件委托，覆盖动态创建的 info-icon）
@@ -437,7 +642,7 @@ function unitField(id, val, unit, extraLabel, tip) {
   return `<div class="field"><label>${esc(extraLabel || "")}${tip ? info(tip) : ""}</label>
     <div class="unit-row">
       <input id="${id}" value="${esc(val)}" type="number">
-      <select id="${id}_unit"><option value="万" ${unit === "万" ? "selected" : ""}>万</option><option value="千" ${unit === "千" ? "selected" : ""}>千</option></select>
+      <select id="${id}_unit"><option value="万" ${unit === "万" ? "selected" : ""}>${t("万")}</option><option value="千" ${unit === "千" ? "selected" : ""}>${t("千")}</option></select>
     </div></div>`;
 }
 
@@ -454,76 +659,76 @@ function buildForm(cfg, canEditSubs) {
   const flush = tokToUnit(sum.flush_history_tokenwise);
 
   const suffixCtrl = isLocal
-    ? `<input id="f_suffix" value="?sslmode=disable" disabled><span class="hint">本地连接，自动使用 sslmode=disable</span>`
-    : `<select id="f_suffix">${SSL_OPTIONS.map(o => `<option value="${esc(o.v)}" ${(pg.suffix || "") === o.v ? "selected" : ""}>${esc(o.label)}</option>`).join("")}</select><span class="hint">云端/企业库请选择 SSL 模式</span>`;
+    ? `<input id="f_suffix" value="?sslmode=disable" disabled><span class="hint">${t("本地连接，自动使用 sslmode=disable")}</span>`
+    : `<select id="f_suffix">${SSL_OPTIONS.map(o => `<option value="${esc(o.v)}" ${(pg.suffix || "") === o.v ? "selected" : ""}>${esc(t(o.label))}</option>`).join("")}</select><span class="hint">${t("云端/企业库请选择 SSL 模式")}</span>`;
 
   const embInOptions = EMB_OPTIONS.includes(emb.model_name);
   const embSelect = `
     <select id="f_emb_model_sel" style="width:100%;">
       ${EMB_OPTIONS.map(m => `<option value="${esc(m)}" ${m === emb.model_name ? "selected" : ""}>${esc(m)}</option>`).join("")}
-      <option value="__custom__" ${!embInOptions ? "selected" : ""}>自定义…</option>
+      <option value="__custom__" ${!embInOptions ? "selected" : ""}>${t("自定义…")}</option>
     </select>
-    <input id="f_emb_model_custom" placeholder="自定义模型名" value="${embInOptions ? "" : esc(emb.model_name)}" style="${embInOptions ? "display:none;" : ""} margin-top:6px;">`;
+    <input id="f_emb_model_custom" placeholder="${t("自定义模型名")}" value="${embInOptions ? "" : esc(emb.model_name)}" style="${embInOptions ? "display:none;" : ""} margin-top:6px;">`;
 
   const hfEndpoint = emb.hf_endpoint || "";
   const hfInOptions = HF_OPTIONS.some(o => o.v === hfEndpoint);
   const hfSelect = `
     <select id="f_hf_endpoint_sel" style="width:100%;">
-      ${HF_OPTIONS.map(o => `<option value="${esc(o.v)}" ${hfEndpoint === o.v ? "selected" : ""}>${esc(o.label)}</option>`).join("")}
-      <option value="__custom__" ${!hfInOptions ? "selected" : ""}>自定义…</option>
+      ${HF_OPTIONS.map(o => `<option value="${esc(o.v)}" ${hfEndpoint === o.v ? "selected" : ""}>${esc(t(o.label))}</option>`).join("")}
+      <option value="__custom__" ${!hfInOptions ? "selected" : ""}>${t("自定义…")}</option>
     </select>
-    <input id="f_hf_endpoint_custom" placeholder="自定义镜像地址" value="${hfInOptions ? "" : esc(hfEndpoint)}" style="${hfInOptions ? "display:none;" : ""} margin-top:6px;">`;
+    <input id="f_hf_endpoint_custom" placeholder="${t("自定义镜像地址")}" value="${hfInOptions ? "" : esc(hfEndpoint)}" style="${hfInOptions ? "display:none;" : ""} margin-top:6px;">`;
 
   const htmlReport = main.html_report;
   const htmlPrompt = main.html_report_prompt || DEFAULT_HTML_PROMPT;
 
   form.innerHTML = `
-    <div class="form-card"><h4>基本信息</h4><div class="form-grid">
+    <div class="form-card"><h4>${t("基本信息")}</h4><div class="form-grid">
       <div class="field"><label>agent_id ${info("唯一标识，用作配置文件名 configs/&lt;id&gt;.json，创建后不可改。")}</label><input id="f_agent_id" value="${esc(cfg.agent_id)}" ${canEditSubs ? "" : "disabled"}${ph("agent_id")}></div>
-      <div class="field"><label>名称 name ${info("显示名称，创建后不可改（与历史会话绑定）。")}</label><input id="f_name" value="${esc(cfg.name)}" ${canEditSubs ? "" : "disabled"}${ph("name")}><span class="lock-hint">${canEditSubs ? "" : "创建后不可改"}</span></div>
-      <div class="field"><label>checkpoint 数据库（会话历史绑定） ${info("会话历史归属的库名，需先在 pgAdmin 建库，创建后不可改。")}</label><input id="f_cpdb" value="${esc(pg.checkpoint_database)}" ${canEditSubs ? "" : "disabled"}${ph("checkpoint_database")}><span class="lock-hint">${canEditSubs ? "需先在 pgAdmin 建库" : "创建后不可改"}</span></div>
-      <div class="field full"><details class="db-help"><summary>📖 不会建数据库？点这里看步骤</summary><ol><li>打开 <b>pgAdmin 4</b>（在开始菜单里搜索「pgAdmin」）。</li><li>左侧展开 <b>Servers → PostgreSQL</b>，双击连接，输入安装 PostgreSQL 时设置的密码。</li><li>右键 <b>Databases → Create → Database…</b>。</li><li>在 <b>Database</b> 一栏填库名（与上面填的 checkpoint 库名保持一致）。</li><li>点 <b>Save</b>。</li><li>记忆库（store 数据库）还需启用 pgvector：选中刚建的库 → 点上方「Query Tool」图标 → 粘贴下面这句 → 点执行（或按 F5）：<pre>CREATE EXTENSION IF NOT EXISTS vector;</pre></li><li>回到本页，点「保存」。</li></ol></details></div>
-      <div class="field"><label>store 数据库 ${info("长期记忆存储的库名，可与 checkpoint 库相同或不同。")}</label><input id="f_sdb" value="${esc(pg.store_database)}"></div>
-      <div class="field"><label>store_namespace（逗号分隔） ${info("记忆存储命名空间，逗号分隔多个层级。")}</label><input id="f_ns" value="${esc(ns)}"></div>
-      <div class="field full"><label>连接前缀 prefix <i class="info-icon">!<span class="tip">格式：postgresql://用户名:密码@主机:端口/<br/>例如 postgresql://user:passwd@localhost:5432/<br/><br/>下面会实时显示完整连接串。程序会根据主机自动判断是否本地回环。</span></i></label><input id="f_prefix" value="${esc(pg.prefix)}"${ph("prefix")}></div>
-      <div class="field"><label>连接后缀 suffix <i class="info-icon">!<span class="tip">本地 postgres（localhost/127.0.0.1）自动用 sslmode=disable，省一次 SSL 握手。<br/><br/>云端或企业级 postgres 请选择对应 SSL 模式；「无字符串」表示交由数据库设置决定。</span></i></label>${suffixCtrl}</div>
-      <div class="field full"><label>完整连接串示例</label><div class="conn-example" id="connExample"></div></div>
+      <div class="field"><label>${t("名称")} name ${info("显示名称，创建后不可改（与历史会话绑定）。")}</label><input id="f_name" value="${esc(cfg.name)}" ${canEditSubs ? "" : "disabled"}${ph("name")}><span class="lock-hint">${canEditSubs ? "" : t("创建后不可改")}</span></div>
+      <div class="field"><label>${t("checkpoint 数据库（会话历史绑定）")} ${info("会话历史归属的库名，需先在 pgAdmin 建库，创建后不可改。")}</label><input id="f_cpdb" value="${esc(pg.checkpoint_database)}" ${canEditSubs ? "" : "disabled"}${ph("checkpoint_database")}><span class="lock-hint">${canEditSubs ? t("需先在 pgAdmin 建库") : t("创建后不可改")}</span></div>
+      <div class="field full"><details class="db-help"><summary>${t("📖 不会建数据库？点这里看步骤")}</summary><ol><li>${t("打开")} <b>pgAdmin 4</b>${t("（在开始菜单里搜索「pgAdmin」）。")}</li><li>${t("左侧展开")} <b>Servers → PostgreSQL</b>${t("，双击连接，输入安装 PostgreSQL 时设置的密码。")}</li><li>${t("右键")} <b>Databases → Create → Database…</b>${t("。")}</li><li>${t("在")} <b>Database</b> ${t("一栏填库名（与上面填的 checkpoint 库名保持一致）。")}</li><li>${t("点")} <b>Save</b>${t("。")}</li><li>${t("记忆库（store 数据库）还需启用 pgvector：选中刚建的库 → 点上方「Query Tool」图标 → 粘贴下面这句 → 点执行（或按 F5）：")}<pre>CREATE EXTENSION IF NOT EXISTS vector;</pre></li><li>${t("回到本页，点「保存」。")}</li></ol></details></div>
+      <div class="field"><label>${t("store 数据库")} ${info("长期记忆存储的库名，可与 checkpoint 库相同或不同。")}</label><input id="f_sdb" value="${esc(pg.store_database)}"></div>
+      <div class="field"><label>${t("store_namespace（逗号分隔）")} ${info("记忆存储命名空间，逗号分隔多个层级。")}</label><input id="f_ns" value="${esc(ns)}"></div>
+      <div class="field full"><label>${t("连接前缀")} prefix <i class="info-icon">!<span class="tip">${t("格式：postgresql://用户名:密码@主机:端口/<br/>例如 postgresql://user:passwd@localhost:5432/<br/><br/>下面会实时显示完整连接串。程序会根据主机自动判断是否本地回环。")}</span></i></label><input id="f_prefix" value="${esc(pg.prefix)}"${ph("prefix")}></div>
+      <div class="field"><label>${t("连接后缀")} suffix <i class="info-icon">!<span class="tip">${t("本地 postgres（localhost/127.0.0.1）自动用 sslmode=disable，省一次 SSL 握手。<br/><br/>云端或企业级 postgres 请选择对应 SSL 模式；「无字符串」表示交由数据库设置决定。")}</span></i></label>${suffixCtrl}</div>
+      <div class="field full"><label>${t("完整连接串示例")}</label><div class="conn-example" id="connExample"></div></div>
     </div></div>
 
-    <div class="form-card"><h4>主 agent</h4><div class="form-grid">
-      <div class="field"><label>模型 provider ${info("格式「供应商:模型名」，如 deepseek:deepseek-v4-pro。")}</label><input id="f_llm" value="${esc(main.llm_provider_name)}"></div>
+    <div class="form-card"><h4>${t("主 agent")}</h4><div class="form-grid">
+      <div class="field"><label>${t("模型 provider")} ${info("格式「供应商:模型名」，如 deepseek:deepseek-v4-pro。")}</label><input id="f_llm" value="${esc(main.llm_provider_name)}"></div>
       <div class="field"><label>API Key ${info("该模型供应商的 API 密钥（明文存本地配置）。")}</label><input id="f_apikey" value="${esc(main.api_key)}" type="password"${ph("main_api_key")}></div>
-      <div class="field"><label>文件工具根目录 ${info("主 agent 文件工具读写文件的根目录。")}</label><input id="f_rootdir" value="${esc(ft.root_dir)}"${ph("root_dir")}></div>
-      <div class="field"><label>embedding 模型 <i class="info-icon">!<span class="tip">无需提前下载，首次配置会自动下载（需连接 Hugging Face Hub，国内网络可能连不上）。若已离线缓存过，可在下方缓存目录直接使用。</span></i></label>${embSelect}</div>
-      <div class="field"><label>embedding 缓存目录 ${info("本地模型缓存路径，留空用 Hugging Face 默认缓存。")}</label><input id="f_emb_cache" value="${esc(emb.cache_folder)}"${ph("emb_cache")}></div>
-      <div class="field"><label>embedding 维度 ${info("向量维度；bge-m3 为 1024，换模型需对应调整。")}</label><input id="f_emb_dims" value="${esc(emb.dims)}" type="number"></div>
-      <div class="field"><label>embedding 镜像 ${info("下载 embedding 模型时使用的 HuggingFace 镜像源；国内推荐 hf-mirror。")}</label>${hfSelect}</div>
+      <div class="field"><label>${t("文件工具根目录")} ${info("主 agent 文件工具读写文件的根目录。")}</label><input id="f_rootdir" value="${esc(ft.root_dir)}"${ph("root_dir")}></div>
+      <div class="field"><label>${t("embedding 模型")} <i class="info-icon">!<span class="tip">${t("无需提前下载，首次配置会自动下载（需连接 Hugging Face Hub，国内网络可能连不上）。若已离线缓存过，可在下方缓存目录直接使用。")}</span></i></label>${embSelect}</div>
+      <div class="field"><label>${t("embedding 缓存目录")} ${info("本地模型缓存路径，留空用 Hugging Face 默认缓存。")}</label><input id="f_emb_cache" value="${esc(emb.cache_folder)}"${ph("emb_cache")}></div>
+      <div class="field"><label>${t("embedding 维度")} ${info("向量维度；bge-m3 为 1024，换模型需对应调整。")}</label><input id="f_emb_dims" value="${esc(emb.dims)}" type="number"></div>
+      <div class="field"><label>${t("embedding 镜像")} ${info("下载 embedding 模型时使用的 HuggingFace 镜像源；国内推荐 hf-mirror。")}</label>${hfSelect}</div>
       <div class="field full">
-        <label style="flex-direction:row;align-items:center;gap:8px;"><input type="checkbox" id="f_emb_offline" ${emb.local_files_only ? "checked" : ""}> Embedding 模型离线模式 ${info("离线模式 = 只从本地缓存加载 embedding 模型、不联网校验。没有缓存时请勿开启（会报错）；已有缓存时建议开启，跳过每次联网校验。")}</label>
-        <span class="hint">没有缓存时请勿开启；已有缓存时建议开启，跳过每次联网校验。</span>
+        <label style="flex-direction:row;align-items:center;gap:8px;"><input type="checkbox" id="f_emb_offline" ${emb.local_files_only ? "checked" : ""}> ${t("Embedding 模型离线模式")} ${info("离线模式 = 只从本地缓存加载 embedding 模型、不联网校验。没有缓存时请勿开启（会报错）；已有缓存时建议开启，跳过每次联网校验。")}</label>
+        <span class="hint">${t("没有缓存时请勿开启；已有缓存时建议开启，跳过每次联网校验。")}</span>
       </div>
-      ${unitField("f_sum_gap", gap.v, gap.u, "阶段性总结阈值", "累计 token 达到该值时触发一次阶段性总结。")}
-      ${unitField("f_sum_flush", flush.v, flush.u, "清空历史阈值", "累计 token 达到该值时清空历史（只保留最近几轮）。")}
-      <div class="field"><label>清空时保留轮数 ${info("清空历史时保留最近几轮对话。")}</label><input id="f_sum_reserve" value="${esc(sum.reserve_message_round)}" type="number"></div>
+      ${unitField("f_sum_gap", gap.v, gap.u, t("阶段性总结阈值"), "累计 token 达到该值时触发一次阶段性总结。")}
+      ${unitField("f_sum_flush", flush.v, flush.u, t("清空历史阈值"), "累计 token 达到该值时清空历史（只保留最近几轮）。")}
+      <div class="field"><label>${t("清空时保留轮数")} ${info("清空历史时保留最近几轮对话。")}</label><input id="f_sum_reserve" value="${esc(sum.reserve_message_round)}" type="number"></div>
       <div class="field full"><label>System Prompt ${info("主 agent 的系统提示词，定义其角色与行为。")}</label><textarea id="f_prompt" rows="8"${ph("main_system_prompt")}>${esc(main.system_prompt)}</textarea></div>
       <div class="field full" style="border-top:1px solid var(--border);padding-top:14px;">
-        <label style="flex-direction:row;align-items:center;gap:8px;"><input type="checkbox" id="f_html_report" ${htmlReport ? "checked" : ""}> 启用 HTML 报告 ${info("主 agent 输出完后，询问是否将结果生成 HTML 报告。")}</label>
+        <label style="flex-direction:row;align-items:center;gap:8px;"><input type="checkbox" id="f_html_report" ${htmlReport ? "checked" : ""}> ${t("启用 HTML 报告")} ${info("主 agent 输出完后，询问是否将结果生成 HTML 报告。")}</label>
       </div>
-      <div class="field full"><label>HTML 报告生成 prompt ${info("确认生成后注入给主 agent 的提示词（可恢复默认）。")} <button class="btn small" id="resetHtmlBtn" type="button">恢复默认</button></label><textarea id="f_html_prompt" rows="3">${esc(htmlPrompt)}</textarea></div>
+      <div class="field full"><label>${t("HTML 报告生成 prompt")} ${info("确认生成后注入给主 agent 的提示词（可恢复默认）。")} <button class="btn small" id="resetHtmlBtn" type="button">${t("恢复默认")}</button></label><textarea id="f_html_prompt" rows="3">${esc(htmlPrompt)}</textarea></div>
     </div></div>
 
-    <div class="form-card"><h4>子 agent（${canEditSubs ? "可增删" : "创建后不可增删改名"}）</h4>
+    <div class="form-card"><h4>${t("子 agent")}（${canEditSubs ? t("可增删") : t("创建后不可增删改名")}）</h4>
       <div id="subs"></div>
-      ${canEditSubs ? `<button class="btn small" id="addSubBtn" type="button">+ 添加子 agent</button>` : ""}
+      ${canEditSubs ? `<button class="btn small" id="addSubBtn" type="button">+ ${t("添加子 agent")}</button>` : ""}
     </div>`;
 
   // 连接示例实时更新（脱敏 + 释义）
   const refreshExample = () => {
     const p = maskedPrefix($("#f_prefix").value);
-    const db = $("#f_cpdb").value || "<数据库名>";
+    const db = $("#f_cpdb").value || t("<数据库名>");
     const suffix = $("#f_suffix").value || "";
     $("#connExample").innerHTML = esc(p + db + suffix) +
-      '<div class="muted" style="margin-top:6px;font-size:11px;">组成：<code>postgresql://</code> 协议 · <code>用户名:passwd</code> 登录凭据 · <code>@主机:port</code> 数据库地址 · <code>/数据库名</code> 库名 · <code>?sslmode</code> SSL 模式</div>';
+      `<div class="muted" style="margin-top:6px;font-size:11px;">${t("组成：")}<code>postgresql://</code> ${t("协议")} · <code>${t("用户名:passwd")}</code> ${t("登录凭据")} · <code>@${t("主机:port")}</code> ${t("数据库地址")} · <code>/${t("数据库名")}</code> ${t("库名")} · <code>?sslmode</code> ${t("SSL 模式")}</div>`;
   };
   ["f_prefix", "f_cpdb", "f_suffix", "f_sdb"].forEach(id => { const el = $("#" + id); if (el) el.addEventListener("input", refreshExample); });
   refreshExample();
@@ -540,7 +745,7 @@ function buildForm(cfg, canEditSubs) {
   const embOffline = $("#f_emb_offline");
   embOffline.onchange = (e) => {
     if (!e.target.checked) {
-      toast("已关闭 Embedding 模型离线模式：每次打开会联网校验。若已获取模型缓存，建议重新开启以跳过校验。", true);
+      toast(t("已关闭 Embedding 模型离线模式：每次打开会联网校验。若已获取模型缓存，建议重新开启以跳过校验。"), true);
     }
   };
 
@@ -559,16 +764,16 @@ function subAgentBox(s, key, canEdit) {
   div.className = "subagent-box";
   div.dataset.key = key;
   div.innerHTML = `
-    <div class="sub-head"><span class="name">🧩 子 agent</span>${canEdit ? `<button class="btn danger small" data-act="remove" type="button">移除</button>` : ""}</div>
+    <div class="sub-head"><span class="name">🧩 ${t("子 agent")}</span>${canEdit ? `<button class="btn danger small" data-act="remove" type="button">${t("移除")}</button>` : ""}</div>
     <div class="form-grid">
-      <div class="field"><label>名称 name ${info("子 agent 标识，会作为工具名呈现给主 agent，创建后不可改。")}</label><input data-f="name" value="${esc(s.name)}" ${canEdit ? "" : "disabled"}${ph("sub_name")}></div>
-      <div class="field"><label>模型 provider ${info("格式「供应商:模型名」，如 deepseek:deepseek-v4-pro。")}</label><input data-f="llm_provider_name" value="${esc(s.llm_provider_name)}"></div>
+      <div class="field"><label>${t("名称")} name ${info("子 agent 标识，会作为工具名呈现给主 agent，创建后不可改。")}</label><input data-f="name" value="${esc(s.name)}" ${canEdit ? "" : "disabled"}${ph("sub_name")}></div>
+      <div class="field"><label>${t("模型 provider")} ${info("格式「供应商:模型名」，如 deepseek:deepseek-v4-pro。")}</label><input data-f="llm_provider_name" value="${esc(s.llm_provider_name)}"></div>
       <div class="field"><label>API Key ${info("该子 agent 所用模型的 API 密钥（明文存本地配置）。")}</label><input data-f="api_key" value="${esc(s.api_key)}" type="password"${ph("sub_api_key")}></div>
-      <div class="field"><label>清空历史阈值 ${info("该子 agent 累计 token 达到该值时清空历史（只保留最近几轮）。")}</label><div class="unit-row"><input data-f="flush" value="${esc(flush.v)}" type="number"><select data-f="flush_unit"><option value="万" ${flush.u === "万" ? "selected" : ""}>万</option><option value="千" ${flush.u === "千" ? "selected" : ""}>千</option></select></div></div>
-      <div class="field"><label>保留轮数 ${info("清空历史时保留最近几轮对话。")}</label><input data-f="reserve" value="${esc((s.summary || {}).reserve_message_round)}" type="number"></div>
+      <div class="field"><label>${t("清空历史阈值")} ${info("该子 agent 累计 token 达到该值时清空历史（只保留最近几轮）。")}</label><div class="unit-row"><input data-f="flush" value="${esc(flush.v)}" type="number"><select data-f="flush_unit"><option value="万" ${flush.u === "万" ? "selected" : ""}>${t("万")}</option><option value="千" ${flush.u === "千" ? "selected" : ""}>${t("千")}</option></select></div></div>
+      <div class="field"><label>${t("保留轮数")} ${info("清空历史时保留最近几轮对话。")}</label><input data-f="reserve" value="${esc((s.summary || {}).reserve_message_round)}" type="number"></div>
       <div class="field full"><label>Description ${info("描述该子 agent 能力，作为工具描述呈现给主 agent。")}</label><textarea data-f="description" rows="3"${ph("sub_description")}>${esc(s.description)}</textarea></div>
       <div class="field full"><label>System Prompt ${info("该子 agent 的系统提示词。")}</label><textarea data-f="system_prompt" rows="6"${ph("sub_system_prompt")}>${esc(s.system_prompt)}</textarea></div>
-      <div class="field full"><label>MCP 服务器 ${info("该子 agent 可用的工具来源；程序不负责启动，需外部自行启动。")}</label><div data-f="mcp"></div></div>
+      <div class="field full"><label>${t("MCP 服务器")} ${info("该子 agent 可用的工具来源；程序不负责启动，需外部自行启动。")}</label><div data-f="mcp"></div></div>
     </div>`;
 
   div.querySelector('[data-act="remove"]')?.addEventListener("click", () => div.remove());
@@ -576,7 +781,7 @@ function subAgentBox(s, key, canEdit) {
   const mcpBox = div.querySelector('[data-f="mcp"]');
   (s.mcp_servers || []).forEach((m, j) => mcpBox.appendChild(mcpRow(m, j)));
   const addM = document.createElement("button");
-  addM.className = "btn small add-mcp"; addM.type = "button"; addM.textContent = "+ 添加 MCP";
+  addM.className = "btn small add-mcp"; addM.type = "button"; addM.textContent = "+ " + t("添加 MCP");
   addM.onclick = () => mcpBox.insertBefore(mcpRow(null, Date.now()), addM);
   mcpBox.appendChild(addM);
   return div;
@@ -587,15 +792,15 @@ function mcpRow(m, key) {
   const div = document.createElement("div");
   div.className = "mcp-row";
   div.innerHTML = `
-    <span class="dot gray" data-dot title="点击检测健康状态"></span>
-    <input data-m="name" placeholder="名称" value="${esc(m.name)}" style="flex:0.8">
+    <span class="dot gray" data-dot title="${t("点击检测健康状态")}"></span>
+    <input data-m="name" placeholder="${t("名称")}" value="${esc(m.name)}" style="flex:0.8">
     <select data-m="transport" style="flex:0.6">
       <option value="http" ${m.transport === "http" ? "selected" : ""}>http</option>
       <option value="stdio" ${m.transport === "stdio" ? "selected" : ""}>stdio</option>
     </select>
-    <input data-m="url" placeholder="URL（http）" value="${esc(m.url || "")}">
-    <input data-m="command" placeholder="命令（stdio）" value="${esc(m.command || "")}">
-    <input data-m="args" placeholder="参数，逗号分隔（stdio）" value="${esc((m.args || []).join(","))}">
+    <input data-m="url" placeholder="${t("URL（http）")}" value="${esc(m.url || "")}">
+    <input data-m="command" placeholder="${t("命令（stdio）")}" value="${esc(m.command || "")}">
+    <input data-m="args" placeholder="${t("参数，逗号分隔（stdio）")}" value="${esc((m.args || []).join(","))}">
     <button class="btn danger small" data-act="rm" type="button">×</button>`;
   div.querySelector('[data-act="rm"]').onclick = () => div.remove();
 
@@ -686,12 +891,12 @@ function buildPayload(cfg) {
 async function saveConfig(cfg, isNew, isDefault) {
   try {
     const payload = buildPayload(cfg);
-    if (!payload.name) return toast("请填写名称", true);
-    if (!payload.postgres.checkpoint_database) return toast("请填写 checkpoint 数据库名", true);
+    if (!payload.name) return toast(t("请填写名称"), true);
+    if (!payload.postgres.checkpoint_database) return toast(t("请填写 checkpoint 数据库名"), true);
 
-    if (isDefault) { await api("/api/default", { method: "PUT", body: JSON.stringify(payload) }); toast("默认配置已保存"); goAgents(); }
-    else if (isNew) { await api("/api/agents", { method: "POST", body: JSON.stringify(payload) }); toast("已创建"); goAgents(); }
-    else { payload.agent_id = S.agentId; await api("/api/agents/" + S.agentId, { method: "PUT", body: JSON.stringify(payload) }); toast("已保存"); goAgents(); }
+    if (isDefault) { await api("/api/default", { method: "PUT", body: JSON.stringify(payload) }); toast(t("默认配置已保存")); goAgents(); }
+    else if (isNew) { await api("/api/agents", { method: "POST", body: JSON.stringify(payload) }); toast(t("已创建")); goAgents(); }
+    else { payload.agent_id = S.agentId; await api("/api/agents/" + encodeURIComponent(S.agentId), { method: "PUT", body: JSON.stringify(payload) }); toast(t("已保存")); goAgents(); }
   } catch (e) { toast(e.message, true); }
 }
 
@@ -704,20 +909,20 @@ async function renderThreadsView() {
   bindBack(() => goAgents());
   view.innerHTML = `
     <div style="display:flex;align-items:center;margin-bottom:20px;gap:12px;">
-      <h2 class="section-title" style="margin:0;">会话线程 — ${esc(S.agentName)}</h2>
+      <h2 class="section-title" style="margin:0;">${t("会话")} — ${esc(S.agentName)}</h2>
       <div class="spacer" style="flex:1;"></div>
-      <button class="btn primary" id="newThreadBtn">+ 新建线程</button>
+      <button class="btn primary" id="newThreadBtn">+ ${t("新建会话")}</button>
     </div>
-    <div id="threadsBox"><div class="muted">加载中…</div></div>`;
-  $("#newThreadBtn").onclick = () => { const n = prompt("新线程名称："); if (n && n.trim()) goChat(S.agentId, S.agentName, n.trim()); };
+    <div id="threadsBox"><div class="muted">${t("加载中…")}</div></div>`;
+  $("#newThreadBtn").onclick = () => { const n = prompt(t("新会话名称：")); if (n && n.trim()) goChat(S.agentId, S.agentName, n.trim()); };
 
   let threads;
-  try { threads = await api(`/api/agents/${S.agentId}/threads`); }
+  try { threads = await api(`/api/agents/${encodeURIComponent(S.agentId)}/threads`); }
   catch (e) { $("#threadsBox").innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
 
   if (!threads.length) {
-    $("#threadsBox").innerHTML = `<div class="empty"><div class="big">🧵</div>暂无会话线程<br/><br/><button class="btn primary" id="nt2">+ 新建线程</button></div>`;
-    const n = $("#nt2"); if (n) n.onclick = () => { const nm = prompt("新线程名称："); if (nm && nm.trim()) goChat(S.agentId, S.agentName, nm.trim()); };
+    $("#threadsBox").innerHTML = `<div class="empty"><div class="big">🧵</div>${t("暂无会话")}<br/><br/><button class="btn primary" id="nt2">+ ${t("新建会话")}</button></div>`;
+    const n = $("#nt2"); if (n) n.onclick = () => { const nm = prompt(t("新会话名称：")); if (nm && nm.trim()) goChat(S.agentId, S.agentName, nm.trim()); };
     return;
   }
 
@@ -727,7 +932,7 @@ async function renderThreadsView() {
         <div class="thread-row" data-tid="${esc(t.thread_id)}">
           <span class="tid">${esc(t.thread_id)}</span>
           <span class="meta"><small>${t.checkpoints} checkpoints</small><small>${esc(t.last_updated || "")}</small></span>
-          <button class="btn danger small" data-del="${esc(t.thread_id)}">删除</button>
+          <button class="btn danger small" data-del="${esc(t.thread_id)}">${t("删除")}</button>
         </div>`).join("")}
     </div>`;
 
@@ -738,8 +943,8 @@ async function renderThreadsView() {
   });
 }
 async function deleteThread(tid) {
-  if (!confirm(`确定删除线程「${tid}」？此操作不可撤销。`)) return;
-  try { await api(`/api/agents/${S.agentId}/threads/${encodeURIComponent(tid)}`, { method: "DELETE" }); toast("已删除"); renderThreadsView(); }
+  if (!confirm(`${t("确定删除会话")}「${tid}」？${t("此操作不可撤销。")}`)) return;
+  try { await api(`/api/agents/${encodeURIComponent(S.agentId)}/threads/${encodeURIComponent(tid)}`, { method: "DELETE" }); toast(t("已删除")); renderThreadsView(); }
   catch (e) { toast(e.message, true); }
 }
 
@@ -747,8 +952,8 @@ async function deleteThread(tid) {
 function setStatusIndicator(mode) {
   const ind = $("#statusInd");
   if (!ind) return;
-  if (mode === "thinking") { ind.className = "status-indicator thinking"; ind.innerHTML = '<span class="status-dot thinking"></span>Agent 思考中…'; }
-  else if (mode === "answering") { ind.className = "status-indicator answering"; ind.innerHTML = '<span class="status-dot answering"></span>Agent 回答中…'; }
+  if (mode === "thinking") { ind.className = "status-indicator thinking"; ind.innerHTML = `<span class="status-dot thinking"></span>${t("Agent 思考中…")}`; }
+  else if (mode === "answering") { ind.className = "status-indicator answering"; ind.innerHTML = `<span class="status-dot answering"></span>${t("Agent 回答中…")}`; }
   else { ind.className = "status-indicator"; ind.innerHTML = ""; }
 }
 
@@ -760,14 +965,14 @@ function toggleMsgDrawer(e) {
   panel.className = "msg-drawer-panel";
   const blocks = $$("#historyMd .user-msg-block");
   if (!blocks.length) {
-    panel.innerHTML = '<div class="muted" style="padding:8px;">暂无用户消息</div>';
+    panel.innerHTML = `<div class="muted" style="padding:8px;">${t("暂无用户消息")}</div>`;
   } else {
     panel.innerHTML = blocks.map((b, i) => {
       const summary = b.dataset.summary || "";
       const raw = summary || (b.querySelector(".user-msg-quote")?.innerText || "");
       const first = raw.split("\n").map(s => s.trim()).filter(Boolean)[0] || "";
       const label = first.length > 24 ? first.slice(0, 24) + "…" : first;
-      return `<div class="msg-drawer-item" data-i="${i}">${esc(label || "（空消息）")}</div>`;
+      return `<div class="msg-drawer-item" data-i="${i}">${esc(label || t("（空消息）"))}</div>`;
     }).join("");
     panel.querySelectorAll(".msg-drawer-item").forEach(item => {
       item.onclick = () => {
@@ -781,7 +986,7 @@ function toggleMsgDrawer(e) {
 }
 
 async function renderChatView() {
-  app.innerHTML = topbar("返回线程", () => goThreads(S.agentId, S.agentName));
+  app.innerHTML = topbar(t("返回会话"), () => goThreads(S.agentId, S.agentName));
   const view = document.createElement("div");
   view.className = "chat-view";
   app.appendChild(view);
@@ -798,16 +1003,16 @@ async function renderChatView() {
         <span class="zoom-btn" id="zoomIn">+</span>
         <span class="zoom-pct" id="zoomPct"></span>
       </div>
-      <button class="btn small" id="msgDirBtn" style="position:relative;">☰ 消息目录</button>
-      <select id="subgraphSel" class="btn small" style="max-width:220px;"><option value="">主会话</option></select>
+      <button class="btn small" id="msgDirBtn" style="position:relative;">☰ ${t("消息目录")}</button>
+      <select id="subgraphSel" class="btn small" style="max-width:220px;"><option value="">${t("主会话")}</option></select>
     </div>
     <div class="chat-body" id="chatBody">
-      <div class="history-pane" id="historyPane"><div class="md-body markdown-body" id="historyMd"><div class="muted">加载历史中…</div></div></div>
-      <button id="pinBtn" class="pin-btn" title="跟随最新输出 · 按住可拖动">📌</button>
+      <div class="history-pane" id="historyPane"><div class="md-body markdown-body" id="historyMd"><div class="muted">${t("加载历史中…")}</div></div></div>
+      <button id="pinBtn" class="pin-btn" title="${t("跟随最新输出 · 按住可拖动")}">📌</button>
       <div class="input-pane" id="inputPane">
-        <div class="input-toolbar"><span class="muted" id="inputHint">输入消息（Enter 发送，Shift+Enter 换行）</span><div class="spacer" style="flex:1;"></div></div>
-        <textarea id="msgInput" placeholder="输入消息…"></textarea>
-        <div class="input-actions"><button class="btn" id="stopBtn" style="display:none;">停止</button><button class="btn primary" id="sendBtn">发送</button></div>
+        <div class="input-toolbar"><span class="muted" id="inputHint">${t("输入消息（Enter 发送，Shift+Enter 换行）")}</span><div class="spacer" style="flex:1;"></div></div>
+        <textarea id="msgInput" placeholder="${t("输入消息…")}"></textarea>
+        <div class="input-actions"><button class="btn" id="stopBtn" style="display:none;">${t("停止")}</button><button class="btn primary" id="sendBtn">${t("发送")}</button></div>
       </div>
       <div id="doneBubble" class="done-bubble done-bubble-float" style="display:none;"></div>
     </div>`;
@@ -848,8 +1053,8 @@ async function renderChatView() {
     const hint = $("#inputHint");
     if (hint) {
       hint.textContent = s.send_key === "mouse_only"
-        ? "输入消息（点击发送，Enter 换行）"
-        : `输入消息（${keyLabel(s.send_key)} 发送，${keyLabel(s.newline_key)} 换行）`;
+        ? t("输入消息（点击发送，Enter 换行）")
+        : `${t("输入消息（")}${keyLabel(s.send_key)} ${t("发送，")}${keyLabel(s.newline_key)} ${t("换行）")}`;
     }
   }).catch(() => {});
   const zoomPctEl = $("#zoomPct");
@@ -912,14 +1117,14 @@ async function renderChatView() {
     pane.scrollTop = Math.max(0, pane.scrollTop + (sr.top - pr.top) - pane.clientHeight);
   };
   try {
-    const h = await api(`/api/agents/${S.agentId}/threads/${encodeURIComponent(S.threadId)}/history`);
+    const h = await api(`/api/agents/${encodeURIComponent(S.agentId)}/threads/${encodeURIComponent(S.threadId)}/history`);
     historyEl.innerHTML = renderMd(h.markdown);
     scrollToLastUserMsg();
-  } catch (e) { historyEl.innerHTML = `<div class="muted">（无历史）</div>`; }
+  } catch (e) { historyEl.innerHTML = `<div class="muted">${t("（无历史）")}</div>`; }
 
   const sel = $("#subgraphSel");
   try {
-    const subs = await api(`/api/agents/${S.agentId}/threads/${encodeURIComponent(S.threadId)}/subgraphs`);
+    const subs = await api(`/api/agents/${encodeURIComponent(S.agentId)}/threads/${encodeURIComponent(S.threadId)}/subgraphs`);
     subs.forEach(s => { const o = document.createElement("option"); o.value = s.node_name; o.textContent = s.node_name; sel.appendChild(o); });
   } catch (e) { /* 无子图 */ }
 
@@ -933,7 +1138,7 @@ async function renderChatView() {
     updateSendState();
     if (!sel.value) { renderChatView(); return; }
     try {
-      const h = await api(`/api/agents/${S.agentId}/threads/${encodeURIComponent(S.threadId)}/subgraphs/${encodeURIComponent(sel.value)}/history`);
+      const h = await api(`/api/agents/${encodeURIComponent(S.agentId)}/threads/${encodeURIComponent(S.threadId)}/subgraphs/${encodeURIComponent(sel.value)}/history`);
       $("#historyMd").innerHTML = renderMd(h.markdown);
     } catch (e) { toast(e.message, true); }
   };
@@ -950,7 +1155,7 @@ async function renderChatView() {
     const b = $("#doneBubble");
     if (!b) return;
     const pane = $("#inputPane");
-    b.textContent = "✅ 回复已完成";
+    b.textContent = t("✅ 回复已完成");
     b.style.bottom = (pane ? pane.offsetHeight + 10 : 160) + "px";
     b.style.display = "inline-flex";
     clearTimeout(b._t);
@@ -969,7 +1174,7 @@ async function renderChatView() {
       if (input.value.trim() === content) input.value = "";
       showDoneBubble();
     } else {
-      toast("发送失败，消息已保留在输入框", true);
+      toast(t("发送失败，消息已保留在输入框"), true);
     }
   }
 
@@ -1005,7 +1210,7 @@ function appendReplyHeader() {
 function openChatWs(content) {
   return new Promise((resolve) => {
     const proto = location.protocol === "https:" ? "wss" : "ws";
-    ws = new WebSocket(`${proto}://${location.host}/api/agents/${S.agentId}/threads/${encodeURIComponent(S.threadId)}/chat`);
+    ws = new WebSocket(`${proto}://${location.host}/api/agents/${encodeURIComponent(S.agentId)}/threads/${encodeURIComponent(S.threadId)}/chat`);
 
     const buffers = { main: "", main_user: "", sub: {} };
     let rafPending = false;
@@ -1018,10 +1223,10 @@ function openChatWs(content) {
       const pane = $("#historyPane");
       const atBottom = pane && (pane.scrollHeight - pane.scrollTop - pane.clientHeight < 48);
       let html = "";
-      if (buffers.main_user) html += `<div class="user-msg-block"><div class="user-msg-head">🧑 <strong>用户</strong></div><blockquote class="user-msg-quote">${esc(buffers.main_user).replace(/\n/g, "<br>")}</blockquote></div>`;
+      if (buffers.main_user) html += `<div class="user-msg-block"><div class="user-msg-head">🧑 <strong>${t("用户")}</strong></div><blockquote class="user-msg-quote">${esc(buffers.main_user).replace(/\n/g, "<br>")}</blockquote></div>`;
       if (buffers.main) html += `<div>${renderMd(buffers.main)}</div>`;
       for (const [name, txt] of Object.entries(buffers.sub)) {
-        if (txt) html += `<div style="margin-top:12px;"><span class="sub-tag">🧩 子 agent · ${esc(name)}</span><div>${renderMd(txt)}</div></div>`;
+        if (txt) html += `<div style="margin-top:12px;"><span class="sub-tag">🧩 ${t("子 agent")} · ${esc(name)}</span><div>${renderMd(txt)}</div></div>`;
       }
       currentReplyEl.innerHTML = html;
       if (pane && (pinned || atBottom)) pane.scrollTop = pane.scrollHeight;
@@ -1040,19 +1245,19 @@ function openChatWs(content) {
           schedule();
           break;
         case "tool_call":
-          buffers.main += `\n\n🔧 **工具调用**: \`${esc(msg.name)}\`\n\n`;
+          buffers.main += `\n\n🔧 **${t("工具调用")}**: \`${esc(msg.name)}\`\n\n`;
           if (msg.args && Object.keys(msg.args).length) buffers.main += "```json\n" + JSON.stringify(msg.args, null, 2) + "\n```\n\n";
           schedule();
           break;
         case "tool_result":
-          buffers.main += `\n✅ **工具结果** (\`${esc(msg.name)}\`):\n\n${esc(msg.content)}\n\n`;
+          buffers.main += `\n✅ **${t("工具结果")}** (\`${esc(msg.name)}\`):\n\n${esc(msg.content)}\n\n`;
           schedule();
           break;
         case "subgraph_start":
           buffers.sub[msg.name] = buffers.sub[msg.name] || "";
           break;
         case "interrupt": {
-          const ans = await askConfirm(msg.prompt || "请确认");
+          const ans = await askConfirm(msg.prompt || t("请确认"));
           ws.send(JSON.stringify({ type: "resume", value: ans }));
           break;
         }
@@ -1066,7 +1271,7 @@ function openChatWs(content) {
           break;
       }
     };
-    ws.onerror = () => { toast("WebSocket 连接失败", true); resolve(false); };
+    ws.onerror = () => { toast(t("WebSocket 连接失败"), true); resolve(false); };
     ws.onclose = () => resolve(false);
   });
 }
@@ -1086,7 +1291,7 @@ function initDlBanner() {
   banner.className = "dl-banner";
   banner.style.display = "none";
   banner.innerHTML = `
-    <div class="dl-text">⬇ 正在下载 embedding 模型：<span id="dlModel"></span></div>
+    <div class="dl-text">⬇ ${t("正在下载 embedding 模型")}：<span id="dlModel"></span></div>
     <div class="dl-bar"><div class="dl-bar-fill" id="dlFill"></div></div>
     <div class="dl-info"><span id="dlSize"></span><span id="dlSpeed"></span></div>`;
   document.body.appendChild(banner);
@@ -1102,8 +1307,8 @@ async function pollDownload() {
       $("#dlModel").textContent = cur.model || "";
       if (cur.status === "preparing") {
         $("#dlFill").style.width = "0%";
-        $("#dlSize").textContent = cur.total ? `共 ${formatSize(cur.total)}` : "";
-        $("#dlSpeed").textContent = "正在准备 / 校验缓存…";
+        $("#dlSize").textContent = cur.total ? `${t("共")} ${formatSize(cur.total)}` : "";
+        $("#dlSpeed").textContent = t("正在准备 / 校验缓存…");
       } else {
         const pct = cur.total ? Math.round((cur.downloaded / cur.total) * 100) : 0;
         $("#dlFill").style.width = pct + "%";
