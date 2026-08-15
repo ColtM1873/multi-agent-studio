@@ -40,6 +40,13 @@ def _apply_hf_endpoint(endpoint: str) -> None:
     _c.HUGGINGFACE_CO_URL_TEMPLATE = ep + "/{repo_id}/resolve/{revision}/{filename}"
 
 
+def _disable_xet() -> None:
+    """禁用 huggingface_hub 的 Xet 分块下载（Xet CAS 国内被墙/401），改走常规 HTTP。"""
+    import huggingface_hub.constants as _c
+
+    _c.HF_HUB_DISABLE_XET = True
+
+
 def _load_embeddings(cfg: EmbeddingConfig) -> HuggingFaceEmbeddings:
     return HuggingFaceEmbeddings(
         model_name=cfg.model_name,
@@ -105,6 +112,7 @@ async def build_embeddings(cfg: EmbeddingConfig) -> HuggingFaceEmbeddings:
         _set_offline(True)
     else:
         _set_offline(False)
+        _disable_xet()
         _apply_hf_endpoint(cfg.hf_endpoint)
         await _ensure_model_downloaded(cfg)
     return await asyncio.to_thread(_load_embeddings, cfg)

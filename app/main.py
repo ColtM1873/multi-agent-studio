@@ -6,9 +6,10 @@ import asyncio
 import os
 import sys
 
-# huggingface_hub 在 import 时读取 HF_ENDPOINT 一次；这里先设默认国内镜像，
-# 避免 huggingface_hub 被 import 时锁定为官方站（per-config 镜像在 persistence 里动态覆盖）
+# huggingface_hub 在 import 时读取这些环境变量一次；先设默认国内镜像并禁用 Xet，
+# 避免 huggingface_hub 被 import 时锁定为官方站 / 走被墙的 Xet CAS（per-config 镜像在 persistence 里动态覆盖）
 os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 
 # psycopg 异步 / langgraph 在 Windows 上需要 SelectorEventLoop
 if sys.platform == "win32":
