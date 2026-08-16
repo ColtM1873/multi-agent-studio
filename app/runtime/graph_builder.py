@@ -28,6 +28,9 @@ SEARCH_MEMORY_THRESHOLD = 0.5
 ATTACH_MEMORY_THRESHOLD = 0.7
 
 def make_sub_agent_tool(name: str, description: str) -> StructuredTool:
+    if not name or not name.strip():
+        raise ValueError("子 agent 名称不能为空（name 为空会导致工具名回退为函数名）")
+
     async def fake_function(instruction: Annotated[str, "用自然语言描述你要委托给子 agent 的任务"]) -> str:
         pass
 

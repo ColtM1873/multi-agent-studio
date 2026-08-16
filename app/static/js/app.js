@@ -244,6 +244,7 @@ const I18N_EN = {
   "该模型供应商的 API 密钥（明文存本地配置）。": "API key for this model provider (stored in plain text locally).",
   "请填写 checkpoint 数据库名": "Please fill in the checkpoint database name",
   "请填写名称": "Please fill in the name",
+  "子 agent 名称不能为空": "Sub-agent name cannot be empty",
   "请确认": "Please confirm",
   "跟随最新输出 · 按住可拖动": "Follow latest output · hold to drag",
   "输入消息…": "Type a message…",
@@ -1057,6 +1058,7 @@ async function saveConfig(cfg, isNew, isDefault) {
     const payload = buildPayload(cfg);
     if (!payload.name) return toast(t("请填写名称"), true);
     if (!payload.postgres.checkpoint_database) return toast(t("请填写 checkpoint 数据库名"), true);
+    if (payload.sub_agents.some(s => !(s.name || "").trim())) return toast(t("子 agent 名称不能为空"), true);
 
     if (isDefault) { await api("/api/default", { method: "PUT", body: JSON.stringify(payload) }); toast(t("默认配置已保存")); goAgents(); }
     else if (isNew) { await api("/api/agents", { method: "POST", body: JSON.stringify(payload) }); toast(t("已创建")); goAgents(); }

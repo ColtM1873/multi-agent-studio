@@ -49,6 +49,11 @@ async def create_agent(cfg: MultiAgentConfig):
     if not cfg.agent_id.strip():
         raise HTTPException(status_code=400, detail="必须填写 agent_id（或名称）")
 
+    # 子 agent 名称不能为空（空 name 会让工具名回退为函数名，导致图构建报错）
+    for sub in cfg.sub_agents:
+        if not sub.name or not sub.name.strip():
+            raise HTTPException(status_code=400, detail="子 agent 名称不能为空")
+
     # 清理 agent_id 中的特殊字符，保证文件名与 URL 安全
     cfg.agent_id = slugify(cfg.agent_id)
     if not cfg.agent_id:
@@ -93,6 +98,11 @@ async def update_agent(agent_id: str, cfg: MultiAgentConfig):
         merged = apply_edits(existing, cfg)
     except EditRuleViolation as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+    # 子 agent 名称不能为空
+    for sub in merged.sub_agents:
+        if not sub.name or not sub.name.strip():
+            raise HTTPException(status_code=400, detail="子 agent 名称不能为空")
 
     # 对旧配置（state_messages_key 为 null）兜底生成并锁定
     assign_state_messages_keys(merged)
