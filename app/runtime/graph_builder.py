@@ -24,6 +24,8 @@ from app.config.models import (
 from app.runtime.prompts import MEMORY_ATTACH_MARKER, USER_MSG_PREFIX, ReAct_system_prompt, summery_promt
 from app.runtime.state_factory import make_main_state, make_sub_agent_state
 
+SEARCH_MEMORY_THRESHOLD = 0.5
+ATTACH_MEMORY_THRESHOLD = 0.7
 
 def make_sub_agent_tool(name: str, description: str) -> StructuredTool:
     async def fake_function(instruction: Annotated[str, "用自然语言描述你要委托给子 agent 的任务"]) -> str:
@@ -294,9 +296,28 @@ async def build_world(
         number_of_retrieval: Annotated[int, "how many semantic-similar memories to return"],
     ) -> str:
         """用于读取记忆，给出你想要读取什么记忆（采用语义相似匹配（Maximun Inner Product Search））支持一轮会话多次调用该工具"""
+        # SEARCH_MEMORY_THRESHOLD = 0.6
         outcome = await store.asearch(store_namespace, query=query, limit=number_of_retrieval)
         memories = ""
         for piece in outcome:
+            if piece.score is None or piece.score < SEARCH_MEMORY_THRESHOLD:
+                continue
+            for key, value in piece.value.items():
+                memories = memories + "\n" + key + ":" + value
+        return memories if memories else "还没有相关记忆存在。"
+
+    @langchain_tool
+    async def attach_memory_automatically(
+        query: Annotated[str, "what memory you want to read about?"],
+        number_of_retrieval: Annotated[int, "how many semantic-similar memories to return"],
+    ) -> str:
+        """用于读取记忆，给出你想要读取什么记忆（采用语义相似匹配（Maximun Inner Product Search））支持一轮会话多次调用该工具"""
+        # ATTACH_MEMORY_THRESHOLD = 0.6
+        outcome = await store.asearch(store_namespace, query=query, limit=number_of_retrieval)
+        memories = ""
+        for piece in outcome:
+            if piece.score is None or piece.score < ATTACH_MEMORY_THRESHOLD:
+                continue
             for key, value in piece.value.items():
                 memories = memories + "\n" + key + ":" + value
         return memories
@@ -326,7 +347,7 @@ async def build_world(
     async def merge_human_message_with_memory(state):
         human_message_content = state["extracted_human_message"]
         if memory_attach:
-            retrieved_memory = await read_memory.coroutine(
+            retrieved_memory = await attach_memory_automatically.coroutine(
                 query=human_message_content, number_of_retrieval=num_memories_attached
             )
         else:

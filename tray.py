@@ -107,14 +107,30 @@ def _update_download_menu(icon, item) -> None:
         time.sleep(1)
 
 
-def _open_browser_later(url: str, delay: float = 2.0) -> None:
-    """后台延迟打开浏览器（等服务先起来）。"""
+def _open_browser_later(url: str, timeout: float = 30.0) -> None:
+    """等服务就绪后再打开浏览器（避免过早打开导致「无法访问」）。"""
 
     def _open() -> None:
-        time.sleep(delay)
+        _wait_for_server(url, timeout)
         webbrowser.open(url)
 
     threading.Thread(target=_open, daemon=True).start()
+
+
+def _wait_for_server(url: str, timeout: float = 30.0) -> bool:
+    """轮询 /api/health 直到服务就绪或超时。"""
+    import urllib.request
+
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(f"{url}/api/health", timeout=1.0) as resp:
+                if resp.status == 200:
+                    return True
+        except Exception:
+            pass
+        time.sleep(0.5)
+    return False
 
 
 def main() -> None:
@@ -123,7 +139,7 @@ def main() -> None:
     server_thread = threading.Thread(target=_run_server, daemon=True, name="uvicorn")
     server_thread.start()
 
-    _open_browser_later(URL, 2.0)
+    _open_browser_later(URL, 30.0)
 
     download_item = pystray.MenuItem("下载模型：就绪", None, enabled=False)
     icon = pystray.Icon(

@@ -15,8 +15,8 @@ SETTINGS_FILE_NAME = "settings.json"
 
 
 class Settings(BaseModel):
-    memory_attach: bool = False
-    num_memories_attached: int = 3
+    memory_attach: bool = True
+    num_memories_attached: int = 5
     warn_unsaved_changes: bool = True
     notification_sound: str = "ber"
     send_key: str = "enter"

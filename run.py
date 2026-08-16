@@ -25,9 +25,27 @@ def _loop_factory():
     return None
 
 
-def open_browser_later(url: str, delay: float = 1.5):
+def _wait_for_server(url: str, timeout: float = 30.0) -> bool:
+    """轮询 /api/health 直到服务就绪或超时。"""
+    import urllib.request
+
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(f"{url}/api/health", timeout=1.0) as resp:
+                if resp.status == 200:
+                    return True
+        except Exception:
+            pass
+        time.sleep(0.5)
+    return False
+
+
+def open_browser_later(url: str, timeout: float = 30.0):
+    """等服务就绪后再打开浏览器（避免过早打开导致「无法访问」）。"""
+
     def _open():
-        time.sleep(delay)
+        _wait_for_server(url, timeout)
         webbrowser.open(url)
 
     threading.Thread(target=_open, daemon=True).start()
