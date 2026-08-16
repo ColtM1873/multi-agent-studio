@@ -409,7 +409,7 @@ function maskedPrefix(p) {
 }
 
 /* ================= Markdown 渲染器 ================= */
-const md = window.markdownit({
+const md = window.markdownit ? window.markdownit({
   html: true,
   linkify: true,
   breaks: true,
@@ -419,8 +419,8 @@ const md = window.markdownit({
     }
     return '<pre class="hljs"><code>' + md.utils.escapeHtml(code) + "</code></pre>";
   },
-});
-function renderMd(text) { return md.render(text || ""); }
+}) : null;
+function renderMd(text) { return md ? md.render(text || "") : esc(text || ""); }
 
 /* ================= 状态 ================= */
 const S = { view: "agents", agentId: null, agentName: null, threadId: null, editingDefault: false };
