@@ -16,6 +16,37 @@ const SSL_OPTIONS = [
   { v: "?sslmode=verify-full", label: "verify-full（校验 CA + 主机名）" },
 ];
 
+// 已内置集成（requirements 已安装对应 langchain 包）的 provider 前缀
+const OFFICIAL_PROVIDERS = ["openai", "anthropic", "deepseek", "google_genai"];
+// 可选采样参数：int 标记是否取整（top_k / max_tokens 为整数）；desc/range 为提示文案
+const EXTRA_PARAMS = [
+  {
+    key: "temperature", int: false, min: "0", step: "0.1",
+    desc: "采样温度：值越高输出越随机、越发散，越低越确定、越保守。",
+    range: "小数，常见范围 0.0 ~ 2.0",
+  },
+  {
+    key: "top_k", int: true, min: "1", step: "1",
+    desc: "Top-K 采样：仅从概率最高的 K 个 token 中抽样。",
+    range: "正整数，常见范围 1 ~ 100",
+  },
+  {
+    key: "top_p", int: false, min: "0", step: "0.01",
+    desc: "Top-P（核）采样：取累计概率达到 p 的最小 token 集合。",
+    range: "小数，范围 0.0 ~ 1.0",
+  },
+  {
+    key: "max_tokens", int: true, min: "1", step: "1",
+    desc: "单次回复的最大输出 token 数。",
+    range: "正整数",
+  },
+  {
+    key: "repetition_penalty", int: false, min: "0", step: "0.1",
+    desc: "重复惩罚：大于 1 时抑制已出现内容的重复。",
+    range: "小数，常见范围 0.0 ~ 2.0（1.0 为不惩罚）",
+  },
+];
+
 /* ================= i18n ================= */
 let lang = localStorage.getItem("lang") || "zh";
 const I18N_EN = {
@@ -136,14 +167,38 @@ const I18N_EN = {
   "显示名称，创建后不可改（与历史会话绑定）。": "Display name, cannot be changed after creation (bound to conversation history).",
   "显示输入示例（灰色占位字）": "Show input examples (gray placeholders)",
   "暂无会话": "No conversations yet",
+  "所有会话均已隐藏": "All conversations are hidden",
+  "隐藏": "Hide",
+  "取消隐藏": "Unhide",
+  "已隐藏": "Hidden",
+  "显示隐藏对话": "Show hidden conversations",
   "暂无用户消息": "No user messages yet",
   "有未保存的修改，确定离开？": "You have unsaved changes. Leave anyway?",
   "本地 postgres（localhost/127.0.0.1）自动用 sslmode=disable，省一次 SSL 握手。<br/><br/>云端或企业级 postgres 请选择对应 SSL 模式；「无字符串」表示交由数据库设置决定。": "Local postgres (localhost/127.0.0.1) automatically uses sslmode=disable to skip an SSL handshake.<br/><br/>For cloud or enterprise postgres, choose the corresponding SSL mode; 'No string' leaves it to the database settings.",
   "本地模型缓存路径，留空用 Hugging Face 默认缓存。": "Local model cache path; leave empty to use Hugging Face's default cache.",
   "本地连接，自动使用 sslmode=disable": "Local connection, auto sslmode=disable",
-  "格式「供应商:模型名」，如 deepseek:deepseek-v4-pro。": "Format 'provider:model', e.g. deepseek:deepseek-v4-pro.",
   "格式：postgresql://用户名:密码@主机:端口/<br/>例如 postgresql://user:passwd@localhost:5432/<br/><br/>下面会实时显示完整连接串。程序会根据主机自动判断是否本地回环。": "Format: postgresql://user:passwd@host:port/<br/>e.g. postgresql://user:passwd@localhost:5432/<br/><br/>The full connection string is shown below in real time. The program auto-detects loopback hosts.",
   "模型 provider": "Model provider",
+  "模型来源": "Model source",
+  "内置模型": "Built-in models",
+  "任意第三方模型（OpenAI 协议）": "Any third-party model (OpenAI protocol)",
+  "模型名": "Model name",
+  "格式「供应商:模型名」，如 deepseek:deepseek-v4-pro。已内置集成：openai / anthropic / deepseek / google_genai。": "Format 'provider:model', e.g. deepseek:deepseek-v4-pro. Built-in providers: openai / anthropic / deepseek / google_genai.",
+  "填纯模型名，不要带供应商前缀（如 deepseek:）。第三方模型的 llm-provider 固定为 openai，不能是其他。": "Bare model name only, without a provider prefix (e.g. no \"deepseek:\"). Third-party models always use \"openai\" as the llm-provider.",
+  "应指向 /v1 根路径，LangChain 会自动拼接 /chat/completions。不要把 /chat/completions 写进 base_url，否则会 404。": "Point to the /v1 root path; LangChain appends /chat/completions automatically. Do not include /chat/completions, or you'll get a 404.",
+  "额外选项": "Extra options",
+  "请确认你的模型 API 提供商支持 {param} 参数": "Please confirm your model's API provider supports the {param} parameter",
+  "该 provider 未内置集成，建议切换为「任意第三方模型（OpenAI 协议）」": "This provider is not built-in; switch to 'Any third-party model (OpenAI protocol)' instead.",
+  "采样温度：值越高输出越随机、越发散，越低越确定、越保守。": "Sampling temperature: higher = more random/creative, lower = more deterministic/conservative.",
+  "Top-K 采样：仅从概率最高的 K 个 token 中抽样。": "Top-K sampling: sample only from the K highest-probability tokens.",
+  "Top-P（核）采样：取累计概率达到 p 的最小 token 集合。": "Top-P (nucleus) sampling: take the smallest token set whose cumulative probability reaches p.",
+  "单次回复的最大输出 token 数。": "Maximum output tokens per reply.",
+  "重复惩罚：大于 1 时抑制已出现内容的重复。": "Repetition penalty: values > 1 discourage repeating already-generated content.",
+  "小数，常见范围 0.0 ~ 2.0": "Decimal, typical range 0.0 ~ 2.0",
+  "正整数，常见范围 1 ~ 100": "Positive integer, typical range 1 ~ 100",
+  "小数，范围 0.0 ~ 1.0": "Decimal, range 0.0 ~ 1.0",
+  "正整数": "Positive integer",
+  "小数，常见范围 0.0 ~ 2.0（1.0 为不惩罚）": "Decimal, typical range 0.0 ~ 2.0 (1.0 = no penalty)",
   "正在下载 embedding 模型": "Downloading embedding model",
   "正在准备 / 校验缓存…": "Preparing / verifying cache…",
   "此操作不可撤销。": "This action cannot be undone.",
@@ -646,6 +701,109 @@ function unitField(id, val, unit, extraLabel, tip) {
     </div></div>`;
 }
 
+/* 模型配置块：入口分支（内置/第三方）+ base_url + 额外采样参数 */
+function modelBlockHTML(llmName, mc, group) {
+  mc = mc || {};
+  const isCompat = mc.provider_mode === "openai_compatible";
+  const v = (x) => esc(x == null ? "" : x);
+  const optWarn = (label) => t("请确认你的模型 API 提供商支持 {param} 参数").replace("{param}", label);
+
+  const optChecks = EXTRA_PARAMS.map(p =>
+    `<label><input type="checkbox" data-opt="${p.key}" ${mc[p.key] != null ? "checked" : ""}> ${p.key}</label>`).join("");
+
+  const optFields = EXTRA_PARAMS.map(p =>
+    `<div class="field opt-field" data-optfield="${p.key}" style="${mc[p.key] != null ? "" : "display:none;"}">
+      <label>${p.key} <span class="opt-warn">⚠ ${optWarn(p.key)}</span></label>
+      <input data-mf="${p.key}" value="${v(mc[p.key])}" type="number" step="${p.step}" min="${p.min}">
+      <span class="hint">${t(p.desc)}</span>
+      <span class="hint">${t(p.range)}</span>
+    </div>`).join("");
+
+  return `
+    <div class="model-block" data-model-block>
+      <div class="model-source-card">
+        <div class="model-source-title">${t("模型来源")}</div>
+        <div class="radio-list">
+          <label class="radio-item"><input type="radio" name="${group}" value="official" ${!isCompat ? "checked" : ""}> ${t("内置模型")}</label>
+          <label class="radio-item"><input type="radio" name="${group}" value="openai_compatible" ${isCompat ? "checked" : ""}> ${t("任意第三方模型（OpenAI 协议）")}</label>
+        </div>
+      </div>
+      <div class="field">
+        <label><span data-model-label>${isCompat ? t("模型名") : t("模型 provider")}</span> <i class="info-icon">!<span class="tip" data-model-tip>${isCompat ? t("填纯模型名，不要带供应商前缀（如 deepseek:）。第三方模型的 llm-provider 固定为 openai，不能是其他。") : t("格式「供应商:模型名」，如 deepseek:deepseek-v4-pro。已内置集成：openai / anthropic / deepseek / google_genai。")}</span></i></label>
+        <input data-mf="llm_provider_name" value="${v(llmName)}">
+        <span class="warn-hint" data-official-warn style="display:none;">⚠ ${t("该 provider 未内置集成，建议切换为「任意第三方模型（OpenAI 协议）」")}</span>
+      </div>
+      <div class="field" data-baseurl-field style="${isCompat ? "" : "display:none;"}">
+        <label>base_url <i class="info-icon">!<span class="tip">${t("应指向 /v1 根路径，LangChain 会自动拼接 /chat/completions。不要把 /chat/completions 写进 base_url，否则会 404。")}</span></i></label>
+        <input data-mf="base_url" value="${v(mc.base_url)}" placeholder="https://api.openai.com/v1">
+      </div>
+      <div class="field full">
+        <details class="db-help">
+          <summary>${t("额外选项")}</summary>
+          <div class="opt-checks">${optChecks}</div>
+          ${optFields}
+        </details>
+      </div>
+    </div>`;
+}
+
+function bindModelBlock(root) {
+  const block = root.querySelector("[data-model-block]");
+  if (!block) return;
+  const llmInput = block.querySelector('[data-mf="llm_provider_name"]');
+  const baseUrlField = block.querySelector("[data-baseurl-field]");
+  const label = block.querySelector("[data-model-label]");
+  const tip = block.querySelector("[data-model-tip]");
+  const warn = block.querySelector("[data-official-warn]");
+  let mode = block.querySelector('input[type="radio"]:checked').value;
+
+  const checkOfficial = () => {
+    const raw = (llmInput.value || "").trim();
+    const prov = (raw.match(/^([^:\s]+):/) || [])[1] || "";
+    const ok = !prov || OFFICIAL_PROVIDERS.includes(prov.toLowerCase());
+    warn.style.display = ok ? "none" : "";
+  };
+
+  const setMode = (m) => {
+    mode = m;
+    const isCompat = m === "openai_compatible";
+    baseUrlField.style.display = isCompat ? "" : "none";
+    label.textContent = isCompat ? t("模型名") : t("模型 provider");
+    tip.textContent = isCompat
+      ? t("填纯模型名，不要带供应商前缀（如 deepseek:）。第三方模型的 llm-provider 固定为 openai，不能是其他。")
+      : t("格式「供应商:模型名」，如 deepseek:deepseek-v4-pro。已内置集成：openai / anthropic / deepseek / google_genai。");
+    if (isCompat) warn.style.display = "none";
+    else checkOfficial();
+  };
+
+  block.querySelectorAll('input[type="radio"]').forEach(r => r.addEventListener("change", () => setMode(r.value)));
+  llmInput.addEventListener("input", () => { if (mode === "official") checkOfficial(); });
+  llmInput.addEventListener("blur", () => { if (mode === "official") checkOfficial(); });
+  block.querySelectorAll("[data-opt]").forEach(cb => cb.addEventListener("change", () => {
+    const f = block.querySelector(`[data-optfield="${cb.dataset.opt}"]`);
+    if (f) f.style.display = cb.checked ? "" : "none";
+  }));
+}
+
+function collectModelCfg(root) {
+  const block = root.querySelector("[data-model-block]");
+  if (!block) return { provider_mode: "official", base_url: "" };
+  const mode = block.querySelector('input[type="radio"]:checked').value;
+  const out = {
+    provider_mode: mode,
+    base_url: mode === "openai_compatible" ? (block.querySelector('[data-mf="base_url"]').value || "").trim() : "",
+  };
+  for (const p of EXTRA_PARAMS) {
+    const cb = block.querySelector(`[data-opt="${p.key}"]`);
+    if (cb && cb.checked) {
+      const raw = (block.querySelector(`[data-mf="${p.key}"]`).value || "").trim();
+      const num = parseFloat(raw);
+      if (raw !== "" && !Number.isNaN(num)) out[p.key] = p.int ? Math.round(num) : num;
+    }
+  }
+  return out;
+}
+
 function buildForm(cfg, canEditSubs) {
   const form = $("#editorForm");
   const pg = cfg.postgres || {};
@@ -696,7 +854,7 @@ function buildForm(cfg, canEditSubs) {
     </div></div>
 
     <div class="form-card"><h4>${t("主 agent")}</h4><div class="form-grid">
-      <div class="field"><label>${t("模型 provider")} ${info("格式「供应商:模型名」，如 deepseek:deepseek-v4-pro。")}</label><input id="f_llm" value="${esc(main.llm_provider_name)}"></div>
+      ${modelBlockHTML(main.llm_provider_name, main.model, "main_mode")}
       <div class="field"><label>API Key ${info("该模型供应商的 API 密钥（明文存本地配置）。")}</label><input id="f_apikey" value="${esc(main.api_key)}" type="password"${ph("main_api_key")}></div>
       <div class="field"><label>${t("文件工具根目录")} ${info("主 agent 文件工具读写文件的根目录。")}</label><input id="f_rootdir" value="${esc(ft.root_dir)}"${ph("root_dir")}></div>
       <div class="field"><label>${t("embedding 模型")} <i class="info-icon">!<span class="tip">${t("无需提前下载，首次配置会自动下载（需连接 Hugging Face Hub，国内网络可能连不上）。若已离线缓存过，可在下方缓存目录直接使用。")}</span></i></label>${embSelect}</div>
@@ -755,6 +913,8 @@ function buildForm(cfg, canEditSubs) {
   (cfg.sub_agents || []).forEach((s, i) => subsBox.appendChild(subAgentBox(s, i, canEditSubs)));
   const addBtn = $("#addSubBtn");
   if (addBtn) addBtn.onclick = () => subsBox.appendChild(subAgentBox(null, Date.now(), true));
+
+  bindModelBlock(form);
 }
 
 function subAgentBox(s, key, canEdit) {
@@ -767,7 +927,7 @@ function subAgentBox(s, key, canEdit) {
     <div class="sub-head"><span class="name">🧩 ${t("子 agent")}</span>${canEdit ? `<button class="btn danger small" data-act="remove" type="button">${t("移除")}</button>` : ""}</div>
     <div class="form-grid">
       <div class="field"><label>${t("名称")} name ${info("子 agent 标识，会作为工具名呈现给主 agent，创建后不可改。")}</label><input data-f="name" value="${esc(s.name)}" ${canEdit ? "" : "disabled"}${ph("sub_name")}></div>
-      <div class="field"><label>${t("模型 provider")} ${info("格式「供应商:模型名」，如 deepseek:deepseek-v4-pro。")}</label><input data-f="llm_provider_name" value="${esc(s.llm_provider_name)}"></div>
+      ${modelBlockHTML(s.llm_provider_name, s.model, `sub_${key}_mode`)}
       <div class="field"><label>API Key ${info("该子 agent 所用模型的 API 密钥（明文存本地配置）。")}</label><input data-f="api_key" value="${esc(s.api_key)}" type="password"${ph("sub_api_key")}></div>
       <div class="field"><label>${t("清空历史阈值")} ${info("该子 agent 累计 token 达到该值时清空历史（只保留最近几轮）。")}</label><div class="unit-row"><input data-f="flush" value="${esc(flush.v)}" type="number"><select data-f="flush_unit"><option value="万" ${flush.u === "万" ? "selected" : ""}>${t("万")}</option><option value="千" ${flush.u === "千" ? "selected" : ""}>${t("千")}</option></select></div></div>
       <div class="field"><label>${t("保留轮数")} ${info("清空历史时保留最近几轮对话。")}</label><input data-f="reserve" value="${esc((s.summary || {}).reserve_message_round)}" type="number"></div>
@@ -784,6 +944,8 @@ function subAgentBox(s, key, canEdit) {
   addM.className = "btn small add-mcp"; addM.type = "button"; addM.textContent = "+ " + t("添加 MCP");
   addM.onclick = () => mcpBox.insertBefore(mcpRow(null, Date.now()), addM);
   mcpBox.appendChild(addM);
+
+  bindModelBlock(div);
   return div;
 }
 
@@ -830,7 +992,8 @@ function collectSubAgent(box) {
     description: get("description"),
     system_prompt: get("system_prompt"),
     api_key: get("api_key"),
-    llm_provider_name: get("llm_provider_name"),
+    llm_provider_name: box.querySelector('[data-mf="llm_provider_name"]').value,
+    model: collectModelCfg(box),
     mcp_servers: mcp,
     summary: {
       flush_history_tokenwise: unitToTok(box.querySelector('[data-f="flush"]').value, box.querySelector('[data-f="flush_unit"]').value),
@@ -864,7 +1027,8 @@ function buildPayload(cfg) {
     main_agent: {
       system_prompt: val("f_prompt"),
       api_key: val("f_apikey"),
-      llm_provider_name: val("f_llm"),
+      llm_provider_name: $("#editorForm").querySelector('[data-mf="llm_provider_name"]').value,
+      model: collectModelCfg($("#editorForm")),
       file_tools: { root_dir: val("f_rootdir") },
       embedding: {
         model_name: embModelValue(),
@@ -905,6 +1069,8 @@ async function renderThreadsView() {
   app.innerHTML = topbar("返回", () => goAgents());
   const view = document.createElement("div");
   view.className = "view";
+  view.style.display = "flex";
+  view.style.flexDirection = "column";
   app.appendChild(view);
   bindBack(() => goAgents());
   view.innerHTML = `
@@ -913,34 +1079,65 @@ async function renderThreadsView() {
       <div class="spacer" style="flex:1;"></div>
       <button class="btn primary" id="newThreadBtn">+ ${t("新建会话")}</button>
     </div>
-    <div id="threadsBox"><div class="muted">${t("加载中…")}</div></div>`;
+    <div id="threadsBox" style="flex:1;overflow:auto;min-height:0;"><div class="muted">${t("加载中…")}</div></div>
+    <div class="threads-footer" id="threadsFooter" style="display:none;">
+      <label class="toggle"><input type="checkbox" id="showHiddenChk"><span class="track"></span></label>
+      <span class="sw-label" id="showHiddenLabel"></span>
+    </div>`;
   $("#newThreadBtn").onclick = () => { const n = prompt(t("新会话名称：")); if (n && n.trim()) goChat(S.agentId, S.agentName, n.trim()); };
 
   let threads;
   try { threads = await api(`/api/agents/${encodeURIComponent(S.agentId)}/threads`); }
   catch (e) { $("#threadsBox").innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
 
-  if (!threads.length) {
-    $("#threadsBox").innerHTML = `<div class="empty"><div class="big">🧵</div>${t("暂无会话")}<br/><br/><button class="btn primary" id="nt2">+ ${t("新建会话")}</button></div>`;
-    const n = $("#nt2"); if (n) n.onclick = () => { const nm = prompt(t("新会话名称：")); if (nm && nm.trim()) goChat(S.agentId, S.agentName, nm.trim()); };
-    return;
+  const hiddenKey = "hidden_threads_" + S.agentId;
+  const showKey = "show_hidden_" + S.agentId;
+  const hiddenSet = new Set(JSON.parse(localStorage.getItem(hiddenKey) || "[]"));
+  const showHidden = localStorage.getItem(showKey) === "1";
+  const hiddenCount = threads.filter(t => hiddenSet.has(t.thread_id)).length;
+  const visible = showHidden ? threads : threads.filter(t => !hiddenSet.has(t.thread_id));
+
+  // footer：有会话时始终显示（即使全部隐藏），让用户能切换「显示隐藏对话」
+  if (threads.length) {
+    $("#showHiddenChk").checked = showHidden;
+    $("#showHiddenLabel").textContent = t("显示隐藏对话") + (hiddenCount ? `（${hiddenCount}）` : "");
+    $("#threadsFooter").style.display = "flex";
   }
 
-  $("#threadsBox").innerHTML = `
-    <div style="background:var(--surface);border-radius:var(--radius);overflow:hidden;box-shadow:var(--shadow);">
-      ${threads.map(t => `
-        <div class="thread-row" data-tid="${esc(t.thread_id)}">
-          <span class="tid">${esc(t.thread_id)}</span>
-          <span class="meta"><small>${t.checkpoints} checkpoints</small><small>${esc(t.last_updated || "")}</small></span>
-          <button class="btn danger small" data-del="${esc(t.thread_id)}">${t("删除")}</button>
-        </div>`).join("")}
-    </div>`;
+  if (!visible.length) {
+    const msg = hiddenCount ? t("所有会话均已隐藏") : t("暂无会话");
+    $("#threadsBox").innerHTML = `<div class="empty"><div class="big">🧵</div>${msg}<br/><br/><button class="btn primary" id="nt2">+ ${t("新建会话")}</button></div>`;
+    const n = $("#nt2"); if (n) n.onclick = () => { const nm = prompt(t("新会话名称：")); if (nm && nm.trim()) goChat(S.agentId, S.agentName, nm.trim()); };
+  } else {
+    $("#threadsBox").innerHTML = `
+      <div style="background:var(--surface);border-radius:var(--radius);overflow:hidden;box-shadow:var(--shadow);">
+        ${visible.map(th => {
+          const hidden = hiddenSet.has(th.thread_id);
+          return `
+          <div class="thread-row ${hidden ? "thread-hidden" : ""}" data-tid="${esc(th.thread_id)}">
+            <span class="tid">${esc(th.thread_id)}</span>
+            <span class="meta"><small>${th.checkpoints} checkpoints</small><small>${esc(th.last_updated || "")}</small>${hidden ? `<small class="hidden-tag">${t("已隐藏")}</small>` : ""}</span>
+            <button class="btn hide small" data-hide="${esc(th.thread_id)}">${hidden ? t("取消隐藏") : t("隐藏")}</button>
+            <button class="btn danger small" data-del="${esc(th.thread_id)}">${t("删除")}</button>
+          </div>`;
+        }).join("")}
+      </div>`;
 
-  $$("#threadsBox .thread-row").forEach(row => {
-    const tid = row.dataset.tid;
-    row.onclick = () => goChat(S.agentId, S.agentName, tid);
-    row.querySelector("[data-del]").onclick = (e) => { e.stopPropagation(); deleteThread(tid); };
-  });
+    $$("#threadsBox .thread-row").forEach(row => {
+      const tid = row.dataset.tid;
+      row.onclick = () => goChat(S.agentId, S.agentName, tid);
+      row.querySelector("[data-del]").onclick = (e) => { e.stopPropagation(); deleteThread(tid); };
+      row.querySelector("[data-hide]").onclick = (e) => {
+        e.stopPropagation();
+        if (hiddenSet.has(tid)) hiddenSet.delete(tid);
+        else hiddenSet.add(tid);
+        localStorage.setItem(hiddenKey, JSON.stringify([...hiddenSet]));
+        renderThreadsView();
+      };
+    });
+  }
+
+  $("#showHiddenChk").onchange = (e) => { localStorage.setItem(showKey, e.target.checked ? "1" : "0"); renderThreadsView(); };
 }
 async function deleteThread(tid) {
   if (!confirm(`${t("确定删除会话")}「${tid}」？${t("此操作不可撤销。")}`)) return;

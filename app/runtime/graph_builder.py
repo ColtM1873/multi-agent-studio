@@ -14,7 +14,13 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 from langgraph.graph.state import CompiledStateGraph, StateGraph, START, END
 from langgraph.types import Command, RetryPolicy, interrupt
 
-from app.config.models import DEFAULT_HTML_REPORT_PROMPT, MCPServerConfig, MultiAgentConfig, SubAgentConfig
+from app.config.models import (
+    DEFAULT_HTML_REPORT_PROMPT,
+    MCPServerConfig,
+    ModelConfig,
+    MultiAgentConfig,
+    SubAgentConfig,
+)
 from app.runtime.prompts import MEMORY_ATTACH_MARKER, USER_MSG_PREFIX, ReAct_system_prompt, summery_promt
 from app.runtime.state_factory import make_main_state, make_sub_agent_state
 
@@ -45,6 +51,41 @@ def build_mcp_client(servers: list[MCPServerConfig]) -> MultiServerMCPClient:
     return MultiServerMCPClient(config)
 
 
+def _init_model(llm_provider_name: str, api_key: str, model_cfg: ModelConfig):
+    """按 ModelConfig 构造 init_chat_model。
+
+    - 标准采样参数（temperature/top_p/max_tokens）作为顶层 kwargs 传入。
+    - 非标准参数（top_k/repetition_penalty）通过 model_kwargs 透传，
+      交由底层 API 自行解释（各 provider 支持程度不一）。
+    - openai_compatible 模式固定 model_provider="openai" 并携带 base_url。
+    """
+    kwargs: dict[str, Any] = {}
+    if model_cfg.temperature is not None:
+        kwargs["temperature"] = model_cfg.temperature
+    if model_cfg.top_p is not None:
+        kwargs["top_p"] = model_cfg.top_p
+    if model_cfg.max_tokens is not None:
+        kwargs["max_tokens"] = model_cfg.max_tokens
+
+    model_kwargs: dict[str, Any] = {}
+    if model_cfg.top_k is not None:
+        model_kwargs["top_k"] = model_cfg.top_k
+    if model_cfg.repetition_penalty is not None:
+        model_kwargs["repetition_penalty"] = model_cfg.repetition_penalty
+    if model_kwargs:
+        kwargs["model_kwargs"] = model_kwargs
+
+    if model_cfg.provider_mode == "openai_compatible":
+        return init_chat_model(
+            model=llm_provider_name,
+            api_key=api_key,
+            model_provider="openai",
+            base_url=model_cfg.base_url,
+            **kwargs,
+        )
+    return init_chat_model(model=llm_provider_name, api_key=api_key, **kwargs)
+
+
 async def build_sub_agent(
     spec: SubAgentConfig,
     tools_mcp_client,
@@ -67,7 +108,7 @@ async def build_sub_agent(
         raise RuntimeError(
             f"子 agent [{sub_agent_name}] 的 MCP 服务器连接失败：[{servers}]，请确认这些服务已启动。原始错误: {e}"
         ) from e
-    model = init_chat_model(model=llm_provider_name, api_key=model_api_key)
+    model = _init_model(llm_provider_name, model_api_key, spec.model)
     model_with_tools = model.bind_tools(tools)
     tools_by_name = {tool.name: tool for tool in tools}
 
@@ -130,7 +171,7 @@ async def build_sub_agent(
 
     async def receiving_instruction(state):
         instruction = state["instructions_for_subagents"][sub_agent_name]["instruction"]
-        return {state_messages_key: [HumanMessage(content=instruction)]}
+        return {state_messages_key: [HumanMessage(content=instruction + "\n")]}
 
     builder.add_node("receiving_instruction", receiving_instruction)
 
@@ -233,8 +274,8 @@ async def build_world(
     sub_agent_dict = {
         sub_agent_specs_list[i].name: sub_agent_sub_graphs[i] for i in range(num_of_sub_agents)
     }
+    main_model = _init_model(main_spec.llm_provider_name, main_spec.api_key, main_spec.model)
 
-    main_model = init_chat_model(model=main_spec.llm_provider_name, api_key=main_spec.api_key)
     main_system_prompt = main_spec.system_prompt
 
     # ── 记忆工具 ────────────────────────────────────────────────

@@ -55,6 +55,25 @@ class SubSummaryConfig(BaseModel):
     reserve_message_round: int = 4
 
 
+class ModelConfig(BaseModel):
+    """LLM 生成配置：模型来源分支 + 可选采样参数。
+
+    provider_mode 决定 init_chat_model 的构造方式：
+    - official: 直接用 ``provider:model`` 前缀走内置 provider。
+    - openai_compatible: 固定 model_provider="openai" 并携带 base_url，
+      适配任意符合 OpenAI Chat Completion 协议的第三方模型。
+    采样参数为 None 表示不传（沿用模型默认值）。
+    """
+
+    provider_mode: Literal["official", "openai_compatible"] = "official"
+    base_url: str = ""
+    temperature: float | None = None
+    top_k: int | None = None
+    top_p: float | None = None
+    max_tokens: int | None = None
+    repetition_penalty: float | None = None
+
+
 class FileToolsConfig(BaseModel):
     root_dir: str = ""
 
@@ -72,6 +91,7 @@ class MainAgentConfig(BaseModel):
     system_prompt: str
     api_key: str
     llm_provider_name: str = "deepseek:deepseek-v4-pro"
+    model: ModelConfig = Field(default_factory=ModelConfig)
     file_tools: FileToolsConfig = Field(default_factory=FileToolsConfig)
     embedding: EmbeddingConfig = Field(default_factory=EmbeddingConfig)
     summary: SummaryConfig = Field(default_factory=SummaryConfig)
@@ -85,6 +105,7 @@ class SubAgentConfig(BaseModel):
     system_prompt: str
     api_key: str
     llm_provider_name: str = "deepseek:deepseek-v4-pro"
+    model: ModelConfig = Field(default_factory=ModelConfig)
     mcp_servers: list[MCPServerConfig] = Field(default_factory=list)
     # 消息通道键名，由系统自动生成（父子消息键必须唯一），用户不填。
     state_messages_key: str | None = None

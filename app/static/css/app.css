@@ -70,6 +70,8 @@ body {
 .btn.primary:hover { background: var(--primary-hover); }
 .btn.danger { color: var(--danger); border-color: #fecaca; }
 .btn.danger:hover { background: #fef2f2; }
+.btn.hide { color: var(--primary); border-color: #c7d2fe; }
+.btn.hide:hover { background: #eef2ff; }
 .btn.small { padding: 5px 10px; font-size: 13px; border-radius: 8px; }
 .btn:disabled { opacity: .5; cursor: not-allowed; }
 
@@ -343,3 +345,29 @@ body {
 .toggle .track::before { content: ""; position: absolute; width: 18px; height: 18px; left: 2px; top: 2px; background: #fff; border-radius: 50%; transition: .2s; box-shadow: 0 1px 2px rgba(0,0,0,.2); }
 .toggle input:checked + .track { background: var(--primary); }
 .toggle input:checked + .track::before { transform: translateX(18px); }
+
+/* 模型配置块 */
+.model-block { display: contents; }
+.model-source-card {
+  grid-column: 1 / -1;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: #fbfbfd;
+  padding: 12px 14px;
+}
+.model-source-title { font-size: 13px; color: var(--text-muted); font-weight: 600; margin-bottom: 10px; }
+.radio-list { display: flex; flex-direction: column; gap: 10px; }
+.radio-item { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 14px; font-weight: 500; }
+.radio-item input { accent-color: var(--primary); }
+.opt-checks { display: flex; gap: 16px; flex-wrap: wrap; margin: 8px 0; }
+.opt-checks label { display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 13px; }
+.opt-checks input { accent-color: var(--primary); }
+.opt-field { padding: 8px 12px; background: #fbfbfd; border: 1px dashed var(--border); border-radius: 8px; }
+.opt-warn { font-size: 11px; color: #b45309; font-weight: 400; }
+.warn-hint { font-size: 12px; color: #b45309; }
+
+/* 会话隐藏 */
+.thread-row.thread-hidden { opacity: .5; }
+.hidden-tag { color: var(--text-muted); background: #f1f5f9; padding: 1px 6px; border-radius: 5px; font-size: 11px; }
+.threads-footer { padding-top: 14px; margin-top: 14px; border-top: 1px solid var(--border); display: flex; align-items: center; gap: 10px; }
+.threads-footer .sw-label { font-size: 13px; color: var(--text-muted); }
