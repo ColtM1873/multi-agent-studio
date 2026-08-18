@@ -409,17 +409,63 @@ function maskedPrefix(p) {
 }
 
 /* ================= Markdown 渲染器 ================= */
-const md = window.markdownit ? window.markdownit({
-  html: true,
-  linkify: true,
-  breaks: true,
-  highlight(code, lang) {
-    if (lang && window.hljs && window.hljs.getLanguage(lang)) {
-      try { return '<pre class="hljs"><code>' + window.hljs.highlight(code, { language: lang }).value + "</code></pre>"; } catch (e) {}
-    }
-    return '<pre class="hljs"><code>' + md.utils.escapeHtml(code) + "</code></pre>";
-  },
-}) : null;
+const md = window.markdownit ? (() => {
+  const inst = window.markdownit({
+    html: true,
+    linkify: true,
+    breaks: true,
+    highlight(code, lang) {
+      if (lang && window.hljs && window.hljs.getLanguage(lang)) {
+        try { return '<pre class="hljs"><code>' + window.hljs.highlight(code, { language: lang }).value + "</code></pre>"; } catch (e) {}
+      }
+      return '<pre class="hljs"><code>' + inst.utils.escapeHtml(code) + "</code></pre>";
+    },
+  });
+  if (window.texmath && window.katex) {
+    try {
+      inst.use(window.texmath, {
+        engine: window.katex,
+        delimiters: ["dollars", "brackets"],
+        katexOptions: { throwOnError: false },
+      });
+    } catch (e) {}
+  }
+  if (window.katex) {
+    // 让独占一行的 \[...\] / $$...$$ 成为 paragraph 的终止符：
+    // 否则 paragraph 会连行吞掉它们，texmath 的 block 规则没机会在行首生效。
+    inst.block.ruler.before("paragraph", "math_block_line", function (state, startLine, endLine, silent) {
+      const start = state.bMarks[startLine] + state.tShift[startLine];
+      const max = state.eMarks[startLine];
+      const line = state.src.slice(start, max);
+      const isBracketStart = line.length >= 2 && line.charCodeAt(0) === 92 && line[1] === "[";
+      const isDollarStart = line.startsWith("$$");
+      if (!isBracketStart && !isDollarStart) return false;
+      // 行首是公式开始（单行或多行）就终止 paragraph，交给 texmath 的 block 规则跨行匹配
+      if (silent) return true;
+      let content = null;
+      if (isBracketStart && line.endsWith("\\]") && line.length >= 4) {
+        content = line.slice(2, -2);
+      } else if (isDollarStart && line.endsWith("$$") && line.length >= 4) {
+        content = line.slice(2, -2);
+      }
+      if (content === null) return false;
+      const token = state.push("math_block_line", "math", 0);
+      token.content = content;
+      token.block = true;
+      token.map = [startLine, startLine + 1];
+      state.line = startLine + 1;
+      return true;
+    }, { alt: ["paragraph", "reference", "blockquote", "list"] });
+    inst.renderer.rules.math_block_line = function (tokens, idx) {
+      try {
+        return window.katex.renderToString(tokens[idx].content, { displayMode: true, throwOnError: false });
+      } catch (e) {
+        return esc(tokens[idx].content);
+      }
+    };
+  }
+  return inst;
+})() : null;
 function renderMd(text) { return md ? md.render(text || "") : esc(text || ""); }
 
 /* ================= 状态 ================= */

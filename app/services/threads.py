@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 
-from psycopg import AsyncConnection
+from psycopg import AsyncConnection, errors
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 from app.services.history_render import (
@@ -26,22 +26,26 @@ async def test_connection(conn_string: str, timeout: int = 5) -> tuple[bool, str
 
 
 async def list_threads(conn_string: str) -> list[dict]:
-    async with await AsyncConnection.connect(conn_string) as conn:
-        await conn.set_autocommit(True)
-        rows = await conn.execute(
-            """
-            SELECT thread_id,
-                   COUNT(*) AS checkpoints,
-                   to_char(MAX((checkpoint->>'ts')::timestamptz), 'YYYY-MM-DD HH24:MI') AS last_updated
-            FROM checkpoints
-            GROUP BY thread_id
-            ORDER BY last_updated DESC
-            """
-        )
-        return [
-            {"thread_id": r[0], "checkpoints": r[1], "last_updated": r[2]}
-            for r in await rows.fetchall()
-        ]
+    try:
+        async with await AsyncConnection.connect(conn_string) as conn:
+            await conn.set_autocommit(True)
+            rows = await conn.execute(
+                """
+                SELECT thread_id,
+                       COUNT(*) AS checkpoints,
+                       to_char(MAX((checkpoint->>'ts')::timestamptz), 'YYYY-MM-DD HH24:MI') AS last_updated
+                FROM checkpoints
+                GROUP BY thread_id
+                ORDER BY last_updated DESC
+                """
+            )
+            return [
+                {"thread_id": r[0], "checkpoints": r[1], "last_updated": r[2]}
+                for r in await rows.fetchall()
+            ]
+    except errors.UndefinedTable:
+        # checkpoints 表尚未创建（该 agent 还没进行过任何对话）→ 视为空列表
+        return []
 
 
 async def delete_thread(conn_string: str, thread_id: str) -> None:
