@@ -197,7 +197,7 @@ def _render_ai(msg, w, show_reasoning, show_tool_calls):
     output_tok = um.get("output_tokens", "?")
     cache = um.get("input_token_details", {}).get("cache_read", 0)
 
-    w('<div style="border-left: 3px solid #4CAF50; padding-left: 12px;">\n\n')
+    w('<div class="ai-msg-block" style="border-left: 3px solid #4CAF50; padding-left: 12px;">\n\n')
     w("**🤖 Assistant**  ")
     tok_str = f"↑{input_tok} ↓{output_tok}"
     if cache:

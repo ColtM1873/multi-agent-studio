@@ -1209,22 +1209,80 @@ function toggleMsgDrawer(e) {
   const panel = document.createElement("div");
   panel.className = "msg-drawer-panel";
   const blocks = $$("#historyMd .user-msg-block");
+  const aiBlocks = $$("#historyMd .ai-msg-block");
   if (!blocks.length) {
     panel.innerHTML = `<div class="muted" style="padding:8px;">${t("暂无用户消息")}</div>`;
   } else {
-    panel.innerHTML = blocks.map((b, i) => {
+    // 每个 AI 回复块归属到它前面的那个用户消息
+    const aiOwner = new Array(aiBlocks.length).fill(-1);
+    let ui = -1;
+    aiBlocks.forEach((ai, k) => {
+      while (ui + 1 < blocks.length && (blocks[ui + 1].compareDocumentPosition(ai) & Node.DOCUMENT_POSITION_FOLLOWING)) ui++;
+      aiOwner[k] = ui;
+    });
+
+    const headingMap = {};
+    const items = blocks.map((b, i) => {
       const summary = b.dataset.summary || "";
       const raw = summary || (b.querySelector(".user-msg-quote")?.innerText || "");
       const first = raw.split("\n").map(s => s.trim()).filter(Boolean)[0] || "";
       const label = first.length > 24 ? first.slice(0, 24) + "…" : first;
-      return `<div class="msg-drawer-item" data-i="${i}">${esc(label || t("（空消息）"))}</div>`;
+
+      const headings = [];
+      aiBlocks.forEach((ai, k) => {
+        if (aiOwner[k] !== i) return;
+        ai.querySelectorAll("h1, h2, h3, h4, h5, h6").forEach(h => headings.push(h));
+      });
+      let topLevel = 0;
+      headings.forEach(h => {
+        const lv = parseInt(h.tagName.slice(1), 10);
+        if (!topLevel || lv < topLevel) topLevel = lv;
+      });
+      const topHeadings = topLevel ? headings.filter(h => parseInt(h.tagName.slice(1), 10) === topLevel) : [];
+      if (topHeadings.length) headingMap[i] = topHeadings;
+      return { i, label: label || t("（空消息）"), expandable: topHeadings.length > 0 };
+    });
+
+    panel.innerHTML = items.map(({ i, label, expandable }) => {
+      const caret = expandable
+        ? `<span class="msg-drawer-caret" data-caret="${i}">▸</span>`
+        : `<span class="msg-drawer-caret msg-drawer-caret-empty"></span>`;
+      const labelHtml = `<span class="msg-drawer-label">${esc(label)}</span>`;
+      const subHtml = expandable
+        ? `<div class="msg-drawer-sub" data-sub="${i}" style="display:none;">${headingMap[i].map((h, j) => {
+            const txt = (h.innerText || "").split("\n").map(s => s.trim()).filter(Boolean)[0] || "";
+            const short = txt.length > 28 ? txt.slice(0, 28) + "…" : txt;
+            return `<div class="msg-drawer-sub-item" data-i="${i}" data-h="${j}">${esc(short)}</div>`;
+          }).join("")}</div>`
+        : "";
+      return `<div class="msg-drawer-item" data-i="${i}">${caret}${labelHtml}</div>${subHtml}`;
     }).join("");
-    panel.querySelectorAll(".msg-drawer-item").forEach(item => {
-      item.onclick = () => {
-        const el = $$("#historyMd .user-msg-block")[+item.dataset.i];
+
+    panel.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      const caret = ev.target.closest(".msg-drawer-caret");
+      if (caret && caret.dataset.caret != null) {
+        const sub = panel.querySelector(`.msg-drawer-sub[data-sub="${caret.dataset.caret}"]`);
+        if (sub) {
+          const open = sub.style.display !== "none";
+          sub.style.display = open ? "none" : "";
+          caret.textContent = open ? "▸" : "▾";
+        }
+        return;
+      }
+      const subItem = ev.target.closest(".msg-drawer-sub-item");
+      if (subItem) {
+        const el = headingMap[+subItem.dataset.i]?.[+subItem.dataset.h];
         if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
         panel.remove();
-      };
+        return;
+      }
+      const item = ev.target.closest(".msg-drawer-item");
+      if (item) {
+        const el = blocks[+item.dataset.i];
+        if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+        panel.remove();
+      }
     });
   }
   btn.appendChild(panel);
@@ -1469,7 +1527,7 @@ function openChatWs(content) {
       const atBottom = pane && (pane.scrollHeight - pane.scrollTop - pane.clientHeight < 48);
       let html = "";
       if (buffers.main_user) html += `<div class="user-msg-block"><div class="user-msg-head">🧑 <strong>${t("用户")}</strong></div><blockquote class="user-msg-quote">${esc(buffers.main_user).replace(/\n/g, "<br>")}</blockquote></div>`;
-      if (buffers.main) html += `<div>${renderMd(buffers.main)}</div>`;
+      if (buffers.main) html += `<div class="ai-msg-block">${renderMd(buffers.main)}</div>`;
       for (const [name, txt] of Object.entries(buffers.sub)) {
         if (txt) html += `<div style="margin-top:12px;"><span class="sub-tag">🧩 ${t("子 agent")} · ${esc(name)}</span><div>${renderMd(txt)}</div></div>`;
       }
