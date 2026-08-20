@@ -981,11 +981,10 @@ async function openSettings() {
           <input type="text" id="set_export_html_path" value="${esc(s.export_html_path || "")}" placeholder="例如 C:\\Agent_WorkPlace\\html">
         </div>
       </div>
-      <div class="modal-actions">
-        <button class="btn" id="setAdvanced">${t("进阶设置")}</button>
-        <button class="btn" id="setColors">${t("字体颜色设置")}</button>
-        <button class="btn" id="setHtmlConfig" style="${s.export_html ? "" : "display:none;"}">${t("HTML 转换配置表")}</button>
-        <div class="spacer" style="flex:1;"></div>
+      <div class="modal-actions" style="justify-content:flex-start; flex-wrap:wrap;">
+        <button class="btn small" id="setAdvanced">${t("进阶设置")}</button>
+        <button class="btn small" id="setColors">${t("字体颜色设置")}</button>
+        <button class="btn small" id="setHtmlConfig" style="${s.export_html ? "" : "display:none;"}">${t("HTML 转换配置表")}</button>
       </div>
       <div class="modal-actions" style="margin-top:10px;">
         <div class="spacer" style="flex:1;"></div>

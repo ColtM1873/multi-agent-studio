@@ -283,7 +283,7 @@ body {
 .modal { background: var(--surface); border-radius: 16px; padding: 24px; width: 420px; box-shadow: var(--shadow-lg); }
 .modal h3 { margin: 0 0 12px; font-size: 16px; }
 .modal .modal-body { font-size: 14px; line-height: 1.6; color: var(--text); white-space: pre-wrap; }
-.modal .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
+.modal .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; flex-wrap: wrap; }
 
 /* ── 消息统计（横向小字） ───────────────── */
 .msg-stats {
