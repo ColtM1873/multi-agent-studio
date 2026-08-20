@@ -285,6 +285,51 @@ const I18N_EN = {
   "📖 不会建数据库？点这里看步骤": "📖 Don't know how to create a database? Click for steps",
   "、": ", ",
   "。": ".",
+  "转换 HTML": "Export HTML",
+  "HTML 输出路径": "HTML output path",
+  "HTML 转换配置表": "HTML export config",
+  "已生成 HTML": "HTML generated",
+  "开启后，浏览历史时每条助手回复下方会出现「转换 HTML」按钮，可将该回复转成可打印的 HTML 文件。": "When enabled, an 'Export HTML' button appears below each assistant reply in history to convert it into a printable HTML file.",
+  "生成 HTML 文件的输出目录（绝对路径）。": "Output directory (absolute path) where generated HTML files are saved.",
+  "调整导出 HTML 的纸张、预览与配色。": "Adjust page, preview and color settings of the exported HTML.",
+  "纸张": "Page",
+  "纸张尺寸": "Page size",
+  "上边距": "Top margin",
+  "右边距": "Right margin",
+  "下边距": "Bottom margin",
+  "左边距": "Left margin",
+  "预览": "Preview",
+  "最大宽度": "Max width",
+  "画布背景色": "Canvas color",
+  "内边距": "Page padding",
+  "配色": "Colors",
+  "页面背景": "Page background",
+  "链接": "Link",
+  "标题 1": "Heading 1",
+  "标题 2": "Heading 2",
+  "标题 3": "Heading 3",
+  "标题 4": "Heading 4",
+  "标题 5": "Heading 5",
+  "标题 6": "Heading 6",
+  "加粗": "Bold",
+  "斜体": "Italic",
+  "引用文字": "Blockquote text",
+  "引用边框": "Blockquote border",
+  "水平线": "Horizontal rule",
+  "列表标记": "List marker",
+  "行内代码背景": "Inline code background",
+  "代码块背景": "Code block background",
+  "代码块边框": "Code block border",
+  "表格边框": "Table border",
+  "表头背景": "Table header background",
+  "代码·关键字": "Code keyword",
+  "代码·字符串": "Code string",
+  "代码·注释": "Code comment",
+  "代码·数字": "Code number",
+  "代码·内建": "Code builtin",
+  "代码·函数": "Code function",
+  "代码·常量": "Code constant",
+  "代码·变量": "Code variable",
 };
 const t = (s) => (lang === "zh" || !I18N_EN[s]) ? s : I18N_EN[s];
 function setLang(l) {
@@ -468,6 +513,98 @@ function applyColors() {
     if (v) root.style.setProperty(f.css, v);
     else root.style.removeProperty(f.css);
   }
+}
+
+/* HTML 导出（md2print） */
+const HTML_CFG_SCHEMA = [
+  { section: "纸张", items: [
+    { p: ["page", "size"], label: "纸张尺寸", type: "text" },
+    { p: ["page", "margin", "top"], label: "上边距", type: "text" },
+    { p: ["page", "margin", "right"], label: "右边距", type: "text" },
+    { p: ["page", "margin", "bottom"], label: "下边距", type: "text" },
+    { p: ["page", "margin", "left"], label: "左边距", type: "text" },
+  ]},
+  { section: "预览", items: [
+    { p: ["preview", "max_width"], label: "最大宽度", type: "text" },
+    { p: ["preview", "canvas"], label: "画布背景色", type: "color" },
+    { p: ["preview", "page_padding"], label: "内边距", type: "text" },
+  ]},
+  { section: "配色", items: [
+    { p: ["colors", "text"], label: "正文", type: "color" },
+    { p: ["colors", "background"], label: "页面背景", type: "color" },
+    { p: ["colors", "link"], label: "链接", type: "color" },
+    { p: ["colors", "h1"], label: "标题 1", type: "color" },
+    { p: ["colors", "h2"], label: "标题 2", type: "color" },
+    { p: ["colors", "h3"], label: "标题 3", type: "color" },
+    { p: ["colors", "h4"], label: "标题 4", type: "color" },
+    { p: ["colors", "h5"], label: "标题 5", type: "color" },
+    { p: ["colors", "h6"], label: "标题 6", type: "color" },
+    { p: ["colors", "strong"], label: "加粗", type: "color" },
+    { p: ["colors", "em"], label: "斜体", type: "color" },
+    { p: ["colors", "blockquote_text"], label: "引用文字", type: "color" },
+    { p: ["colors", "blockquote_border"], label: "引用边框", type: "color" },
+    { p: ["colors", "hr"], label: "水平线", type: "color" },
+    { p: ["colors", "list_marker"], label: "列表标记", type: "color" },
+    { p: ["colors", "inline_code_bg"], label: "行内代码背景", type: "color" },
+    { p: ["colors", "code_bg"], label: "代码块背景", type: "color" },
+    { p: ["colors", "code_border"], label: "代码块边框", type: "color" },
+    { p: ["colors", "table_border"], label: "表格边框", type: "color" },
+    { p: ["colors", "table_header_bg"], label: "表头背景", type: "color" },
+    { p: ["colors", "code_keyword"], label: "代码·关键字", type: "color" },
+    { p: ["colors", "code_string"], label: "代码·字符串", type: "color" },
+    { p: ["colors", "code_comment"], label: "代码·注释", type: "color" },
+    { p: ["colors", "code_number"], label: "代码·数字", type: "color" },
+    { p: ["colors", "code_builtin"], label: "代码·内建", type: "color" },
+    { p: ["colors", "code_function"], label: "代码·函数", type: "color" },
+    { p: ["colors", "code_constant"], label: "代码·常量", type: "color" },
+    { p: ["colors", "code_variable"], label: "代码·变量", type: "color" },
+  ]},
+];
+
+function cfgGet(obj, path) {
+  let c = obj;
+  for (const k of path) { if (c == null) return ""; c = c[k]; }
+  return c == null ? "" : c;
+}
+function cfgSet(obj, path, val) {
+  let c = obj;
+  for (let i = 0; i < path.length - 1; i++) {
+    if (c[path[i]] == null) c[path[i]] = {};
+    c = c[path[i]];
+  }
+  c[path[path.length - 1]] = val;
+}
+
+function b64ToUtf8(b64) {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return new TextDecoder("utf-8").decode(bytes);
+}
+
+async function exportHtml(markdown) {
+  try {
+    const r = await api(`/api/agents/${encodeURIComponent(S.agentId)}/threads/${encodeURIComponent(S.threadId)}/export-html`, {
+      method: "POST", body: JSON.stringify({ markdown }),
+    });
+    toast(`${t("已生成 HTML")}：${r.path}`);
+  } catch (e) { toast(e.message, true); }
+}
+
+function injectExportButtons(rootEl) {
+  if (!settingsCache || !settingsCache.export_html) return;
+  $$(".ai-msg-block[data-md-b64]", rootEl).forEach(block => {
+    if (block.querySelector(".export-html-btn")) return;
+    const wrap = document.createElement("div");
+    wrap.className = "export-html-row";
+    const btn = document.createElement("button");
+    btn.className = "btn small export-html-btn";
+    btn.type = "button";
+    btn.textContent = `🖨 ${t("转换 HTML")}`;
+    btn.onclick = () => exportHtml(b64ToUtf8(block.dataset.mdB64));
+    wrap.appendChild(btn);
+    block.appendChild(wrap);
+  });
 }
 
 /* 未保存提醒 */
@@ -834,9 +971,23 @@ async function openSettings() {
         <span class="sw-label">${t("裸公式识别")} <i class="info-icon">!<span class="tip">${t("模型偶尔不带 $ 或 \\( 分隔符直接输出公式（如 s_{t+1}=f(s_t,a_t)）。开启后自动识别并渲染，适合科研 / 数理场景；日常场景建议关闭，以免误判普通文本。")}</span></i></span>
         <label class="toggle"><input type="checkbox" id="set_baremath" ${s.bare_math_detect ? "checked" : ""}><span class="track"></span></label>
       </div>
+      <div class="switch-row">
+        <span class="sw-label">🖨 ${t("转换 HTML")} <i class="info-icon">!<span class="tip">${t("开启后，浏览历史时每条助手回复下方会出现「转换 HTML」按钮，可将该回复转成可打印的 HTML 文件。")}</span></i></span>
+        <label class="toggle"><input type="checkbox" id="set_export_html" ${s.export_html ? "checked" : ""}><span class="track"></span></label>
+      </div>
+      <div id="exportHtmlFields" style="${s.export_html ? "" : "display:none;"}">
+        <div class="switch-row">
+          <span class="sw-label">${t("HTML 输出路径")} <i class="info-icon">!<span class="tip">${t("生成 HTML 文件的输出目录（绝对路径）。")}</span></i></span>
+          <input type="text" id="set_export_html_path" value="${esc(s.export_html_path || "")}" placeholder="例如 C:\\Agent_WorkPlace\\html">
+        </div>
+      </div>
       <div class="modal-actions">
         <button class="btn" id="setAdvanced">${t("进阶设置")}</button>
         <button class="btn" id="setColors">${t("字体颜色设置")}</button>
+        <button class="btn" id="setHtmlConfig" style="${s.export_html ? "" : "display:none;"}">${t("HTML 转换配置表")}</button>
+        <div class="spacer" style="flex:1;"></div>
+      </div>
+      <div class="modal-actions" style="margin-top:10px;">
         <div class="spacer" style="flex:1;"></div>
         <button class="btn" id="setCancel">${t("取消")}</button>
         <button class="btn primary" id="setSave">${t("保存")}</button>
@@ -845,6 +996,11 @@ async function openSettings() {
   document.body.appendChild(mask);
   mask.querySelector("#set_mem").addEventListener("change", e => { mask.querySelector("#set_memnum").disabled = !e.target.checked; });
   mask.querySelector("#set_sound").addEventListener("change", e => playSound(e.target.value));
+  mask.querySelector("#set_export_html").addEventListener("change", e => {
+    const on = e.target.checked;
+    mask.querySelector("#exportHtmlFields").style.display = on ? "" : "none";
+    mask.querySelector("#setHtmlConfig").style.display = on ? "" : "none";
+  });
 
   const sendSel = mask.querySelector("#set_send");
   const newlineSel = mask.querySelector("#set_newline");
@@ -861,6 +1017,7 @@ async function openSettings() {
   mask.querySelector("#setCancel").onclick = () => mask.remove();
   mask.querySelector("#setAdvanced").onclick = () => { mask.remove(); openAdvancedSettings(); };
   mask.querySelector("#setColors").onclick = () => { mask.remove(); openColorSettings(); };
+  mask.querySelector("#setHtmlConfig").onclick = () => { mask.remove(); openHtmlConfigSettings(); };
   mask.querySelector("#setSave").onclick = async () => {
     try {
       await saveSettings({
@@ -873,6 +1030,8 @@ async function openSettings() {
         newline_key: newlineSel.value,
         show_placeholders: mask.querySelector("#set_ph").checked,
         bare_math_detect: mask.querySelector("#set_baremath").checked,
+        export_html: mask.querySelector("#set_export_html").checked,
+        export_html_path: mask.querySelector("#set_export_html_path").value,
       });
       mask.remove();
       toast(t("设置已保存"));
@@ -963,6 +1122,68 @@ async function openColorSettings() {
     applyColors();
     mask.remove();
     toast(t("设置已保存"));
+  };
+}
+
+async function openHtmlConfigSettings() {
+  let cfg, defaults, s;
+  try {
+    const r = await api("/api/export-html-config");
+    cfg = r.config; defaults = r.defaults;
+  } catch (e) { toast(e.message, true); return; }
+  try { s = await getSettings(); } catch (e) { s = {}; }
+  const mask = document.createElement("div");
+  mask.className = "modal-mask";
+
+  const fid = (path) => "cfg-" + path.join("_");
+  const rows = HTML_CFG_SCHEMA.map(sec => {
+    const items = sec.items.map(it => {
+      const id = fid(it.p);
+      const val = cfgGet(cfg, it.p);
+      const input = it.type === "color"
+        ? `<input type="color" id="${id}" value="${esc(String(val))}">`
+        : `<input type="text" id="${id}" value="${esc(String(val))}">`;
+      return `<div class="switch-row"><span class="sw-label">${t(it.label)}</span>${input}</div>`;
+    }).join("");
+    return `<div class="muted" style="margin:10px 0 2px;">${t(sec.section)}</div>${items}`;
+  }).join("");
+
+  mask.innerHTML = `
+    <div class="modal" style="width:520px;max-height:82vh;overflow:auto;">
+      <h3>🖨 ${t("HTML 转换配置表")}</h3>
+      <div class="muted" style="margin-bottom:4px;">${t("调整导出 HTML 的纸张、预览与配色。")}</div>
+      ${rows}
+      <div class="modal-actions">
+        <button class="btn" id="cfgReset">${t("恢复默认")}</button>
+        <div class="spacer" style="flex:1;"></div>
+        <button class="btn" id="cfgCancel">${t("取消")}</button>
+        <button class="btn primary" id="cfgSave">${t("保存")}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(mask);
+
+  const collect = () => {
+    const out = {};
+    HTML_CFG_SCHEMA.forEach(sec => sec.items.forEach(it => {
+      const el = mask.querySelector("#" + fid(it.p));
+      if (el) cfgSet(out, it.p, el.value);
+    }));
+    return out;
+  };
+
+  mask.querySelector("#cfgCancel").onclick = () => mask.remove();
+  mask.querySelector("#cfgReset").onclick = () => {
+    HTML_CFG_SCHEMA.forEach(sec => sec.items.forEach(it => {
+      const el = mask.querySelector("#" + fid(it.p));
+      if (el) el.value = cfgGet(defaults, it.p);
+    }));
+  };
+  mask.querySelector("#cfgSave").onclick = async () => {
+    try {
+      await saveSettings({ ...s, export_html_config: collect() });
+      mask.remove();
+      toast(t("设置已保存"));
+    } catch (e) { toast(e.message, true); }
   };
 }
 
@@ -1746,6 +1967,7 @@ async function renderChatView() {
   try {
     const h = await api(`/api/agents/${encodeURIComponent(S.agentId)}/threads/${encodeURIComponent(S.threadId)}/history`);
     historyEl.innerHTML = renderMd(h.markdown);
+    injectExportButtons(historyEl);
     scrollToLastUserMsg();
   } catch (e) { historyEl.innerHTML = `<div class="muted">${t("（无历史）")}</div>`; }
 
@@ -1767,6 +1989,7 @@ async function renderChatView() {
     try {
       const h = await api(`/api/agents/${encodeURIComponent(S.agentId)}/threads/${encodeURIComponent(S.threadId)}/subgraphs/${encodeURIComponent(sel.value)}/history`);
       $("#historyMd").innerHTML = renderMd(h.markdown);
+      injectExportButtons($("#historyMd"));
     } catch (e) { toast(e.message, true); }
   };
 

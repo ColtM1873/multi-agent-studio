@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import io
 from datetime import datetime
 
@@ -29,6 +30,7 @@ def render_checkpoint_to_markdown_string(
     reasoning_expanded: bool = True,
     tool_call_expanded: bool = False,
     tool_result_expanded: bool = False,
+    export_html: bool = False,
 ) -> str:
     buf = io.StringIO()
     render_checkpoint_to_markdown(
@@ -42,6 +44,7 @@ def render_checkpoint_to_markdown_string(
         reasoning_expanded=reasoning_expanded,
         tool_call_expanded=tool_call_expanded,
         tool_result_expanded=tool_result_expanded,
+        export_html=export_html,
     )
     return buf.getvalue()
 
@@ -58,6 +61,7 @@ def render_checkpoint_to_markdown(
     reasoning_expanded: bool = True,
     tool_call_expanded: bool = False,
     tool_result_expanded: bool = False,
+    export_html: bool = False,
 ):
     w = md_file.write
     cp = cp_tuple.checkpoint
@@ -106,6 +110,7 @@ def render_checkpoint_to_markdown(
         reasoning_expanded=reasoning_expanded,
         tool_call_expanded=tool_call_expanded,
         tool_result_expanded=tool_result_expanded,
+        export_html=export_html,
     )
 
 
@@ -120,6 +125,7 @@ def render_messages(
     reasoning_expanded: bool = True,
     tool_call_expanded: bool = False,
     tool_result_expanded: bool = False,
+    export_html: bool = False,
 ):
     """渲染一个消息列表（供单 checkpoint 与聚合子图历史复用）。"""
     w = md_file.write
@@ -135,7 +141,7 @@ def render_messages(
             _render_human(msg, w, human_index)
             human_index += 1
         elif msg_type == "AIMessage":
-            _render_ai(msg, w, show_reasoning, show_tool_calls, reasoning_expanded, tool_call_expanded)
+            _render_ai(msg, w, show_reasoning, show_tool_calls, reasoning_expanded, tool_call_expanded, export_html)
         elif msg_type == "ToolMessage":
             _render_tool(msg, w, max_tool_result_lines, tool_result_expanded)
         elif msg_type == "SystemMessage":
@@ -173,6 +179,7 @@ def render_messages_to_markdown_string(
     reasoning_expanded: bool = True,
     tool_call_expanded: bool = False,
     tool_result_expanded: bool = False,
+    export_html: bool = False,
 ) -> str:
     buf = io.StringIO()
     render_messages(
@@ -185,6 +192,7 @@ def render_messages_to_markdown_string(
         reasoning_expanded=reasoning_expanded,
         tool_call_expanded=tool_call_expanded,
         tool_result_expanded=tool_result_expanded,
+        export_html=export_html,
     )
     return buf.getvalue()
 
@@ -210,7 +218,18 @@ def _render_human(msg, w, idx: int):
     w("</div>\n")
 
 
-def _render_ai(msg, w, show_reasoning, show_tool_calls, reasoning_expanded=True, tool_call_expanded=False):
+def _extract_ai_text(content) -> str:
+    """提取 AI 消息的正文（text），不包含思考（reasoning）与工具调用。"""
+    if isinstance(content, str):
+        return content
+    parts = []
+    for block in content:
+        if isinstance(block, dict) and block.get("type") == "text":
+            parts.append(block.get("text", ""))
+    return "\n\n".join(parts)
+
+
+def _render_ai(msg, w, show_reasoning, show_tool_calls, reasoning_expanded=True, tool_call_expanded=False, export_html=False):
     content = msg.content
     tool_calls = getattr(msg, "tool_calls", []) or []
     um = getattr(msg, "usage_metadata", {}) or {}
@@ -218,7 +237,14 @@ def _render_ai(msg, w, show_reasoning, show_tool_calls, reasoning_expanded=True,
     output_tok = um.get("output_tokens", "?")
     cache = um.get("input_token_details", {}).get("cache_read", 0)
 
-    w('<div class="ai-msg-block" style="border-left: 3px solid #4CAF50; padding-left: 12px;">\n\n')
+    data_attr = ""
+    if export_html:
+        raw_text = _extract_ai_text(content)
+        if raw_text and raw_text.strip():
+            b64 = base64.b64encode(raw_text.encode("utf-8")).decode("ascii")
+            data_attr = f' data-md-b64="{b64}"'
+
+    w(f'<div class="ai-msg-block" style="border-left: 3px solid #4CAF50; padding-left: 12px;"{data_attr}>\n\n')
     w("**🤖 Assistant**  ")
     tok_str = f"↑{input_tok} ↓{output_tok}"
     if cache:

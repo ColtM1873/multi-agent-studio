@@ -33,6 +33,7 @@ def _load_history_settings(config_dir) -> dict:
         "reasoning_expanded": settings.reasoning_expanded,
         "tool_call_expanded": settings.tool_call_expanded,
         "tool_result_expanded": settings.tool_result_expanded,
+        "export_html": settings.export_html,
     }
 
 

@@ -201,6 +201,11 @@ body {
 /* 工具结果正文着色 */
 .tool-result-body { color: var(--tool-result-color, #475569); }
 
+/* HTML 导出按钮（每条助手消息底部） */
+.export-html-row { text-align: right; margin-top: 10px; }
+.export-html-btn { opacity: .85; }
+.export-html-btn:hover { opacity: 1; }
+
 /* 正文颜色（默认跟随 github-markdown 的 --fgColor-default） */
 .md-body.markdown-body { color: var(--content-color, var(--fgColor-default, #1f2328)); }
 

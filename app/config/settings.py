@@ -28,6 +28,10 @@ class Settings(BaseModel):
     reasoning_expanded: bool = True
     tool_call_expanded: bool = False
     tool_result_expanded: bool = False
+    # HTML 导出（md2print）：默认开启；输出路径为空时需先在设置里填写
+    export_html: bool = True
+    export_html_path: str = ""
+    export_html_config: dict = {}
 
 
 def settings_path(config_dir: Path | str) -> Path:

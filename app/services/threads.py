@@ -63,6 +63,7 @@ async def get_thread_history_markdown(
     reasoning_expanded: bool = True,
     tool_call_expanded: bool = False,
     tool_result_expanded: bool = False,
+    export_html: bool = False,
 ) -> str | None:
     async with AsyncPostgresSaver.from_conn_string(conn_string) as cp:
         await cp.setup()
@@ -74,6 +75,7 @@ async def get_thread_history_markdown(
         reasoning_expanded=reasoning_expanded,
         tool_call_expanded=tool_call_expanded,
         tool_result_expanded=tool_result_expanded,
+        export_html=export_html,
     )
 
 
@@ -107,6 +109,7 @@ async def get_subgraph_history_by_node(
     reasoning_expanded: bool = True,
     tool_call_expanded: bool = False,
     tool_result_expanded: bool = False,
+    export_html: bool = False,
 ) -> str | None:
     """按子 agent 名聚合其所有调用（namespace）的历史，按时间排序合并。"""
     async with await AsyncConnection.connect(conn_string) as conn:
@@ -151,4 +154,5 @@ async def get_subgraph_history_by_node(
         reasoning_expanded=reasoning_expanded,
         tool_call_expanded=tool_call_expanded,
         tool_result_expanded=tool_result_expanded,
+        export_html=export_html,
     )

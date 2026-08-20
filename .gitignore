@@ -23,3 +23,8 @@ logs/
 
 # 内部交接文档（不入库）
 inner_docs/
+
+# md2print 项目：仅入库源码与静态资源，忽略示例与缓存
+md2print/__pycache__/
+md2print/example.html
+md2print/example.md
