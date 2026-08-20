@@ -49,26 +49,53 @@ async def run_agent_stream(
         user_input = Command(resume=resume_value)
 
 
+async def _emit_message_stream(message, source: str, emit: Emit):
+    """按时间顺序 emit 一条消息的思考过程与正文。
+
+    直接迭代 message 的原始协议事件（replay-buffer），这样思考与正文会严格按
+    模型输出的先后顺序交错发出（推理模型会出现「正文—思考—正文」的停顿），
+    而不是像 projection 那样先整段思考、再整段正文。普通模型没有 reasoning
+    事件，自动跳过。
+    """
+    async for event in message:
+        if event.get("event") != "content-block-delta":
+            continue
+        delta = event.get("delta")
+        if not isinstance(delta, dict):
+            block = event.get("content_block")
+            if isinstance(block, dict):
+                btype = block.get("type")
+                if btype == "text":
+                    delta = {"type": "text-delta", "text": block.get("text", "")}
+                elif btype == "reasoning":
+                    delta = {"type": "reasoning-delta", "reasoning": block.get("reasoning", "")}
+        if not isinstance(delta, dict):
+            continue
+        dtype = delta.get("type", "")
+        if dtype == "text-delta":
+            text = delta.get("text", "")
+            if text:
+                await emit({"type": "text", "source": source, "text": text})
+        elif dtype == "reasoning-delta":
+            r = delta.get("reasoning", "")
+            if r:
+                await emit({"type": "reasoning", "source": source, "text": r})
+
+
 async def _consume_messages(stream, emit: Emit):
-    """主图（主 agent）的文本流。"""
+    """主图（主 agent）的文本流（含思考过程）。"""
     async for message in stream.messages:
         is_user = message.node == "merge_human_message_with_memory"
-        async for token in message.text:
-            await emit({
-                "type": "text",
-                "source": "main_user" if is_user else "main",
-                "text": token,
-            })
+        await _emit_message_stream(message, "main_user" if is_user else "main", emit)
 
 
 async def _consume_subgraphs(stream, emit: Emit):
-    """子图（子 agent）的文本流。"""
+    """子图（子 agent）的文本流（含思考过程）。"""
     async for subgraph in stream.subgraphs:
         name = subgraph.graph_name
         await emit({"type": "subgraph_start", "name": name})
         async for message in subgraph.messages:
-            async for token in message.text:
-                await emit({"type": "text", "source": f"sub:{name}", "text": token})
+            await _emit_message_stream(message, f"sub:{name}", emit)
         await emit({"type": "subgraph_end", "name": name})
 
 

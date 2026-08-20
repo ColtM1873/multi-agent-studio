@@ -26,6 +26,9 @@ def render_checkpoint_to_markdown_string(
     max_tool_result_lines: int = 50,
     messages_key=None,
     title: str = "Checkpoint",
+    reasoning_expanded: bool = True,
+    tool_call_expanded: bool = False,
+    tool_result_expanded: bool = False,
 ) -> str:
     buf = io.StringIO()
     render_checkpoint_to_markdown(
@@ -36,6 +39,9 @@ def render_checkpoint_to_markdown_string(
         max_tool_result_lines=max_tool_result_lines,
         messages_key=messages_key,
         title=title,
+        reasoning_expanded=reasoning_expanded,
+        tool_call_expanded=tool_call_expanded,
+        tool_result_expanded=tool_result_expanded,
     )
     return buf.getvalue()
 
@@ -49,6 +55,9 @@ def render_checkpoint_to_markdown(
     max_tool_result_lines: int = 50,
     messages_key=None,
     title: str = "Checkpoint",
+    reasoning_expanded: bool = True,
+    tool_call_expanded: bool = False,
+    tool_result_expanded: bool = False,
 ):
     w = md_file.write
     cp = cp_tuple.checkpoint
@@ -94,6 +103,9 @@ def render_checkpoint_to_markdown(
         show_reasoning=show_reasoning,
         show_tool_calls=show_tool_calls,
         max_tool_result_lines=max_tool_result_lines,
+        reasoning_expanded=reasoning_expanded,
+        tool_call_expanded=tool_call_expanded,
+        tool_result_expanded=tool_result_expanded,
     )
 
 
@@ -105,6 +117,9 @@ def render_messages(
     show_reasoning: bool = True,
     show_tool_calls: bool = True,
     max_tool_result_lines: int = 50,
+    reasoning_expanded: bool = True,
+    tool_call_expanded: bool = False,
+    tool_result_expanded: bool = False,
 ):
     """渲染一个消息列表（供单 checkpoint 与聚合子图历史复用）。"""
     w = md_file.write
@@ -120,9 +135,9 @@ def render_messages(
             _render_human(msg, w, human_index)
             human_index += 1
         elif msg_type == "AIMessage":
-            _render_ai(msg, w, show_reasoning, show_tool_calls)
+            _render_ai(msg, w, show_reasoning, show_tool_calls, reasoning_expanded, tool_call_expanded)
         elif msg_type == "ToolMessage":
-            _render_tool(msg, w, max_tool_result_lines)
+            _render_tool(msg, w, max_tool_result_lines, tool_result_expanded)
         elif msg_type == "SystemMessage":
             w("<details><summary>📌 SystemMessage</summary>\n\n")
             w(f"{_escape_md(str(msg.content))}\n\n")
@@ -155,6 +170,9 @@ def render_messages_to_markdown_string(
     show_reasoning: bool = True,
     show_tool_calls: bool = True,
     max_tool_result_lines: int = 50,
+    reasoning_expanded: bool = True,
+    tool_call_expanded: bool = False,
+    tool_result_expanded: bool = False,
 ) -> str:
     buf = io.StringIO()
     render_messages(
@@ -164,6 +182,9 @@ def render_messages_to_markdown_string(
         show_reasoning=show_reasoning,
         show_tool_calls=show_tool_calls,
         max_tool_result_lines=max_tool_result_lines,
+        reasoning_expanded=reasoning_expanded,
+        tool_call_expanded=tool_call_expanded,
+        tool_result_expanded=tool_result_expanded,
     )
     return buf.getvalue()
 
@@ -189,7 +210,7 @@ def _render_human(msg, w, idx: int):
     w("</div>\n")
 
 
-def _render_ai(msg, w, show_reasoning, show_tool_calls):
+def _render_ai(msg, w, show_reasoning, show_tool_calls, reasoning_expanded=True, tool_call_expanded=False):
     content = msg.content
     tool_calls = getattr(msg, "tool_calls", []) or []
     um = getattr(msg, "usage_metadata", {}) or {}
@@ -211,8 +232,12 @@ def _render_ai(msg, w, show_reasoning, show_tool_calls):
             btype = block.get("type", "")
             if btype == "reasoning" and show_reasoning:
                 r = block.get("reasoning", "")
-                w("<details>\n<summary>🧠 思考过程</summary>\n\n")
-                w(f"{r}\n\n")
+                open_attr = " open" if reasoning_expanded else ""
+                # 换行转成 <br>：避免 literal 换行在 markdown-it 的 HTML 块里被当成空行，
+                # 导致后续内容被包进 <p> 而出现「普通换行变空一行、空一行变空两行」的翻倍。
+                r_html = _escape_html(str(r)).replace("\r\n", "\n").replace("\n", "<br>")
+                w(f'<details class="reasoning-block"{open_attr}>\n<summary>🧠 思考过程</summary>\n\n')
+                w(f'<div class="reasoning-body">{r_html}</div>\n\n')
                 w("</details>\n\n")
             elif btype == "text":
                 w(f"{block.get('text', '')}\n\n")
@@ -224,13 +249,14 @@ def _render_ai(msg, w, show_reasoning, show_tool_calls):
     if show_tool_calls and tool_calls:
         for tc in tool_calls:
             tc_name = tc.get("name", "?")
-            w(f"<details>\n<summary>🔧 `{tc_name}`</summary>\n\n")
+            open_attr = " open" if tool_call_expanded else ""
+            w(f"<details{open_attr}>\n<summary>🔧 `{tc_name}`</summary>\n\n")
             w(f"```json\n{_format_args(tc.get('args', {}))}\n```\n")
             w("</details>\n\n")
     w("</div>\n\n")
 
 
-def _render_tool(msg, w, max_lines):
+def _render_tool(msg, w, max_lines, tool_result_expanded=False):
     name = getattr(msg, "name", "") or "unknown_tool"
     content = msg.content
     if isinstance(content, list):
@@ -246,14 +272,15 @@ def _render_tool(msg, w, max_lines):
     content_str = str(content)
     lines = content_str.split("\n")
     line_count = len(lines)
+    open_attr = " open" if tool_result_expanded else ""
     if line_count <= max_lines:
-        w(f"<details open>\n<summary>✅ Tool 结果: `{name}` ({line_count} 行)</summary>\n\n")
-        w(f"{content_str}\n\n")
+        w(f"<details{open_attr}>\n<summary>✅ Tool 结果: `{name}` ({line_count} 行)</summary>\n\n")
+        w(f'<div class="tool-result-body">{content_str}</div>\n\n')
         w("</details>\n\n")
     else:
         preview = "\n".join(lines[:max_lines])
-        w(f"<details>\n<summary>✅ Tool 结果: `{name}` ({line_count} 行 — 点击展开)</summary>\n\n")
-        w(f"{preview}\n\n")
+        w(f"<details{open_attr}>\n<summary>✅ Tool 结果: `{name}` ({line_count} 行 — 点击展开)</summary>\n\n")
+        w(f'<div class="tool-result-body">{preview}</div>\n\n')
         w(f"...（共 {line_count} 行，仅显示前 {max_lines} 行）\n\n")
         w("</details>\n\n")
 

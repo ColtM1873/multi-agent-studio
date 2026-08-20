@@ -10,6 +10,8 @@
   --radius: 14px;
   --shadow: 0 1px 3px rgba(0,0,0,.08), 0 8px 24px rgba(0,0,0,.06);
   --shadow-lg: 0 8px 40px rgba(0,0,0,.12);
+  --reasoning-color: #6b7280;
+  --tool-result-color: #475569;
 }
 
 * { box-sizing: border-box; }
@@ -186,6 +188,22 @@ body {
   border-radius: 8px; padding: 2px 10px; font-size: 12px; font-weight: 600; margin-bottom: 6px;
 }
 
+/* ── 思考过程 ─────────────────────────── */
+.reasoning-block { margin: 10px 0; border: 1px dashed var(--border); border-radius: 10px; background: #fbfbfd; overflow: hidden; }
+.reasoning-block summary { cursor: pointer; padding: 6px 12px; font-size: calc(var(--md-font-size, 15px) * var(--reasoning-font-scale, 1) * 0.85); color: var(--text-muted); user-select: none; list-style: none; }
+.reasoning-block summary::-webkit-details-marker { display: none; }
+.reasoning-body {
+  padding: 8px 14px; border-top: 1px dashed var(--border); color: var(--reasoning-color, #6b7280);
+  font-size: calc(var(--md-font-size, 15px) * var(--reasoning-font-scale, 1));
+  line-height: 1.65; white-space: pre-wrap;
+}
+
+/* 工具结果正文着色 */
+.tool-result-body { color: var(--tool-result-color, #475569); }
+
+/* 正文颜色（默认跟随 github-markdown 的 --fgColor-default） */
+.md-body.markdown-body { color: var(--content-color, var(--fgColor-default, #1f2328)); }
+
 /* 空状态 */
 .empty { text-align: center; color: var(--text-muted); padding: 60px 20px; }
 .empty .big { font-size: 40px; margin-bottom: 10px; }
@@ -272,12 +290,13 @@ body {
 /* ── 用户消息块 ─────────────────────────── */
 .user-msg-block { margin: 14px 0; }
 .user-msg-head { font-size: 14px; color: #2563eb; font-weight: 700; margin-bottom: 4px; }
-.user-msg-quote { margin: 0; padding: 8px 14px; border-left: 3px solid #93c5fd; background: #eff6ff; border-radius: 0 8px 8px 0; color: var(--text); font-size: var(--md-font-size, 15px); line-height: 1.6; }
+.user-msg-quote { margin: 0; padding: 8px 14px; border-left: 3px solid #93c5fd; background: #eff6ff; border-radius: 0 8px 8px 0; color: var(--text); font-size: var(--md-font-size, 15px); line-height: 1.6; white-space: pre-wrap; }
 
 /* ── 缩放按钮 ───────────────────────────── */
 .zoom-controls { display: inline-flex; align-items: center; gap: 3px; position: relative; }
 .zoom-btn { width: 26px; height: 26px; border: 1px solid var(--border); background: var(--surface); border-radius: 8px; cursor: pointer; font-size: 15px; line-height: 1; display: inline-flex; align-items: center; justify-content: center; }
 .zoom-btn:hover { border-color: var(--primary); }
+.zoom-label { width: 30px; height: 26px; border: 1px solid var(--border); background: #fbfbfd; border-radius: 8px; cursor: default; font-size: 13px; line-height: 1; display: inline-flex; align-items: center; justify-content: center; color: var(--text-muted); user-select: none; }
 .zoom-controls .zoom-pct { display: none; position: absolute; top: 32px; left: 50%; transform: translateX(-50%); background: #111827; color: #fff; font-size: 11px; padding: 3px 8px; border-radius: 6px; white-space: nowrap; z-index: 50; }
 .zoom-controls:hover .zoom-pct { display: block; }
 
@@ -346,6 +365,7 @@ body {
 .switch-row:last-child { border-bottom: none; }
 .switch-row .sw-label { font-size: 14px; display: flex; align-items: center; gap: 6px; }
 .switch-row input[type="number"] { width: 80px; }
+.switch-row input[type="color"] { width: 46px; height: 30px; padding: 0; border: 1px solid var(--border); border-radius: 6px; background: none; cursor: pointer; }
 .toggle { position: relative; width: 40px; height: 22px; flex-shrink: 0; cursor: pointer; }
 .toggle input { display: none; }
 .toggle .track { position: absolute; inset: 0; background: #d1d5db; border-radius: 999px; transition: .2s; }

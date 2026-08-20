@@ -22,6 +22,12 @@ class Settings(BaseModel):
     send_key: str = "enter"
     newline_key: str = "shift_enter"
     show_placeholders: bool = True
+    # 裸公式识别：无分隔符公式的启发式渲染，默认关闭以避开日常场景误判
+    bare_math_detect: bool = False
+    # 历史浏览时各板块默认展开/折叠
+    reasoning_expanded: bool = True
+    tool_call_expanded: bool = False
+    tool_result_expanded: bool = False
 
 
 def settings_path(config_dir: Path | str) -> Path:

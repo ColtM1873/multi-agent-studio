@@ -24,6 +24,18 @@ def make_user_input(text: str) -> dict:
     }
 
 
+def _load_history_settings(config_dir) -> dict:
+    """读取影响历史浏览默认展开/折叠的全局设置。"""
+    from app.config.settings import load_settings
+
+    settings = load_settings(config_dir)
+    return {
+        "reasoning_expanded": settings.reasoning_expanded,
+        "tool_call_expanded": settings.tool_call_expanded,
+        "tool_result_expanded": settings.tool_result_expanded,
+    }
+
+
 class AgentRuntime:
     def __init__(self, config: MultiAgentConfig, graph, stack: AsyncExitStack):
         self.config = config
@@ -104,7 +116,10 @@ class ChatManager:
 
     async def thread_history(self, agent_id: str, thread_id: str) -> str | None:
         config = self.config_store.load(agent_id)
-        return await threads_service.get_thread_history_markdown(config.checkpoint_conn_string, thread_id)
+        settings = _load_history_settings(self.config_store._dir)
+        return await threads_service.get_thread_history_markdown(
+            config.checkpoint_conn_string, thread_id, **settings
+        )
 
     async def thread_subgraphs(self, agent_id: str, thread_id: str) -> list[dict]:
         config = self.config_store.load(agent_id)
@@ -112,6 +127,7 @@ class ChatManager:
 
     async def subgraph_history(self, agent_id: str, thread_id: str, node_name: str) -> str | None:
         config = self.config_store.load(agent_id)
+        settings = _load_history_settings(self.config_store._dir)
         return await threads_service.get_subgraph_history_by_node(
-            config.checkpoint_conn_string, thread_id, node_name
+            config.checkpoint_conn_string, thread_id, node_name, **settings
         )

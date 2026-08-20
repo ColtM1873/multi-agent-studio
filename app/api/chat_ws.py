@@ -7,6 +7,7 @@
 
 服务端→客户端事件：
   {"type": "text", "source": "main"|"sub:<name>", "text": token}
+  {"type": "reasoning", "source": "main"|"sub:<name>", "text": token}
   {"type": "subgraph_start"|"subgraph_end", "name": ...}
   {"type": "tool_call", "name", "args"}
   {"type": "tool_result", "name", "content"}

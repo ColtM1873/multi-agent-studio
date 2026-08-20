@@ -341,7 +341,20 @@ async def build_world(
         human_message = state["messages"][-1]
         if not isinstance(human_message, HumanMessage):
             return "call_main_llm"
-        return "extract_human_message"
+        return "we_dont_want_unresponded_human_msg"
+
+    async def we_dont_want_unresponded_human_msg (state):
+        msg_list = state["messages"]
+        len_msg_list = len(msg_list)
+        if len_msg_list >= 2:
+            last_second_msg = msg_list[-2]
+            if isinstance(last_second_msg , HumanMessage):
+                return Command(goto = "we_dont_want_unresponded_human_msg",
+                               update= {        "messages" : [RemoveMessage ( id = last_second_msg.id)]      })
+            else:
+                return Command(goto= "extract_human_message")
+        else:
+            return Command(goto= "extract_human_message")
 
     async def extract_human_message(state):
         human_message = state["messages"][-1]
@@ -455,6 +468,7 @@ async def build_world(
         .add_node("final_summerization", call_main_llm, retry_policy=RetryPolicy(max_attempts=3))
         .add_node("final_history_flush", final_history_flush)
         .add_node("merge_human_message_with_memory", merge_human_message_with_memory)
+        .add_node("we_dont_want_unresponded_human_msg",we_dont_want_unresponded_human_msg)
         .add_conditional_edges(START, is_human_msg_or_not)
         .add_edge("extract_human_message", "period_summerize_evaluate")
         .add_edge("period_summerization_prompt", "period_summerization")

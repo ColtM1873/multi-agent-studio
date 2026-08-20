@@ -180,6 +180,22 @@ const I18N_EN = {
   "格式：postgresql://用户名:密码@主机:端口/<br/>例如 postgresql://user:passwd@localhost:5432/<br/><br/>下面会实时显示完整连接串。程序会根据主机自动判断是否本地回环。": "Format: postgresql://user:passwd@host:port/<br/>e.g. postgresql://user:passwd@localhost:5432/<br/><br/>The full connection string is shown below in real time. The program auto-detects loopback hosts.",
   "模型 provider": "Model provider",
   "模型来源": "Model source",
+  "思考过程": "Thinking process",
+  "思考字号（相对正文）": "Reasoning font size (relative to body)",
+  "思考字号减小": "Decrease reasoning font size",
+  "思考字号增大": "Increase reasoning font size",
+  "正文字号": "Body font size",
+  "正文字号减小": "Decrease body font size",
+  "正文字号增大": "Increase body font size",
+  "进阶设置": "Advanced settings",
+  "历史浏览时各板块默认展开 / 折叠": "Default expand/collapse of sections when browsing history",
+  "历史浏览时，思考过程板块默认展开还是折叠。": "Whether the reasoning section is expanded or collapsed by default when browsing history.",
+  "历史浏览时，工具调用板块默认展开还是折叠。": "Whether the tool call section is expanded or collapsed by default when browsing history.",
+  "历史浏览时，工具结果板块默认展开还是折叠。": "Whether the tool result section is expanded or collapsed by default when browsing history.",
+  "开启后默认展开": "Expanded by default when enabled",
+  "字体颜色设置": "Font color settings",
+  "正文": "Body text",
+  "调整各板块文字颜色，仅本机生效。": "Adjust the text color of each section; applies on this machine only.",
   "内置模型": "Built-in models",
   "任意第三方模型（OpenAI 协议）": "Any third-party model (OpenAI protocol)",
   "模型名": "Model name",
@@ -233,6 +249,8 @@ const I18N_EN = {
   "自定义镜像地址": "Custom mirror URL",
   "表单已按默认配置预填，请修改差异项。创建后子 agent 不可增删改名。": "The form is pre-filled from the default configuration; modify the differences. Sub-agents cannot be added/removed/renamed after creation.",
   "记忆吸附": "Memory attachment",
+  "裸公式识别": "Auto-detect bare formulas",
+  "模型偶尔不带 $ 或 \\( 分隔符直接输出公式（如 s_{t+1}=f(s_t,a_t)）。开启后自动识别并渲染，适合科研 / 数理场景；日常场景建议关闭，以免误判普通文本。": "Models sometimes output formulas without $ or \\( delimiters (e.g. s_{t+1}=f(s_t,a_t)). When enabled, they are detected and rendered automatically—useful for research/math scenarios. Keep it off in everyday use to avoid misinterpreting plain text.",
   "记忆存储命名空间，逗号分隔多个层级。": "Memory store namespace, comma-separated for multiple levels.",
   "记忆库（store 数据库）还需启用 pgvector：选中刚建的库 → 点上方「Query Tool」图标 → 粘贴下面这句 → 点执行（或按 F5）：": "The memory store (store database) also needs pgvector: select the database you just created → click the 'Query Tool' icon → paste the line below → click Execute (or press F5):",
   "设为默认": "Set as default",
@@ -385,10 +403,71 @@ let zoomPct = parseInt(localStorage.getItem("md-zoom") || "100", 10);
 function applyZoom() {
   document.documentElement.style.setProperty("--md-font-size", (15 * zoomPct / 100).toFixed(1) + "px");
 }
+
+/* 缩放锚点：记录缩放前视口顶端的文本/元素位置，缩放后回滚使其仍停留在视口顶部，避免长内容乱跳 */
+function captureZoomAnchor() {
+  const pane = $("#historyPane");
+  if (!pane) return null;
+  const rect = pane.getBoundingClientRect();
+  if (rect.height < 8) return null;
+  const x = rect.left + 1;
+  const y = rect.top + 1;
+  let range = null;
+  if (document.caretRangeFromPoint) range = document.caretRangeFromPoint(x, y);
+  else if (document.caretPositionFromPoint) {
+    const pos = document.caretPositionFromPoint(x, y);
+    if (pos) { range = document.createRange(); range.setStart(pos.offsetNode, pos.offset); range.collapse(true); }
+  }
+  if (range && range.startContainer && pane.contains(range.startContainer)) {
+    return { range: range, beforeTop: range.getBoundingClientRect().top };
+  }
+  let el = document.elementFromPoint(x, y);
+  if (!el || !pane.contains(el)) el = pane;
+  return { el: el, beforeTop: el.getBoundingClientRect().top };
+}
+function restoreZoomAnchor(anchor) {
+  if (!anchor) return;
+  const pane = $("#historyPane");
+  if (!pane) return;
+  const afterTop = anchor.range ? anchor.range.getBoundingClientRect().top : anchor.el.getBoundingClientRect().top;
+  pane.scrollTop += (afterTop - anchor.beforeTop);
+}
+
 function changeZoom(delta) {
+  const anchor = captureZoomAnchor();
   zoomPct = Math.min(200, Math.max(60, zoomPct + delta));
   localStorage.setItem("md-zoom", String(zoomPct));
   applyZoom();
+  restoreZoomAnchor(anchor);
+}
+
+/* 思考字号（相对正文的百分比） */
+let reasoningZoomPct = parseInt(localStorage.getItem("reasoning-zoom") || "100", 10);
+function applyReasoningZoom() {
+  document.documentElement.style.setProperty("--reasoning-font-scale", (reasoningZoomPct / 100).toFixed(2));
+}
+function changeReasoningZoom(delta) {
+  const anchor = captureZoomAnchor();
+  reasoningZoomPct = Math.min(200, Math.max(50, reasoningZoomPct + delta));
+  localStorage.setItem("reasoning-zoom", String(reasoningZoomPct));
+  applyReasoningZoom();
+  restoreZoomAnchor(anchor);
+}
+
+/* 板块字体颜色 */
+const COLOR_FIELDS = [
+  { key: "color-reasoning", css: "--reasoning-color", def: "#6b7280" },
+  { key: "color-content", css: "--content-color", def: "#1f2328" },
+  { key: "color-tool-result", css: "--tool-result-color", def: "#475569" },
+];
+function getColor(key, def) { return localStorage.getItem(key) || def; }
+function applyColors() {
+  const root = document.documentElement;
+  for (const f of COLOR_FIELDS) {
+    const v = localStorage.getItem(f.key);
+    if (v) root.style.setProperty(f.css, v);
+    else root.style.removeProperty(f.css);
+  }
 }
 
 /* 未保存提醒 */
@@ -463,10 +542,144 @@ const md = window.markdownit ? (() => {
         return esc(tokens[idx].content);
       }
     };
+    // 行内 \[...\] 兜底：texmath 的 brackets 只有 \(...\) 行内规则，没有 \[...\] 行内规则，
+    // 导致 \[...\] 出现在段落中间（非独占一行）时被 escape 规则吃掉反斜杠、按原文显示。
+    inst.inline.ruler.before("escape", "math_inline_bracket", function (state, silent) {
+      const pos = state.pos;
+      const src = state.src;
+      if (src.charCodeAt(pos) !== 92 || src[pos + 1] !== "[") return false;
+      const close = src.indexOf("\\]", pos + 2);
+      if (close === -1) return false;
+      const nl = src.indexOf("\n", pos);
+      if (nl !== -1 && close > nl) return false;
+      const content = src.slice(pos + 2, close).trim();
+      if (!silent) {
+        const token = state.push("math_inline_bracket", "math", 0);
+        token.content = content;
+        token.markup = "\\[";
+      }
+      state.pos = close + 2;
+      return true;
+    });
+    inst.renderer.rules.math_inline_bracket = function (tokens, idx) {
+      try {
+        return window.katex.renderToString(tokens[idx].content, { displayMode: false, throwOnError: false });
+      } catch (e) {
+        return esc(tokens[idx].content);
+      }
+    };
   }
   return inst;
 })() : null;
-function renderMd(text) { return md ? md.render(text || "") : esc(text || ""); }
+/* 裸公式识别：模型偶尔不带 $/\( 分隔符直接输出 LaTeX（如 s_{t+1}=f(s_t,a_t)）。
+   按启发式把「强信号」片段包裹成 \(...\) 交给 KaTeX；强信号 = \命令 或 花括号/数字上下标。 */
+const isBareMathChar = (c) => !!c && /[A-Za-z0-9_^{}().,=+\-*/<>|'~]/.test(c);
+const isBareMathOp = (c) => !!c && /[=+\-*/<>|,^_]/.test(c);
+function bareMathSeedEnd(s, i) {
+  const c = s[i];
+  if (c === undefined) return -1;
+  if (c === "\\") {
+    const m = /\\[A-Za-z]+/.exec(s.slice(i));
+    return m ? i + m[0].length : -1;
+  }
+  if (!/[A-Za-z0-9)\]}]/.test(c)) return -1;
+  const nxt = s[i + 1];
+  if (nxt !== "_" && nxt !== "^") return -1;
+  const after = s[i + 2];
+  if (after === "{") {
+    let j = i + 3, depth = 1;
+    while (j < s.length && depth > 0) {
+      if (s[j] === "{") depth++;
+      else if (s[j] === "}") depth--;
+      j++;
+    }
+    return depth === 0 ? j : -1;
+  }
+  return /[0-9]/.test(after || "") ? i + 3 : -1;
+}
+function bareMathExpandLeft(s, start) {
+  while (start > 0) {
+    const c = s[start - 1];
+    if (isBareMathChar(c)) { start--; continue; }
+    if (c === " " || c === "\t") {
+      let k = start - 1;
+      while (k > 0 && (s[k] === " " || s[k] === "\t")) k--;
+      const leftCh = s[k];
+      if (!isBareMathChar(leftCh)) break;
+      if (isBareMathOp(leftCh) || s[start] === "\\") { start = k; continue; }
+    }
+    break;
+  }
+  return start;
+}
+function bareMathExpandRight(s, end) {
+  while (end < s.length) {
+    const c = s[end];
+    if (isBareMathChar(c)) { end++; continue; }
+    if (c === "\\" && /[A-Za-z]/.test(s[end + 1] || "")) {
+      end += 2;
+      while (end < s.length && /[A-Za-z]/.test(s[end])) end++;
+      continue;
+    }
+    if (c === " " || c === "\t") {
+      let k = end;
+      while (k < s.length && (s[k] === " " || s[k] === "\t")) k++;
+      const prev = s[end - 1];
+      const nxt = s[k];
+      const prevOk = isBareMathOp(prev);
+      const nxtOk = isBareMathOp(nxt) || (nxt === "\\" && /[A-Za-z]/.test(s[k + 1] || ""));
+      if (prevOk || nxtOk) { end = k; continue; }
+    }
+    break;
+  }
+  while (end > 0 && (s[end - 1] === " " || s[end - 1] === "\t")) end--;
+  return end;
+}
+function autodetectMath(text) {
+  const stash = [];
+  const P = "\u0001";
+  const protect = () => (m) => { stash.push(m); return P + (stash.length - 1) + P; };
+  let s = String(text == null ? "" : text);
+  s = s.replace(/```[\s\S]*?```/g, protect());
+  s = s.replace(/~~~[\s\S]*?~~~/g, protect());
+  s = s.replace(/`[^`\n]*`/g, protect());
+  s = s.replace(/\$\$[\s\S]*?\$\$/g, protect());
+  s = s.replace(/\\\[[\s\S]*?\\\]/g, protect());
+  s = s.replace(/\\\([^\n]*?\\\)/g, protect());
+  s = s.replace(/\$[^$\n]*?\$/g, protect());
+
+  const spans = [];
+  for (let i = 0; i < s.length; i++) {
+    const se = bareMathSeedEnd(s, i);
+    if (se < 0) continue;
+    const start = bareMathExpandLeft(s, i);
+    const end = bareMathExpandRight(s, se);
+    if (s.slice(start, end).indexOf(P) !== -1) { i = se - 1; continue; }
+    spans.push({ start, end });
+    i = end - 1;
+  }
+  spans.sort((a, b) => a.start - b.start);
+  const merged = [];
+  for (const sp of spans) {
+    const last = merged[merged.length - 1];
+    if (last && sp.start <= last.end) last.end = Math.max(last.end, sp.end);
+    else merged.push({ start: sp.start, end: sp.end });
+  }
+  let out = "", pos = 0;
+  for (const sp of merged) {
+    if (s.slice(sp.start, sp.end).trim() === "") continue;
+    out += s.slice(pos, sp.start) + "\\(" + s.slice(sp.start, sp.end) + "\\)";
+    pos = sp.end;
+  }
+  out += s.slice(pos);
+  return out.replace(new RegExp(P + "(\\d+)" + P, "g"), (m, idx) => stash[+idx]);
+}
+function bareMathEnabled() { return !!(settingsCache && settingsCache.bare_math_detect); }
+function renderMd(text) {
+  const t = text || "";
+  if (!md) return esc(t);
+  return md.render(bareMathEnabled() ? autodetectMath(t) : t);
+}
 
 /* ================= 状态 ================= */
 const S = { view: "agents", agentId: null, agentName: null, threadId: null, editingDefault: false };
@@ -617,7 +830,14 @@ async function openSettings() {
           <option value="ctrl_enter" ${s.newline_key === "ctrl_enter" ? "selected" : ""}>Ctrl + Enter</option>
         </select>
       </div>
+      <div class="switch-row">
+        <span class="sw-label">${t("裸公式识别")} <i class="info-icon">!<span class="tip">${t("模型偶尔不带 $ 或 \\( 分隔符直接输出公式（如 s_{t+1}=f(s_t,a_t)）。开启后自动识别并渲染，适合科研 / 数理场景；日常场景建议关闭，以免误判普通文本。")}</span></i></span>
+        <label class="toggle"><input type="checkbox" id="set_baremath" ${s.bare_math_detect ? "checked" : ""}><span class="track"></span></label>
+      </div>
       <div class="modal-actions">
+        <button class="btn" id="setAdvanced">${t("进阶设置")}</button>
+        <button class="btn" id="setColors">${t("字体颜色设置")}</button>
+        <div class="spacer" style="flex:1;"></div>
         <button class="btn" id="setCancel">${t("取消")}</button>
         <button class="btn primary" id="setSave">${t("保存")}</button>
       </div>
@@ -639,9 +859,12 @@ async function openSettings() {
   updateNewline();
 
   mask.querySelector("#setCancel").onclick = () => mask.remove();
+  mask.querySelector("#setAdvanced").onclick = () => { mask.remove(); openAdvancedSettings(); };
+  mask.querySelector("#setColors").onclick = () => { mask.remove(); openColorSettings(); };
   mask.querySelector("#setSave").onclick = async () => {
     try {
       await saveSettings({
+        ...s,
         warn_unsaved_changes: mask.querySelector("#set_warn").checked,
         memory_attach: mask.querySelector("#set_mem").checked,
         num_memories_attached: +mask.querySelector("#set_memnum").value || 3,
@@ -649,10 +872,97 @@ async function openSettings() {
         send_key: sendSel.value,
         newline_key: newlineSel.value,
         show_placeholders: mask.querySelector("#set_ph").checked,
+        bare_math_detect: mask.querySelector("#set_baremath").checked,
       });
       mask.remove();
       toast(t("设置已保存"));
     } catch (e) { toast(e.message, true); }
+  };
+}
+
+async function openAdvancedSettings() {
+  let s;
+  try { s = await getSettings(); } catch (e) { toast(e.message, true); return; }
+  const mask = document.createElement("div");
+  mask.className = "modal-mask";
+  mask.innerHTML = `
+    <div class="modal" style="width:480px;">
+      <h3>🧩 ${t("进阶设置")}</h3>
+      <div class="muted" style="margin-bottom:4px;">${t("历史浏览时各板块默认展开 / 折叠")}（${t("开启后默认展开")}）</div>
+      <div class="switch-row">
+        <span class="sw-label">🧠 ${t("思考过程")} <i class="info-icon">!<span class="tip">${t("历史浏览时，思考过程板块默认展开还是折叠。")}</span></i></span>
+        <label class="toggle"><input type="checkbox" id="adv_reasoning" ${s.reasoning_expanded ? "checked" : ""}><span class="track"></span></label>
+      </div>
+      <div class="switch-row">
+        <span class="sw-label">🔧 ${t("工具调用")} <i class="info-icon">!<span class="tip">${t("历史浏览时，工具调用板块默认展开还是折叠。")}</span></i></span>
+        <label class="toggle"><input type="checkbox" id="adv_tool_call" ${s.tool_call_expanded ? "checked" : ""}><span class="track"></span></label>
+      </div>
+      <div class="switch-row">
+        <span class="sw-label">✅ ${t("工具结果")} <i class="info-icon">!<span class="tip">${t("历史浏览时，工具结果板块默认展开还是折叠。")}</span></i></span>
+        <label class="toggle"><input type="checkbox" id="adv_tool_result" ${s.tool_result_expanded ? "checked" : ""}><span class="track"></span></label>
+      </div>
+      <div class="modal-actions">
+        <button class="btn" id="advCancel">${t("取消")}</button>
+        <button class="btn primary" id="advSave">${t("保存")}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(mask);
+  mask.querySelector("#advCancel").onclick = () => mask.remove();
+  mask.querySelector("#advSave").onclick = async () => {
+    try {
+      await saveSettings({
+        ...s,
+        reasoning_expanded: mask.querySelector("#adv_reasoning").checked,
+        tool_call_expanded: mask.querySelector("#adv_tool_call").checked,
+        tool_result_expanded: mask.querySelector("#adv_tool_result").checked,
+      });
+      mask.remove();
+      toast(t("设置已保存"));
+    } catch (e) { toast(e.message, true); }
+  };
+}
+
+async function openColorSettings() {
+  const mask = document.createElement("div");
+  mask.className = "modal-mask";
+  const row = (f, label) => `
+    <div class="switch-row">
+      <span class="sw-label">${label}</span>
+      <input type="color" id="${f.key}" value="${getColor(f.key, f.def)}">
+    </div>`;
+  mask.innerHTML = `
+    <div class="modal" style="width:480px;">
+      <h3>🎨 ${t("字体颜色设置")}</h3>
+      <div class="muted" style="margin-bottom:4px;">${t("调整各板块文字颜色，仅本机生效。")}</div>
+      ${row(COLOR_FIELDS[0], `🧠 ${t("思考过程")}`)}
+      ${row(COLOR_FIELDS[1], `📝 ${t("正文")}`)}
+      ${row(COLOR_FIELDS[2], `✅ ${t("工具结果")}`)}
+      <div class="modal-actions">
+        <button class="btn" id="colorReset">${t("恢复默认")}</button>
+        <div class="spacer" style="flex:1;"></div>
+        <button class="btn" id="colorCancel">${t("取消")}</button>
+        <button class="btn primary" id="colorSave">${t("保存")}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(mask);
+
+  mask.querySelector("#colorCancel").onclick = () => mask.remove();
+  mask.querySelector("#colorReset").onclick = () => {
+    for (const f of COLOR_FIELDS) {
+      localStorage.removeItem(f.key);
+      const el = mask.querySelector("#" + f.key);
+      if (el) el.value = f.def;
+    }
+    applyColors();
+  };
+  mask.querySelector("#colorSave").onclick = () => {
+    for (const f of COLOR_FIELDS) {
+      const el = mask.querySelector("#" + f.key);
+      if (el) localStorage.setItem(f.key, el.value);
+    }
+    applyColors();
+    mask.remove();
+    toast(t("设置已保存"));
   };
 }
 
@@ -1302,8 +1612,15 @@ async function renderChatView() {
       <div class="spacer" style="flex:1;"></div>
       <span class="status-indicator" id="statusInd"></span>
       <div class="zoom-controls">
-        <span class="zoom-btn" id="zoomOut">−</span>
-        <span class="zoom-btn" id="zoomIn">+</span>
+        <span class="zoom-btn" id="rZoomOut" title="${t("思考字号减小")}">−</span>
+        <span class="zoom-label" id="rZoomLabel" title="${t("思考字号（相对正文）")}">🧠</span>
+        <span class="zoom-btn" id="rZoomIn" title="${t("思考字号增大")}">+</span>
+        <span class="zoom-pct" id="rZoomPct"></span>
+      </div>
+      <div class="zoom-controls">
+        <span class="zoom-btn" id="zoomOut" title="${t("正文字号减小")}">−</span>
+        <span class="zoom-label" id="zoomLabel" title="${t("正文字号")}">Aa</span>
+        <span class="zoom-btn" id="zoomIn" title="${t("正文字号增大")}">+</span>
         <span class="zoom-pct" id="zoomPct"></span>
       </div>
       <button class="btn small" id="msgDirBtn" style="position:relative;">☰ ${t("消息目录")}</button>
@@ -1350,21 +1667,28 @@ async function renderChatView() {
   }
 
   applyZoom();
-  getSettings().then(s => {
-    if (!s) return;
+  applyReasoningZoom();
+  let settings = null;
+  try { settings = await getSettings(); } catch (e) {}
+  if (settings) {
     const keyLabel = k => ({ enter: "Enter", shift_enter: "Shift+Enter", ctrl_enter: "Ctrl+Enter" })[k] || k;
     const hint = $("#inputHint");
     if (hint) {
-      hint.textContent = s.send_key === "mouse_only"
+      hint.textContent = settings.send_key === "mouse_only"
         ? t("输入消息（点击发送，Enter 换行）")
-        : `${t("输入消息（")}${keyLabel(s.send_key)} ${t("发送，")}${keyLabel(s.newline_key)} ${t("换行）")}`;
+        : `${t("输入消息（")}${keyLabel(settings.send_key)} ${t("发送，")}${keyLabel(settings.newline_key)} ${t("换行）")}`;
     }
-  }).catch(() => {});
+  }
   const zoomPctEl = $("#zoomPct");
   const updateZoomLabel = () => { if (zoomPctEl) zoomPctEl.textContent = zoomPct + "%"; };
   updateZoomLabel();
   $("#zoomOut").onclick = () => { changeZoom(-10); updateZoomLabel(); };
   $("#zoomIn").onclick = () => { changeZoom(10); updateZoomLabel(); };
+  const rZoomPctEl = $("#rZoomPct");
+  const updateReasoningZoomLabel = () => { if (rZoomPctEl) rZoomPctEl.textContent = reasoningZoomPct + "%"; };
+  updateReasoningZoomLabel();
+  $("#rZoomOut").onclick = () => { changeReasoningZoom(-10); updateReasoningZoomLabel(); };
+  $("#rZoomIn").onclick = () => { changeReasoningZoom(10); updateReasoningZoomLabel(); };
   $("#msgDirBtn").onclick = (e) => toggleMsgDrawer(e);
 
   const updatePinBtn = () => { pinBtn.classList.toggle("active", pinned); };
@@ -1467,14 +1791,15 @@ async function renderChatView() {
   }
 
   async function send() {
-    const content = input.value.trim();
-    if (!content || isRunning) return;
+    const raw = input.value;
+    if (!raw.trim() || isRunning) return;
+    const content = raw.replace(/\s+$/, "");
     setRunning(true);
     appendReplyHeader();
     const ok = await openChatWs(content);
     setRunning(false);
     if (ok) {
-      if (input.value.trim() === content) input.value = "";
+      if (input.value.replace(/\s+$/, "") === content) input.value = "";
       showDoneBubble();
     } else {
       toast(t("发送失败，消息已保留在输入框"), true);
@@ -1515,11 +1840,21 @@ function openChatWs(content) {
     const proto = location.protocol === "https:" ? "wss" : "ws";
     ws = new WebSocket(`${proto}://${location.host}/api/agents/${encodeURIComponent(S.agentId)}/threads/${encodeURIComponent(S.threadId)}/chat`);
 
-    const buffers = { main: "", main_user: "", sub: {} };
+    const buffers = { main_user: "", main: [], sub: {} };
     let rafPending = false;
     let answered = false;
     const flush = () => { rafPending = false; renderStream(); };
     const schedule = () => { if (!rafPending) { rafPending = true; requestAnimationFrame(flush); } };
+
+    const pushBlock = (list, type, content) => {
+      const last = list[list.length - 1];
+      if (last && last.type === type) last.content += content;
+      else list.push({ type, content });
+    };
+
+    const reasoningBlock = (txt) => txt
+      ? `<details class="reasoning-block" open><summary>🧠 ${t("思考过程")}</summary><div class="reasoning-body">${esc(txt)}</div></details>`
+      : "";
 
     function renderStream() {
       if (!currentReplyEl) return;
@@ -1527,9 +1862,17 @@ function openChatWs(content) {
       const atBottom = pane && (pane.scrollHeight - pane.scrollTop - pane.clientHeight < 48);
       let html = "";
       if (buffers.main_user) html += `<div class="user-msg-block"><div class="user-msg-head">🧑 <strong>${t("用户")}</strong></div><blockquote class="user-msg-quote">${esc(buffers.main_user).replace(/\n/g, "<br>")}</blockquote></div>`;
-      if (buffers.main) html += `<div class="ai-msg-block">${renderMd(buffers.main)}</div>`;
-      for (const [name, txt] of Object.entries(buffers.sub)) {
-        if (txt) html += `<div style="margin-top:12px;"><span class="sub-tag">🧩 ${t("子 agent")} · ${esc(name)}</span><div>${renderMd(txt)}</div></div>`;
+      const renderBlocks = (blocks) => blocks.map(b =>
+        b.type === "reasoning"
+          ? reasoningBlock(b.content)
+          : b.type === "tool_result"
+            ? `<div class="tool-result-body">${renderMd(b.content)}</div>`
+            : `<div class="ai-msg-block">${renderMd(b.content)}</div>`
+      ).join("");
+      html += renderBlocks(buffers.main);
+      for (const [name, blocks] of Object.entries(buffers.sub)) {
+        if (!blocks || !blocks.length) continue;
+        html += `<div style="margin-top:12px;"><span class="sub-tag">🧩 ${t("子 agent")} · ${esc(name)}</span>${renderBlocks(blocks)}</div>`;
       }
       currentReplyEl.innerHTML = html;
       if (pane && (pinned || atBottom)) pane.scrollTop = pane.scrollHeight;
@@ -1543,21 +1886,27 @@ function openChatWs(content) {
         case "text":
           if (msg.source === "main" && !answered) { answered = true; setStatusIndicator("answering"); }
           if (msg.source === "main_user") buffers.main_user += msg.text;
-          else if (msg.source === "main") buffers.main += msg.text;
-          else { const n = msg.source.replace(/^sub:/, ""); buffers.sub[n] = (buffers.sub[n] || "") + msg.text; }
+          else if (msg.source === "main") pushBlock(buffers.main, "text", msg.text);
+          else { const n = msg.source.replace(/^sub:/, ""); (buffers.sub[n] = buffers.sub[n] || []); pushBlock(buffers.sub[n], "text", msg.text); }
+          schedule();
+          break;
+        case "reasoning":
+          if (msg.source === "main") pushBlock(buffers.main, "reasoning", msg.text);
+          else { const n = msg.source.replace(/^sub:/, ""); (buffers.sub[n] = buffers.sub[n] || []); pushBlock(buffers.sub[n], "reasoning", msg.text); }
           schedule();
           break;
         case "tool_call":
-          buffers.main += `\n\n🔧 **${t("工具调用")}**: \`${esc(msg.name)}\`\n\n`;
-          if (msg.args && Object.keys(msg.args).length) buffers.main += "```json\n" + JSON.stringify(msg.args, null, 2) + "\n```\n\n";
-          schedule();
+          { let tcHtml = `\n\n🔧 **${t("工具调用")}**: \`${esc(msg.name)}\`\n\n`;
+          if (msg.args && Object.keys(msg.args).length) tcHtml += "```json\n" + JSON.stringify(msg.args, null, 2) + "\n```\n\n";
+          pushBlock(buffers.main, "tool", tcHtml);
+          schedule(); }
           break;
         case "tool_result":
-          buffers.main += `\n✅ **${t("工具结果")}** (\`${esc(msg.name)}\`):\n\n${esc(msg.content)}\n\n`;
+          pushBlock(buffers.main, "tool_result", `\n✅ **${t("工具结果")}** (\`${esc(msg.name)}\`):\n\n${esc(msg.content)}\n\n`);
           schedule();
           break;
         case "subgraph_start":
-          buffers.sub[msg.name] = buffers.sub[msg.name] || "";
+          buffers.sub[msg.name] = buffers.sub[msg.name] || [];
           break;
         case "interrupt": {
           const ans = await askConfirm(msg.prompt || t("请确认"));
@@ -1568,7 +1917,7 @@ function openChatWs(content) {
           resolve(true);
           break;
         case "error":
-          buffers.main += `\n\n> ⚠️ ${esc(msg.message)}\n\n`;
+          pushBlock(buffers.main, "tool", `\n\n> ⚠️ ${esc(msg.message)}\n\n`);
           schedule();
           resolve(false);
           break;
@@ -1629,4 +1978,5 @@ initDlBanner();
 setInterval(pollDownload, 1000);
 
 /* ================= 启动 ================= */
+applyColors();
 render();

@@ -56,13 +56,25 @@ async def delete_thread(conn_string: str, thread_id: str) -> None:
         await conn.execute("DELETE FROM checkpoint_writes WHERE thread_id = %s", (thread_id,))
 
 
-async def get_thread_history_markdown(conn_string: str, thread_id: str) -> str | None:
+async def get_thread_history_markdown(
+    conn_string: str,
+    thread_id: str,
+    *,
+    reasoning_expanded: bool = True,
+    tool_call_expanded: bool = False,
+    tool_result_expanded: bool = False,
+) -> str | None:
     async with AsyncPostgresSaver.from_conn_string(conn_string) as cp:
         await cp.setup()
         cp_tuple = await cp.aget_tuple({"configurable": {"thread_id": thread_id}})
     if not cp_tuple:
         return None
-    return render_checkpoint_to_markdown_string(cp_tuple)
+    return render_checkpoint_to_markdown_string(
+        cp_tuple,
+        reasoning_expanded=reasoning_expanded,
+        tool_call_expanded=tool_call_expanded,
+        tool_result_expanded=tool_result_expanded,
+    )
 
 
 async def list_subgraph_nodes(conn_string: str, thread_id: str) -> list[dict]:
@@ -87,7 +99,15 @@ async def list_subgraph_nodes(conn_string: str, thread_id: str) -> list[dict]:
         ]
 
 
-async def get_subgraph_history_by_node(conn_string: str, thread_id: str, node_name: str) -> str | None:
+async def get_subgraph_history_by_node(
+    conn_string: str,
+    thread_id: str,
+    node_name: str,
+    *,
+    reasoning_expanded: bool = True,
+    tool_call_expanded: bool = False,
+    tool_result_expanded: bool = False,
+) -> str | None:
     """按子 agent 名聚合其所有调用（namespace）的历史，按时间排序合并。"""
     async with await AsyncConnection.connect(conn_string) as conn:
         await conn.set_autocommit(True)
@@ -125,4 +145,10 @@ async def get_subgraph_history_by_node(conn_string: str, thread_id: str, node_na
     if not merged:
         return None
 
-    return render_messages_to_markdown_string(merged, title=f"子图 [{node_name}] 历史")
+    return render_messages_to_markdown_string(
+        merged,
+        title=f"子图 [{node_name}] 历史",
+        reasoning_expanded=reasoning_expanded,
+        tool_call_expanded=tool_call_expanded,
+        tool_result_expanded=tool_result_expanded,
+    )
