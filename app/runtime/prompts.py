@@ -63,3 +63,4 @@ Before each tool call, you should:
 # 记忆吸附时包装用户消息的前缀 / 标记（graph_builder 与 history_render 共用，改一处即可）
 USER_MSG_PREFIX = "用户此次发送的信息如下：\n"
 MEMORY_ATTACH_MARKER = "\n与用户此次发送信息相关联的记忆如下："
+subagent_call_prompt = "You may not invoke the same sub-agent multiple times in a single message.\n"

@@ -21,7 +21,7 @@ from app.config.models import (
     MultiAgentConfig,
     SubAgentConfig,
 )
-from app.runtime.prompts import MEMORY_ATTACH_MARKER, USER_MSG_PREFIX, ReAct_system_prompt, summery_promt
+from app.runtime.prompts import MEMORY_ATTACH_MARKER, USER_MSG_PREFIX, ReAct_system_prompt, summery_promt, subagent_call_prompt
 from app.runtime.state_factory import make_main_state, make_sub_agent_state
 
 SEARCH_MEMORY_THRESHOLD = 0.5
@@ -117,9 +117,11 @@ async def build_sub_agent(
     model_with_tools = model.bind_tools(tools)
     tools_by_name = {tool.name: tool for tool in tools}
 
+    react_prompt = ReAct_system_prompt if spec.react_prompt else ""
+
     async def call_llm(state):
         existing = state.get(state_messages_key, [])
-        concate = [SystemMessage(content=agent_system_prompt + ReAct_system_prompt)] + existing
+        concate = [SystemMessage(content=agent_system_prompt + react_prompt)] + existing
         response = await model_with_tools.ainvoke(concate)
         return {state_messages_key: [response]}
 
@@ -451,7 +453,9 @@ async def build_world(
 
     async def call_main_llm(state):
         existing = state.get("messages", [])
-        concate_sys_messages = [SystemMessage(content=main_system_prompt + "You may not invoke the same sub-agent multiple times in a single message.\n" + ReAct_system_prompt)] + existing
+        subagent_call_prompt_here = subagent_call_prompt if sub_agent_dict else ""
+        react_prompt = ReAct_system_prompt if main_spec.react_prompt else ""
+        concate_sys_messages = [SystemMessage(content=main_system_prompt + "\n" + subagent_call_prompt_here + react_prompt)] + existing
         response = await main_model_with_tools.ainvoke(concate_sys_messages)
         return {"messages": [response]}
 
@@ -543,7 +547,9 @@ async def build_world(
 
     async def produce_html_call_llm(state):
         existing = state.get("messages", [])
-        concate_sys_messages = [SystemMessage(content=main_system_prompt + ReAct_system_prompt)] + existing
+        subagent_call_prompt_here = subagent_call_prompt if sub_agent_dict else ""
+        react_prompt = ReAct_system_prompt if main_spec.react_prompt else ""
+        concate_sys_messages = [SystemMessage(content=main_system_prompt + "\n" + subagent_call_prompt_here + react_prompt)] + existing
         response = await main_model_with_tools.ainvoke(concate_sys_messages)
         return {"messages": [response]}
 

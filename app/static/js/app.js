@@ -148,6 +148,8 @@ const I18N_EN = {
   "已设为默认配置": "Set as default configuration",
   "库名": "Database name",
   "开启后，主 agent 收到用户消息时会先从记忆库语义检索 N 条相关记忆，附在用户消息里一起传入。此设置影响图编译，进入某个 multi-agent 后不可改动，需退回主界面。": "When enabled, the main agent retrieves N relevant memories from the memory store and attaches them to the user message. This affects graph compilation and cannot be changed after entering a multi-agent; go back to the main screen.",
+  "开启 ReAct Prompt": "Enable ReAct Prompt",
+  "用于长程多工具调用的严肃任务处理场景；日常聊天可关闭以节省 token 并加快响应。": "For serious task scenarios involving long-range, multi-tool calls; disable for everyday chat to save tokens and speed up responses.",
   "恢复默认": "Restore default",
   "打开": "Open",
   "换行键": "Newline key",
@@ -1416,6 +1418,7 @@ function buildForm(cfg, canEditSubs) {
 
   const htmlReport = main.html_report;
   const htmlPrompt = main.html_report_prompt || DEFAULT_HTML_PROMPT;
+  const reactPrompt = main.react_prompt !== false;
 
   form.innerHTML = `
     <div class="form-card"><h4>${t("基本信息")}</h4><div class="form-grid">
@@ -1446,6 +1449,9 @@ function buildForm(cfg, canEditSubs) {
       ${unitField("f_sum_flush", flush.v, flush.u, t("清空历史阈值"), "累计 token 达到该值时清空历史（只保留最近几轮）。")}
       <div class="field"><label>${t("清空时保留轮数")} ${info("清空历史时保留最近几轮对话。")}</label><input id="f_sum_reserve" value="${esc(sum.reserve_message_round)}" type="number"></div>
       <div class="field full"><label>System Prompt ${info("主 agent 的系统提示词，定义其角色与行为。")}</label><textarea id="f_prompt" rows="8"${ph("main_system_prompt")}>${esc(main.system_prompt)}</textarea></div>
+      <div class="field full">
+        <label style="flex-direction:row;align-items:center;gap:8px;"><input type="checkbox" id="f_react_prompt" ${reactPrompt ? "checked" : ""}> ${t("开启 ReAct Prompt")} ${info("用于长程多工具调用的严肃任务处理场景；日常聊天可关闭以节省 token 并加快响应。")}</label>
+      </div>
       <div class="field full" style="border-top:1px solid var(--border);padding-top:14px;">
         <label style="flex-direction:row;align-items:center;gap:8px;"><input type="checkbox" id="f_html_report" ${htmlReport ? "checked" : ""}> ${t("启用 HTML 报告")} ${info("主 agent 输出完后，询问是否将结果生成 HTML 报告。")}</label>
       </div>
@@ -1495,7 +1501,7 @@ function buildForm(cfg, canEditSubs) {
 }
 
 function subAgentBox(s, key, canEdit) {
-  s = s || { name: "", description: "", system_prompt: "", api_key: "", llm_provider_name: "deepseek:deepseek-v4-pro", mcp_servers: [], summary: { flush_history_tokenwise: 200000, reserve_message_round: 4 } };
+  s = s || { name: "", description: "", system_prompt: "", api_key: "", llm_provider_name: "deepseek:deepseek-v4-pro", mcp_servers: [], summary: { flush_history_tokenwise: 200000, reserve_message_round: 4 }, react_prompt: true };
   const flush = tokToUnit((s.summary || {}).flush_history_tokenwise);
   const div = document.createElement("div");
   div.className = "subagent-box";
@@ -1510,6 +1516,9 @@ function subAgentBox(s, key, canEdit) {
       <div class="field"><label>${t("保留轮数")} ${info("清空历史时保留最近几轮对话。")}</label><input data-f="reserve" value="${esc((s.summary || {}).reserve_message_round)}" type="number"></div>
       <div class="field full"><label>Description ${info("描述该子 agent 能力，作为工具描述呈现给主 agent。")}</label><textarea data-f="description" rows="3"${ph("sub_description")}>${esc(s.description)}</textarea></div>
       <div class="field full"><label>System Prompt ${info("该子 agent 的系统提示词。")}</label><textarea data-f="system_prompt" rows="6"${ph("sub_system_prompt")}>${esc(s.system_prompt)}</textarea></div>
+      <div class="field full">
+        <label style="flex-direction:row;align-items:center;gap:8px;"><input type="checkbox" data-f="react_prompt" ${s.react_prompt !== false ? "checked" : ""}> ${t("开启 ReAct Prompt")} ${info("用于长程多工具调用的严肃任务处理场景；日常聊天可关闭以节省 token 并加快响应。")}</label>
+      </div>
       <div class="field full"><label>${t("MCP 服务器")} ${info("该子 agent 可用的工具来源；程序不负责启动，需外部自行启动。")}</label><div data-f="mcp"></div></div>
     </div>`;
 
@@ -1576,6 +1585,7 @@ function collectSubAgent(box) {
       flush_history_tokenwise: unitToTok(box.querySelector('[data-f="flush"]').value, box.querySelector('[data-f="flush_unit"]').value),
       reserve_message_round: +get("reserve"),
     },
+    react_prompt: box.querySelector('[data-f="react_prompt"]').checked,
   };
 }
 
@@ -1623,6 +1633,7 @@ function buildPayload(cfg) {
       },
       html_report: $("#f_html_report").checked,
       html_report_prompt: val("f_html_prompt"),
+      react_prompt: $("#f_react_prompt").checked,
     },
     sub_agents: $$(".subagent-box").map(collectSubAgent),
     output: cfg.output || { stream_output_dir: "" },

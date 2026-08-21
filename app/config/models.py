@@ -97,6 +97,7 @@ class MainAgentConfig(BaseModel):
     summary: SummaryConfig = Field(default_factory=SummaryConfig)
     html_report: bool = False
     html_report_prompt: str = DEFAULT_HTML_REPORT_PROMPT
+    react_prompt: bool = True
 
 
 class SubAgentConfig(BaseModel):
@@ -110,6 +111,7 @@ class SubAgentConfig(BaseModel):
     # 消息通道键名，由系统自动生成（父子消息键必须唯一），用户不填。
     state_messages_key: str | None = None
     summary: SubSummaryConfig = Field(default_factory=SubSummaryConfig)
+    react_prompt: bool = True
 
 
 class OutputConfig(BaseModel):
