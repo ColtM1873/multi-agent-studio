@@ -88,6 +88,33 @@ build_exe.bat               # 双击运行，或：python build_exe.py
 
 生成 `dist/MultiAgentStudio.exe` 并复制到项目根目录。启动器相对自身目录定位 `run.py` 与 `venv`，不写死任何绝对路径。
 
+## 版本迁移（升级到新版本）
+
+升级时只需**保留少数「你的数据」，其余代码文件全部覆盖为新版本**即可。PostgreSQL 里的会话历史与长期记忆（checkpoint 库 / store 库）存在数据库里、不在此文件夹中，覆盖文件不会影响它们。
+
+### 必须保留（覆盖前先备份，或复制到新版本目录）
+
+| 文件 / 目录 | 说明 |
+|---|---|
+| `configs/` | 所有 multi-agent 配置（`<agent_id>.json`、`default.json`）与全局设置（`settings.json`）。含 API key、system prompt、数据库连接、阈值等。 |
+| `snapshots/` | 全量总结前自动保存的会话快照（若生成过）。 |
+| `.env` | 本地 MCP 服务器读取的 token 等环境变量。 |
+
+### 可以直接覆盖（用新版本替换）
+
+`app/`、`run.py`、`tray.py`、`launcher.py`、`scripts/`、`folder_of_MCPs/`、`md2print/`（源码）、`requirements.txt`、`setup.bat`、`setup.ps1`、`build_exe.py`、`build_exe.bat`、`icon.ico`、`.env.example`、`README.md`、`LICENSE` 等。
+
+### 会自动重新生成（无需手动保留）
+
+`venv/`（`setup.bat` 重建）、`MultiAgentStudio.exe` / `dist/` / `build/`（打包生成）、`logs/`（服务日志）、`__pycache__/` 等缓存。
+
+### 推荐迁移步骤
+
+1. 备份 `configs/`、`snapshots/`、`.env`。
+2. 用新版本覆盖其余文件（或把上述三个复制进新解压的文件夹）。
+3. 运行 `setup.bat` 重新安装依赖并打包。
+4. 双击 `MultiAgentStudio.exe`，确认历史会话、记忆与快照都还在。
+
 ## 本地 MCP
 
 `folder_of_MCPs/` 是独立的 FastMCP 服务器（彩云天气、高德地图）。单独启动后，在子 agent 的 `mcp_servers` 里以 `http` 或 `stdio` 方式引用；token 从环境变量读取，见 `.env.example`。
@@ -106,6 +133,7 @@ app/
   api/           agents · threads · chat_ws · settings
   static/        index.html · css · js
 configs/         multi-agent 配置（不入库）
+snapshots/       会话快照（不入库）
 scripts/         dev_server · verify_phase1
 folder_of_MCPs/  本地 MCP 服务器
 ```
@@ -204,6 +232,33 @@ build_exe.bat               # double-click, or run: python build_exe.py
 
 Produces `dist/MultiAgentStudio.exe` and copies it to the project root. The launcher locates `run.py` and `venv` relative to its own directory — no absolute paths are hard-coded.
 
+## Version migration (upgrading)
+
+When upgrading, **keep only a handful of "your data" items and overwrite everything else with the new version**. Conversation history and long-term memory (checkpoint / store databases) live in PostgreSQL, not in this folder, so overwriting files does not affect them.
+
+### Must keep (back up first, or copy into the new version folder)
+
+| File / directory | Notes |
+|---|---|
+| `configs/` | All multi-agent configs (`<agent_id>.json`, `default.json`) and global settings (`settings.json`). Contains API keys, system prompts, DB connections, thresholds, etc. |
+| `snapshots/` | Conversation snapshots saved automatically before a full summary (if any were generated). |
+| `.env` | Environment variables (e.g. tokens) read by the local MCP servers. |
+
+### Safe to overwrite (replace with the new version)
+
+`app/`, `run.py`, `tray.py`, `launcher.py`, `scripts/`, `folder_of_MCPs/`, `md2print/` (source), `requirements.txt`, `setup.bat`, `setup.ps1`, `build_exe.py`, `build_exe.bat`, `icon.ico`, `.env.example`, `README.md`, `LICENSE`, etc.
+
+### Regenerated automatically (no need to keep)
+
+`venv/` (rebuilt by `setup.bat`), `MultiAgentStudio.exe` / `dist/` / `build/` (built during packaging), `logs/` (server logs), `__pycache__/` and other caches.
+
+### Recommended migration steps
+
+1. Back up `configs/`, `snapshots/`, and `.env`.
+2. Overwrite the remaining files with the new version (or copy the three items above into the freshly extracted folder).
+3. Run `setup.bat` to reinstall dependencies and rebuild.
+4. Double-click `MultiAgentStudio.exe` and confirm history, memory, and snapshots are all intact.
+
 ## Local MCP servers
 
 `folder_of_MCPs/` contains standalone FastMCP servers (Caiyun weather, AMap). Run them separately and reference them in a sub-agent's `mcp_servers` via `http` or `stdio` transport. Their tokens are read from environment variables — see `.env.example`.
@@ -222,6 +277,7 @@ app/
   api/           agents · threads · chat_ws · settings
   static/        index.html · css · js
 configs/         multi-agent configs (not committed)
+snapshots/       conversation snapshots (not committed)
 scripts/         dev_server · verify_phase1
 folder_of_MCPs/  local MCP servers
 ```

@@ -9,6 +9,9 @@ venv/
 .env
 configs/*.json
 
+# 会话快照（用户数据，本地保留，不入库）
+snapshots/
+
 # 构建产物
 dist/
 build/
