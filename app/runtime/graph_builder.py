@@ -166,12 +166,13 @@ async def build_sub_agent(
                            update= {history_token_measure_key :usage_count })
         return Command(goto="receiving_instruction")
 
-    async def final_summarization_prompt(state):
+    async def final_summarization_prompt(state, config: RunnableConfig):
+        await _try_capture_snapshot(config, checkpoint_conn_string, agent_id)
         usage_count = state[history_token_measure_key]
         summery_prompt = summery_prompt_generator(usage_count=usage_count , proactive_flush= False)
         return {state_messages_key: [HumanMessage(content=summery_prompt)]}
 
-    async def final_history_flush(state, config: RunnableConfig): 
+    async def final_history_flush(state): 
         reserve_msg_rounds = reserve_rounds
         msg_list = state[state_messages_key]
         len_msg_list = len(msg_list)
@@ -197,7 +198,6 @@ async def build_sub_agent(
                         break
         if beginning_human_iter <= 0: # reserve too much
             return {}
-        await _try_capture_snapshot(config, checkpoint_conn_string, agent_id)
         msg_list_to_delete = msg_list[0:beginning_human_iter] + msg_list[summery_human_msg_iter:]
         extract_ai_summery_msg = msg_list[-1].content
         extract_ai_summery_msg_as_str = None
@@ -212,18 +212,11 @@ async def build_sub_agent(
             history_token_measure_key :0,
             }
     async def refill_summery_msg(state):
+        summery_text = state[extracted_summery_ai_msg_key] or ""
         return {
             state_messages_key:[
                 HumanMessage(content= trimmed_summery_prompt),
-                AIMessage(
-                    content={
-                        "type": "text",
-                        "text": state[extracted_summery_ai_msg_key],
-                        "index": 0,
-                    },
-                    response_metadata = {"output_version": "v1",},
-                    tool_calls = [],
-                    )
+                AIMessage(content=summery_text),
             ]
         }
     async def should_continue_main_summery_final(state):
@@ -515,17 +508,19 @@ async def build_world(
                         update= {"current_history_token_volume" :usage_count })
 
     
-    async def final_summarization_prompt(state):
+    async def final_summarization_prompt(state, config: RunnableConfig):
+        await _try_capture_snapshot(config, snapshot_conn_string, snapshot_agent_id)
         usage_count = state["current_history_token_volume"]
         summery_prompt = summery_prompt_generator(usage_count=usage_count , proactive_flush= False)
         return {"messages": [HumanMessage(content=summery_prompt)]}
 
-    async def proactive_final_summarization_prompt(state):
+    async def proactive_final_summarization_prompt(state, config: RunnableConfig):
+        await _try_capture_snapshot(config, snapshot_conn_string, snapshot_agent_id)
         usage_count = state["current_history_token_volume"]
         summery_prompt = summery_prompt_generator(usage_count=usage_count , proactive_flush= True)
         return {"messages": [HumanMessage(content=summery_prompt)]}
     
-    async def final_history_flush(state, config: RunnableConfig): 
+    async def final_history_flush(state): 
         reserve_msg_rounds = reserve_rounds
         msg_list = state["messages"]
         len_msg_list = len(msg_list)
@@ -552,7 +547,6 @@ async def build_world(
         if beginning_human_iter <= 0: # reserve too much
             return {}
         
-        await _try_capture_snapshot(config, snapshot_conn_string, snapshot_agent_id)
         msg_list_to_delete = msg_list[0:beginning_human_iter] + msg_list[summery_human_msg_iter:]
 
         extract_ai_summery_msg = msg_list[-1].content
@@ -570,18 +564,11 @@ async def build_world(
             }
     
     async def refill_summery_msg(state):
+        summery_text = state["extracted_summery_ai_msg_as_str"] or ""
         return {
             "messages":[
                 HumanMessage(content= trimmed_summery_prompt),
-                AIMessage(
-                    content={
-                        "type": "text",
-                        "text": state["extracted_summery_ai_msg_as_str"],
-                        "index": 0,
-                    },
-                    response_metadata = {"output_version": "v1",},
-                    tool_calls = [],
-                    )
+                AIMessage(content=summery_text),
             ]
         }
 

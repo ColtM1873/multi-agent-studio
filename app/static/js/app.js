@@ -2106,9 +2106,24 @@ async function renderChatView() {
     if (isRunning) return;
     setRunning(true);
     currentReplyEl = null;
+    appendReplyHeader();
     const ok = await openChatWs("", true);
     if (ok) {
-      render();
+      // 原地刷新历史，避免整页 render() 造成闪屏
+      currentReplyEl = null;
+      try {
+        const h = await api(`/api/agents/${encodeURIComponent(S.agentId)}/threads/${encodeURIComponent(S.threadId)}/history`);
+        historyEl.innerHTML = renderMd(h.markdown);
+        injectExportButtons(historyEl);
+        sel.value = "";
+        while (sel.options.length > 1) sel.remove(1);
+        const subs = await api(`/api/agents/${encodeURIComponent(S.agentId)}/threads/${encodeURIComponent(S.threadId)}/subgraphs`);
+        subs.forEach(s => { const o = document.createElement("option"); o.value = s.node_name; o.textContent = s.node_name; sel.appendChild(o); });
+        scrollToLastUserMsg();
+      } catch (e) {
+        historyEl.innerHTML = `<div class="muted">${t("（无历史）")}</div>`;
+      }
+      setRunning(false);
     } else {
       setRunning(false);
       toast(t("主动全量总结失败"), true);

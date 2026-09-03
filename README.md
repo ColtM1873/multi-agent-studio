@@ -92,6 +92,8 @@ build_exe.bat               # 双击运行，或：python build_exe.py
 
 升级时只需**保留少数「你的数据」，其余代码文件全部覆盖为新版本**即可。PostgreSQL 里的会话历史与长期记忆（checkpoint 库 / store 库）存在数据库里、不在此文件夹中，覆盖文件不会影响它们。
 
+> ⚠️ **重要**：升级后**务必重新运行 `setup.bat`** 生成新的 `MultiAgentStudio.exe`。不要直接沿用旧版的 `MultiAgentStudio.exe`——部分版本更迭中，旧 exe 因打包的前端/后端代码与新版不匹配，会出现错误行为。
+
 ### 必须保留（覆盖前先备份，或复制到新版本目录）
 
 | 文件 / 目录 | 说明 |
@@ -112,8 +114,8 @@ build_exe.bat               # 双击运行，或：python build_exe.py
 
 1. 备份 `configs/`、`snapshots/`、`.env`。
 2. 用新版本覆盖其余文件（或把上述三个复制进新解压的文件夹）。
-3. 运行 `setup.bat` 重新安装依赖并打包。
-4. 双击 `MultiAgentStudio.exe`，确认历史会话、记忆与快照都还在。
+3. **务必**运行 `setup.bat` 重新安装依赖并打包，生成新的 `MultiAgentStudio.exe`（不要沿用旧 exe）。
+4. 双击新生成的 `MultiAgentStudio.exe`，确认历史会话、记忆与快照都还在。
 
 ## 本地 MCP
 
@@ -236,6 +238,8 @@ Produces `dist/MultiAgentStudio.exe` and copies it to the project root. The laun
 
 When upgrading, **keep only a handful of "your data" items and overwrite everything else with the new version**. Conversation history and long-term memory (checkpoint / store databases) live in PostgreSQL, not in this folder, so overwriting files does not affect them.
 
+> ⚠️ **Important**: after upgrading, you **must re-run `setup.bat`** to generate a new `MultiAgentStudio.exe`. Do not keep using the old `MultiAgentStudio.exe` — on some upgrades the old exe misbehaves because its bundled frontend/backend code is out of sync with the new version.
+
 ### Must keep (back up first, or copy into the new version folder)
 
 | File / directory | Notes |
@@ -256,8 +260,8 @@ When upgrading, **keep only a handful of "your data" items and overwrite everyth
 
 1. Back up `configs/`, `snapshots/`, and `.env`.
 2. Overwrite the remaining files with the new version (or copy the three items above into the freshly extracted folder).
-3. Run `setup.bat` to reinstall dependencies and rebuild.
-4. Double-click `MultiAgentStudio.exe` and confirm history, memory, and snapshots are all intact.
+3. **Must** run `setup.bat` to reinstall dependencies and rebuild a new `MultiAgentStudio.exe` (do not reuse the old exe).
+4. Double-click the newly built `MultiAgentStudio.exe` and confirm history, memory, and snapshots are all intact.
 
 ## Local MCP servers
 
