@@ -403,3 +403,29 @@ body {
 .hidden-tag { color: var(--text-muted); background: #f1f5f9; padding: 1px 6px; border-radius: 5px; font-size: 11px; }
 .threads-footer { padding-top: 14px; margin-top: 14px; border-top: 1px solid var(--border); display: flex; align-items: center; gap: 10px; }
 .threads-footer .sw-label { font-size: 13px; color: var(--text-muted); }
+
+/* ── 快照抽屉 ───────────────────────────── */
+.snapshot-drawer { position: relative; flex-shrink: 0; border-top: 1px solid var(--border); background: var(--surface); }
+.snapshot-handle {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  width: 100%; padding: 8px 12px; border: none; background: var(--surface);
+  color: var(--text-muted); font-size: 13px; font-weight: 600; cursor: pointer;
+}
+.snapshot-handle:hover { color: var(--primary); background: #f9fafb; }
+.snapshot-panel {
+  position: absolute; bottom: 100%; left: 0; right: 0;
+  background: var(--surface); border: 1px solid var(--border); border-bottom: none;
+  border-radius: 14px 14px 0 0; box-shadow: 0 -8px 30px rgba(0,0,0,.10);
+  max-height: 360px; display: flex; flex-direction: column; overflow: hidden; z-index: 50;
+}
+.snapshot-panel-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 14px; border-bottom: 1px solid var(--border);
+}
+.snapshot-panel-title { font-size: 14px; font-weight: 700; }
+.snapshot-list { overflow: auto; padding: 6px; }
+.snapshot-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 8px; cursor: pointer; }
+.snapshot-row:hover { background: #eef2ff; }
+.snapshot-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.snapshot-name { font-size: 13px; font-weight: 600; color: var(--primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.snapshot-meta { font-size: 12px; color: var(--text-muted); }

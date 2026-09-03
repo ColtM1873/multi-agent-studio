@@ -17,7 +17,13 @@ from langgraph.store.memory import InMemoryStore
 
 from app.config.store import ConfigStore
 from app.runtime.graph_builder import build_world
-from app.runtime.state_factory import assign_state_messages_keys, make_main_state, make_sub_agent_state
+from app.runtime.state_factory import (
+    assign_extracted_summery_ai_msg_keys,
+    assign_history_token_measure_keys,
+    assign_state_messages_keys,
+    make_main_state,
+    make_sub_agent_state,
+)
 
 
 class _FakeMCPClient:
@@ -40,14 +46,24 @@ async def main() -> None:
 
     for cfg in configs:
         assign_state_messages_keys(cfg)
+        assign_history_token_measure_keys(cfg)
+        assign_extracted_summery_ai_msg_keys(cfg)
         make_main_state()
         keys = []
+        token_keys = []
+        summery_keys = []
         for s in cfg.sub_agents:
-            make_sub_agent_state(s.state_messages_key)
+            make_sub_agent_state(s.state_messages_key, s.history_token_measure_key, s.extracted_summery_ai_msg_key)
             keys.append(s.state_messages_key)
+            token_keys.append(s.history_token_measure_key)
+            summery_keys.append(s.extracted_summery_ai_msg_key)
 
         assert "messages" not in keys, "子图消息键不能与主图 `messages` 冲突"
         assert len(keys) == len(set(keys)), "子图消息键彼此冲突"
+        assert "current_history_token_volume" not in token_keys, "子图 token 计数键不能与主图 `current_history_token_volume` 冲突"
+        assert len(token_keys) == len(set(token_keys)), "子图 token 计数键彼此冲突"
+        assert "extracted_summery_ai_msg_as_str" not in summery_keys, "子图总结 AI 消息键不能与主图 `extracted_summery_ai_msg_as_str` 冲突"
+        assert len(summery_keys) == len(set(summery_keys)), "子图总结 AI 消息键彼此冲突"
 
         graph = await build_world(
             cfg,

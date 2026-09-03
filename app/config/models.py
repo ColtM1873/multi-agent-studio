@@ -45,7 +45,7 @@ class SummaryConfig(BaseModel):
 
     summarize_gap_tokenwise: int = 8 * 10000
     flush_history_tokenwise: int = 60 * 10000
-    reserve_message_round: int = 4
+    reserve_message_round: int = 0
 
 
 class SubSummaryConfig(BaseModel):
@@ -110,6 +110,10 @@ class SubAgentConfig(BaseModel):
     mcp_servers: list[MCPServerConfig] = Field(default_factory=list)
     # 消息通道键名，由系统自动生成（父子消息键必须唯一），用户不填。
     state_messages_key: str | None = None
+    # 每个子 agent 独立的 token 计数键名，由系统自动生成（父子键必须唯一），用户不填。
+    history_token_measure_key: str | None = None
+    # 每个子 agent 独立的「提取的总结 AI 消息」键名，由系统自动生成（父子键必须唯一），用户不填。
+    extracted_summery_ai_msg_key: str | None = None
     summary: SubSummaryConfig = Field(default_factory=SubSummaryConfig)
     react_prompt: bool = True
 

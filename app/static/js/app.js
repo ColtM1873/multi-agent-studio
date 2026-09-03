@@ -222,6 +222,8 @@ const I18N_EN = {
   "此操作不可撤销。": "This action cannot be undone.",
   "没有缓存时请勿开启；已有缓存时建议开启，跳过每次联网校验。": "Do not enable without a cache; if cached, enable it to skip online verification every time.",
   "消息目录": "Message directory",
+  "主动全量总结": "Proactive Full Summary",
+  "主动全量总结失败": "Proactive summary failed",
   "添加 MCP": "Add MCP",
   "添加子 agent": "Add sub-agent",
   "清空历史时保留最近几轮对话。": "Keep the most recent turns when clearing history.",
@@ -332,6 +334,11 @@ const I18N_EN = {
   "代码·函数": "Code function",
   "代码·常量": "Code constant",
   "代码·变量": "Code variable",
+  "快照": "Snapshots",
+  "快照列表": "Snapshot list",
+  "暂无快照": "No snapshots yet",
+  "条消息": "messages",
+  "确定删除快照": "Delete snapshot?",
 };
 const t = (s) => (lang === "zh" || !I18N_EN[s]) ? s : I18N_EN[s];
 function setLang(l) {
@@ -821,7 +828,7 @@ function renderMd(text) {
 }
 
 /* ================= 状态 ================= */
-const S = { view: "agents", agentId: null, agentName: null, threadId: null, editingDefault: false };
+const S = { view: "agents", agentId: null, agentName: null, threadId: null, snapshotId: null, editingDefault: false };
 const app = $("#app");
 let ws = null;
 let isRunning = false;
@@ -849,10 +856,12 @@ function render() {
   else if (S.view === "editor") renderEditorView();
   else if (S.view === "threads") renderThreadsView();
   else if (S.view === "chat") renderChatView();
+  else if (S.view === "snapshot") renderSnapshotView();
 }
-function goAgents() { S.view = "agents"; S.agentId = null; S.agentName = null; S.threadId = null; render(); }
-function goThreads(agentId, agentName) { S.view = "threads"; S.agentId = agentId; S.agentName = agentName; S.threadId = null; render(); }
-function goChat(agentId, agentName, threadId) { S.view = "chat"; S.agentId = agentId; S.agentName = agentName; S.threadId = threadId; render(); }
+function goAgents() { S.view = "agents"; S.agentId = null; S.agentName = null; S.threadId = null; S.snapshotId = null; render(); }
+function goThreads(agentId, agentName) { S.view = "threads"; S.agentId = agentId; S.agentName = agentName; S.threadId = null; S.snapshotId = null; render(); }
+function goChat(agentId, agentName, threadId) { S.view = "chat"; S.agentId = agentId; S.agentName = agentName; S.threadId = threadId; S.snapshotId = null; render(); }
+function goSnapshot(agentId, agentName, snapshotId) { S.view = "snapshot"; S.agentId = agentId; S.agentName = agentName; S.snapshotId = snapshotId; render(); }
 
 /* ================= 视图1：Agent 列表 ================= */
 async function renderAgents() {
@@ -1672,6 +1681,16 @@ async function renderThreadsView() {
     <div class="threads-footer" id="threadsFooter" style="display:none;">
       <label class="toggle"><input type="checkbox" id="showHiddenChk"><span class="track"></span></label>
       <span class="sw-label" id="showHiddenLabel"></span>
+    </div>
+    <div class="snapshot-drawer" id="snapshotDrawer">
+      <button class="snapshot-handle" id="snapshotHandle">📸 ${t("快照")}</button>
+      <div class="snapshot-panel" id="snapshotPanel" style="display:none;">
+        <div class="snapshot-panel-head">
+          <span class="snapshot-panel-title">📸 ${t("快照列表")}</span>
+          <button class="btn small" id="snapshotClose">×</button>
+        </div>
+        <div class="snapshot-list" id="snapshotList"><div class="muted">${t("加载中…")}</div></div>
+      </div>
     </div>`;
   $("#newThreadBtn").onclick = () => { const n = prompt(t("新会话名称：")); if (n && n.trim()) goChat(S.agentId, S.agentName, n.trim()); };
 
@@ -1727,6 +1746,48 @@ async function renderThreadsView() {
   }
 
   $("#showHiddenChk").onchange = (e) => { localStorage.setItem(showKey, e.target.checked ? "1" : "0"); renderThreadsView(); };
+
+  // ── 快照抽屉 ─────────────────────────────
+  const snapPanel = $("#snapshotPanel");
+  const snapListEl = $("#snapshotList");
+  async function loadSnapshots() {
+    snapListEl.innerHTML = `<div class="muted">${t("加载中…")}</div>`;
+    let snaps;
+    try { snaps = await api(`/api/agents/${encodeURIComponent(S.agentId)}/snapshots`); }
+    catch (e) { snapListEl.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+    if (!snaps.length) {
+      snapListEl.innerHTML = `<div class="muted" style="padding:12px;">${t("暂无快照")}</div>`;
+      return;
+    }
+    snapListEl.innerHTML = snaps.map(s => `
+      <div class="snapshot-row" data-sid="${esc(s.id)}">
+        <div class="snapshot-info">
+          <span class="snapshot-name">${esc(s.thread_id)}</span>
+          <span class="snapshot-meta">${esc(s.created_at)} · ${s.total_messages} ${t("条消息")}</span>
+        </div>
+        <button class="btn danger small" data-snap-del="${esc(s.id)}">${t("删除")}</button>
+      </div>`).join("");
+
+    $$("#snapshotList .snapshot-row").forEach(row => {
+      const sid = row.dataset.sid;
+      row.onclick = (e) => { if (e.target.closest("button")) return; goSnapshot(S.agentId, S.agentName, sid); };
+      row.querySelector("[data-snap-del]").onclick = async (e) => {
+        e.stopPropagation();
+        if (!confirm(`${t("确定删除快照")}「${sid}」？${t("此操作不可撤销。")}`)) return;
+        try {
+          await api(`/api/agents/${encodeURIComponent(S.agentId)}/snapshots/${encodeURIComponent(sid)}`, { method: "DELETE" });
+          toast(t("已删除"));
+          loadSnapshots();
+        } catch (err) { toast(err.message, true); }
+      };
+    });
+  }
+  $("#snapshotHandle").onclick = () => {
+    const open = snapPanel.style.display !== "none";
+    snapPanel.style.display = open ? "none" : "";
+    if (!open) loadSnapshots();
+  };
+  $("#snapshotClose").onclick = () => { snapPanel.style.display = "none"; };
 }
 async function deleteThread(tid) {
   if (!confirm(`${t("确定删除会话")}「${tid}」？${t("此操作不可撤销。")}`)) return;
@@ -1842,6 +1903,7 @@ async function renderChatView() {
       <span class="muted">（${esc(S.agentName)}）</span>
       <div class="spacer" style="flex:1;"></div>
       <span class="status-indicator" id="statusInd"></span>
+      <button class="btn small" id="proactiveSummeryBtn" title="${t("主动全量总结")}">📝 ${t("主动全量总结")}</button>
       <div class="zoom-controls">
         <span class="zoom-btn" id="rZoomOut" title="${t("思考字号减小")}">−</span>
         <span class="zoom-label" id="rZoomLabel" title="${t("思考字号（相对正文）")}">🧠</span>
@@ -1921,6 +1983,7 @@ async function renderChatView() {
   $("#rZoomOut").onclick = () => { changeReasoningZoom(-10); updateReasoningZoomLabel(); };
   $("#rZoomIn").onclick = () => { changeReasoningZoom(10); updateReasoningZoomLabel(); };
   $("#msgDirBtn").onclick = (e) => toggleMsgDrawer(e);
+  $("#proactiveSummeryBtn").onclick = () => triggerProactiveSummery();
 
   const updatePinBtn = () => { pinBtn.classList.toggle("active", pinned); };
   updatePinBtn();
@@ -2039,6 +2102,19 @@ async function renderChatView() {
     }
   }
 
+  async function triggerProactiveSummery() {
+    if (isRunning) return;
+    setRunning(true);
+    currentReplyEl = null;
+    const ok = await openChatWs("", true);
+    if (ok) {
+      render();
+    } else {
+      setRunning(false);
+      toast(t("主动全量总结失败"), true);
+    }
+  }
+
   sendBtn.onclick = send;
   input.onkeydown = e => {
     if (e.key !== "Enter") return;
@@ -2059,6 +2135,81 @@ async function renderChatView() {
   updateSendState();
 }
 
+/* ================= 视图5：快照浏览 ================= */
+async function renderSnapshotView() {
+  const backToThreads = () => goThreads(S.agentId, S.agentName);
+  app.innerHTML = topbar(t("返回会话"), backToThreads);
+  const view = document.createElement("div");
+  view.className = "chat-view";
+  app.appendChild(view);
+  bindBack(backToThreads);
+
+  await getSettings().catch(() => {});
+
+  let snap;
+  try {
+    snap = await api(`/api/agents/${encodeURIComponent(S.agentId)}/snapshots/${encodeURIComponent(S.snapshotId)}`);
+  } catch (e) {
+    view.innerHTML = `<div class="empty"><div class="big">⚠️</div>${esc(e.message)}</div>`;
+    return;
+  }
+
+  const subMap = {};
+  (snap.subgraphs || []).forEach(s => { subMap[s.name] = s.markdown; });
+  const subNames = Object.keys(subMap);
+
+  view.innerHTML = `
+    <div class="chat-head">
+      <span class="thread-name">📸 ${esc(snap.thread_id)}</span>
+      <span class="muted">${esc(snap.created_at || "")}</span>
+      <div class="spacer" style="flex:1;"></div>
+      <div class="zoom-controls">
+        <span class="zoom-btn" id="rZoomOut" title="${t("思考字号减小")}">−</span>
+        <span class="zoom-label" id="rZoomLabel" title="${t("思考字号（相对正文）")}">🧠</span>
+        <span class="zoom-btn" id="rZoomIn" title="${t("思考字号增大")}">+</span>
+        <span class="zoom-pct" id="rZoomPct"></span>
+      </div>
+      <div class="zoom-controls">
+        <span class="zoom-btn" id="zoomOut" title="${t("正文字号减小")}">−</span>
+        <span class="zoom-label" id="zoomLabel" title="${t("正文字号")}">Aa</span>
+        <span class="zoom-btn" id="zoomIn" title="${t("正文字号增大")}">+</span>
+        <span class="zoom-pct" id="zoomPct"></span>
+      </div>
+      <button class="btn small" id="msgDirBtn" style="position:relative;">☰ ${t("消息目录")}</button>
+      <select id="subgraphSel" class="btn small" style="max-width:220px;"><option value="">${t("主会话")}</option></select>
+    </div>
+    <div class="chat-body" id="chatBody">
+      <div class="history-pane" id="historyPane"><div class="md-body markdown-body" id="historyMd"><div class="muted">${t("加载历史中…")}</div></div></div>
+    </div>`;
+
+  applyZoom();
+  applyReasoningZoom();
+  const zoomPctEl = $("#zoomPct");
+  const updateZoomLabel = () => { if (zoomPctEl) zoomPctEl.textContent = zoomPct + "%"; };
+  updateZoomLabel();
+  $("#zoomOut").onclick = () => { changeZoom(-10); updateZoomLabel(); };
+  $("#zoomIn").onclick = () => { changeZoom(10); updateZoomLabel(); };
+  const rZoomPctEl = $("#rZoomPct");
+  const updateReasoningZoomLabel = () => { if (rZoomPctEl) rZoomPctEl.textContent = reasoningZoomPct + "%"; };
+  updateReasoningZoomLabel();
+  $("#rZoomOut").onclick = () => { changeReasoningZoom(-10); updateReasoningZoomLabel(); };
+  $("#rZoomIn").onclick = () => { changeReasoningZoom(10); updateReasoningZoomLabel(); };
+  $("#msgDirBtn").onclick = (e) => toggleMsgDrawer(e);
+
+  const historyEl = $("#historyMd");
+  historyEl.innerHTML = renderMd(snap.main || "");
+  injectExportButtons(historyEl);
+
+  const sel = $("#subgraphSel");
+  subNames.forEach(n => { const o = document.createElement("option"); o.value = n; o.textContent = n; sel.appendChild(o); });
+  sel.onchange = () => {
+    const v = sel.value;
+    historyEl.innerHTML = renderMd(v ? subMap[v] : (snap.main || ""));
+    injectExportButtons(historyEl);
+    const pane = $("#historyPane"); if (pane) pane.scrollTop = 0;
+  };
+}
+
 function appendReplyHeader() {
   const historyEl = $("#historyMd");
   if (!currentReplyEl || currentReplyEl.parentElement !== historyEl) {
@@ -2068,7 +2219,7 @@ function appendReplyHeader() {
   }
 }
 
-function openChatWs(content) {
+function openChatWs(content, proactive = false) {
   return new Promise((resolve) => {
     const proto = location.protocol === "https:" ? "wss" : "ws";
     ws = new WebSocket(`${proto}://${location.host}/api/agents/${encodeURIComponent(S.agentId)}/threads/${encodeURIComponent(S.threadId)}/chat`);
@@ -2111,7 +2262,7 @@ function openChatWs(content) {
       if (pane && (pinned || atBottom)) pane.scrollTop = pane.scrollHeight;
     }
 
-    ws.onopen = () => ws.send(JSON.stringify({ type: "send", content }));
+    ws.onopen = () => ws.send(JSON.stringify(proactive ? { type: "proactive_summarize" } : { type: "send", content }));
 
     ws.onmessage = async (ev) => {
       const msg = JSON.parse(ev.data);

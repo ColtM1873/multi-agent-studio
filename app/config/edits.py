@@ -32,9 +32,15 @@ def apply_edits(existing: MultiAgentConfig, incoming: MultiAgentConfig) -> Multi
     连接凭据等）均可变。
     """
     validate_edits(existing, incoming)
-    # 保留原有 state_messages_key（子 agent 名未变，键名也保持稳定）
-    key_map = {s.name: s.state_messages_key for s in existing.sub_agents}
+    # 保留原有 state_messages_key / history_token_measure_key / extracted_summery_ai_msg_key（子 agent 名未变，键名也保持稳定）
+    msg_key_map = {s.name: s.state_messages_key for s in existing.sub_agents}
+    token_key_map = {s.name: s.history_token_measure_key for s in existing.sub_agents}
+    summery_key_map = {s.name: s.extracted_summery_ai_msg_key for s in existing.sub_agents}
     for sub in incoming.sub_agents:
         if sub.state_messages_key is None:
-            sub.state_messages_key = key_map.get(sub.name)
+            sub.state_messages_key = msg_key_map.get(sub.name)
+        if sub.history_token_measure_key is None:
+            sub.history_token_measure_key = token_key_map.get(sub.name)
+        if sub.extracted_summery_ai_msg_key is None:
+            sub.extracted_summery_ai_msg_key = summery_key_map.get(sub.name)
     return incoming

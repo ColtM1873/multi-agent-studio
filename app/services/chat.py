@@ -24,6 +24,16 @@ def make_user_input(text: str) -> dict:
     }
 
 
+def make_proactive_summery_input() -> dict:
+    return {
+        "messages": [],
+        "proactive_summery_requested": True,
+        "instructions_for_subagents": {},
+        "instructions_ids": {},
+        "subagents_reports_submit": {},
+    }
+
+
 def _load_history_settings(config_dir) -> dict:
     """读取影响历史浏览默认展开/折叠的全局设置。"""
     from app.config.settings import load_settings

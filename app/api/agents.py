@@ -11,7 +11,11 @@ from app.config.edits import EditRuleViolation, apply_edits
 from app.config.models import MultiAgentConfig
 from app.config.store import slugify
 from app.deps import chat_manager, config_store
-from app.runtime.state_factory import assign_state_messages_keys
+from app.runtime.state_factory import (
+    assign_extracted_summery_ai_msg_keys,
+    assign_history_token_measure_keys,
+    assign_state_messages_keys,
+)
 from app.services import threads as threads_service
 
 router = APIRouter(prefix="/api", tags=["agents"])
@@ -78,6 +82,8 @@ async def create_agent(cfg: MultiAgentConfig):
 
     # 生成并锁定子 agent 的消息通道键（落盘后永久固定，与历史绑定）
     assign_state_messages_keys(cfg)
+    assign_history_token_measure_keys(cfg)
+    assign_extracted_summery_ai_msg_keys(cfg)
 
     await chat_manager.invalidate(cfg.agent_id)
     config_store.save(cfg)
@@ -106,6 +112,8 @@ async def update_agent(agent_id: str, cfg: MultiAgentConfig):
 
     # 对旧配置（state_messages_key 为 null）兜底生成并锁定
     assign_state_messages_keys(merged)
+    assign_history_token_measure_keys(merged)
+    assign_extracted_summery_ai_msg_keys(merged)
 
     await chat_manager.invalidate(agent_id)
     config_store.save(merged)

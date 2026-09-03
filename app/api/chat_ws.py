@@ -2,6 +2,7 @@
 
 客户端→服务端消息：
   {"type": "send", "content": "..."}   发送一轮消息
+  {"type": "proactive_summarize"}      触发主动全量总结
   {"type": "resume", "value": "yes"}   回复 interrupt 中断
   {"type": "stop"}                     关闭
 
@@ -23,7 +24,7 @@ import asyncio
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.deps import chat_manager
-from app.services.chat import make_user_input
+from app.services.chat import make_proactive_summery_input, make_user_input
 
 router = APIRouter()
 
@@ -53,7 +54,7 @@ async def chat_ws(websocket: WebSocket, agent_id: str, thread_id: str):
         resume_future = asyncio.get_running_loop().create_future()
         return await resume_future
 
-    async def _run(content: str):
+    async def _run(content: str, proactive: bool = False):
         import os
 
         html_files: list[str] = []
@@ -68,8 +69,9 @@ async def chat_ws(websocket: WebSocket, agent_id: str, thread_id: str):
             await emit(event)
 
         try:
+            user_input = make_proactive_summery_input() if proactive else make_user_input(content)
             final_state = await runtime.run(
-                thread_id, make_user_input(content), emit_checked, on_interrupt
+                thread_id, user_input, emit_checked, on_interrupt
             )
             await emit({"type": "done", "final_state": final_state})
 
@@ -95,6 +97,11 @@ async def chat_ws(websocket: WebSocket, agent_id: str, thread_id: str):
                     await emit({"type": "error", "message": "上一轮仍在运行"})
                     continue
                 current_run = asyncio.create_task(_run(data.get("content", "")))
+            elif mtype == "proactive_summarize":
+                if current_run and not current_run.done():
+                    await emit({"type": "error", "message": "上一轮仍在运行"})
+                    continue
+                current_run = asyncio.create_task(_run("", proactive=True))
             elif mtype == "resume":
                 if resume_future and not resume_future.done():
                     resume_future.set_result(data.get("value", ""))

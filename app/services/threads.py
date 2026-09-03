@@ -101,17 +101,11 @@ async def list_subgraph_nodes(conn_string: str, thread_id: str) -> list[dict]:
         ]
 
 
-async def get_subgraph_history_by_node(
-    conn_string: str,
-    thread_id: str,
-    node_name: str,
-    *,
-    reasoning_expanded: bool = True,
-    tool_call_expanded: bool = False,
-    tool_result_expanded: bool = False,
-    export_html: bool = False,
-) -> str | None:
-    """按子 agent 名聚合其所有调用（namespace）的历史，按时间排序合并。"""
+async def get_subgraph_messages(conn_string: str, thread_id: str, node_name: str) -> list:
+    """按子 agent 名聚合其所有调用（namespace）的历史，按时间排序合并为消息列表。
+
+    供历史渲染与快照计数/渲染复用，保证两者取到的数据完全一致。
+    """
     async with await AsyncConnection.connect(conn_string) as conn:
         await conn.set_autocommit(True)
         rows = await conn.execute(
@@ -122,7 +116,7 @@ async def get_subgraph_history_by_node(
         namespaces = [r[0] for r in await rows.fetchall()]
 
     if not namespaces:
-        return None
+        return []
 
     tuples = []
     async with AsyncPostgresSaver.from_conn_string(conn_string) as cp:
@@ -133,7 +127,7 @@ async def get_subgraph_history_by_node(
                 tuples.append(t)
 
     if not tuples:
-        return None
+        return []
 
     tuples.sort(key=lambda t: t.checkpoint.get("ts", ""))
 
@@ -145,6 +139,21 @@ async def get_subgraph_history_by_node(
             msgs = channel_values.get("messages", [])
         merged.extend(msgs)
 
+    return merged
+
+
+async def get_subgraph_history_by_node(
+    conn_string: str,
+    thread_id: str,
+    node_name: str,
+    *,
+    reasoning_expanded: bool = True,
+    tool_call_expanded: bool = False,
+    tool_result_expanded: bool = False,
+    export_html: bool = False,
+) -> str | None:
+    """按子 agent 名聚合其所有调用（namespace）的历史，按时间排序合并。"""
+    merged = await get_subgraph_messages(conn_string, thread_id, node_name)
     if not merged:
         return None
 
