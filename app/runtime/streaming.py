@@ -102,6 +102,7 @@ async def _consume_subgraphs(stream, emit: Emit):
 async def _consume_values(stream, emit: Emit):
     """主图的 tool call / tool 结果事件。"""
     seen_tool_ids: set[str] = set()
+    seen_tool_result_ids: set[str] = set()
     async for snapshot in stream.values:
         msgs = snapshot.get("messages", [])
         if not msgs:
@@ -110,6 +111,14 @@ async def _consume_values(stream, emit: Emit):
         if not hasattr(last, "type"):
             continue
         if last.type == "tool":
+            # 同一条 ToolMessage 会出现在相邻的多个状态快照里（tool_node_front →
+            # consume_submitted_reports 之间没有新增消息），导致 tool_result 被 emit 两次。
+            # 用 tool_call_id 去重（与 tool_call 的 seen_tool_ids 对称）。
+            result_id = getattr(last, "tool_call_id", None) or getattr(last, "id", None)
+            if result_id and result_id in seen_tool_result_ids:
+                continue
+            if result_id:
+                seen_tool_result_ids.add(result_id)
             content = last.content
             if isinstance(content, list):
                 parts = []
