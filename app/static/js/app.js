@@ -2091,6 +2091,7 @@ async function renderChatView() {
     if (!raw.trim() || isRunning) return;
     const content = raw.replace(/\s+$/, "");
     setRunning(true);
+    currentReplyEl = null;
     appendReplyHeader();
     const ok = await openChatWs(content);
     setRunning(false);
