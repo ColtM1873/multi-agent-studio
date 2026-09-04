@@ -5,8 +5,8 @@
 - 每个子图的消息键 `state_messages_key` 必须全局唯一（父子消息键不同，否则冲突）。
 - 每个子图的 token 计数键 `history_token_measure_key` 同样必须全局唯一，
   且不能与主图保留字段 `current_history_token_volume` 重名。
-- 每个子图的「提取总结 AI 消息」键 `extracted_summery_ai_msg_key` 同样必须全局唯一，
-  且不能与主图保留字段 `extracted_summery_ai_msg_as_str` 重名。
+- 每个子图的「提取总结 AI 消息」键 `extracted_summary_ai_msg_key` 同样必须全局唯一，
+  且不能与主图保留字段 `extracted_summary_ai_msg_as_str` 重名。
 - `subagents_reports_submit` / `instructions_for_subagents` 在父子图间故意同名，
   用 merge_dicts reducer 实现"信息穿透"（子→父报告、父→子指令）。
 """
@@ -39,23 +39,26 @@ def make_main_state() -> type:
 
     class MainAgentState(MessagesState):
         subagents_reports_submit: Annotated[dict[str, Any], merge_dicts]
-        instructions_for_subagents: Annotated[dict[str, Any], merge_dicts]
+        instructions_for_subagents: Annotated[dict[str, Any], merge_dicts] 
+        # update rule, later with same key name overwrite old 
+        # design to be "sub_agent_name" : "args_schema"
+        # now change it to "sub_agent_name" : dict
         instructions_ids: Annotated[dict[str, Any], merge_dicts]
         extracted_human_message: str
-        next_summerize_thresh_hold: int
+        next_summarize_thresh_hold: int
         current_history_token_volume : int
-        extracted_summery_ai_msg_as_str : str
-        proactive_summery_requested : bool
-
+        extracted_summary_ai_msg_as_str : str
+        proactive_summary_requested : bool
+        proactive_summary_requested_for_specified_sub_agent : str | None
     return MainAgentState
 
 
-def make_sub_agent_state(messages_key: str, history_token_measure_key: str, extracted_summery_ai_msg_key: str) -> type:
+def make_sub_agent_state(messages_key: str, history_token_measure_key: str, extracted_summary_ai_msg_key: str) -> type:
     """子图 state，等价于原来的 DocsState / WebSearchState 等。"""
     fields: dict[str, Any] = {
         messages_key: Annotated[list[AnyMessage], add_messages],
         history_token_measure_key: int,
-        extracted_summery_ai_msg_key: str,
+        extracted_summary_ai_msg_key: str,
         **SHARED_FIELDS,
     }
     return type(
@@ -111,28 +114,28 @@ def assign_history_token_measure_keys(config: MultiAgentConfig) -> None:
         seen.add(key)
 
 
-def assign_extracted_summery_ai_msg_keys(config: MultiAgentConfig) -> None:
+def assign_extracted_summary_ai_msg_keys(config: MultiAgentConfig) -> None:
     """为每个子 agent 生成唯一的「提取总结 AI 消息」键名（原地写入 config）。
 
     规则与 assign_state_messages_keys 完全一致，只是：
-    - 主图保留字段是 `extracted_summery_ai_msg_as_str`；
-    - 生成的基础键名是 `<slugified_name>_extracted_summery_ai_msg`。
+    - 主图保留字段是 `extracted_summary_ai_msg_as_str`；
+    - 生成的基础键名是 `<slugified_name>_extracted_summary_ai_msg`。
     """
     seen: set[str] = set()
-    used_by_main = {"extracted_summery_ai_msg_as_str"}
+    used_by_main = {"extracted_summary_ai_msg_as_str"}
     for sub in config.sub_agents:
         if (
-            sub.extracted_summery_ai_msg_key
-            and sub.extracted_summery_ai_msg_key not in seen
-            and sub.extracted_summery_ai_msg_key not in used_by_main
+            sub.extracted_summary_ai_msg_key
+            and sub.extracted_summary_ai_msg_key not in seen
+            and sub.extracted_summary_ai_msg_key not in used_by_main
         ):
-            seen.add(sub.extracted_summery_ai_msg_key)
+            seen.add(sub.extracted_summary_ai_msg_key)
             continue
-        base = f"{slugify(sub.name)}_extracted_summery_ai_msg"
+        base = f"{slugify(sub.name)}_extracted_summary_ai_msg"
         key = base
         i = 2
         while key in seen or key in used_by_main:
             key = f"{base}_{i}"
             i += 1
-        sub.extracted_summery_ai_msg_key = key
+        sub.extracted_summary_ai_msg_key = key
         seen.add(key)

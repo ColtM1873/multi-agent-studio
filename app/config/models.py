@@ -113,7 +113,7 @@ class SubAgentConfig(BaseModel):
     # 每个子 agent 独立的 token 计数键名，由系统自动生成（父子键必须唯一），用户不填。
     history_token_measure_key: str | None = None
     # 每个子 agent 独立的「提取的总结 AI 消息」键名，由系统自动生成（父子键必须唯一），用户不填。
-    extracted_summery_ai_msg_key: str | None = None
+    extracted_summary_ai_msg_key: str | None = None
     summary: SubSummaryConfig = Field(default_factory=SubSummaryConfig)
     react_prompt: bool = True
 

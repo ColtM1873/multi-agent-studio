@@ -23,7 +23,7 @@ from app.config.models import (
     MultiAgentConfig,
     SubAgentConfig,
 )
-from app.runtime.prompts import MEMORY_ATTACH_MARKER, USER_MSG_PREFIX, ReAct_system_prompt, summery_prompt_generator, subagent_call_prompt, summery_prompt_prefix,trimmed_summery_prompt
+from app.runtime.prompts import MEMORY_ATTACH_MARKER, USER_MSG_PREFIX, ReAct_system_prompt, summary_prompt_generator, subagent_call_prompt, summary_prompt_prefix,trimmed_summary_prompt
 from app.runtime.state_factory import make_main_state, make_sub_agent_state
 from app.services import snapshot as snapshot_service
 
@@ -113,7 +113,7 @@ async def build_sub_agent(
     tools_mcp_client,
     state_messages_key: str,
     history_token_measure_key: str,
-    extracted_summery_ai_msg_key: str,
+    extracted_summary_ai_msg_key: str,
     checkpoint_conn_string: str,
     agent_id: str,
     state_type,
@@ -169,28 +169,35 @@ async def build_sub_agent(
     async def final_summarization_prompt(state, config: RunnableConfig):
         await _try_capture_snapshot(config, checkpoint_conn_string, agent_id)
         usage_count = state[history_token_measure_key]
-        summery_prompt = summery_prompt_generator(usage_count=usage_count , proactive_flush= False)
-        return {state_messages_key: [HumanMessage(content=summery_prompt)]}
+        summary_prompt = summary_prompt_generator(usage_count=usage_count , proactive_flush= False)
+        return {state_messages_key: [HumanMessage(content=summary_prompt)]}
+    
+    async def proactive_final_summarization_prompt(state, config: RunnableConfig):
+        await _try_capture_snapshot(config, checkpoint_conn_string, agent_id)
+        usage_count = state[history_token_measure_key]
+        summary_prompt = summary_prompt_generator(usage_count=usage_count , proactive_flush= True)
+        return {state_messages_key: [HumanMessage(content=summary_prompt)]}
+
 
     async def final_history_flush(state): 
         reserve_msg_rounds = reserve_rounds
         msg_list = state[state_messages_key]
         len_msg_list = len(msg_list)
-        summery_human_msg_iter = None
-        # locate last summery HumanMessage
+        summary_human_msg_iter = None
+        # locate last summary HumanMessage
         for msg_iter in range(len_msg_list - 1, -1 , -1):
             msg_here = msg_list[msg_iter]
             if isinstance(msg_here, HumanMessage):
                 msg_str = msg_here.content
                 if msg_str.strip().startswith(
-                    summery_prompt_prefix.strip()
+                    summary_prompt_prefix.strip()
                 ):
-                    summery_human_msg_iter = msg_iter
+                    summary_human_msg_iter = msg_iter
                     break
                 
-        beginning_human_iter = summery_human_msg_iter
+        beginning_human_iter = summary_human_msg_iter
         if reserve_msg_rounds:
-            for msg_iter in range(summery_human_msg_iter - 1, -1, -1): #倒序查找HumanMessage
+            for msg_iter in range(summary_human_msg_iter - 1, -1, -1): #倒序查找HumanMessage
                 if isinstance(msg_list[msg_iter], HumanMessage):
                     reserve_msg_rounds -= 1
                     if not reserve_msg_rounds:
@@ -198,32 +205,37 @@ async def build_sub_agent(
                         break
         if beginning_human_iter <= 0: # reserve too much
             return {}
-        msg_list_to_delete = msg_list[0:beginning_human_iter] + msg_list[summery_human_msg_iter:]
-        extract_ai_summery_msg = msg_list[-1].content
-        extract_ai_summery_msg_as_str = None
-        for msg_dict in extract_ai_summery_msg:
+        msg_list_to_delete = msg_list[0:beginning_human_iter] + msg_list[summary_human_msg_iter:]
+        extract_ai_summary_msg = msg_list[-1].content
+        extract_ai_summary_msg_as_str = None
+        for msg_dict in extract_ai_summary_msg:
             if msg_dict["type"] == "text":
-                extract_ai_summery_msg_as_str = msg_dict["text"]
+                extract_ai_summary_msg_as_str = msg_dict["text"]
                 break
 
         return {
             state_messages_key: [ RemoveMessage(id=msg.id) for msg in msg_list_to_delete  ],
-            extracted_summery_ai_msg_key : extract_ai_summery_msg_as_str,
+            extracted_summary_ai_msg_key : extract_ai_summary_msg_as_str,
             history_token_measure_key :0,
             }
-    async def refill_summery_msg(state):
-        summery_text = state[extracted_summery_ai_msg_key] or ""
+    async def refill_summary_msg(state):
+        summary_text = state[extracted_summary_ai_msg_key] or ""
         return {
             state_messages_key:[
-                HumanMessage(content= trimmed_summery_prompt),
-                AIMessage(content=summery_text),
+                HumanMessage(content= trimmed_summary_prompt),
+                AIMessage(content=summary_text),
             ]
         }
-    async def should_continue_main_summery_final(state):
+    async def should_continue_main_summary_final(state):
         if state[state_messages_key][-1].tool_calls:
-            return "kill_tools_final"
-        return "final_history_flush"
-
+            return Command(goto="kill_tools_final")
+        return Command(goto="final_history_flush")
+    
+    async def proactive_should_continue_main_summary_final(state):
+        if state[state_messages_key][-1].tool_calls:
+            return Command(goto="proactive_kill_tools_final")
+        return Command(goto="proactive_final_history_flush")
+    
     async def kill_tool(state):
         result = []
         for tool_call in state[state_messages_key][-1].tool_calls:
@@ -233,26 +245,81 @@ async def build_sub_agent(
             )
         return {state_messages_key: result}
 
+#instruction 不用消费后置空，因为如果 新的instruction没有overwrite，意味着 主agent根本没有 toolcall指向该子agent
+#该子agent也就不会被调用，也就不会取到 过时的或者已经消费的 instruction
+
     async def receiving_instruction(state):
-        instruction = state["instructions_for_subagents"][sub_agent_name]["instruction"]
+        instruction = state["instructions_for_subagents"][sub_agent_name]["args"]["instruction"]
         return {state_messages_key: [HumanMessage(content=instruction + "\n")]}
+
+    async def route_to_proactive_summary(state):
+        proactive_summary_bool = state["instructions_for_subagents"][sub_agent_name]["proactive_summary"]
+        if proactive_summary_bool:
+            return Command(goto="proactive_summary_confirm")
+        return Command(goto="period_summarize_evaluate")
+
+
+    async def proactive_summary_confirm(state):
+        user_opinion = interrupt(f"是否对子agent,{sub_agent_name},进行主动全量总结？注意：会剥离目前所有会话历史（除了设置的保留会话轮数）。")
+        if user_opinion == "yes":
+            return Command(goto="proactive_summary_get_usage_count")
+        return Command(goto=END)
+
+    async def proactive_summary_get_usage_count(state):
+        msg_list = state[state_messages_key]
+        last_ai_msg = None
+        for message_iter in range(len(msg_list) - 1, -1, -1):
+            msg_here = msg_list[message_iter]
+            if isinstance(msg_here, AIMessage):
+                last_ai_msg = msg_here
+                break
+        usage_metadata = (last_ai_msg.usage_metadata or {}) if last_ai_msg else {}
+        usage_count = usage_metadata.get("total_tokens", 0)
+        return Command(goto="proactive_final_summarization_prompt",
+                        update= {history_token_measure_key :usage_count })
 
     builder.add_node("receiving_instruction", receiving_instruction)
 
     (
         builder
         .add_node("period_summarize_evaluate", period_summarize_evaluate)
+        .add_node("proactive_summary_get_usage_count",proactive_summary_get_usage_count)
+        .add_node("route_to_proactive_summary",route_to_proactive_summary)
+        .add_node("should_continue_main_summary_final",should_continue_main_summary_final)
+        .add_node("proactive_should_continue_main_summary_final",proactive_should_continue_main_summary_final)
+
+        .add_node("proactive_summary_confirm",proactive_summary_confirm)
         .add_node("final_summarization_prompt", final_summarization_prompt)
+        .add_node("proactive_final_summarization_prompt",proactive_final_summarization_prompt)
+        .add_node("proactive_final_summarize", call_llm)
         .add_node("final_summarize", call_llm)
+
         .add_node("kill_tools_final", kill_tool)
+        .add_node("proactive_kill_tools_final", kill_tool)
+
         .add_node("final_history_flush", final_history_flush)
-        .add_node("refill_summery_msg",refill_summery_msg)
-        .add_edge(START, "period_summarize_evaluate")
+        .add_node("proactive_final_history_flush", final_history_flush)
+
+        .add_node("refill_summary_msg",refill_summary_msg)
+        .add_node("proactive_refill_summary_msg",refill_summary_msg)
+
+
+        .add_edge(START, "route_to_proactive_summary")
         .add_edge("final_summarization_prompt", "final_summarize")
-        .add_conditional_edges("final_summarize", should_continue_main_summery_final)
-        .add_edge("final_history_flush","refill_summery_msg")
+        .add_edge("proactive_final_summarization_prompt", "proactive_final_summarize")
+
+        .add_edge("final_summarize", "should_continue_main_summary_final")
+        .add_edge("proactive_final_summarize", "proactive_should_continue_main_summary_final")
+
+
+        .add_edge("final_history_flush","refill_summary_msg")
+        .add_edge("proactive_final_history_flush","proactive_refill_summary_msg")
+
         .add_edge("kill_tools_final", "final_summarize")
-        .add_edge("refill_summery_msg", "receiving_instruction")
+        .add_edge("proactive_kill_tools_final", "proactive_final_summarize")
+
+        .add_edge("proactive_refill_summary_msg", END)
+        .add_edge("refill_summary_msg", "receiving_instruction")
     )
 
     async def tool_node_fn(state):
@@ -312,14 +379,14 @@ async def build_world(
 
     # 为每个子 agent 生成唯一消息键（若尚未生成）
     from app.runtime.state_factory import (
-        assign_extracted_summery_ai_msg_keys,
+        assign_extracted_summary_ai_msg_keys,
         assign_history_token_measure_keys,
         assign_state_messages_keys,
     )
 
     assign_state_messages_keys(config)
     assign_history_token_measure_keys(config)
-    assign_extracted_summery_ai_msg_keys(config)
+    assign_extracted_summary_ai_msg_keys(config)
 
     factory = mcp_client_factory or build_mcp_client
 
@@ -337,6 +404,8 @@ async def build_world(
     num_of_sub_agents = len(sub_agent_specs_list)
 
     sub_agent_tools = [make_sub_agent_tool(s.name, s.description) for s in sub_agent_specs_list]
+# tool_name is exactly subagent name, is exactly the sub_graph node name
+
 
     sub_agent_sub_graphs = []
     for spec in sub_agent_specs_list:
@@ -344,7 +413,7 @@ async def build_world(
         state_type = make_sub_agent_state(
             spec.state_messages_key,
             spec.history_token_measure_key,
-            spec.extracted_summery_ai_msg_key,
+            spec.extracted_summary_ai_msg_key,
         )
         sub_agent_sub_graphs.append(
             await build_sub_agent(
@@ -352,7 +421,7 @@ async def build_world(
                 mcp_client,
                 spec.state_messages_key,
                 spec.history_token_measure_key,
-                spec.extracted_summery_ai_msg_key,
+                spec.extracted_summary_ai_msg_key,
                 snapshot_conn_string,
                 snapshot_agent_id,
                 state_type,
@@ -459,7 +528,7 @@ async def build_world(
             human_message = HumanMessage(content=human_message_content + "\n")
         return {"messages": [human_message]}
 
-    async def period_summerize_evaluate(state):
+    async def period_summarize_evaluate(state):
         msg_list = state["messages"]
         last_ai_msg = None
         for message_iter in range(len(msg_list) - 1, -1, -1):
@@ -475,11 +544,11 @@ async def build_world(
             return Command(goto="final_summarization_prompt",
                            update= {"current_history_token_volume" :usage_count })
 
-        summerize_thresh_hold = state.get("next_summerize_thresh_hold", sum_gap)
-        if usage_count >= summerize_thresh_hold:
+        summarize_thresh_hold = state.get("next_summarize_thresh_hold", sum_gap)
+        if usage_count >= summarize_thresh_hold:
             return Command(
                 goto="period_summarization_prompt",
-                update={"next_summerize_thresh_hold": summerize_thresh_hold + sum_gap},
+                update={"next_summarize_thresh_hold": summarize_thresh_hold + sum_gap},
             )
         return Command(goto="merge_human_message_with_memory")
 
@@ -494,7 +563,7 @@ async def build_world(
                 )
             ]
         }
-    async def proactive_summery_get_usage_count(state):
+    async def proactive_summary_get_usage_count(state):
         msg_list = state["messages"]
         last_ai_msg = None
         for message_iter in range(len(msg_list) - 1, -1, -1):
@@ -511,34 +580,34 @@ async def build_world(
     async def final_summarization_prompt(state, config: RunnableConfig):
         await _try_capture_snapshot(config, snapshot_conn_string, snapshot_agent_id)
         usage_count = state["current_history_token_volume"]
-        summery_prompt = summery_prompt_generator(usage_count=usage_count , proactive_flush= False)
-        return {"messages": [HumanMessage(content=summery_prompt)]}
+        summary_prompt = summary_prompt_generator(usage_count=usage_count , proactive_flush= False)
+        return {"messages": [HumanMessage(content=summary_prompt)]}
 
     async def proactive_final_summarization_prompt(state, config: RunnableConfig):
         await _try_capture_snapshot(config, snapshot_conn_string, snapshot_agent_id)
         usage_count = state["current_history_token_volume"]
-        summery_prompt = summery_prompt_generator(usage_count=usage_count , proactive_flush= True)
-        return {"messages": [HumanMessage(content=summery_prompt)]}
+        summary_prompt = summary_prompt_generator(usage_count=usage_count , proactive_flush= True)
+        return {"messages": [HumanMessage(content=summary_prompt)]}
     
     async def final_history_flush(state): 
         reserve_msg_rounds = reserve_rounds
         msg_list = state["messages"]
         len_msg_list = len(msg_list)
-        summery_human_msg_iter = None
-        # locate last summery HumanMessage
+        summary_human_msg_iter = None
+        # locate last summary HumanMessage
         for msg_iter in range(len_msg_list - 1, -1 , -1):
             msg_here = msg_list[msg_iter]
             if isinstance(msg_here, HumanMessage):
                 msg_str = msg_here.content
                 if msg_str.strip().startswith(
-                    summery_prompt_prefix.strip()
+                    summary_prompt_prefix.strip()
                 ):
-                    summery_human_msg_iter = msg_iter
+                    summary_human_msg_iter = msg_iter
                     break
                 
-        beginning_human_iter = summery_human_msg_iter
+        beginning_human_iter = summary_human_msg_iter
         if reserve_msg_rounds:
-            for msg_iter in range(summery_human_msg_iter - 1, -1, -1): #倒序查找HumanMessage
+            for msg_iter in range(summary_human_msg_iter - 1, -1, -1): #倒序查找HumanMessage
                 if isinstance(msg_list[msg_iter], HumanMessage):
                     reserve_msg_rounds -= 1
                     if not reserve_msg_rounds:
@@ -547,42 +616,42 @@ async def build_world(
         if beginning_human_iter <= 0: # reserve too much
             return {}
         
-        msg_list_to_delete = msg_list[0:beginning_human_iter] + msg_list[summery_human_msg_iter:]
+        msg_list_to_delete = msg_list[0:beginning_human_iter] + msg_list[summary_human_msg_iter:]
 
-        extract_ai_summery_msg = msg_list[-1].content
-        extract_ai_summery_msg_as_str = None
-        for msg_dict in extract_ai_summery_msg:
+        extract_ai_summary_msg = msg_list[-1].content
+        extract_ai_summary_msg_as_str = None
+        for msg_dict in extract_ai_summary_msg:
             if msg_dict["type"] == "text":
-                extract_ai_summery_msg_as_str = msg_dict["text"]
+                extract_ai_summary_msg_as_str = msg_dict["text"]
                 break
 
         return {
             "messages": [ RemoveMessage(id=msg.id) for msg in msg_list_to_delete  ],
-            "extracted_summery_ai_msg_as_str" : extract_ai_summery_msg_as_str,
+            "extracted_summary_ai_msg_as_str" : extract_ai_summary_msg_as_str,
             "current_history_token_volume" :0,
-            "next_summerize_thresh_hold": sum_gap,
+            "next_summarize_thresh_hold": sum_gap,
             }
     
-    async def refill_summery_msg(state):
-        summery_text = state["extracted_summery_ai_msg_as_str"] or ""
+    async def refill_summary_msg(state):
+        summary_text = state["extracted_summary_ai_msg_as_str"] or ""
         return {
             "messages":[
-                HumanMessage(content= trimmed_summery_prompt),
-                AIMessage(content=summery_text),
+                HumanMessage(content= trimmed_summary_prompt),
+                AIMessage(content=summary_text),
             ]
         }
 
-    async def should_continue_main_summery_period(state):
+    async def should_continue_main_summary_period(state):
         if state["messages"][-1].tool_calls:
             return "kill_tools_period"
         return "merge_human_message_with_memory"
 
-    async def should_continue_main_summery_final(state):
+    async def should_continue_main_summary_final(state):
         if state["messages"][-1].tool_calls:
             return "kill_tools_final"
         return "final_history_flush"
     
-    async def proactive_should_continue_main_summery_final(state):
+    async def proactive_should_continue_main_summary_final(state):
         if state["messages"][-1].tool_calls:
             return "proactive_kill_tools_final"
         return "proactive_final_history_flush"
@@ -602,30 +671,49 @@ async def build_world(
         response = await main_model_with_tools.ainvoke(concate_sys_messages)
         return {"messages": [response]}
     
-    async def query_to_proactive_summery(state):
-        if not state.get("proactive_summery_requested"):
-            return Command(goto="is_human_msg_or_not")
-        return Command(goto="proactive_summery_confirm", update={"proactive_summery_requested": False})
+    async def query_to_proactive_summary(state):
+        if state.get("proactive_summary_requested") == True:
+            return Command(goto="proactive_summary_confirm", update={"proactive_summary_requested": False})
+        elif state.get("proactive_summary_requested_for_specified_sub_agent") != None:
+            return Command(goto="summary_requested_for_sub_agent" )
+                # update={"proactive_summary_requested_for_specified_sub_agent": None})
+        return Command(goto="is_human_msg_or_not")
 
-    async def proactive_summery_confirm(state):
+    async def summary_requested_for_sub_agent(state):
+        instructions_for_subagents = {}
+        sub_agent_name = state.get("proactive_summary_requested_for_specified_sub_agent")
+        instructions_for_subagents[sub_agent_name] = {}
+        instructions_for_subagents[sub_agent_name]["proactive_summary"] = True
+        return Command( goto=sub_agent_name,
+                       update= {
+                           "instructions_for_subagents": instructions_for_subagents,
+                           "proactive_summary_requested_for_specified_sub_agent" : None,
+                            }
+                        )
+
+
+    async def proactive_summary_confirm(state):
         user_opinion = interrupt("是否进行主动全量总结？注意：会剥离目前所有会话历史（除了设置的保留会话轮数）。")
         if user_opinion == "yes":
-            return Command(goto="proactive_summery_get_usage_count")
+            return Command(goto="proactive_summary_get_usage_count")
         return Command(goto=END)
 
-
+    for name, subgraph in sub_agent_dict.items():
+        main_agent_builder.add_node(name, subgraph, retry_policy=RetryPolicy(max_attempts=3))
+        
     (
         main_agent_builder
         .add_node("extract_human_message", extract_human_message)
         .add_node("call_main_llm", call_main_llm, retry_policy=RetryPolicy(max_attempts=3))
+        .add_node("summary_requested_for_sub_agent",summary_requested_for_sub_agent)
         .add_node("kill_tools_period", kill_tool)
         .add_node("kill_tools_final", kill_tool)
         .add_node("proactive_kill_tools_final", kill_tool)
-        .add_node("query_to_proactive_summery",query_to_proactive_summery)
-        .add_node("proactive_summery_confirm",proactive_summery_confirm)
-        .add_node("refill_summery_msg",refill_summery_msg)
-        .add_node("proactive_refill_summery_msg",refill_summery_msg)
-        .add_node("period_summerize_evaluate", period_summerize_evaluate)
+        .add_node("query_to_proactive_summary",query_to_proactive_summary)
+        .add_node("proactive_summary_confirm",proactive_summary_confirm)
+        .add_node("refill_summary_msg",refill_summary_msg)
+        .add_node("proactive_refill_summary_msg",refill_summary_msg)
+        .add_node("period_summarize_evaluate", period_summarize_evaluate)
         .add_node("period_summarization_prompt", period_summarization_prompt)
         .add_node("period_summarization", call_main_llm, retry_policy=RetryPolicy(max_attempts=3))
         .add_node("proactive_final_summarization_prompt", proactive_final_summarization_prompt)
@@ -637,22 +725,22 @@ async def build_world(
         .add_node("merge_human_message_with_memory", merge_human_message_with_memory)
         .add_node("we_dont_want_unresponded_human_msg",we_dont_want_unresponded_human_msg)
         .add_node("is_human_msg_or_not",is_human_msg_or_not)
-        .add_node("proactive_summery_get_usage_count",proactive_summery_get_usage_count)
-        .add_edge(START, "query_to_proactive_summery")
+        .add_node("proactive_summary_get_usage_count",proactive_summary_get_usage_count)
+        .add_edge(START, "query_to_proactive_summary")
         .add_edge("proactive_final_summarization_prompt","proactive_final_summarization")
-        .add_edge("extract_human_message", "period_summerize_evaluate")
+        .add_edge("extract_human_message", "period_summarize_evaluate")
         .add_edge("period_summarization_prompt", "period_summarization")
-        .add_conditional_edges("period_summarization", should_continue_main_summery_period, ["kill_tools_period", "merge_human_message_with_memory"])
+        .add_conditional_edges("period_summarization", should_continue_main_summary_period, ["kill_tools_period", "merge_human_message_with_memory"])
         .add_edge("kill_tools_period", "period_summarization")
         .add_edge("final_summarization_prompt", "final_summarization")
-        .add_conditional_edges("final_summarization", should_continue_main_summery_final, ["kill_tools_final", "final_history_flush"])
-        .add_conditional_edges("proactive_final_summarization", proactive_should_continue_main_summery_final, ["proactive_kill_tools_final", "proactive_final_history_flush"])
+        .add_conditional_edges("final_summarization", should_continue_main_summary_final, ["kill_tools_final", "final_history_flush"])
+        .add_conditional_edges("proactive_final_summarization", proactive_should_continue_main_summary_final, ["proactive_kill_tools_final", "proactive_final_history_flush"])
         .add_edge("kill_tools_final", "final_summarization")
-        .add_edge("final_history_flush","refill_summery_msg")
-        .add_edge("refill_summery_msg", "merge_human_message_with_memory")
+        .add_edge("final_history_flush","refill_summary_msg")
+        .add_edge("refill_summary_msg", "merge_human_message_with_memory")
         .add_edge("proactive_kill_tools_final", "proactive_final_summarization")
-        .add_edge("proactive_final_history_flush","proactive_refill_summery_msg")
-        .add_edge("proactive_refill_summery_msg", END)
+        .add_edge("proactive_final_history_flush","proactive_refill_summary_msg")
+        .add_edge("proactive_refill_summary_msg", END)
         .add_edge("merge_human_message_with_memory", "call_main_llm")
     )
 
@@ -663,7 +751,9 @@ async def build_world(
             agent_name = agent_call["name"]
             if agent_name not in sub_agent_dict:
                 continue
-            instructions_for_subagents[agent_name] = agent_call["args"]
+            instructions_for_subagents[agent_name] = {}
+            instructions_for_subagents[agent_name]["args"] = agent_call["args"]
+            instructions_for_subagents[agent_name]["proactive_summary"] = False
             instructions_ids[agent_name] = agent_call["id"]
         return {
             "instructions_for_subagents": instructions_for_subagents,
@@ -773,7 +863,6 @@ async def build_world(
             return "tool_node"
         return END
 
-    list_of_str_subgraphs = [tool.name for tool in sub_agent_tools]
 
     main_agent_builder.add_node("query_to_produce_html", query_to_produce_html)
     main_agent_builder.add_node("produce_html_call_llm", produce_html_call_llm, retry_policy=RetryPolicy(max_attempts=3))
@@ -781,12 +870,21 @@ async def build_world(
     main_agent_builder.add_node("delegate_instructions", delegate_instructions)
     main_agent_builder.add_node("consume_submitted_reports", consume_submitted_reports)
     main_agent_builder.add_node("tool_node_front", tool_node_front, retry_policy=RetryPolicy(max_attempts=3))
-    for name, subgraph in sub_agent_dict.items():
-        main_agent_builder.add_node(name, subgraph, retry_policy=RetryPolicy(max_attempts=3))
+
     main_agent_builder.add_edge("call_main_llm", "delegate_instructions")
     main_agent_builder.add_conditional_edges("delegate_instructions", route_to_func)
-    for node in list_of_str_subgraphs:
-        main_agent_builder.add_edge(node, "consume_submitted_reports")
+    for name in sub_agent_dict.keys():
+        async def route_after_sub_agent(state, _name=name):
+            instructions = state.get("instructions_for_subagents", {}).get(_name, {})
+            if instructions.get("proactive_summary"):
+                return "proactive_done"
+            return "consume_reports"
+
+        main_agent_builder.add_conditional_edges(
+            name,
+            route_after_sub_agent,
+            {"proactive_done": END, "consume_reports": "consume_submitted_reports"},
+        )
     main_agent_builder.add_edge("tool_node_front", "consume_submitted_reports")
     main_agent_builder.add_edge("consume_submitted_reports", "call_main_llm")
     main_agent_builder.add_conditional_edges("produce_html_call_llm", should_continue_main)

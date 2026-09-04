@@ -2,7 +2,8 @@
 
 客户端→服务端消息：
   {"type": "send", "content": "..."}   发送一轮消息
-  {"type": "proactive_summarize"}      触发主动全量总结
+  {"type": "proactive_summarize"}      触发主动全量总结（主 agent）
+  {"type": "proactive_summarize_sub", "sub_agent": "..."}  触发子 agent 主动全量总结
   {"type": "resume", "value": "yes"}   回复 interrupt 中断
   {"type": "stop"}                     关闭
 
@@ -24,7 +25,11 @@ import asyncio
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.deps import chat_manager
-from app.services.chat import make_proactive_summery_input, make_user_input
+from app.services.chat import (
+    make_proactive_summary_input,
+    make_proactive_summary_input_for_sub_agent,
+    make_user_input,
+)
 
 router = APIRouter()
 
@@ -54,7 +59,7 @@ async def chat_ws(websocket: WebSocket, agent_id: str, thread_id: str):
         resume_future = asyncio.get_running_loop().create_future()
         return await resume_future
 
-    async def _run(content: str, proactive: bool = False):
+    async def _run(content: str, proactive: bool = False, sub_agent: str | None = None):
         import os
 
         html_files: list[str] = []
@@ -69,7 +74,12 @@ async def chat_ws(websocket: WebSocket, agent_id: str, thread_id: str):
             await emit(event)
 
         try:
-            user_input = make_proactive_summery_input() if proactive else make_user_input(content)
+            if sub_agent:
+                user_input = make_proactive_summary_input_for_sub_agent(sub_agent)
+            elif proactive:
+                user_input = make_proactive_summary_input()
+            else:
+                user_input = make_user_input(content)
             final_state = await runtime.run(
                 thread_id, user_input, emit_checked, on_interrupt
             )
@@ -102,6 +112,13 @@ async def chat_ws(websocket: WebSocket, agent_id: str, thread_id: str):
                     await emit({"type": "error", "message": "上一轮仍在运行"})
                     continue
                 current_run = asyncio.create_task(_run("", proactive=True))
+            elif mtype == "proactive_summarize_sub":
+                if current_run and not current_run.done():
+                    await emit({"type": "error", "message": "上一轮仍在运行"})
+                    continue
+                current_run = asyncio.create_task(
+                    _run("", sub_agent=data.get("sub_agent", ""))
+                )
             elif mtype == "resume":
                 if resume_future and not resume_future.done():
                     resume_future.set_result(data.get("value", ""))

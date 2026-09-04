@@ -24,10 +24,20 @@ def make_user_input(text: str) -> dict:
     }
 
 
-def make_proactive_summery_input() -> dict:
+def make_proactive_summary_input() -> dict:
     return {
         "messages": [],
-        "proactive_summery_requested": True,
+        "proactive_summary_requested": True,
+        "instructions_for_subagents": {},
+        "instructions_ids": {},
+        "subagents_reports_submit": {},
+    }
+
+
+def make_proactive_summary_input_for_sub_agent(sub_agent_name: str) -> dict:
+    return {
+        "messages": [],
+        "proactive_summary_requested_for_specified_sub_agent": sub_agent_name,
         "instructions_for_subagents": {},
         "instructions_ids": {},
         "subagents_reports_submit": {},

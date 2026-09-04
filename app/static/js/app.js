@@ -268,6 +268,7 @@ const I18N_EN = {
   "请填写名称": "Please fill in the name",
   "子 agent 名称不能为空": "Sub-agent name cannot be empty",
   "请确认": "Please confirm",
+  "请先选择要总结的子 agent": "Please select a sub-agent to summarize first",
   "跟随最新输出 · 按住可拖动": "Follow latest output · hold to drag",
   "输入消息…": "Type a message…",
   "输入消息（": "Type a message (",
@@ -393,12 +394,13 @@ function isLocalPrefix(prefix) {
 }
 
 /* 确认弹窗 */
-function askConfirm(prompt) {
+function askConfirm(prompt, opts) {
   return new Promise(resolve => {
+    const pink = opts && opts.pink;
     const mask = document.createElement("div");
     mask.className = "modal-mask";
     mask.innerHTML = `
-      <div class="modal">
+      <div class="modal${pink ? " modal-pink" : ""}">
         <h3>${t("确认")}</h3>
         <div class="modal-body">${esc(prompt)}</div>
         <div class="modal-actions">
@@ -1903,7 +1905,7 @@ async function renderChatView() {
       <span class="muted">（${esc(S.agentName)}）</span>
       <div class="spacer" style="flex:1;"></div>
       <span class="status-indicator" id="statusInd"></span>
-      <button class="btn small" id="proactiveSummeryBtn" title="${t("主动全量总结")}">📝 ${t("主动全量总结")}</button>
+      <button class="btn small" id="proactiveSummaryBtn" title="${t("主动全量总结")}">📝 ${t("主动全量总结")}</button>
       <div class="zoom-controls">
         <span class="zoom-btn" id="rZoomOut" title="${t("思考字号减小")}">−</span>
         <span class="zoom-label" id="rZoomLabel" title="${t("思考字号（相对正文）")}">🧠</span>
@@ -1983,7 +1985,10 @@ async function renderChatView() {
   $("#rZoomOut").onclick = () => { changeReasoningZoom(-10); updateReasoningZoomLabel(); };
   $("#rZoomIn").onclick = () => { changeReasoningZoom(10); updateReasoningZoomLabel(); };
   $("#msgDirBtn").onclick = (e) => toggleMsgDrawer(e);
-  $("#proactiveSummeryBtn").onclick = () => triggerProactiveSummery();
+  $("#proactiveSummaryBtn").onclick = () => {
+    if (sel.value) triggerSubAgentProactiveSummary(sel.value);
+    else triggerProactiveSummary();
+  };
 
   const updatePinBtn = () => { pinBtn.classList.toggle("active", pinned); };
   updatePinBtn();
@@ -2103,7 +2108,7 @@ async function renderChatView() {
     }
   }
 
-  async function triggerProactiveSummery() {
+  async function triggerProactiveSummary() {
     if (isRunning) return;
     setRunning(true);
     currentReplyEl = null;
@@ -2120,6 +2125,30 @@ async function renderChatView() {
         while (sel.options.length > 1) sel.remove(1);
         const subs = await api(`/api/agents/${encodeURIComponent(S.agentId)}/threads/${encodeURIComponent(S.threadId)}/subgraphs`);
         subs.forEach(s => { const o = document.createElement("option"); o.value = s.node_name; o.textContent = s.node_name; sel.appendChild(o); });
+        scrollToLastUserMsg();
+      } catch (e) {
+        historyEl.innerHTML = `<div class="muted">${t("（无历史）")}</div>`;
+      }
+      setRunning(false);
+    } else {
+      setRunning(false);
+      toast(t("主动全量总结失败"), true);
+    }
+  }
+
+  async function triggerSubAgentProactiveSummary(subAgent) {
+    if (isRunning) return;
+    if (!subAgent) { toast(t("请先选择要总结的子 agent"), true); return; }
+    setRunning(true);
+    currentReplyEl = null;
+    appendReplyHeader();
+    const ok = await openChatWs("", false, subAgent);
+    if (ok) {
+      currentReplyEl = null;
+      try {
+        const h = await api(`/api/agents/${encodeURIComponent(S.agentId)}/threads/${encodeURIComponent(S.threadId)}/subgraphs/${encodeURIComponent(subAgent)}/history`);
+        historyEl.innerHTML = renderMd(h.markdown);
+        injectExportButtons(historyEl);
         scrollToLastUserMsg();
       } catch (e) {
         historyEl.innerHTML = `<div class="muted">${t("（无历史）")}</div>`;
@@ -2235,21 +2264,21 @@ function appendReplyHeader() {
   }
 }
 
-function openChatWs(content, proactive = false) {
+function openChatWs(content, proactive = false, subAgent = null) {
   return new Promise((resolve) => {
     const proto = location.protocol === "https:" ? "wss" : "ws";
     ws = new WebSocket(`${proto}://${location.host}/api/agents/${encodeURIComponent(S.agentId)}/threads/${encodeURIComponent(S.threadId)}/chat`);
 
-    const buffers = { main_user: "", main: [], sub: {} };
+    const buffers = { main_user: "", timeline: [] };
     let rafPending = false;
     let answered = false;
     const flush = () => { rafPending = false; renderStream(); };
     const schedule = () => { if (!rafPending) { rafPending = true; requestAnimationFrame(flush); } };
 
-    const pushBlock = (list, type, content) => {
-      const last = list[list.length - 1];
-      if (last && last.type === type) last.content += content;
-      else list.push({ type, content });
+    const pushBlock = (group, type, content) => {
+      const last = buffers.timeline[buffers.timeline.length - 1];
+      if (last && last.group === group && last.type === type) last.content += content;
+      else buffers.timeline.push({ group, type, content });
     };
 
     const reasoningBlock = (txt) => txt
@@ -2262,23 +2291,38 @@ function openChatWs(content, proactive = false) {
       const atBottom = pane && (pane.scrollHeight - pane.scrollTop - pane.clientHeight < 48);
       let html = "";
       if (buffers.main_user) html += `<div class="user-msg-block"><div class="user-msg-head">🧑 <strong>${t("用户")}</strong></div><blockquote class="user-msg-quote">${esc(buffers.main_user).replace(/\n/g, "<br>")}</blockquote></div>`;
-      const renderBlocks = (blocks) => blocks.map(b =>
+      const renderBlock = (b) =>
         b.type === "reasoning"
           ? reasoningBlock(b.content)
           : b.type === "tool_result"
             ? `<div class="tool-result-body">${renderMd(b.content)}</div>`
-            : `<div class="ai-msg-block">${renderMd(b.content)}</div>`
-      ).join("");
-      html += renderBlocks(buffers.main);
-      for (const [name, blocks] of Object.entries(buffers.sub)) {
-        if (!blocks || !blocks.length) continue;
-        html += `<div style="margin-top:12px;"><span class="sub-tag">🧩 ${t("子 agent")} · ${esc(name)}</span>${renderBlocks(blocks)}</div>`;
+            : `<div class="ai-msg-block">${renderMd(b.content)}</div>`;
+      let openSub = null;
+      const closeSub = () => { if (openSub !== null) { html += "</div>"; openSub = null; } };
+      for (const b of buffers.timeline) {
+        if (b.group === "main") {
+          closeSub();
+          html += renderBlock(b);
+        } else {
+          const name = b.group.slice(4);
+          if (name !== openSub) {
+            closeSub();
+            html += `<div style="margin-top:12px;"><span class="sub-tag">🧩 ${t("子 agent")} · ${esc(name)}</span>`;
+            openSub = name;
+          }
+          html += renderBlock(b);
+        }
       }
+      closeSub();
       currentReplyEl.innerHTML = html;
       if (pane && (pinned || atBottom)) pane.scrollTop = pane.scrollHeight;
     }
 
-    ws.onopen = () => ws.send(JSON.stringify(proactive ? { type: "proactive_summarize" } : { type: "send", content }));
+    ws.onopen = () => ws.send(JSON.stringify(
+      subAgent ? { type: "proactive_summarize_sub", sub_agent: subAgent }
+        : proactive ? { type: "proactive_summarize" }
+          : { type: "send", content }
+    ));
 
     ws.onmessage = async (ev) => {
       const msg = JSON.parse(ev.data);
@@ -2286,30 +2330,27 @@ function openChatWs(content, proactive = false) {
         case "text":
           if (msg.source === "main" && !answered) { answered = true; setStatusIndicator("answering"); }
           if (msg.source === "main_user") buffers.main_user += msg.text;
-          else if (msg.source === "main") pushBlock(buffers.main, "text", msg.text);
-          else { const n = msg.source.replace(/^sub:/, ""); (buffers.sub[n] = buffers.sub[n] || []); pushBlock(buffers.sub[n], "text", msg.text); }
+          else if (msg.source === "main") pushBlock("main", "text", msg.text);
+          else { const n = msg.source.replace(/^sub:/, ""); pushBlock("sub:" + n, "text", msg.text); }
           schedule();
           break;
         case "reasoning":
-          if (msg.source === "main") pushBlock(buffers.main, "reasoning", msg.text);
-          else { const n = msg.source.replace(/^sub:/, ""); (buffers.sub[n] = buffers.sub[n] || []); pushBlock(buffers.sub[n], "reasoning", msg.text); }
+          if (msg.source === "main") pushBlock("main", "reasoning", msg.text);
+          else { const n = msg.source.replace(/^sub:/, ""); pushBlock("sub:" + n, "reasoning", msg.text); }
           schedule();
           break;
         case "tool_call":
           { let tcHtml = `\n\n🔧 **${t("工具调用")}**: \`${esc(msg.name)}\`\n\n`;
           if (msg.args && Object.keys(msg.args).length) tcHtml += "```json\n" + JSON.stringify(msg.args, null, 2) + "\n```\n\n";
-          pushBlock(buffers.main, "tool", tcHtml);
+          pushBlock("main", "tool", tcHtml);
           schedule(); }
           break;
         case "tool_result":
-          pushBlock(buffers.main, "tool_result", `\n✅ **${t("工具结果")}** (\`${esc(msg.name)}\`):\n\n${esc(msg.content)}\n\n`);
+          pushBlock("main", "tool_result", `\n✅ **${t("工具结果")}** (\`${esc(msg.name)}\`):\n\n${esc(msg.content)}\n\n`);
           schedule();
           break;
-        case "subgraph_start":
-          buffers.sub[msg.name] = buffers.sub[msg.name] || [];
-          break;
         case "interrupt": {
-          const ans = await askConfirm(msg.prompt || t("请确认"));
+          const ans = await askConfirm(msg.prompt || t("请确认"), subAgent ? { pink: true } : null);
           ws.send(JSON.stringify({ type: "resume", value: ans }));
           break;
         }
@@ -2317,7 +2358,7 @@ function openChatWs(content, proactive = false) {
           resolve(true);
           break;
         case "error":
-          pushBlock(buffers.main, "tool", `\n\n> ⚠️ ${esc(msg.message)}\n\n`);
+          pushBlock("main", "tool", `\n\n> ⚠️ ${esc(msg.message)}\n\n`);
           schedule();
           resolve(false);
           break;
