@@ -53,7 +53,9 @@ def _load_history_settings(config_dir) -> dict:
         "reasoning_expanded": settings.reasoning_expanded,
         "tool_call_expanded": settings.tool_call_expanded,
         "tool_result_expanded": settings.tool_result_expanded,
-        "export_html": settings.export_html,
+        # export_html 参数控制「是否在 .ai-msg-block 埋 data-md-b64 原文」，
+        # 供前端「转换 HTML / 导出 md 文件」两个按钮共用，任一开启即埋。
+        "export_html": settings.export_html or settings.export_md,
     }
 
 
@@ -93,6 +95,10 @@ class ChatManager:
             runtime = await self._build_runtime(config)
             self._runtimes[agent_id] = runtime
             return runtime
+
+    def has_runtime(self, agent_id: str) -> bool:
+        """运行时是否已构建并缓存（用于前端决定是否显示 embedding 加载状态）。"""
+        return agent_id in self._runtimes
 
     async def _build_runtime(self, config: MultiAgentConfig) -> AgentRuntime:
         from app.config.settings import load_settings

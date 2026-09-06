@@ -111,6 +111,7 @@ const I18N_EN = {
   "创建后不可增删改名": "Sub-agents cannot be added/removed/renamed after creation",
   "创建后不可改": "Cannot be changed after creation",
   "删除": "Delete",
+  "加载Embedding模型中": "Loading embedding model…",
   "加载中…": "Loading…",
   "加载历史中…": "Loading history…",
   "千": "×1,000",
@@ -296,6 +297,11 @@ const I18N_EN = {
   "已生成 HTML": "HTML generated",
   "开启后，浏览历史时每条助手回复下方会出现「转换 HTML」按钮，可将该回复转成可打印的 HTML 文件。": "When enabled, an 'Export HTML' button appears below each assistant reply in history to convert it into a printable HTML file.",
   "生成 HTML 文件的输出目录（绝对路径）。": "Output directory (absolute path) where generated HTML files are saved.",
+  "导出 md 文件": "Export MD",
+  "已生成 md 文件": "MD file generated",
+  "md 输出路径": "MD output path",
+  "开启后，浏览历史时每条助手回复下方会出现「导出 md 文件」按钮，可将该回复保存为 Markdown 文件。": "When enabled, an 'Export MD' button appears below each assistant reply in history to save it as a Markdown file.",
+  "生成 md 文件的输出目录（绝对路径）。": "Output directory (absolute path) where generated MD files are saved.",
   "调整导出 HTML 的纸张、预览与配色。": "Adjust page, preview and color settings of the exported HTML.",
   "纸张": "Page",
   "纸张尺寸": "Page size",
@@ -340,6 +346,7 @@ const I18N_EN = {
   "暂无快照": "No snapshots yet",
   "条消息": "messages",
   "确定删除快照": "Delete snapshot?",
+  "等待确认…": "Awaiting confirmation…",
 };
 const t = (s) => (lang === "zh" || !I18N_EN[s]) ? s : I18N_EN[s];
 function setLang(l) {
@@ -602,18 +609,40 @@ async function exportHtml(markdown) {
   } catch (e) { toast(e.message, true); }
 }
 
+async function exportMd(markdown) {
+  try {
+    const r = await api(`/api/agents/${encodeURIComponent(S.agentId)}/threads/${encodeURIComponent(S.threadId)}/export-md`, {
+      method: "POST", body: JSON.stringify({ markdown }),
+    });
+    toast(`${t("已生成 md 文件")}：${r.path}`);
+  } catch (e) { toast(e.message, true); }
+}
+
 function injectExportButtons(rootEl) {
-  if (!settingsCache || !settingsCache.export_html) return;
+  if (!settingsCache) return;
+  const showHtml = settingsCache.export_html;
+  const showMd = settingsCache.export_md;
+  if (!showHtml && !showMd) return;
   $$(".ai-msg-block[data-md-b64]", rootEl).forEach(block => {
-    if (block.querySelector(".export-html-btn")) return;
+    if (block.querySelector(".export-html-row")) return;
     const wrap = document.createElement("div");
     wrap.className = "export-html-row";
-    const btn = document.createElement("button");
-    btn.className = "btn small export-html-btn";
-    btn.type = "button";
-    btn.textContent = `🖨 ${t("转换 HTML")}`;
-    btn.onclick = () => exportHtml(b64ToUtf8(block.dataset.mdB64));
-    wrap.appendChild(btn);
+    if (showHtml) {
+      const btn = document.createElement("button");
+      btn.className = "btn small export-html-btn";
+      btn.type = "button";
+      btn.textContent = `🖨 ${t("转换 HTML")}`;
+      btn.onclick = () => exportHtml(b64ToUtf8(block.dataset.mdB64));
+      wrap.appendChild(btn);
+    }
+    if (showMd) {
+      const btn = document.createElement("button");
+      btn.className = "btn small export-md-btn";
+      btn.type = "button";
+      btn.textContent = `📄 ${t("导出 md 文件")}`;
+      btn.onclick = () => exportMd(b64ToUtf8(block.dataset.mdB64));
+      wrap.appendChild(btn);
+    }
     block.appendChild(wrap);
   });
 }
@@ -994,6 +1023,16 @@ async function openSettings() {
           <input type="text" id="set_export_html_path" value="${esc(s.export_html_path || "")}" placeholder="例如 C:\\Agent_WorkPlace\\html">
         </div>
       </div>
+      <div class="switch-row">
+        <span class="sw-label">📄 ${t("导出 md 文件")} <i class="info-icon">!<span class="tip">${t("开启后，浏览历史时每条助手回复下方会出现「导出 md 文件」按钮，可将该回复保存为 Markdown 文件。")}</span></i></span>
+        <label class="toggle"><input type="checkbox" id="set_export_md" ${s.export_md ? "checked" : ""}><span class="track"></span></label>
+      </div>
+      <div id="exportMdFields" style="${s.export_md ? "" : "display:none;"}">
+        <div class="switch-row">
+          <span class="sw-label">${t("md 输出路径")} <i class="info-icon">!<span class="tip">${t("生成 md 文件的输出目录（绝对路径）。")}</span></i></span>
+          <input type="text" id="set_export_md_path" value="${esc(s.export_md_path || "")}" placeholder="例如 C:\\Agent_WorkPlace\\md">
+        </div>
+      </div>
       <div class="modal-actions" style="justify-content:flex-start; flex-wrap:wrap;">
         <button class="btn small" id="setAdvanced">${t("进阶设置")}</button>
         <button class="btn small" id="setColors">${t("字体颜色设置")}</button>
@@ -1012,6 +1051,9 @@ async function openSettings() {
     const on = e.target.checked;
     mask.querySelector("#exportHtmlFields").style.display = on ? "" : "none";
     mask.querySelector("#setHtmlConfig").style.display = on ? "" : "none";
+  });
+  mask.querySelector("#set_export_md").addEventListener("change", e => {
+    mask.querySelector("#exportMdFields").style.display = e.target.checked ? "" : "none";
   });
 
   const sendSel = mask.querySelector("#set_send");
@@ -1044,6 +1086,8 @@ async function openSettings() {
         bare_math_detect: mask.querySelector("#set_baremath").checked,
         export_html: mask.querySelector("#set_export_html").checked,
         export_html_path: mask.querySelector("#set_export_html_path").value,
+        export_md: mask.querySelector("#set_export_md").checked,
+        export_md_path: mask.querySelector("#set_export_md_path").value,
       });
       mask.remove();
       toast(t("设置已保存"));
@@ -1680,12 +1724,12 @@ async function renderThreadsView() {
       <button class="btn primary" id="newThreadBtn">+ ${t("新建会话")}</button>
     </div>
     <div id="threadsBox" style="flex:1;overflow:auto;min-height:0;"><div class="muted">${t("加载中…")}</div></div>
-    <div class="threads-footer" id="threadsFooter" style="display:none;">
-      <label class="toggle"><input type="checkbox" id="showHiddenChk"><span class="track"></span></label>
-      <span class="sw-label" id="showHiddenLabel"></span>
-    </div>
     <div class="snapshot-drawer" id="snapshotDrawer">
-      <button class="snapshot-handle" id="snapshotHandle">📸 ${t("快照")}</button>
+      <button class="snapshot-handle" id="snapshotHandle" type="button">📸 ${t("快照")}</button>
+      <button class="showhidden-zone" id="showHiddenZone" type="button" style="display:none;">
+        <span class="sw-label" id="showHiddenLabel"></span>
+        <span class="toggle"><input type="checkbox" id="showHiddenChk"><span class="track"></span></span>
+      </button>
       <div class="snapshot-panel" id="snapshotPanel" style="display:none;">
         <div class="snapshot-panel-head">
           <span class="snapshot-panel-title">📸 ${t("快照列表")}</span>
@@ -1704,50 +1748,61 @@ async function renderThreadsView() {
   const showKey = "show_hidden_" + S.agentId;
   const hiddenSet = new Set(JSON.parse(localStorage.getItem(hiddenKey) || "[]"));
   const showHidden = localStorage.getItem(showKey) === "1";
-  const hiddenCount = threads.filter(t => hiddenSet.has(t.thread_id)).length;
-  const visible = showHidden ? threads : threads.filter(t => !hiddenSet.has(t.thread_id));
 
   // footer：有会话时始终显示（即使全部隐藏），让用户能切换「显示隐藏对话」
   if (threads.length) {
     $("#showHiddenChk").checked = showHidden;
-    $("#showHiddenLabel").textContent = t("显示隐藏对话") + (hiddenCount ? `（${hiddenCount}）` : "");
-    $("#threadsFooter").style.display = "flex";
+    $("#showHiddenZone").style.display = "flex";
   }
 
-  if (!visible.length) {
-    const msg = hiddenCount ? t("所有会话均已隐藏") : t("暂无会话");
-    $("#threadsBox").innerHTML = `<div class="empty"><div class="big">🧵</div>${msg}<br/><br/><button class="btn primary" id="nt2">+ ${t("新建会话")}</button></div>`;
-    const n = $("#nt2"); if (n) n.onclick = () => { const nm = prompt(t("新会话名称：")); if (nm && nm.trim()) goChat(S.agentId, S.agentName, nm.trim()); };
-  } else {
-    $("#threadsBox").innerHTML = `
-      <div style="background:var(--surface);border-radius:var(--radius);overflow:hidden;box-shadow:var(--shadow);">
-        ${visible.map(th => {
-          const hidden = hiddenSet.has(th.thread_id);
-          return `
-          <div class="thread-row ${hidden ? "thread-hidden" : ""}" data-tid="${esc(th.thread_id)}">
-            <span class="tid">${esc(th.thread_id)}</span>
-            <span class="meta"><small>${th.checkpoints} checkpoints</small><small>${esc(th.last_updated || "")}</small>${hidden ? `<small class="hidden-tag">${t("已隐藏")}</small>` : ""}</span>
-            <button class="btn hide small" data-hide="${esc(th.thread_id)}">${hidden ? t("取消隐藏") : t("隐藏")}</button>
-            <button class="btn danger small" data-del="${esc(th.thread_id)}">${t("删除")}</button>
-          </div>`;
-        }).join("")}
-      </div>`;
+  // 复用已加载的 threads，仅原地重绘列表，避免整页 flash /「加载中」闪屏
+  function drawThreadsBox() {
+    const showNow = localStorage.getItem(showKey) === "1";
+    const vis = showNow ? threads : threads.filter(t => !hiddenSet.has(t.thread_id));
+    const hiddenCnt = threads.filter(t => hiddenSet.has(t.thread_id)).length;
+    $("#showHiddenLabel").textContent = t("显示隐藏对话") + (hiddenCnt ? `（${hiddenCnt}）` : "");
+    if (!vis.length) {
+      const msg = hiddenCnt ? t("所有会话均已隐藏") : t("暂无会话");
+      $("#threadsBox").innerHTML = `<div class="empty"><div class="big">🧵</div>${msg}<br/><br/><button class="btn primary" id="nt2">+ ${t("新建会话")}</button></div>`;
+      const n = $("#nt2"); if (n) n.onclick = () => { const nm = prompt(t("新会话名称：")); if (nm && nm.trim()) goChat(S.agentId, S.agentName, nm.trim()); };
+    } else {
+      $("#threadsBox").innerHTML = `
+        <div style="background:var(--surface);border-radius:var(--radius);overflow:hidden;box-shadow:var(--shadow);">
+          ${vis.map(th => {
+            const hidden = hiddenSet.has(th.thread_id);
+            return `
+            <div class="thread-row ${hidden ? "thread-hidden" : ""}" data-tid="${esc(th.thread_id)}">
+              <span class="tid">${esc(th.thread_id)}</span>
+              <span class="meta"><small>${th.checkpoints} checkpoints</small><small>${esc(th.last_updated || "")}</small>${hidden ? `<small class="hidden-tag">${t("已隐藏")}</small>` : ""}</span>
+              <button class="btn hide small" data-hide="${esc(th.thread_id)}">${hidden ? t("取消隐藏") : t("隐藏")}</button>
+              <button class="btn danger small" data-del="${esc(th.thread_id)}">${t("删除")}</button>
+            </div>`;
+          }).join("")}
+        </div>`;
 
-    $$("#threadsBox .thread-row").forEach(row => {
-      const tid = row.dataset.tid;
-      row.onclick = () => goChat(S.agentId, S.agentName, tid);
-      row.querySelector("[data-del]").onclick = (e) => { e.stopPropagation(); deleteThread(tid); };
-      row.querySelector("[data-hide]").onclick = (e) => {
-        e.stopPropagation();
-        if (hiddenSet.has(tid)) hiddenSet.delete(tid);
-        else hiddenSet.add(tid);
-        localStorage.setItem(hiddenKey, JSON.stringify([...hiddenSet]));
-        renderThreadsView();
-      };
-    });
+      $$("#threadsBox .thread-row").forEach(row => {
+        const tid = row.dataset.tid;
+        row.onclick = () => goChat(S.agentId, S.agentName, tid);
+        row.querySelector("[data-del]").onclick = (e) => { e.stopPropagation(); deleteThread(tid); };
+        row.querySelector("[data-hide]").onclick = (e) => {
+          e.stopPropagation();
+          if (hiddenSet.has(tid)) hiddenSet.delete(tid);
+          else hiddenSet.add(tid);
+          localStorage.setItem(hiddenKey, JSON.stringify([...hiddenSet]));
+          drawThreadsBox();
+        };
+      });
+    }
   }
+  drawThreadsBox();
 
-  $("#showHiddenChk").onchange = (e) => { localStorage.setItem(showKey, e.target.checked ? "1" : "0"); renderThreadsView(); };
+  $("#showHiddenChk").onchange = (e) => { localStorage.setItem(showKey, e.target.checked ? "1" : "0"); drawThreadsBox(); };
+  $("#showHiddenZone").onclick = (e) => {
+    e.preventDefault();
+    const chk = $("#showHiddenChk");
+    chk.checked = !chk.checked;
+    chk.dispatchEvent(new Event("change"));
+  };
 
   // ── 快照抽屉 ─────────────────────────────
   const snapPanel = $("#snapshotPanel");
@@ -1803,6 +1858,8 @@ function setStatusIndicator(mode) {
   if (!ind) return;
   if (mode === "thinking") { ind.className = "status-indicator thinking"; ind.innerHTML = `<span class="status-dot thinking"></span>${t("Agent 思考中…")}`; }
   else if (mode === "answering") { ind.className = "status-indicator answering"; ind.innerHTML = `<span class="status-dot answering"></span>${t("Agent 回答中…")}`; }
+  else if (mode === "loading") { ind.className = "status-indicator loading"; ind.innerHTML = `<span class="status-dot loading"></span>${t("加载Embedding模型中")}`; }
+  else if (mode === "waiting") { ind.className = "status-indicator waiting"; ind.innerHTML = `<span class="status-dot waiting"></span>${t("等待确认…")}`; }
   else { ind.className = "status-indicator"; ind.innerHTML = ""; }
 }
 
@@ -2071,11 +2128,11 @@ async function renderChatView() {
     } catch (e) { toast(e.message, true); }
   };
 
-  function setRunning(r) {
+  function setRunning(r, status = "thinking") {
     isRunning = r;
     sel.disabled = r;
     updateSendState();
-    if (r) setStatusIndicator("thinking"); else setStatusIndicator("idle");
+    if (r) setStatusIndicator(status); else setStatusIndicator("idle");
     if (r) stopBtn.style.display = ""; else stopBtn.style.display = "none";
   }
 
@@ -2110,7 +2167,7 @@ async function renderChatView() {
 
   async function triggerProactiveSummary() {
     if (isRunning) return;
-    setRunning(true);
+    setRunning(true, "loading");
     currentReplyEl = null;
     appendReplyHeader();
     const ok = await openChatWs("", true);
@@ -2139,7 +2196,7 @@ async function renderChatView() {
   async function triggerSubAgentProactiveSummary(subAgent) {
     if (isRunning) return;
     if (!subAgent) { toast(t("请先选择要总结的子 agent"), true); return; }
-    setRunning(true);
+    setRunning(true, "loading");
     currentReplyEl = null;
     appendReplyHeader();
     const ok = await openChatWs("", false, subAgent);
@@ -2350,10 +2407,15 @@ function openChatWs(content, proactive = false, subAgent = null) {
           schedule();
           break;
         case "interrupt": {
+          setStatusIndicator("waiting");
           const ans = await askConfirm(msg.prompt || t("请确认"), subAgent ? { pink: true } : null);
+          if (ans === "yes") setStatusIndicator("thinking");
           ws.send(JSON.stringify({ type: "resume", value: ans }));
           break;
         }
+        case "status":
+          if (msg.status === "loading") setStatusIndicator("loading");
+          break;
         case "done":
           resolve(true);
           break;

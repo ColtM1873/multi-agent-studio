@@ -232,6 +232,24 @@ def _extract_ai_text(content) -> str:
 def _render_ai(msg, w, show_reasoning, show_tool_calls, reasoning_expanded=True, tool_call_expanded=False, export_html=False):
     content = msg.content
     tool_calls = getattr(msg, "tool_calls", []) or []
+    # 有些模型把 tool call 只编码在 content 的 tool_call block 里（.tool_calls 为空）。
+    # 这里把「.tool_calls 未覆盖的 content tool_call block」也收集进来，避免这类被静默丢弃。
+    content_tool_calls = []
+    if isinstance(content, list):
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "tool_call":
+                content_tool_calls.append(
+                    {
+                        "name": block.get("name", "?"),
+                        "args": block.get("args", {}),
+                        "id": block.get("id", ""),
+                    }
+                )
+    seen_ids = {tc.get("id", "") for tc in tool_calls}
+    for tc in content_tool_calls:
+        if tc.get("id") not in seen_ids:
+            seen_ids.add(tc.get("id"))
+            tool_calls.append(tc)
     um = getattr(msg, "usage_metadata", {}) or {}
     input_tok = um.get("input_tokens", "?")
     output_tok = um.get("output_tokens", "?")
@@ -299,16 +317,18 @@ def _render_tool(msg, w, max_lines, tool_result_expanded=False):
     lines = content_str.split("\n")
     line_count = len(lines)
     open_attr = " open" if tool_result_expanded else ""
-    if line_count <= max_lines:
-        w(f"<details{open_attr}>\n<summary>✅ Tool 结果: `{name}` ({line_count} 行)</summary>\n\n")
-        w(f'<div class="tool-result-body">{content_str}</div>\n\n')
-        w("</details>\n\n")
-    else:
-        preview = "\n".join(lines[:max_lines])
-        w(f"<details{open_attr}>\n<summary>✅ Tool 结果: `{name}` ({line_count} 行 — 点击展开)</summary>\n\n")
-        w(f'<div class="tool-result-body">{preview}</div>\n\n')
+    body = (content_str if line_count <= max_lines else "\n".join(lines[:max_lines]))
+    # 关键：把换行转成 <br>，避免内容里的空行让 markdown-it 提前终止 <div class="tool-result-body">
+    # 这个 html_block，导致 <div> 未闭合而破坏其后所有 tool_call/details 的 DOM 结构（工具结果丢失）。
+    body_html = _escape_html(body).replace("\r\n", "\n").replace("\n", "<br>")
+    summary_line = f"{line_count} 行"
+    if line_count > max_lines:
+        summary_line += " — 点击展开"
+    w(f"<details{open_attr}>\n<summary>✅ Tool 结果: `{name}` ({summary_line})</summary>\n\n")
+    w(f'<div class="tool-result-body">{body_html}</div>\n\n')
+    if line_count > max_lines:
         w(f"...（共 {line_count} 行，仅显示前 {max_lines} 行）\n\n")
-        w("</details>\n\n")
+    w("</details>\n\n")
 
 
 def _format_args(args: dict, max_str_len: int = 500) -> str:

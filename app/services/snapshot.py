@@ -55,7 +55,9 @@ def _history_settings() -> dict:
         "reasoning_expanded": settings.reasoning_expanded,
         "tool_call_expanded": settings.tool_call_expanded,
         "tool_result_expanded": settings.tool_result_expanded,
-        "export_html": settings.export_html,
+        # export_html 参数控制「是否在 .ai-msg-block 埋 data-md-b64 原文」，
+        # 供前端「转换 HTML / 导出 md 文件」两个按钮共用，任一开启即埋。
+        "export_html": settings.export_html or settings.export_md,
     }
 
 

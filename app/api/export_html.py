@@ -60,3 +60,30 @@ def export_html(agent_id: str, thread_id: str, body: ExportHtmlRequest):
     html_str = markdown_to_html(markdown, title=thread_id, config=settings.export_html_config or {})
     out_path.write_text(html_str, encoding="utf-8")
     return {"path": str(out_path)}
+
+
+@router.post("/api/agents/{agent_id}/threads/{thread_id}/export-md")
+def export_md(agent_id: str, thread_id: str, body: ExportHtmlRequest):
+    """把一段 Markdown 正文原样写入系统设置里的「md 输出路径」。"""
+    settings = load_settings(config_store._dir)
+    if not settings.export_md:
+        raise HTTPException(status_code=400, detail="md 导出未开启，请先在系统设置里开启")
+    if not settings.export_md_path:
+        raise HTTPException(status_code=400, detail="请先在系统设置里填写 md 输出路径")
+
+    markdown = (body.markdown or "").strip()
+    if not markdown:
+        raise HTTPException(status_code=400, detail="消息正文为空，无法导出")
+
+    out_dir = Path(settings.export_md_path)
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=f"无法创建输出目录：{e}")
+
+    safe_tid = re.sub(r"[^\w\-]+", "_", thread_id).strip("_") or "thread"
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    out_path = out_dir / f"{safe_tid}_{ts}.md"
+
+    out_path.write_text(markdown, encoding="utf-8")
+    return {"path": str(out_path)}

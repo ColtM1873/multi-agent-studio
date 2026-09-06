@@ -14,6 +14,7 @@
   {"type": "tool_call", "name", "args"}
   {"type": "tool_result", "name", "content"}
   {"type": "interrupt", "prompt"}
+  {"type": "status", "status": "loading"}  运行时构建中（embedding 模型加载等）
   {"type": "done", "final_state"}
   {"type": "error", "message"}
 """
@@ -39,6 +40,8 @@ async def chat_ws(websocket: WebSocket, agent_id: str, thread_id: str):
     await websocket.accept()
 
     try:
+        if not chat_manager.has_runtime(agent_id):
+            await websocket.send_json({"type": "status", "status": "loading"})
         runtime = await chat_manager.get_runtime(agent_id)
     except Exception as e:
         await websocket.send_json({"type": "error", "message": f"无法构建 agent: {e}"})

@@ -32,6 +32,9 @@ class Settings(BaseModel):
     export_html: bool = True
     export_html_path: str = ""
     export_html_config: dict = {}
+    # MD 导出：默认开启；输出路径为空时需先在设置里填写
+    export_md: bool = True
+    export_md_path: str = ""
 
 
 def settings_path(config_dir: Path | str) -> Path:
