@@ -7,7 +7,6 @@ import uuid
 from typing import Annotated, Any, Literal
 
 from langchain.chat_models import init_chat_model
-from langchain_community.agent_toolkits.file_management.toolkit import FileManagementToolkit
 from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage, SystemMessage, ToolMessage
 from langchain_core.runnables.config import RunnableConfig
 from langchain_core.tools import tool as langchain_tool
@@ -23,6 +22,7 @@ from app.config.models import (
     MultiAgentConfig,
     SubAgentConfig,
 )
+from app.runtime.file_tools import build_file_tools
 from app.runtime.prompts import MEMORY_ATTACH_MARKER, USER_MSG_PREFIX, ReAct_system_prompt, summary_prompt_generator, subagent_call_prompt, summary_prompt_prefix,trimmed_summary_prompt
 from app.runtime.state_factory import make_main_state, make_sub_agent_state
 from app.services import snapshot as snapshot_service
@@ -397,8 +397,7 @@ async def build_world(
     snapshot_conn_string = config.checkpoint_conn_string
     snapshot_agent_id = config.agent_id
 
-    file_toolkit = FileManagementToolkit(root_dir=main_spec.file_tools.root_dir)
-    pass_in_tools = file_toolkit.get_tools()
+    pass_in_tools = build_file_tools(main_spec.file_tools.root_dir)
 
     sub_agent_specs_list = config.sub_agents
     num_of_sub_agents = len(sub_agent_specs_list)
