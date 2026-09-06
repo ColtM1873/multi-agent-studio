@@ -27,6 +27,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.deps import chat_manager
 from app.services.chat import (
+    make_edit_input,
     make_proactive_summary_input,
     make_proactive_summary_input_for_sub_agent,
     make_user_input,
@@ -100,6 +101,19 @@ async def chat_ws(websocket: WebSocket, agent_id: str, thread_id: str):
         except Exception as e:
             await emit({"type": "error", "message": str(e)})
 
+    async def _run_edit(request: dict):
+        try:
+            user_input = make_edit_input(
+                request_for_subagent=bool(request.get("request_for_subagent")),
+                subagent_name=request.get("subagent_name") or None,
+                msg_indice=int(request.get("msg_indice", -1)),
+                substitute_msg_dict=request.get("substitute_msg") or {},
+            )
+            final_state = await runtime.run(thread_id, user_input, emit, on_interrupt)
+            await emit({"type": "done", "final_state": final_state})
+        except Exception as e:
+            await emit({"type": "error", "message": str(e)})
+
     try:
         while True:
             data = await websocket.receive_json()
@@ -122,6 +136,11 @@ async def chat_ws(websocket: WebSocket, agent_id: str, thread_id: str):
                 current_run = asyncio.create_task(
                     _run("", sub_agent=data.get("sub_agent", ""))
                 )
+            elif mtype == "edit":
+                if current_run and not current_run.done():
+                    await emit({"type": "error", "message": "上一轮仍在运行"})
+                    continue
+                current_run = asyncio.create_task(_run_edit(data.get("request", {})))
             elif mtype == "resume":
                 if resume_future and not resume_future.done():
                     resume_future.set_result(data.get("value", ""))

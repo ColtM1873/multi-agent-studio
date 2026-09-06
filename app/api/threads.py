@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 
 from app.deps import chat_manager
+from app.services.messages_json import message_to_dict
 
 router = APIRouter(prefix="/api/agents/{agent_id}/threads", tags=["threads"])
 
@@ -53,3 +54,25 @@ async def subgraph_history(agent_id: str, thread_id: str, node_name: str):
     if md is None:
         raise HTTPException(status_code=404, detail="该子图无 checkpoint")
     return {"markdown": md}
+
+
+@router.get("/{thread_id}/messages")
+async def thread_messages(agent_id: str, thread_id: str):
+    _load(agent_id)
+    msgs = await chat_manager.main_thread_messages(agent_id, thread_id)
+    return {
+        "messages": [
+            {**message_to_dict(m), "msg_indice": i} for i, m in enumerate(msgs)
+        ]
+    }
+
+
+@router.get("/{thread_id}/subgraphs/{node_name:path}/messages")
+async def subgraph_messages(agent_id: str, thread_id: str, node_name: str):
+    _load(agent_id)
+    msgs = await chat_manager.subgraph_messages_exact(agent_id, thread_id, node_name)
+    return {
+        "messages": [
+            {**message_to_dict(m), "msg_indice": i} for i, m in enumerate(msgs)
+        ]
+    }

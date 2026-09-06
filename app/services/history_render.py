@@ -134,22 +134,22 @@ def render_messages(
 
     counts = {"HumanMessage": 0, "AIMessage": 0, "ToolMessage": 0, "SystemMessage": 0}
     human_index = 0
-    for msg in messages:
+    for msg_indice, msg in enumerate(messages):
         msg_type = type(msg).__name__
         counts[msg_type] = counts.get(msg_type, 0) + 1
         if msg_type == "HumanMessage":
-            _render_human(msg, w, human_index)
+            _render_human(msg, w, human_index, msg_indice)
             human_index += 1
         elif msg_type == "AIMessage":
-            _render_ai(msg, w, show_reasoning, show_tool_calls, reasoning_expanded, tool_call_expanded, export_html)
+            _render_ai(msg, w, show_reasoning, show_tool_calls, reasoning_expanded, tool_call_expanded, export_html, msg_indice)
         elif msg_type == "ToolMessage":
-            _render_tool(msg, w, max_tool_result_lines, tool_result_expanded)
+            _render_tool(msg, w, max_tool_result_lines, tool_result_expanded, msg_indice)
         elif msg_type == "SystemMessage":
-            w("<details><summary>📌 SystemMessage</summary>\n\n")
+            w('<details class="system-msg-block" data-msg-indice="%d"><summary>📌 SystemMessage</summary>\n\n' % msg_indice)
             w(f"{_escape_md(str(msg.content))}\n\n")
             w("</details>\n\n")
         else:
-            w(f"<details><summary>📦 {msg_type}</summary>\n\n")
+            w(f'<details class="other-msg-block" data-msg-indice="{msg_indice}"><summary>📦 {msg_type}</summary>\n\n')
             w(f"```\n{_escape_md(str(msg.content))[:2000]}\n```\n\n")
             w("</details>\n\n")
 
@@ -208,11 +208,11 @@ def _extract_user_summary(content: str) -> str:
     return s.strip()
 
 
-def _render_human(msg, w, idx: int):
+def _render_human(msg, w, idx: int, msg_indice: int):
     content = str(msg.content)
     escaped = _escape_html(content).replace("\n", "<br>")
-    summary = _escape_html(_extract_user_summary(content))
-    w(f'<div id="user-msg-{idx}" class="user-msg-block" data-summary="{summary}">\n')
+    summary = _escape_html(_extract_user_summary(content)).replace("\n", " ")
+    w(f'<div id="user-msg-{idx}" class="user-msg-block" data-msg-indice="{msg_indice}" data-summary="{summary}">\n')
     w('<div class="user-msg-head">🧑 <strong>用户</strong></div>\n')
     w(f'<blockquote class="user-msg-quote">{escaped}</blockquote>\n')
     w("</div>\n")
@@ -229,7 +229,7 @@ def _extract_ai_text(content) -> str:
     return "\n\n".join(parts)
 
 
-def _render_ai(msg, w, show_reasoning, show_tool_calls, reasoning_expanded=True, tool_call_expanded=False, export_html=False):
+def _render_ai(msg, w, show_reasoning, show_tool_calls, reasoning_expanded=True, tool_call_expanded=False, export_html=False, msg_indice=0):
     content = msg.content
     tool_calls = getattr(msg, "tool_calls", []) or []
     # 有些模型把 tool call 只编码在 content 的 tool_call block 里（.tool_calls 为空）。
@@ -262,7 +262,7 @@ def _render_ai(msg, w, show_reasoning, show_tool_calls, reasoning_expanded=True,
             b64 = base64.b64encode(raw_text.encode("utf-8")).decode("ascii")
             data_attr = f' data-md-b64="{b64}"'
 
-    w(f'<div class="ai-msg-block" style="border-left: 3px solid #4CAF50; padding-left: 12px;"{data_attr}>\n\n')
+    w(f'<div class="ai-msg-block" style="border-left: 3px solid #4CAF50; padding-left: 12px;" data-msg-indice="{msg_indice}"{data_attr}>\n\n')
     w("**🤖 Assistant**  ")
     tok_str = f"↑{input_tok} ↓{output_tok}"
     if cache:
@@ -300,7 +300,7 @@ def _render_ai(msg, w, show_reasoning, show_tool_calls, reasoning_expanded=True,
     w("</div>\n\n")
 
 
-def _render_tool(msg, w, max_lines, tool_result_expanded=False):
+def _render_tool(msg, w, max_lines, tool_result_expanded=False, msg_indice=0):
     name = getattr(msg, "name", "") or "unknown_tool"
     content = msg.content
     if isinstance(content, list):
@@ -324,7 +324,7 @@ def _render_tool(msg, w, max_lines, tool_result_expanded=False):
     summary_line = f"{line_count} 行"
     if line_count > max_lines:
         summary_line += " — 点击展开"
-    w(f"<details{open_attr}>\n<summary>✅ Tool 结果: `{name}` ({summary_line})</summary>\n\n")
+    w(f"<details{open_attr} data-msg-indice=\"{msg_indice}\">\n<summary>✅ Tool 结果: `{name}` ({summary_line})</summary>\n\n")
     w(f'<div class="tool-result-body">{body_html}</div>\n\n')
     if line_count > max_lines:
         w(f"...（共 {line_count} 行，仅显示前 {max_lines} 行）\n\n")

@@ -347,6 +347,22 @@ const I18N_EN = {
   "条消息": "messages",
   "确定删除快照": "Delete snapshot?",
   "等待确认…": "Awaiting confirmation…",
+  "历史消息任意时间可编辑": "Edit any historical message",
+  "开启编辑模式": "Enable edit mode",
+  "开启后，会话界面右上角会出现「进入编辑模式」按钮，可编辑历史消息。": "When enabled, an 'Enter Edit Mode' button appears at the top-right of the chat view to edit historical messages.",
+  "开启后，无论多久远的历史消息都能进入编辑模式编辑；关闭时只编辑最近一轮对话。": "When enabled, messages of any age can be edited in edit mode; when disabled, only the latest turn is editable.",
+  "历史消息所有类型可编辑": "Edit all message types",
+  "开启后，用户消息、思考过程、工具调用、工具结果都能编辑；关闭时只编辑 AI 回复正文。": "When enabled, user messages, reasoning, tool calls and tool results can all be edited; when disabled, only AI reply text is editable.",
+  "进入编辑模式": "Enter Edit Mode",
+  "退出编辑模式": "Exit Edit Mode",
+  "编辑模式": "Edit Mode",
+  "确认改动": "Apply",
+  "撤销改动": "Undo",
+  "是否提交对历史消息的更改": "Submit changes to the historical messages?",
+  "更改已生效": "Changes applied",
+  "编辑历史消息失败": "Failed to edit history message",
+  "写入中": "Writing…",
+  "当前处于编辑模式，请先退出编辑模式后再离开。是否退出编辑模式？": "You are in edit mode. Exit edit mode before leaving?",
 };
 const t = (s) => (lang === "zh" || !I18N_EN[s]) ? s : I18N_EN[s];
 function setLang(l) {
@@ -598,6 +614,12 @@ function b64ToUtf8(b64) {
   const bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
   return new TextDecoder("utf-8").decode(bytes);
+}
+function utf8ToB64(s) {
+  const bytes = new TextEncoder().encode(String(s));
+  let bin = "";
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin);
 }
 
 async function exportHtml(markdown) {
@@ -882,6 +904,7 @@ function bindBack(cb) { const b = $("#backBtn"); if (b) b.onclick = cb; }
 /* ================= 视图调度 ================= */
 function render() {
   app.innerHTML = "";
+  $$(".edit-popup").forEach(p => p.remove());
   isRunning = false; ws = null; currentReplyEl = null; editorDirty = false;
   if (S.view === "agents") renderAgents();
   else if (S.view === "editor") renderEditorView();
@@ -1033,6 +1056,20 @@ async function openSettings() {
           <input type="text" id="set_export_md_path" value="${esc(s.export_md_path || "")}" placeholder="例如 C:\\Agent_WorkPlace\\md">
         </div>
       </div>
+      <div class="switch-row">
+        <span class="sw-label">✏️ ${t("开启编辑模式")} <i class="info-icon">!<span class="tip">${t("开启后，会话界面右上角会出现「进入编辑模式」按钮，可编辑历史消息。")}</span></i></span>
+        <label class="toggle"><input type="checkbox" id="set_edit_enabled" ${s.edit_mode_enabled !== false ? "checked" : ""}><span class="track"></span></label>
+      </div>
+      <div id="editFields" style="${s.edit_mode_enabled !== false ? "" : "display:none;"}">
+        <div class="switch-row">
+          <span class="sw-label">🕰 ${t("历史消息任意时间可编辑")} <i class="info-icon">!<span class="tip">${t("开启后，无论多久远的历史消息都能进入编辑模式编辑；关闭时只编辑最近一轮对话。")}</span></i></span>
+          <label class="toggle"><input type="checkbox" id="set_edit_any" ${s.edit_any_history ? "checked" : ""}><span class="track"></span></label>
+        </div>
+        <div class="switch-row">
+          <span class="sw-label">🧩 ${t("历史消息所有类型可编辑")} <i class="info-icon">!<span class="tip">${t("开启后，用户消息、思考过程、工具调用、工具结果都能编辑；关闭时只编辑 AI 回复正文。")}</span></i></span>
+          <label class="toggle"><input type="checkbox" id="set_edit_types" ${s.edit_all_message_types ? "checked" : ""}><span class="track"></span></label>
+        </div>
+      </div>
       <div class="modal-actions" style="justify-content:flex-start; flex-wrap:wrap;">
         <button class="btn small" id="setAdvanced">${t("进阶设置")}</button>
         <button class="btn small" id="setColors">${t("字体颜色设置")}</button>
@@ -1054,6 +1091,9 @@ async function openSettings() {
   });
   mask.querySelector("#set_export_md").addEventListener("change", e => {
     mask.querySelector("#exportMdFields").style.display = e.target.checked ? "" : "none";
+  });
+  mask.querySelector("#set_edit_enabled").addEventListener("change", e => {
+    mask.querySelector("#editFields").style.display = e.target.checked ? "" : "none";
   });
 
   const sendSel = mask.querySelector("#set_send");
@@ -1088,6 +1128,9 @@ async function openSettings() {
         export_html_path: mask.querySelector("#set_export_html_path").value,
         export_md: mask.querySelector("#set_export_md").checked,
         export_md_path: mask.querySelector("#set_export_md_path").value,
+        edit_mode_enabled: mask.querySelector("#set_edit_enabled").checked,
+        edit_any_history: mask.querySelector("#set_edit_any").checked,
+        edit_all_message_types: mask.querySelector("#set_edit_types").checked,
       });
       mask.remove();
       toast(t("设置已保存"));
@@ -1950,11 +1993,11 @@ function toggleMsgDrawer(e) {
 }
 
 async function renderChatView() {
-  app.innerHTML = topbar(t("返回会话"), () => goThreads(S.agentId, S.agentName));
+  app.innerHTML = topbar(t("返回会话"), () => leaveChatView());
   const view = document.createElement("div");
   view.className = "chat-view";
   app.appendChild(view);
-  bindBack(() => goThreads(S.agentId, S.agentName));
+  bindBack(() => leaveChatView());
 
   view.innerHTML = `
     <div class="chat-head">
@@ -1962,6 +2005,8 @@ async function renderChatView() {
       <span class="muted">（${esc(S.agentName)}）</span>
       <div class="spacer" style="flex:1;"></div>
       <span class="status-indicator" id="statusInd"></span>
+      <span class="edit-mode-badge" id="editModeBadge" style="display:none;">✏️ ${t("编辑模式")}</span>
+      <button class="btn small" id="editModeBtn">✏️ ${t("进入编辑模式")}</button>
       <button class="btn small" id="proactiveSummaryBtn" title="${t("主动全量总结")}">📝 ${t("主动全量总结")}</button>
       <div class="zoom-controls">
         <span class="zoom-btn" id="rZoomOut" title="${t("思考字号减小")}">−</span>
@@ -2030,6 +2075,8 @@ async function renderChatView() {
         ? t("输入消息（点击发送，Enter 换行）")
         : `${t("输入消息（")}${keyLabel(settings.send_key)} ${t("发送，")}${keyLabel(settings.newline_key)} ${t("换行）")}`;
     }
+    const editBtn = $("#editModeBtn");
+    if (editBtn) editBtn.style.display = (settings.edit_mode_enabled !== false) ? "" : "none";
   }
   const zoomPctEl = $("#zoomPct");
   const updateZoomLabel = () => { if (zoomPctEl) zoomPctEl.textContent = zoomPct + "%"; };
@@ -2046,6 +2093,484 @@ async function renderChatView() {
     if (sel.value) triggerSubAgentProactiveSummary(sel.value);
     else triggerProactiveSummary();
   };
+
+  /* ================= 编辑模式 ================= */
+  let editModeOn = false;
+  let editRawMessages = null;
+  let editSubName = null;
+  let edits = [];
+
+  const editModeBtn = $("#editModeBtn");
+  const editModeBadge = $("#editModeBadge");
+
+  function setEditBadge(mode) {
+    if (editModeBtn) editModeBtn.textContent = (mode === "off") ? `✏️ ${t("进入编辑模式")}` : `✏️ ${t("退出编辑模式")}`;
+    if (!editModeBadge) return;
+    if (mode === "off") {
+      editModeBadge.style.display = "none";
+    } else {
+      editModeBadge.style.display = "";
+      if (mode === "writing") {
+        editModeBadge.textContent = `✏️ ${t("写入中")}`;
+        editModeBadge.className = "edit-mode-badge writing";
+      } else {
+        editModeBadge.textContent = `✏️ ${t("编辑模式")}`;
+        editModeBadge.className = "edit-mode-badge";
+      }
+    }
+  }
+
+  function editableLinesHTML(rawText, field, blockIndex, toolCallIndex, msgIndice) {
+    const segs = String(rawText).split("\n");
+    return segs.map((seg, pi) => {
+      const b64 = utf8ToB64(seg);
+      const inner = seg ? renderMd(seg) : "&nbsp;";
+      return `<div class="edit-line" data-msg="${msgIndice}" data-field="${field}" data-block="${blockIndex == null ? "" : blockIndex}" data-toolcall="${toolCallIndex == null ? "" : toolCallIndex}" data-para="${pi}" data-raw-b64="${b64}">${inner}</div>`;
+    }).join("");
+  }
+
+  function aiTokStr(msg) {
+    const um = msg.usage_metadata || {};
+    const i = um.input_tokens != null ? um.input_tokens : "?";
+    const o = um.output_tokens != null ? um.output_tokens : "?";
+    const cache = (um.input_token_details && um.input_token_details.cache_read) || 0;
+    let s = `↑${i} ↓${o}`;
+    if (cache) s += `  💾cache:${cache}`;
+    return s;
+  }
+
+  function renderEditableMessage(msg, settings) {
+    const allTypes = !!settings.edit_all_message_types;
+    const idx = msg.msg_indice;
+    if (msg.type === "HumanMessage") {
+      const raw = String(msg.content ?? "");
+      const body = allTypes
+        ? editableLinesHTML(raw, "human_content", null, null, idx)
+        : esc(raw).replace(/\n/g, "<br>");
+      return `<div class="user-msg-block" data-msg-indice="${idx}"><div class="user-msg-head">🧑 <strong>${t("用户")}</strong></div><blockquote class="user-msg-quote">${body}</blockquote></div>`;
+    }
+    if (msg.type === "AIMessage") {
+      let html = `<div class="ai-msg-block" data-msg-indice="${idx}" style="border-left: 3px solid #4CAF50; padding-left: 12px;">`;
+      html += `<strong>🤖 Assistant</strong>  <sub>${aiTokStr(msg)}</sub>`;
+      const content = msg.content;
+      if (Array.isArray(content)) {
+        content.forEach((blk, bi) => {
+          if (!blk) return;
+          if (blk.type === "reasoning") {
+            const open = settings.reasoning_expanded !== false ? " open" : "";
+            const r = String(blk.reasoning ?? "");
+            const body = allTypes
+              ? editableLinesHTML(r, "reasoning", bi, null, idx)
+              : `<div class="reasoning-body">${esc(r).replace(/\r\n/g, "\n").replace(/\n/g, "<br>")}</div>`;
+            html += `<details class="reasoning-block"${open}><summary>🧠 ${t("思考过程")}</summary>${body}</details>`;
+          } else if (blk.type === "text") {
+            html += editableLinesHTML(String(blk.text ?? ""), "text", bi, null, idx);
+          }
+        });
+      } else if (typeof content === "string") {
+        html += editableLinesHTML(content, "text", null, null, idx);
+      }
+      if (msg.tool_calls && msg.tool_calls.length) {
+        msg.tool_calls.forEach((tc, ti) => {
+          const open = settings.tool_call_expanded ? " open" : "";
+          const argsJson = JSON.stringify(tc.args || {}, null, 2);
+          const body = allTypes
+            ? editableLinesHTML(argsJson, "tool_call_args", null, ti, idx)
+            : renderMd("```json\n" + argsJson + "\n```");
+          html += `<details${open}><summary>🔧 \`${esc(tc.name || "?")}\`</summary>${body}</details>`;
+        });
+      }
+      html += `</div>`;
+      return html;
+    }
+    if (msg.type === "ToolMessage") {
+      const name = msg.name || "unknown_tool";
+      let c = msg.content;
+      if (Array.isArray(c)) c = c.filter(b => b && b.type === "text").map(b => b.text).join("\n\n");
+      const raw = String(c ?? "");
+      const lineCount = raw.split("\n").length;
+      const open = settings.tool_result_expanded ? " open" : "";
+      const body = allTypes
+        ? editableLinesHTML(raw, "tool_content", null, null, idx)
+        : `<div class="tool-result-body">${esc(raw).replace(/\r\n/g, "\n").replace(/\n/g, "<br>")}</div>`;
+      return `<details${open} data-msg-indice="${idx}"><summary>✅ ${t("工具结果")}: \`${esc(name)}\` (${lineCount} ${t("行")})</summary>${body}</details>`;
+    }
+    return "";
+  }
+
+  async function fetchRawMessagesForEdit() {
+    const base = `/api/agents/${encodeURIComponent(S.agentId)}/threads/${encodeURIComponent(S.threadId)}`;
+    const isSub = !!sel.value;
+    const url = isSub ? `${base}/subgraphs/${encodeURIComponent(sel.value)}/messages` : `${base}/messages`;
+    const r = await api(url);
+    editSubName = isSub ? sel.value : null;
+    editRawMessages = r.messages || [];
+  }
+
+  function computeEditableMessages(settings) {
+    const msgs = editRawMessages || [];
+    const allTime = !!settings.edit_any_history;
+    const allTypes = !!settings.edit_all_message_types;
+    let editableIdx = new Set();
+    if (allTime) {
+      msgs.forEach((m, i) => editableIdx.add(i));
+    } else {
+      let h = -1;
+      msgs.forEach((m, i) => { if (m.type === "HumanMessage") h = i; });
+      for (let i = h + 1; i < msgs.length; i++) editableIdx.add(i);
+    }
+    const editable = new Set();
+    msgs.forEach((m, i) => {
+      if (!editableIdx.has(i)) return;
+      if (m.type === "AIMessage") editable.add(i);
+      else if (allTypes && (m.type === "HumanMessage" || m.type === "ToolMessage")) editable.add(i);
+    });
+    return editable;
+  }
+
+  function captureMsgAnchor() {
+    const pane = $("#historyPane");
+    if (!pane) return null;
+    const pr = pane.getBoundingClientRect();
+    const blocks = pane.querySelectorAll("[data-msg-indice]");
+    for (const b of blocks) {
+      const r = b.getBoundingClientRect();
+      if (r.bottom > pr.top + 8) return { indice: b.getAttribute("data-msg-indice"), top: r.top };
+    }
+    return { scrollTop: pane.scrollTop };
+  }
+
+  function restoreMsgAnchor(anchor) {
+    if (!anchor) return;
+    const pane = $("#historyPane");
+    if (!pane) return;
+    if (anchor.indice != null) {
+      const b = pane.querySelector(`[data-msg-indice="${anchor.indice}"]`);
+      if (b) { pane.scrollTop += (b.getBoundingClientRect().top - anchor.top); return; }
+    }
+    if (anchor.scrollTop != null) pane.scrollTop = anchor.scrollTop;
+  }
+
+  function renderEditMode() {
+    const anchor = captureMsgAnchor();
+    const settings = settingsCache || {};
+    const editable = computeEditableMessages(settings);
+    (editRawMessages || []).forEach((m, i) => {
+      if (!editable.has(i)) return;
+      const el = historyEl.querySelector(`[data-msg-indice="${i}"]`);
+      if (el) el.outerHTML = renderEditableMessage(m, settings);
+    });
+    restoreMsgAnchor(anchor);
+  }
+
+  function applyLineEdit(line, newText) {
+    const oldRaw = b64ToUtf8(line.dataset.rawB64 || "");
+    if (newText === oldRaw) return;
+    line.innerHTML = newText ? renderMd(newText) : "&nbsp;";
+    line.dataset.rawB64 = utf8ToB64(newText);
+    const msgIndice = +line.dataset.msg;
+    const field = line.dataset.field;
+    const blockIndex = line.dataset.block === "" ? null : +line.dataset.block;
+    const toolCallIndex = line.dataset.toolcall === "" ? null : +line.dataset.toolcall;
+    const paraIndex = +line.dataset.para;
+    const existing = edits.find(e =>
+      e.msgIndice === msgIndice && e.field === field &&
+      e.blockIndex === blockIndex && e.toolCallIndex === toolCallIndex &&
+      e.paraIndex === paraIndex);
+    if (existing) existing.newText = newText;
+    else edits.push({ msgIndice, field, blockIndex, toolCallIndex, paraIndex, newText });
+  }
+
+  function closeEditPopup() {
+    $$(".edit-popup").forEach(p => p.remove());
+  }
+
+  function positionEditPopup(popup, rect) {
+    const pad = 6;
+    const vw = window.innerWidth, vh = window.innerHeight;
+    const pw = popup.offsetWidth, ph = popup.offsetHeight;
+    let left = rect.left;
+    let top = rect.bottom + pad;
+    if (left + pw > vw) left = Math.max(8, vw - pw - 8);
+    if (top + ph > vh) top = Math.max(8, rect.top - ph - pad);
+    popup.style.left = left + "px";
+    popup.style.top = top + "px";
+  }
+
+  function openEditPopup(line) {
+    closeEditPopup();
+    const raw = b64ToUtf8(line.dataset.rawB64 || "");
+    const rect = line.getBoundingClientRect();
+    const popup = document.createElement("div");
+    popup.className = "edit-popup";
+    popup.innerHTML = `
+      <div class="edit-popup-toolbar">
+        <button class="btn small primary" data-act="apply">${t("确认改动")}</button>
+        <button class="btn small" data-act="cancel">${t("撤销改动")}</button>
+      </div>
+      <textarea></textarea>`;
+    const ta = popup.querySelector("textarea");
+    ta.value = raw;
+    document.body.appendChild(popup);
+    // 动态宽度：一行文本（正文渲染区）宽度的 0.75 倍
+    const lineWidth = (historyEl && historyEl.clientWidth) || (window.innerWidth - 44);
+    popup.style.width = Math.max(280, Math.round(lineWidth * 0.75)) + "px";
+    positionEditPopup(popup, rect);
+    popup.querySelector('[data-act="apply"]').onclick = () => { applyLineEdit(line, ta.value); closeEditPopup(); };
+    popup.querySelector('[data-act="cancel"]').onclick = () => closeEditPopup();
+    ta.focus();
+  }
+
+  function bindEditLineEvents() {
+    historyEl.addEventListener("mouseover", (e) => {
+      if (!editModeOn) return;
+      const line = e.target.closest(".edit-line");
+      const prev = historyEl.querySelector(".edit-line.hover");
+      if (prev && prev !== line) prev.classList.remove("hover");
+      if (!line) return;
+      if (line.closest("details:not([open])")) return;
+      line.classList.add("hover");
+    });
+    historyEl.addEventListener("mouseleave", () => {
+      historyEl.querySelectorAll(".edit-line.hover").forEach(el => el.classList.remove("hover"));
+    });
+    historyEl.addEventListener("click", (e) => {
+      if (!editModeOn) return;
+      const line = e.target.closest(".edit-line");
+      if (!line) return;
+      if (line.closest("details:not([open])")) return;
+      e.preventDefault();
+      openEditPopup(line);
+    });
+  }
+
+  function applyParaEditsToText(rawText, paraEdits) {
+    const segs = String(rawText).split("\n");
+    paraEdits.forEach(pe => { segs[pe.paraIndex] = pe.newText; });
+    return segs.join("\n");
+  }
+
+  function buildSubstituteMessage(original, itemEdits) {
+    const clone = JSON.parse(JSON.stringify(original));
+    const byField = {};
+    itemEdits.forEach(e => {
+      const fk = `${e.field}|${e.blockIndex}|${e.toolCallIndex}`;
+      (byField[fk] = byField[fk] || []).push(e);
+    });
+    for (const fk of Object.keys(byField)) {
+      const parts = fk.split("|");
+      const field = parts[0];
+      const bi = parts[1] === "" ? null : parts[1];
+      const ti = parts[2] === "" ? null : parts[2];
+      const paraEdits = byField[fk];
+      if (field === "text" || field === "reasoning") {
+        const blocks = Array.isArray(clone.content) ? clone.content : null;
+        if (bi != null && blocks && blocks[bi]) {
+          blocks[bi][field] = applyParaEditsToText(blocks[bi][field], paraEdits);
+        } else if (field === "text" && !blocks && typeof clone.content === "string") {
+          clone.content = applyParaEditsToText(clone.content, paraEdits);
+        }
+      } else if (field === "tool_call_args") {
+        const tc = clone.tool_calls && clone.tool_calls[ti];
+        if (tc) {
+          const jsonStr = JSON.stringify(tc.args || {}, null, 2);
+          const newJson = applyParaEditsToText(jsonStr, paraEdits);
+          try { tc.args = JSON.parse(newJson); } catch (err) { /* 无效 JSON：保留原值 */ }
+        }
+      } else if (field === "tool_content" || field === "human_content") {
+        let raw = clone.content;
+        if (Array.isArray(raw)) raw = raw.filter(b => b && b.type === "text").map(b => b.text).join("\n\n");
+        clone.content = applyParaEditsToText(String(raw), paraEdits);
+      }
+    }
+    return clone;
+  }
+
+  function submitEditRequest(req) {
+    return new Promise((resolve) => {
+      const proto = location.protocol === "https:" ? "wss" : "ws";
+      const s = new WebSocket(`${proto}://${location.host}/api/agents/${encodeURIComponent(S.agentId)}/threads/${encodeURIComponent(S.threadId)}/chat`);
+      let settled = false;
+      const finish = (ok) => { if (!settled) { settled = true; try { s.close(); } catch (e) {} resolve(ok); } };
+      s.onopen = () => s.send(JSON.stringify({ type: "edit", request: req }));
+      s.onmessage = (ev) => {
+        const m = JSON.parse(ev.data);
+        if (m.type === "done") finish(true);
+        else if (m.type === "error") finish(false);
+      };
+      s.onerror = () => finish(false);
+      s.onclose = () => finish(false);
+      setTimeout(() => finish(false), 30000);
+    });
+  }
+
+  async function submitEdits() {
+    const groups = {};
+    edits.forEach(e => { (groups[e.msgIndice] = groups[e.msgIndice] || []).push(e); });
+    let anyFail = false;
+    for (const gk of Object.keys(groups)) {
+      const msgIndice = +gk;
+      const original = (editRawMessages || [])[msgIndice];
+      if (!original) continue;
+      const substitute = buildSubstituteMessage(original, groups[gk]);
+      const isSub = !!editSubName;
+      const ok = await submitEditRequest({
+        request_for_subagent: isSub,
+        subagent_name: isSub ? editSubName : null,
+        msg_indice: msgIndice,
+        substitute_msg: substitute,
+      });
+      if (!ok) anyFail = true;
+    }
+    return !anyFail;
+  }
+
+  async function refreshHistory() {
+    const anchor = captureMsgAnchor();
+    try {
+      const base = `/api/agents/${encodeURIComponent(S.agentId)}/threads/${encodeURIComponent(S.threadId)}`;
+      const h = sel.value
+        ? await api(`${base}/subgraphs/${encodeURIComponent(sel.value)}/history`)
+        : await api(`${base}/history`);
+      historyEl.innerHTML = renderMd(h.markdown);
+      injectExportButtons(historyEl);
+      restoreMsgAnchor(anchor);
+    } catch (e) {
+      historyEl.innerHTML = `<div class="muted">${t("（无历史）")}</div>`;
+    }
+  }
+
+  function leaveEditMode() {
+    closeEditPopup();
+    editModeOn = false;
+    edits = [];
+    editRawMessages = null;
+    editSubName = null;
+    setEditBadge("off");
+  }
+
+  async function enterEditMode() {
+    editModeOn = true;
+    edits = [];
+    setEditBadge("edit");
+    try {
+      await fetchRawMessagesForEdit();
+      renderEditMode();
+    } catch (e) {
+      toast(e.message, true);
+      leaveEditMode();
+    }
+  }
+
+  async function exitEditMode() {
+    let shouldSubmit = false;
+    if (edits.length) {
+      const ans = await askConfirm(t("是否提交对历史消息的更改"));
+      if (ans === "yes") shouldSubmit = true;
+    }
+    if (shouldSubmit) {
+      setEditBadge("writing");
+      const ok = await submitEdits();
+      if (ok) showAppliedBubble();
+      else toast(t("编辑历史消息失败"), true);
+    }
+    leaveEditMode();
+    await refreshHistory();
+  }
+
+  async function leaveChatView() {
+    if (editModeOn) {
+      const ans = await askConfirm(t("当前处于编辑模式，请先退出编辑模式后再离开。是否退出编辑模式？"));
+      if (ans !== "yes") return;
+      await exitEditMode();
+    }
+    goThreads(S.agentId, S.agentName);
+  }
+
+  async function refreshEditModeData() {
+    try {
+      await fetchRawMessagesForEdit();
+      renderEditMode();
+    } catch (e) { toast(e.message, true); }
+  }
+
+  function showAppliedBubble() {
+    const el = document.createElement("div");
+    el.className = "edit-applied-bubble";
+    el.textContent = t("更改已生效");
+    document.body.appendChild(el);
+    setTimeout(() => particleDissolve(el, () => el.remove()), 1300);
+  }
+
+  function roundRectPath(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  function particleDissolve(el, done) {
+    const rect = el.getBoundingClientRect();
+    const w = Math.max(1, Math.round(rect.width));
+    const h = Math.max(1, Math.round(rect.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    canvas.style.cssText = `position:fixed;left:${rect.left}px;top:${rect.top}px;width:${w}px;height:${h}px;pointer-events:none;z-index:1101;`;
+    const ctx = canvas.getContext("2d");
+    document.body.appendChild(canvas);
+
+    ctx.fillStyle = "#16a34a";
+    roundRectPath(ctx, 0, 0, w, h, 12);
+    ctx.fill();
+    ctx.fillStyle = "#fff";
+    ctx.font = "700 16px -apple-system, 'Segoe UI', sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(el.textContent, w / 2, h / 2);
+
+    const data = ctx.getImageData(0, 0, w, h).data;
+    const particles = [];
+    const step = 2;
+    for (let y = 0; y < h; y += step) {
+      for (let x = 0; x < w; x += step) {
+        const a = data[(y * w + x) * 4 + 3];
+        if (a > 128) {
+          particles.push({
+            x, y,
+            color: `rgb(${data[(y * w + x) * 4]},${data[(y * w + x) * 4 + 1]},${data[(y * w + x) * 4 + 2]})`,
+            vx: -Math.random() * 2 - 1.5,
+            vy: (Math.random() - 0.5) * 1.5,
+            life: 1,
+            decay: 0.01 + Math.random() * 0.03,
+          });
+        }
+      }
+    }
+    el.style.opacity = "0";
+
+    const tick = () => {
+      ctx.clearRect(0, 0, w, h);
+      let alive = 0;
+      for (const p of particles) {
+        p.x += p.vx;
+        p.y += p.vy;
+        p.life -= p.decay;
+        if (p.life <= 0) continue;
+        alive++;
+        ctx.globalAlpha = Math.max(0, p.life);
+        ctx.fillStyle = p.color;
+        ctx.fillRect(p.x, p.y, step, step);
+      }
+      ctx.globalAlpha = 1;
+      if (alive > 0) requestAnimationFrame(tick);
+      else { canvas.remove(); done(); }
+    };
+    requestAnimationFrame(tick);
+  }
 
   const updatePinBtn = () => { pinBtn.classList.toggle("active", pinned); };
   updatePinBtn();
@@ -2114,17 +2639,21 @@ async function renderChatView() {
 
   const input = $("#msgInput"), sendBtn = $("#sendBtn"), stopBtn = $("#stopBtn");
 
+  editModeBtn.onclick = () => { if (editModeOn) exitEditMode(); else enterEditMode(); };
+  bindEditLineEvents();
+
   function updateSendState() {
     sendBtn.disabled = isRunning || !!sel.value;
   }
 
   sel.onchange = async () => {
     updateSendState();
-    if (!sel.value) { renderChatView(); return; }
+    if (!sel.value) { closeEditPopup(); renderChatView(); return; }
     try {
       const h = await api(`/api/agents/${encodeURIComponent(S.agentId)}/threads/${encodeURIComponent(S.threadId)}/subgraphs/${encodeURIComponent(sel.value)}/history`);
       $("#historyMd").innerHTML = renderMd(h.markdown);
       injectExportButtons($("#historyMd"));
+      if (editModeOn) { edits = []; await refreshEditModeData(); }
     } catch (e) { toast(e.message, true); }
   };
 

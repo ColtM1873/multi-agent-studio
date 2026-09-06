@@ -253,10 +253,15 @@ async def build_sub_agent(
         return {state_messages_key: [HumanMessage(content=instruction + "\n")]}
 
     async def route_to_proactive_summary(state):
-        proactive_summary_bool = state["instructions_for_subagents"][sub_agent_name]["proactive_summary"]
+        proactive_summary_bool = state.get("instructions_for_subagents", {}).get(sub_agent_name, {}).get("proactive_summary", False)
         if proactive_summary_bool:
             return Command(goto="proactive_summary_confirm")
-        return Command(goto="period_summarize_evaluate")
+        elif ( state.get("request_to_edit_msg_in_the_past") != None 
+              and  state["request_to_edit_msg_in_the_past"].get("request_or_not") 
+              and  state["request_to_edit_msg_in_the_past"].get("request_for_subagent") ):
+            return Command(goto = "edit_msg_in_the_past_sub")
+        else:
+            return Command(goto="period_summarize_evaluate")
 
 
     async def proactive_summary_confirm(state):
@@ -277,6 +282,46 @@ async def build_sub_agent(
         usage_count = usage_metadata.get("total_tokens", 0)
         return Command(goto="proactive_final_summarization_prompt",
                         update= {history_token_measure_key :usage_count })
+
+    async def edit_msg_in_the_past_sub(state):
+        msg_list = state[state_messages_key]
+        len_msg_list = len(msg_list)
+        msg_indice_to_change = state["request_to_edit_msg_in_the_past"]["msg_indice"]
+        if msg_indice_to_change < 0 or msg_indice_to_change >= len_msg_list:
+            print("msg_indice out of range.")
+            return Command(goto= END)
+        else:
+            msg_original = msg_list[msg_indice_to_change]
+            msg_substitute = state["request_to_edit_msg_in_the_past"]["substitute_msg"]
+            if not (  type(msg_original) is type(msg_substitute)  ):
+                print("substitute_msg type mismatch.")
+                return Command(goto= END)
+            else:
+                msg_list_to_peel = msg_list[msg_indice_to_change :]
+                return Command(goto = "refill_msg_list_after_edit",
+                               update= {
+                                   state_messages_key: [ RemoveMessage(id=msg.id) for msg in msg_list_to_peel  ],
+                                   "request_to_edit_msg_in_the_past" :{
+                                       "substitute_msg" : msg_substitute,
+                                       "msg_list_cache" : msg_list_to_peel,
+                                       }
+                                   })
+    async def refill_msg_list_after_edit(state):
+        edit_dict = state["request_to_edit_msg_in_the_past"]
+        msg_list_to_peel = edit_dict["msg_list_cache"][:]
+        msg_substitute = edit_dict["substitute_msg"]
+        msg_list_to_peel[0] = msg_substitute
+        return Command(goto= END ,
+                       update= {
+                           state_messages_key : msg_list_to_peel,
+                           "request_to_edit_msg_in_the_past" : {"request_for_subagent" : True},
+                           })
+    (
+        builder
+        .add_node("refill_msg_list_after_edit", refill_msg_list_after_edit)
+        .add_node("edit_msg_in_the_past_sub", edit_msg_in_the_past_sub)
+    )
+
 
     builder.add_node("receiving_instruction", receiving_instruction)
 
@@ -676,7 +721,62 @@ async def build_world(
         elif state.get("proactive_summary_requested_for_specified_sub_agent") != None:
             return Command(goto="summary_requested_for_sub_agent" )
                 # update={"proactive_summary_requested_for_specified_sub_agent": None})
+        elif ( state.get("request_to_edit_msg_in_the_past") != None 
+              and  state["request_to_edit_msg_in_the_past"].get("request_or_not") ):
+            return Command(goto = "edit_msg_in_the_past")
         return Command(goto="is_human_msg_or_not")
+
+    async def edit_msg_in_the_past (state):
+        request_for_subagent_or_not = state["request_to_edit_msg_in_the_past"]["request_for_subagent"]
+        if request_for_subagent_or_not:
+            return Command(goto= state["request_to_edit_msg_in_the_past"]["subagent_name"])
+        else:
+            return Command(goto= "edit_msg_in_the_past_main")
+
+    async def edit_msg_in_the_past_main(state):
+        msg_list = state["messages"]
+        len_msg_list = len(msg_list)
+        msg_indice_to_change = state["request_to_edit_msg_in_the_past"]["msg_indice"]
+        if msg_indice_to_change < 0 or msg_indice_to_change >= len_msg_list:
+            print("msg_indice out of range.")
+            return Command(goto= END,
+                           update={ "request_to_edit_msg_in_the_past" : None })
+        else:
+            msg_original = msg_list[msg_indice_to_change]
+            msg_substitute = state["request_to_edit_msg_in_the_past"]["substitute_msg"]
+            if not (  type(msg_original) is type(msg_substitute)  ):
+                print("substitute_msg type mismatch.")
+                return Command(goto= END,
+                               update={ "request_to_edit_msg_in_the_past" : None })
+            else:
+                msg_list_to_peel = msg_list[msg_indice_to_change :]
+                return Command(goto = "refill_msg_list_after_edit",
+                               update= {
+                                   "messages": [ RemoveMessage(id=msg.id) for msg in msg_list_to_peel  ],
+                                   "request_to_edit_msg_in_the_past" :{
+                                       "substitute_msg" : msg_substitute,
+                                       "msg_list_cache" : msg_list_to_peel,
+                                       }
+                                   })
+    async def refill_msg_list_after_edit(state):
+        edit_dict = state["request_to_edit_msg_in_the_past"]
+        msg_list_to_peel = edit_dict["msg_list_cache"][:]
+        msg_substitute = edit_dict["substitute_msg"]
+        msg_list_to_peel[0] = msg_substitute
+        return Command(goto= END ,
+                       update= {
+                           "messages" : msg_list_to_peel,
+                           "request_to_edit_msg_in_the_past" : None,
+                           })
+    (
+        main_agent_builder
+        .add_node("edit_msg_in_the_past" , edit_msg_in_the_past)
+        .add_node("edit_msg_in_the_past_main" , edit_msg_in_the_past_main)
+        .add_node("refill_msg_list_after_edit" , refill_msg_list_after_edit)
+
+    )
+
+
 
     async def summary_requested_for_sub_agent(state):
         instructions_for_subagents = {}
@@ -777,6 +877,10 @@ async def build_world(
         return node_list
 
     async def consume_submitted_reports(state):
+        if (  state.get("request_to_edit_msg_in_the_past") 
+            and state["request_to_edit_msg_in_the_past"]["request_for_subagent"] ):
+            return Command(goto = END,
+                           update = { "request_to_edit_msg_in_the_past" : None})
         tool_message_list_to_return = []
         reports_dict = state.get("subagents_reports_submit", {})
         for agent_name, report in reports_dict.items():

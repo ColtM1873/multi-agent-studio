@@ -35,6 +35,12 @@ class Settings(BaseModel):
     # MD 导出：默认开启；输出路径为空时需先在设置里填写
     export_md: bool = True
     export_md_path: str = ""
+    # 历史消息编辑：总开关（默认开启）
+    edit_mode_enabled: bool = True
+    # 历史消息编辑：是否允许编辑任意久远的历史消息（默认只编辑最新一轮对话）
+    edit_any_history: bool = False
+    # 历史消息编辑：是否允许编辑所有消息类型（默认只编辑 AI 回复正文 text）
+    edit_all_message_types: bool = False
 
 
 def settings_path(config_dir: Path | str) -> Path:

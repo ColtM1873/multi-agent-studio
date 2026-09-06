@@ -13,6 +13,7 @@ from app.runtime.graph_builder import build_world
 from app.runtime.persistence import build_persistence
 from app.runtime.streaming import run_agent_stream
 from app.services import threads as threads_service
+from app.services.messages_json import dict_to_message
 
 
 def make_user_input(text: str) -> dict:
@@ -38,6 +39,29 @@ def make_proactive_summary_input_for_sub_agent(sub_agent_name: str) -> dict:
     return {
         "messages": [],
         "proactive_summary_requested_for_specified_sub_agent": sub_agent_name,
+        "instructions_for_subagents": {},
+        "instructions_ids": {},
+        "subagents_reports_submit": {},
+    }
+
+
+def make_edit_input(
+    request_for_subagent: bool,
+    subagent_name: str | None,
+    msg_indice: int,
+    substitute_msg_dict: dict,
+) -> dict:
+    """构造「编辑历史消息」的图输入（空消息触发，只改 msg_indice 那一条）。"""
+    return {
+        "messages": [],
+        "request_to_edit_msg_in_the_past": {
+            "request_or_not": True,
+            "request_for_subagent": request_for_subagent,
+            "subagent_name": subagent_name,
+            "msg_indice": msg_indice,
+            "substitute_msg": dict_to_message(substitute_msg_dict),
+            "msg_list_cache": None,
+        },
         "instructions_for_subagents": {},
         "instructions_ids": {},
         "subagents_reports_submit": {},
@@ -157,4 +181,16 @@ class ChatManager:
         settings = _load_history_settings(self.config_store._dir)
         return await threads_service.get_subgraph_history_by_node(
             config.checkpoint_conn_string, thread_id, node_name, **settings
+        )
+
+    async def main_thread_messages(self, agent_id: str, thread_id: str) -> list:
+        config = self.config_store.load(agent_id)
+        return await threads_service.get_main_thread_messages(
+            config.checkpoint_conn_string, thread_id
+        )
+
+    async def subgraph_messages_exact(self, agent_id: str, thread_id: str, node_name: str) -> list:
+        config = self.config_store.load(agent_id)
+        return await threads_service.get_subgraph_messages_exact(
+            config.checkpoint_conn_string, thread_id, node_name
         )

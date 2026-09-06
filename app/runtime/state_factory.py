@@ -31,6 +31,7 @@ def merge_dicts(left: dict, right: dict) -> dict:
 SHARED_FIELDS = {
     "subagents_reports_submit": Annotated[dict[str, Any], merge_dicts],
     "instructions_for_subagents": Annotated[dict[str, Any], merge_dicts],
+    "request_to_edit_msg_in_the_past" : dict[str , Any] | None,
 }
 
 
@@ -50,7 +51,20 @@ def make_main_state() -> type:
         extracted_summary_ai_msg_as_str : str
         proactive_summary_requested : bool
         proactive_summary_requested_for_specified_sub_agent : str | None
+        request_to_edit_msg_in_the_past : dict[str , Any] | None
     return MainAgentState
+
+#request_to_edit_msg_in_the_past assumed structure
+# from langchain.messages import HumanMessage
+# request_to_edit_msg_in_the_past = {
+#     "request_or_not" : True,
+#     "request_for_subagent" : True,
+#     "subagent_name" : None, # or str
+#     "msg_indice" : -1,
+#     "substitute_msg" : HumanMessage(content = "Hello , world!"),
+#     "msg_list_cache" : None,
+# }
+
 
 
 def make_sub_agent_state(messages_key: str, history_token_measure_key: str, extracted_summary_ai_msg_key: str) -> type:

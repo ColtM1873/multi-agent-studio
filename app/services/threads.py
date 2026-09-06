@@ -142,6 +142,37 @@ async def get_subgraph_messages(conn_string: str, thread_id: str, node_name: str
     return merged
 
 
+async def get_main_thread_messages(conn_string: str, thread_id: str) -> list:
+    """主图最新 checkpoint 的 messages（与 edit 节点 state["messages"] 完全一致）。"""
+    async with AsyncPostgresSaver.from_conn_string(conn_string) as cp:
+        await cp.setup()
+        cp_tuple = await cp.aget_tuple({"configurable": {"thread_id": thread_id}})
+    if not cp_tuple:
+        return []
+    channel_values = cp_tuple.checkpoint.get("channel_values", {})
+    return channel_values.get("messages", [])
+
+
+async def get_subgraph_messages_exact(conn_string: str, thread_id: str, node_name: str) -> list:
+    """子图【精确 namespace = node_name】最新 checkpoint 的消息。
+
+    与 edit 节点的 state[state_messages_key] 一致；不做跨 namespace 合并，
+    保证前端拿到的消息下标就是 msg_indice。
+    """
+    async with AsyncPostgresSaver.from_conn_string(conn_string) as cp:
+        await cp.setup()
+        t = await cp.aget_tuple(
+            {"configurable": {"thread_id": thread_id, "checkpoint_ns": node_name}}
+        )
+    if not t:
+        return []
+    channel_values = t.checkpoint.get("channel_values", {})
+    key, msgs = _find_messages_channel(channel_values)
+    if key:
+        return msgs
+    return channel_values.get("messages", [])
+
+
 async def get_subgraph_history_by_node(
     conn_string: str,
     thread_id: str,
