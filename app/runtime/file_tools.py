@@ -1,13 +1,31 @@
 """文件操作工具集（主 agent 专属）。
 
-灵感与设计借鉴自 opencode 的文件工具（read / edit / write）：
-- read 支持 `offset`（1 起始行号）+ `limit`（最大行数），可「从中间按行读取」；
-- edit 用 `old_string` / `new_string` / `replace_all` 做「精确到字符串的中段修改」，
-  并用多个 fuzzy replacer 容错（行尾空白、缩进、换行符等差异）；
-- write 是整文件覆盖写，不再提供易出错、易超上下文上限的 append。
+一、设计来源与致谢
+- **opencode**（https://github.com/anomalyco/opencode，**MIT License**）：
+  read / edit / write 三件套——`read` 支持 `offset`+`limit` 按行读中段、`edit` 用
+  `old_string`/`new_string`/`replace_all` 做精确字符串中段修改（含多个 fuzzy replacer
+  容错行尾空白/缩进/换行符差异）、`write` 为整文件覆写（去掉了易出错的 append）。
+  本项目为 **Python / langchain 重实现**，遵循原库语义，非逐行翻译。
+- **Microsoft MarkItDown**（https://github.com/microsoft/markitdown，**MIT License**）：
+  作为「富格式/文档文件 → Markdown」的转换引擎，用于**扩宽本 file tools 的格式适用范围**。
+  见下方「三、富格式中间件」。它是**内嵌为本模块的函数**，不单独以 MCP 形式暴露给模型。
+- 本项目根目录 LICENSE 为 **GNU GPL v3**。MIT 与 GPL-3.0 兼容：并入 GPL-3.0 项目后整体按
+  GPL-3.0 分发，但**仍须保留各家原作者的版权声明与许可文本**（本 docstring 即满足保留声明）。
 
-来源：https://github.com/anomalyco/opencode （MIT License）。
-本项目为 Python / langchain 重实现，遵循原库语义，非逐行翻译。
+二、核心能力
+- `read_file`：`offset`+`limit` 按行读中段，带行号 + 截断提示；目录列出条目。
+- `edit_file`：精确字符串中段修改（旧文件 `old_string=""` 会被拒绝；新建文件 `old_string=""`）。
+- `write_file`：整文件覆写。
+- 路径安全：全部落点强制在 `root_dir` 内；二进制内容绝不喂给模型。
+
+三、富格式中间件（借用 MarkItDown，内嵌为函数，不作为 MCP 暴露给模型）
+  对 `.pdf .ppt .pptx .doc .docx .xls .xlsx .odt .ods .odp .epub .html .htm` 等富/专有格式：
+  - **读取**：`read_file` 时先用 MarkItDown 转成 Markdown，再按行分页返回，内容是 Markdown 文本。
+  - **写入/编辑**：属于「只读支持」——**不能把这些格式写成二进制文档**。调用方若以这类扩展名写内容，
+    会被**重定向为相同文件名的 `.md`**（如 `the-new-SOTA-paper.pdf` → `the-new-SOTA-paper.md`），
+    从而避免模型写出的 Markdown 内容找不到、丢失。
+  - MarkItDown 为**可选依赖**：未安装时，`read_file` 对这些扩展名会返回明确的「转换不可用」错误；
+    `write_file`/`edit_file` 的「重定向为 `.md`」不依赖 MarkItDown，仍照常生效；其余功能不受影响。
 """
 
 from __future__ import annotations
@@ -17,6 +35,7 @@ import fnmatch
 import os
 import re
 import shutil
+import threading
 from typing import Annotated, Callable, Iterator, Optional
 
 from langchain_core.tools import tool as langchain_tool
@@ -36,6 +55,16 @@ _BINARY_EXTENSIONS = {
     ".bin", ".dat", ".obj", ".o", ".a", ".lib", ".wasm", ".pyc", ".pyo",
     ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico", ".pdf",
 }
+
+# 富/专有格式扩展名（不能被当作普通文本直接读，需用 MarkItDown 转成 Markdown 再读物）
+_PROPRIETARY_DOC_EXTENSIONS = {
+    ".pdf", ".ppt", ".pptx", ".doc", ".docx", ".xls", ".xlsx",
+    ".odt", ".ods", ".odp", ".epub",
+}
+
+# MarkItDown 可转换的扩展名（在专有格式之上再宽一些，如 html/htm 也能转成更整洁的 Markdown）。
+# 注意：html 只参与「读取转换」，不参与「写入重定向」，以免破坏 chat_ws 的 html 报告自动打开。
+_MARKITDOWN_EXTENSIONS = _PROPRIETARY_DOC_EXTENSIONS | {".html", ".htm"}
 
 
 # ---------------------------------------------------------------------------
@@ -70,6 +99,67 @@ def _is_binary(path: str) -> bool:
         return True
     nonprintable = sum(1 for b in sample if b < 9 or (13 < b < 32))
     return nonprintable / len(sample) > 0.3
+
+
+# ---------------------------------------------------------------------------
+# MarkItDown 富格式中间件（借用 microsoft/markitdown，内嵌为函数，不作为 MCP 暴露给模型）
+# ---------------------------------------------------------------------------
+_MARKITDOWN_INSTANCE = None
+_MARKITDOWN_INIT_FAILED = False
+_MARKITDOWN_LOCK = threading.Lock()
+
+
+def _get_markitdown():
+    """懒加载 MarkItDown 实例（进程级单例，与 root_dir 无关，可跨 agent 共享）。
+
+    可选依赖：markitdown 未安装时返回 None，调用方回退到「按二进制拒绝」。
+    """
+    global _MARKITDOWN_INSTANCE, _MARKITDOWN_INIT_FAILED
+    if _MARKITDOWN_INSTANCE is not None:
+        return _MARKITDOWN_INSTANCE
+    if _MARKITDOWN_INIT_FAILED:
+        return None
+    with _MARKITDOWN_LOCK:
+        if _MARKITDOWN_INSTANCE is not None:
+            return _MARKITDOWN_INSTANCE
+        if _MARKITDOWN_INIT_FAILED:
+            return None
+        try:
+            from markitdown import MarkItDown
+            _MARKITDOWN_INSTANCE = MarkItDown(enable_plugins=False)
+            return _MARKITDOWN_INSTANCE
+        except Exception:
+            _MARKITDOWN_INIT_FAILED = True
+            return None
+
+
+def _convert_to_markdown(path: str) -> tuple[bool, str]:
+    """用 MarkItDown 把富格式文件转成 Markdown 文本。失败返回 (False, 原因)。"""
+    md = _get_markitdown()
+    if md is None:
+        return False, "markitdown 未安装，无法转换该格式。"
+    try:
+        result = md.convert_local(path)
+        text = result.markdown or ""
+        if not text.strip():
+            return False, "转换结果为空。"
+        return True, text
+    except Exception as e:
+        return False, f"MarkItDown 转换失败：{e}"
+
+
+def _is_markitdown_ext(path: str) -> bool:
+    return os.path.splitext(path)[1].lower() in _MARKITDOWN_EXTENSIONS
+
+
+def _is_proprietary_doc_ext(path: str) -> bool:
+    return os.path.splitext(path)[1].lower() in _PROPRIETARY_DOC_EXTENSIONS
+
+
+def _md_redirect_path(path: str) -> str:
+    """把专有格式路径改为同名 .md 路径（如 x.pdf → x.md）。"""
+    root, _ = os.path.splitext(path)
+    return root + ".md"
 
 
 # ---------------------------------------------------------------------------
@@ -240,6 +330,48 @@ def _replace(content: str, old: str, new: str, replace_all: bool = False) -> str
 
 
 # ---------------------------------------------------------------------------
+# 文本行分页（read_file 的文本 / MarkItDown 转出的 Markdown 共用）
+# ---------------------------------------------------------------------------
+def _paginate_lines(raw_lines: list[str], offset: Optional[int], limit: int) -> tuple[Optional[list[str]], str]:
+    """按 offset/limit 对行列表分页。
+
+    返回 (带行号的行列表, 尾注)；越界返回 (None, 错误信息)。
+    """
+    total = len(raw_lines)
+    limit = max(1, limit)
+    start = max(0, (offset or 1) - 1)
+    if start >= total and total > 0:
+        return None, f"Offset {offset} is out of range for this file ({total} lines)."
+
+    selected = raw_lines[start : start + limit]
+    body: list[str] = []
+    byte_count = 0
+    cut = False
+    for i, line in enumerate(selected):
+        line_no = start + i + 1
+        text = line.rstrip("\r\n")
+        if len(text) > MAX_LINE_LENGTH:
+            text = text[:MAX_LINE_LENGTH] + MAX_LINE_SUFFIX
+        size = len(text.encode("utf-8")) + (1 if body else 0)
+        if byte_count + size > MAX_BYTES:
+            cut = True
+            break
+        body.append(f"{line_no}: {text}")
+        byte_count += size
+
+    last_line = start + len(body)
+    next_offset = last_line + 1
+    more = start + len(selected) > last_line
+    if cut:
+        note = f"\n\n(Output capped at {MAX_BYTES_LABEL}. Showing lines {start + 1}-{last_line}. Use offset={next_offset} to continue.)"
+    elif more:
+        note = f"\n\n(Showing lines {start + 1}-{last_line} of {total}. Use offset={next_offset} to continue.)"
+    else:
+        note = f"\n\n(End of file - total {total} lines)"
+    return body, note
+
+
+# ---------------------------------------------------------------------------
 # build_file_tools：用闭包把 root_dir 绑定到每个工具（每个 agent 一份）
 # ---------------------------------------------------------------------------
 def build_file_tools(root_dir: str) -> list[BaseTool]:
@@ -248,13 +380,25 @@ def build_file_tools(root_dir: str) -> list[BaseTool]:
 
     @langchain_tool
     def read_file(
-        file_path: Annotated[str, "The path to the file or directory to read (relative to root_dir or absolute)"],
+        file_path: Annotated[
+            str,
+            "The path to the file or directory to read (relative to root_dir or absolute). "
+            "富/专有格式（.pdf .ppt .pptx .doc .docx .xls .xlsx .odt .ods .odp .epub .html .htm）会自动转成 Markdown 返回，"
+            "仅支持读取。这些格式不支持写入为原格式——写内容请用 write_file 写为同名 .md 文件。",
+        ],
         offset: Annotated[Optional[int], "The line number to start reading from (1-indexed). Defaults to 1."] = None,
         limit: Annotated[
             int, "The maximum number of lines to read (defaults to 2000). Use a smaller value to read mid-sections."
         ] = DEFAULT_READ_LIMIT,
     ) -> str:
-        """读取文件或目录。文件按行读取并带行号，支持 offset/limit 只读中段；目录列出条目。"""
+        """读取文件或目录。
+
+        对以下富/专有格式：pdf、ppt、pptx、doc、docx、xls、xlsx、odt、ods、odp、epub、html、htm，
+        会自动用 MarkItDown 转成 Markdown 后返回（内容是 Markdown 文本，并带行号分页）。
+        注意：这类格式**仅支持读取**（自动转换为 Markdown）——**不支持写入为原格式**；写内容时请改用同名 .md 文件
+        （如把内容写到 the-new-SOTA-paper.pdf，实际会保存为 the-new-SOTA-paper.md）。
+        普通文本文件仍按行带行号读取，支持 offset/limit 只读中段；目录则列出条目。
+        """
         try:
             path = _resolve_path(root_dir, file_path)
         except Exception as e:
@@ -284,6 +428,22 @@ def build_file_tools(root_dir: str) -> list[BaseTool]:
             return f"Error: no such file or directory: {file_path}"
         if not os.path.isfile(path):
             return f"Error: not a regular file: {file_path}"
+
+        # 富格式：先用 MarkItDown 转成 Markdown，再按行分页返回
+        if _is_markitdown_ext(path):
+            ok, text_or_err = _convert_to_markdown(path)
+            if not ok:
+                return f"Error: {text_or_err}"
+            raw_lines = text_or_err.splitlines(keepends=True)
+            ext = os.path.splitext(path)[1].lower()
+            body, note = _paginate_lines(raw_lines, offset, limit)
+            if body is None:
+                return note
+            return (
+                f"<path>{path}</path>\n<type>file</type>\n<source_format>{ext}</source_format>\n<converted>true</converted>\n<content>\n"
+                + "\n".join(body) + note + "\n</content>"
+            )
+
         if _is_binary(path):
             return f"Cannot read binary file: {file_path}"
 
@@ -293,62 +453,60 @@ def build_file_tools(root_dir: str) -> list[BaseTool]:
         except OSError as e:
             return f"Error: {e}"
 
-        total = len(raw_lines)
-        limit = max(1, limit)
-        start = max(0, (offset or 1) - 1)
-        if start >= total and not (start == 0 and total == 0):
-            return f"Offset {offset} is out of range for this file ({total} lines)."
-
-        selected = raw_lines[start : start + limit]
-        out_lines: list[str] = []
-        byte_count = 0
-        cut = False
-        for i, line in enumerate(selected):
-            line_no = start + i + 1
-            text = line.rstrip("\r\n")
-            if len(text) > MAX_LINE_LENGTH:
-                text = text[:MAX_LINE_LENGTH] + MAX_LINE_SUFFIX
-            size = len(text.encode("utf-8")) + (1 if out_lines else 0)
-            if byte_count + size > MAX_BYTES:
-                cut = True
-                break
-            out_lines.append(f"{line_no}: {text}")
-            byte_count += size
-
-        last_line = start + len(out_lines)
-        next_offset = last_line + 1
-        more = start + len(selected) > last_line
-        if cut:
-            note = f"\n\n(Output capped at {MAX_BYTES_LABEL}. Showing lines {start + 1}-{last_line}. Use offset={next_offset} to continue.)"
-        elif more:
-            note = f"\n\n(Showing lines {start + 1}-{last_line} of {total}. Use offset={next_offset} to continue.)"
-        else:
-            note = f"\n\n(End of file - total {total} lines)"
+        body, note = _paginate_lines(raw_lines, offset, limit)
+        if body is None:
+            return note
         return (
             f"<path>{path}</path>\n<type>file</type>\n<content>\n"
-            + "\n".join(out_lines)
-            + note
-            + "\n</content>"
+            + "\n".join(body) + note + "\n</content>"
         )
 
     @langchain_tool
     def write_file(
-        file_path: Annotated[str, "The path to the file to write (relative to root_dir or absolute)"],
+        file_path: Annotated[
+            str,
+            "The path to the file to write (relative to root_dir or absolute). "
+            "注意：不支持直接写入 .pdf .pptx .docx .xlsx 等专有格式文件；若 file_path 以此类扩展名结尾，"
+            "内容会保存为相同文件名的 .md 文件（如 the-new-SOTA-paper.pdf 会写成 the-new-SOTA-paper.md）。",
+        ],
         content: Annotated[str, "The full content to write to the file"],
     ) -> str:
         """覆写（或新建）整个文件。若只想改某一段，请改用 edit_file。"""
         try:
             path = _resolve_path(root_dir, file_path)
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            with open(path, "w", encoding="utf-8", newline="") as f:
+        except Exception as e:
+            return f"Error: {e}"
+
+        redirected = False
+        target = path
+        if _is_proprietary_doc_ext(path):
+            target = _md_redirect_path(path)
+            redirected = True
+
+        try:
+            os.makedirs(os.path.dirname(target), exist_ok=True)
+            with open(target, "w", encoding="utf-8", newline="") as f:
                 f.write(content)
         except Exception as e:
             return f"Error: {e}"
+
+        if redirected:
+            ext = os.path.splitext(file_path)[1]
+            return (
+                f"Note: 不支持直接写入 {ext} 等专有格式文件；内容已保存为同名 Markdown 文件："
+                f"{os.path.basename(target)}（原文件名：{os.path.basename(file_path)}）。"
+                f"如需再读取该内容，请用 read_file 打开 {os.path.basename(target)}。"
+            )
         return f"File written successfully to {file_path}."
 
     @langchain_tool
     def edit_file(
-        file_path: Annotated[str, "The path to the file to modify (relative to root_dir or absolute)"],
+        file_path: Annotated[
+            str,
+            "The path to the file to modify (relative to root_dir or absolute). "
+            "注意：不支持编辑 .pdf .pptx .docx .xlsx 等专有格式文件；若 file_path 以此类扩展名结尾，"
+            "会改为编辑相同文件名的 .md 文件（如 the-new-SOTA-paper.pdf → the-new-SOTA-paper.md）。",
+        ],
         old_string: Annotated[str, "The text to replace"],
         new_string: Annotated[str, "The text to replace it with (must be different from old_string)"],
         replace_all: Annotated[
@@ -365,6 +523,11 @@ def build_file_tools(root_dir: str) -> list[BaseTool]:
         except Exception as e:
             return f"Error: {e}"
 
+        redirected = False
+        if _is_proprietary_doc_ext(path):
+            path = _md_redirect_path(path)
+            redirected = True
+
         if old_string == new_string:
             return "Error: 没有改动可执行：old_string 与 new_string 相同。"
 
@@ -377,7 +540,10 @@ def build_file_tools(root_dir: str) -> list[BaseTool]:
                     f.write(new_string)
             except Exception as e:
                 return f"Error: {e}"
-            return "Edit applied successfully (file created)."
+            msg = "Edit applied successfully (file created)."
+            if redirected:
+                msg += f" Note: 已保存为同名 .md 文件（专有格式不支持二进制编辑）。"
+            return msg
 
         if os.path.isdir(path):
             return f"Error: Path is a directory, not a file: {file_path}"
@@ -412,7 +578,10 @@ def build_file_tools(root_dir: str) -> list[BaseTool]:
                 tofile=path,
             )
         ).strip()
-        return "Edit applied successfully.\n\n" + (diff or "(no textual change)")
+        msg = "Edit applied successfully.\n\n" + (diff or "(no textual change)")
+        if redirected:
+            msg += f"\n\nNote: 编辑的是同名 .md 文件（{os.path.splitext(file_path)[1]} 专有格式不支持二进制编辑）。"
+        return msg
 
     @langchain_tool
     def list_directory(

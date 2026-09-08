@@ -16,3 +16,4 @@ python-dotenv==1.2.2
 pystray==0.19.5
 pillow==12.3.0
 sentence-transformers==5.7.0
+markitdown[pdf,docx,pptx,xlsx,xls]==0.1.7
