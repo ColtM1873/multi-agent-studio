@@ -72,6 +72,9 @@ class ModelConfig(BaseModel):
     top_p: float | None = None
     max_tokens: int | None = None
     repetition_penalty: float | None = None
+    # DeepSeek 专用：开启后在请求里回填历史 assistant 的 reasoning_content，
+    # 规避 langchain_deepseek 丢弃该字段导致的间歇性 400（见 inner_docs/ID29）。
+    preserve_reasoning_content: bool = False
 
 
 class FileToolsConfig(BaseModel):

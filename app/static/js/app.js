@@ -76,6 +76,8 @@ const I18N_EN = {
   "store_namespace（逗号分隔）": "store_namespace (comma-separated)",
   "verify-ca（校验 CA 证书）": "verify-ca (verify CA certificate)",
   "verify-full（校验 CA + 主机名）": "verify-full (verify CA + hostname)",
+  "DeepSeek 思考模式 + 工具调用时，官方 LangChain 会丢弃历史思考内容、可能偶发 400。勾选后在本项目内运行时回填该内容（不改动官方库）。": "In DeepSeek thinking mode with tool calls, official LangChain drops historical reasoning content, which can cause intermittent 400s. When enabled, this project restores it at runtime (the official library is not modified).",
+  "启用 DeepSeek reasoning_content 保留修复": "Enable DeepSeek reasoning_content preservation fix",
   "✅ 回复已完成": "✅ Reply completed",
   "一栏填库名（与上面填的 checkpoint 库名保持一致）。": "Enter the database name here (keep it consistent with the checkpoint database above).",
   "万": "×10,000",
@@ -1414,6 +1416,10 @@ function modelBlockHTML(llmName, mc, group) {
         <label>base_url <i class="info-icon">!<span class="tip">${t("应指向 /v1 根路径，LangChain 会自动拼接 /chat/completions。不要把 /chat/completions 写进 base_url，否则会 404。")}</span></i></label>
         <input data-mf="base_url" value="${v(mc.base_url)}" placeholder="https://api.openai.com/v1">
       </div>
+      <div class="field" data-reasoning-fix-field style="display:none;">
+        <label style="flex-direction:row;align-items:center;gap:8px;"><input type="checkbox" data-mf="preserve_reasoning_content" ${mc.preserve_reasoning_content ? "checked" : ""}> ${t("启用 DeepSeek reasoning_content 保留修复")}</label>
+        <span class="hint">${t("DeepSeek 思考模式 + 工具调用时，官方 LangChain 会丢弃历史思考内容、可能偶发 400。勾选后在本项目内运行时回填该内容（不改动官方库）。")}</span>
+      </div>
       <div class="field full">
         <details class="db-help">
           <summary>${t("额外选项")}</summary>
@@ -1432,7 +1438,19 @@ function bindModelBlock(root) {
   const label = block.querySelector("[data-model-label]");
   const tip = block.querySelector("[data-model-tip]");
   const warn = block.querySelector("[data-official-warn]");
+  const baseUrlInput = block.querySelector('[data-mf="base_url"]');
+  const reasoningFixField = block.querySelector("[data-reasoning-fix-field]");
   let mode = block.querySelector('input[type="radio"]:checked').value;
+
+  const isDeepseek = () => {
+    if (mode === "openai_compatible") {
+      return ((baseUrlInput && baseUrlInput.value) || "").toLowerCase().includes("deepseek");
+    }
+    return (llmInput.value || "").trim().toLowerCase().startsWith("deepseek:");
+  };
+  const updateDeepseekFix = () => {
+    if (reasoningFixField) reasoningFixField.style.display = isDeepseek() ? "" : "none";
+  };
 
   const checkOfficial = () => {
     const raw = (llmInput.value || "").trim();
@@ -1451,15 +1469,19 @@ function bindModelBlock(root) {
       : t("格式「供应商:模型名」，如 deepseek:deepseek-v4-pro。已内置集成：openai / anthropic / deepseek / google_genai。");
     if (isCompat) warn.style.display = "none";
     else checkOfficial();
+    updateDeepseekFix();
   };
 
   block.querySelectorAll('input[type="radio"]').forEach(r => r.addEventListener("change", () => setMode(r.value)));
-  llmInput.addEventListener("input", () => { if (mode === "official") checkOfficial(); });
-  llmInput.addEventListener("blur", () => { if (mode === "official") checkOfficial(); });
+  llmInput.addEventListener("input", () => { if (mode === "official") checkOfficial(); updateDeepseekFix(); });
+  llmInput.addEventListener("blur", () => { if (mode === "official") checkOfficial(); updateDeepseekFix(); });
+  if (baseUrlInput) baseUrlInput.addEventListener("input", updateDeepseekFix);
   block.querySelectorAll("[data-opt]").forEach(cb => cb.addEventListener("change", () => {
     const f = block.querySelector(`[data-optfield="${cb.dataset.opt}"]`);
     if (f) f.style.display = cb.checked ? "" : "none";
   }));
+
+  updateDeepseekFix();
 }
 
 function collectModelCfg(root) {
@@ -1470,6 +1492,8 @@ function collectModelCfg(root) {
     provider_mode: mode,
     base_url: mode === "openai_compatible" ? (block.querySelector('[data-mf="base_url"]').value || "").trim() : "",
   };
+  const reasoningFix = block.querySelector('[data-mf="preserve_reasoning_content"]');
+  out.preserve_reasoning_content = !!(reasoningFix && reasoningFix.checked);
   for (const p of EXTRA_PARAMS) {
     const cb = block.querySelector(`[data-opt="${p.key}"]`);
     if (cb && cb.checked) {
@@ -1494,7 +1518,7 @@ function buildForm(cfg, canEditSubs) {
   const flush = tokToUnit(sum.flush_history_tokenwise);
 
   const suffixCtrl = isLocal
-    ? `<input id="f_suffix" value="?sslmode=disable" disabled><span class="hint">${t("本地连接，自动使用 sslmode=disable")}</span>`
+    ? `<input id="f_suffix" value="?sslmode=disable" readonly><span class="hint">${t("本地连接，自动使用 sslmode=disable")}</span>`
     : `<select id="f_suffix">${SSL_OPTIONS.map(o => `<option value="${esc(o.v)}" ${(pg.suffix || "") === o.v ? "selected" : ""}>${esc(t(o.label))}</option>`).join("")}</select><span class="hint">${t("云端/企业库请选择 SSL 模式")}</span>`;
 
   const embInOptions = EMB_OPTIONS.includes(emb.model_name);
@@ -1520,9 +1544,9 @@ function buildForm(cfg, canEditSubs) {
 
   form.innerHTML = `
     <div class="form-card"><h4>${t("基本信息")}</h4><div class="form-grid">
-      <div class="field"><label>agent_id ${info("唯一标识，用作配置文件名 configs/&lt;id&gt;.json，创建后不可改。")}</label><input id="f_agent_id" value="${esc(cfg.agent_id)}" ${canEditSubs ? "" : "disabled"}${ph("agent_id")}></div>
-      <div class="field"><label>${t("名称")} name ${info("显示名称，创建后不可改（与历史会话绑定）。")}</label><input id="f_name" value="${esc(cfg.name)}" ${canEditSubs ? "" : "disabled"}${ph("name")}><span class="lock-hint">${canEditSubs ? "" : t("创建后不可改")}</span></div>
-      <div class="field"><label>${t("checkpoint 数据库（会话历史绑定）")} ${info("会话历史归属的库名，需先在 pgAdmin 建库，创建后不可改。")}</label><input id="f_cpdb" value="${esc(pg.checkpoint_database)}" ${canEditSubs ? "" : "disabled"}${ph("checkpoint_database")}><span class="lock-hint">${canEditSubs ? t("需先在 pgAdmin 建库") : t("创建后不可改")}</span></div>
+      <div class="field"><label>agent_id ${info("唯一标识，用作配置文件名 configs/&lt;id&gt;.json，创建后不可改。")}</label><input id="f_agent_id" value="${esc(cfg.agent_id)}" ${canEditSubs ? "" : "readonly"}${ph("agent_id")}></div>
+      <div class="field"><label>${t("名称")} name ${info("显示名称，创建后不可改（与历史会话绑定）。")}</label><input id="f_name" value="${esc(cfg.name)}" ${canEditSubs ? "" : "readonly"}${ph("name")}><span class="lock-hint">${canEditSubs ? "" : t("创建后不可改")}</span></div>
+      <div class="field"><label>${t("checkpoint 数据库（会话历史绑定）")} ${info("会话历史归属的库名，需先在 pgAdmin 建库，创建后不可改。")}</label><input id="f_cpdb" value="${esc(pg.checkpoint_database)}" ${canEditSubs ? "" : "readonly"}${ph("checkpoint_database")}><span class="lock-hint">${canEditSubs ? t("需先在 pgAdmin 建库") : t("创建后不可改")}</span></div>
       <div class="field full"><details class="db-help"><summary>${t("📖 不会建数据库？点这里看步骤")}</summary><ol><li>${t("打开")} <b>pgAdmin 4</b>${t("（在开始菜单里搜索「pgAdmin」）。")}</li><li>${t("左侧展开")} <b>Servers → PostgreSQL</b>${t("，双击连接，输入安装 PostgreSQL 时设置的密码。")}</li><li>${t("右键")} <b>Databases → Create → Database…</b>${t("。")}</li><li>${t("在")} <b>Database</b> ${t("一栏填库名（与上面填的 checkpoint 库名保持一致）。")}</li><li>${t("点")} <b>Save</b>${t("。")}</li><li>${t("记忆库（store 数据库）还需启用 pgvector：选中刚建的库 → 点上方「Query Tool」图标 → 粘贴下面这句 → 点执行（或按 F5）：")}<pre>CREATE EXTENSION IF NOT EXISTS vector;</pre></li><li>${t("回到本页，点「保存」。")}</li></ol></details></div>
       <div class="field"><label>${t("store 数据库")} ${info("长期记忆存储的库名，可与 checkpoint 库相同或不同。")}</label><input id="f_sdb" value="${esc(pg.store_database)}"></div>
       <div class="field"><label>${t("store_namespace（逗号分隔）")} ${info("记忆存储命名空间，逗号分隔多个层级。")}</label><input id="f_ns" value="${esc(ns)}"></div>
@@ -1607,7 +1631,7 @@ function subAgentBox(s, key, canEdit) {
   div.innerHTML = `
     <div class="sub-head"><span class="name">🧩 ${t("子 agent")}</span>${canEdit ? `<button class="btn danger small" data-act="remove" type="button">${t("移除")}</button>` : ""}</div>
     <div class="form-grid">
-      <div class="field"><label>${t("名称")} name ${info("子 agent 标识，会作为工具名呈现给主 agent，创建后不可改。")}</label><input data-f="name" value="${esc(s.name)}" ${canEdit ? "" : "disabled"}${ph("sub_name")}></div>
+      <div class="field"><label>${t("名称")} name ${info("子 agent 标识，会作为工具名呈现给主 agent，创建后不可改。")}</label><input data-f="name" value="${esc(s.name)}" ${canEdit ? "" : "readonly"}${ph("sub_name")}></div>
       ${modelBlockHTML(s.llm_provider_name, s.model, `sub_${key}_mode`)}
       <div class="field"><label>API Key ${info("该子 agent 所用模型的 API 密钥（明文存本地配置）。")}</label><input data-f="api_key" value="${esc(s.api_key)}" type="password"${ph("sub_api_key")}></div>
       <div class="field"><label>${t("清空历史阈值")} ${info("该子 agent 累计 token 达到该值时清空历史（只保留最近几轮）。")}</label><div class="unit-row"><input data-f="flush" value="${esc(flush.v)}" type="number"><select data-f="flush_unit"><option value="万" ${flush.u === "万" ? "selected" : ""}>${t("万")}</option><option value="千" ${flush.u === "千" ? "selected" : ""}>${t("千")}</option></select></div></div>

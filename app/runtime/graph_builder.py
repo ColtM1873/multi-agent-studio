@@ -23,6 +23,7 @@ from app.config.models import (
     SubAgentConfig,
 )
 from app.runtime.file_tools import build_file_tools
+from app.runtime.deepseek_reasoning_fix import apply_deepseek_reasoning_fix, is_deepseek_config
 from app.runtime.prompts import MEMORY_ATTACH_MARKER, USER_MSG_PREFIX, ReAct_system_prompt, summary_prompt_generator, subagent_call_prompt, summary_prompt_prefix,trimmed_summary_prompt
 from app.runtime.state_factory import make_main_state, make_sub_agent_state
 from app.services import snapshot as snapshot_service
@@ -98,14 +99,21 @@ def _init_model(llm_provider_name: str, api_key: str, model_cfg: ModelConfig):
         kwargs["model_kwargs"] = model_kwargs
 
     if model_cfg.provider_mode == "openai_compatible":
-        return init_chat_model(
+        model = init_chat_model(
             model=llm_provider_name,
             api_key=api_key,
             model_provider="openai",
             base_url=model_cfg.base_url,
             **kwargs,
         )
-    return init_chat_model(model=llm_provider_name, api_key=api_key, **kwargs)
+    else:
+        model = init_chat_model(model=llm_provider_name, api_key=api_key, **kwargs)
+
+    # DeepSeek 可选修复：回填历史 assistant 的 reasoning_content（见 inner_docs/ID29）。
+    if model_cfg.preserve_reasoning_content and is_deepseek_config(llm_provider_name, model_cfg):
+        apply_deepseek_reasoning_fix(model)
+
+    return model
 
 
 async def build_sub_agent(
