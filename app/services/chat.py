@@ -91,7 +91,14 @@ class AgentRuntime:
 
     async def run(self, thread_id: str, user_input: dict, emit, on_interrupt=None) -> str:
         config_dict = {"configurable": {"thread_id": thread_id}}
-        return await run_agent_stream(self.graph, config_dict, user_input, emit, on_interrupt)
+        return await run_agent_stream(
+            self.graph,
+            config_dict,
+            user_input,
+            emit,
+            on_interrupt,
+            sub_agent_names={s.name for s in self.config.sub_agents},
+        )
 
     async def close(self) -> None:
         await self._stack.aclose()

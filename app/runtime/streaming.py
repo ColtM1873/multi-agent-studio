@@ -23,17 +23,22 @@ async def run_agent_stream(
     user_input: dict[str, Any],
     emit: Emit,
     on_interrupt: InterruptHandler | None = None,
+    sub_agent_names: set[str] | None = None,
 ) -> str:
     """运行一次 agent 调用，把 token/子图/tool 事件流式 emit 出去。
 
+    sub_agent_names: 主图里作为「工具」暴露的子 agent 名字集合，用于把主 agent 正在
+    生成的 tool_call 区分为「给子 agent 发布任务」还是「编辑普通工具调取指令」。
+
     返回最终的 state 字符串（与旧 stream_ainvoke 一致）。
     """
+    sub_names = sub_agent_names or set()
     while True:
         stream = await main_agent.astream_events(input=user_input, config=thread_id_config, version="v3")
 
         await asyncio.gather(
-            _consume_messages(stream, emit),
-            _consume_subgraphs(stream, emit),
+            _consume_messages(stream, emit, sub_names),
+            _consume_subgraphs(stream, emit, sub_names),
             _consume_values(stream, emit),
         )
 
@@ -49,16 +54,54 @@ async def run_agent_stream(
         user_input = Command(resume=resume_value)
 
 
-async def _emit_message_stream(message, source: str, emit: Emit):
-    """按时间顺序 emit 一条消息的思考过程与正文。
+async def _emit_message_stream(message, source: str, emit: Emit, sub_agent_names: set[str]):
+    """按时间顺序 emit 一条消息的思考过程、正文，以及状态栏的「阶段」事件。
 
     直接迭代 message 的原始协议事件（replay-buffer），这样思考与正文会严格按
     模型输出的先后顺序交错发出（推理模型会出现「正文—思考—正文」的停顿），
     而不是像 projection 那样先整段思考、再整段正文。普通模型没有 reasoning
     事件，自动跳过。
+
+    阶段（phase）判定：
+    - message-start              → thinking（LLM 开始）
+    - 首个 text-delta            → answering
+    - 首个 tool_call_chunk       → 名称属于子 agent 则 delegate，否则 tool_edit
+    - message-finish（含非子 agent 工具） → tool_wait
     """
+    is_user = source == "main_user"
+    text_started = False
+    tool_names: list[str] = []
+    tool_phase: str | None = None
+
+    async def emit_phase(phase: str):
+        if not is_user:
+            await emit({"type": "phase", "source": source, "phase": phase})
+
+    def note_tool_name(name: str) -> str | None:
+        """记录 tool 名并返回该名对应的阶段；同类型阶段不重复发。"""
+        nonlocal tool_phase
+        if not name or name in tool_names:
+            return None
+        tool_names.append(name)
+        phase = "delegate" if name in sub_agent_names else "tool_edit"
+        if phase != tool_phase:
+            tool_phase = phase
+            return phase
+        return None
+
     async for event in message:
-        if event.get("event") != "content-block-delta":
+        etype = event.get("event")
+        if etype == "message-start":
+            await emit_phase("thinking")
+            continue
+        if etype == "content-block-finish":
+            block = event.get("content") or event.get("content_block")
+            if isinstance(block, dict) and block.get("type") == "tool_call":
+                phase = note_tool_name(block.get("name") or "")
+                if phase:
+                    await emit_phase(phase)
+            continue
+        if etype != "content-block-delta":
             continue
         delta = event.get("delta")
         if not isinstance(delta, dict):
@@ -75,28 +118,68 @@ async def _emit_message_stream(message, source: str, emit: Emit):
         if dtype == "text-delta":
             text = delta.get("text", "")
             if text:
+                if not text_started:
+                    text_started = True
+                    await emit_phase("answering")
                 await emit({"type": "text", "source": source, "text": text})
         elif dtype == "reasoning-delta":
             r = delta.get("reasoning", "")
             if r:
                 await emit({"type": "reasoning", "source": source, "text": r})
+        elif dtype in ("block-delta", "legacy-block-delta"):
+            fields = delta.get("fields")
+            if isinstance(fields, dict) and fields.get("type") == "tool_call_chunk":
+                phase = note_tool_name(fields.get("name") or "")
+                if phase:
+                    await emit_phase(phase)
+
+    # 消息结束：只有「非子 agent 工具」才会让主 agent 停下来等工具执行；
+    # 若全是子 agent，则保持 delegate，等子 agent 自己的阶段事件（状态下沉）。
+    if tool_names and any(n not in sub_agent_names for n in tool_names):
+        await emit_phase("tool_wait")
 
 
-async def _consume_messages(stream, emit: Emit):
+async def _consume_messages(stream, emit: Emit, sub_agent_names: set[str]):
     """主图（主 agent）的文本流（含思考过程）。"""
     async for message in stream.messages:
         is_user = message.node == "merge_human_message_with_memory"
-        await _emit_message_stream(message, "main_user" if is_user else "main", emit)
+        await _emit_message_stream(
+            message, "main_user" if is_user else "main", emit, sub_agent_names
+        )
 
 
-async def _consume_subgraphs(stream, emit: Emit):
-    """子图（子 agent）的文本流（含思考过程）。"""
-    async for subgraph in stream.subgraphs:
-        name = subgraph.graph_name
-        await emit({"type": "subgraph_start", "name": name})
-        async for message in subgraph.messages:
-            await _emit_message_stream(message, f"sub:{name}", emit)
+async def _drain_subgraph(cursor, name: str, emit: Emit, sub_agent_names: set[str]):
+    """消费单个子图 handle 的消息流（在独立任务里跑，实现并行子图并发接收）。"""
+    try:
+        async for message in cursor:
+            await _emit_message_stream(message, f"sub:{name}", emit, sub_agent_names)
+    finally:
         await emit({"type": "subgraph_end", "name": name})
+
+
+async def _consume_subgraphs(stream, emit: Emit, sub_agent_names: set[str]):
+    """子图（子 agent）的文本流（含思考过程），支持多个子图并行。
+
+    关键：LangGraph 的 StreamChannel 是 lazy-subscribe —— 只有在消息被推入其缓冲
+    **之前**已订阅，才拿得到；否则并行子图早期的消息会被丢弃。因此这里在「读到
+    handle」与「下一次 pump」之间**同步**调用 `__aiter__()` 完成订阅，再为每个
+    handle 起一个独立任务并发消费。
+    """
+    tasks: list[asyncio.Task] = []
+    try:
+        async for subgraph in stream.subgraphs:
+            name = subgraph.graph_name
+            await emit({"type": "subgraph_start", "name": name})
+            cursor = subgraph.messages.__aiter__()  # 同步订阅，防止并行子图丢消息
+            tasks.append(
+                asyncio.create_task(_drain_subgraph(cursor, name, emit, sub_agent_names))
+            )
+        if tasks:
+            await asyncio.gather(*tasks)
+    finally:
+        for t in tasks:
+            if not t.done():
+                t.cancel()
 
 
 async def _consume_values(stream, emit: Emit):
@@ -132,6 +215,9 @@ async def _consume_values(stream, emit: Emit):
             await emit(
                 {"type": "tool_result", "name": getattr(last, "name", "unknown"), "content": str(content)[:2000]}
             )
+            # 工具结果回流后，主 agent 即将再次 call_main_llm；显式回到「思考中」，
+            # 消除「工具执行完毕」到「下一条 LLM 首个 token」之间的状态空档。
+            await emit({"type": "phase", "source": "main", "phase": "thinking"})
         elif last.type == "ai" and getattr(last, "tool_calls", None):
             for tc in last.tool_calls:
                 tid = tc.get("id", "")

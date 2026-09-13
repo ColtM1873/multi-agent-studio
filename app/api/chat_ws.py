@@ -10,11 +10,15 @@
 服务端→客户端事件：
   {"type": "text", "source": "main"|"sub:<name>", "text": token}
   {"type": "reasoning", "source": "main"|"sub:<name>", "text": token}
+  {"type": "phase", "source": "main"|"sub:<name>",
+   "phase": "thinking"|"answering"|"tool_edit"|"delegate"|"tool_wait"}  状态栏阶段
   {"type": "subgraph_start"|"subgraph_end", "name": ...}
   {"type": "tool_call", "name", "args"}
   {"type": "tool_result", "name", "content"}
   {"type": "interrupt", "prompt"}
   {"type": "status", "status": "loading"}  运行时构建中（embedding 模型加载等）
+  {"type": "status", "status": "ready"}    运行时已就绪，图/LLM 即将开始
+  {"type": "sub_agents", "names": [...]}   配置里的子 agent 名单（前端分区渲染用）
   {"type": "done", "final_state"}
   {"type": "error", "message"}
 """
@@ -44,6 +48,15 @@ async def chat_ws(websocket: WebSocket, agent_id: str, thread_id: str):
         if not chat_manager.has_runtime(agent_id):
             await websocket.send_json({"type": "status", "status": "loading"})
         runtime = await chat_manager.get_runtime(agent_id)
+        # 运行时已就绪（embedding 已加载完成）。显式通知前端脱离「加载Embedding模型中」，
+        # 否则在「构建完成」到「第一条 token」之间（思考模型可能先出 reasoning、或先跑工具）
+        # 状态栏会一直停在 loading，与实际不符。
+        await websocket.send_json({"type": "status", "status": "ready"})
+        # 下发配置里的子 agent 名单：前端据此判断是否启用「子 agent 分区 + 下拉切换」
+        # （配置里子 agent ≤1 时自动关闭该功能）。
+        await websocket.send_json(
+            {"type": "sub_agents", "names": [s.name for s in runtime.config.sub_agents]}
+        )
     except Exception as e:
         await websocket.send_json({"type": "error", "message": f"无法构建 agent: {e}"})
         await websocket.close()

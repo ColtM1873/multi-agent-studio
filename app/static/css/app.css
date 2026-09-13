@@ -189,6 +189,21 @@ body {
   border-radius: 8px; padding: 2px 10px; font-size: 12px; font-weight: 600; margin-bottom: 6px;
 }
 
+/* ── 子 agent 分区（并行流式 + 下拉切换） ───── */
+.seg-main { display: block; }
+.seg-sub { display: block; }
+.sub-stream-divider {
+  display: flex; justify-content: flex-end; align-items: center;
+  border-top: 1px solid var(--border); padding-top: 6px; margin: 14px 0 8px;
+}
+.sub-stream-select {
+  font-size: 12px; max-width: 240px; padding: 2px 8px;
+  border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface); color: var(--text); cursor: pointer;
+}
+.sub-stream-content { padding-left: 10px; border-left: 2px solid var(--border); }
+.sub-placeholder { color: var(--text-muted); font-size: 13px; padding: 4px 0; font-style: italic; }
+
 /* ── 思考过程 ─────────────────────────── */
 .reasoning-block { margin: 10px 0; border: 1px dashed var(--border); border-radius: 10px; background: #fbfbfd; overflow: hidden; }
 .reasoning-block summary { cursor: pointer; padding: 6px 12px; font-size: calc(var(--md-font-size, 15px) * var(--reasoning-font-scale, 1) * 0.85); color: var(--text-muted); user-select: none; list-style: none; }
@@ -350,11 +365,17 @@ body {
 /* ── 状态指示强化 ───────────────────────── */
 .status-indicator.thinking { color: #b45309; }
 .status-indicator.answering { color: #15803d; font-weight: 600; }
+.status-indicator.tool_edit { color: #1d4ed8; }
+.status-indicator.delegate { color: #6d28d9; font-weight: 600; }
+.status-indicator.tool_wait { color: #475569; }
 .status-indicator.loading { color: #64748b; }
 .status-indicator.waiting { color: #b45309; }
 .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
 .status-dot.thinking { background: #f59e0b; animation: pulse 1s infinite; }
 .status-dot.answering { background: #22c55e; animation: pulse .7s infinite; }
+.status-dot.tool_edit { background: #3b82f6; animation: pulse 1s infinite; }
+.status-dot.delegate { background: #8b5cf6; animation: pulse .8s infinite; }
+.status-dot.tool_wait { background: #64748b; animation: pulse 1s infinite; }
 .status-dot.loading { background: #94a3b8; animation: pulse 1s infinite; }
 .status-dot.waiting { background: #f59e0b; animation: pulse 1s infinite; }
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .3; } }

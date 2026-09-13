@@ -53,6 +53,15 @@ const I18N_EN = {
   "<数据库名>": "<database name>",
   "Agent 回答中…": "Agent is answering…",
   "Agent 思考中…": "Agent is thinking…",
+  "主 agent": "Main agent",
+  "{actor} 思考中": "{actor} is thinking",
+  "{actor} 回答中": "{actor} is answering",
+  "{actor} 编辑工具调取指令": "{actor} is composing a tool call",
+  "{actor} 给子 agent 发布任务": "{actor} is dispatching a task to a sub-agent",
+  "{actor} 等待工具执行完毕": "{actor} is waiting for the tool to finish",
+  "未调用": "Not called",
+  "等待输出…": "Waiting for output…",
+  "选择子 agent": "Select sub-agent",
   "Embedding 模型离线模式": "Embedding offline mode",
   "HTML 报告生成 prompt": "HTML report generation prompt",
   "MCP 服务器": "MCP server",
@@ -887,6 +896,7 @@ const S = { view: "agents", agentId: null, agentName: null, threadId: null, snap
 const app = $("#app");
 let ws = null;
 let isRunning = false;
+let statusMode = "idle";
 let currentReplyEl = null;
 let editorDirty = false;
 let settingsCache = null;
@@ -907,7 +917,7 @@ function bindBack(cb) { const b = $("#backBtn"); if (b) b.onclick = cb; }
 function render() {
   app.innerHTML = "";
   $$(".edit-popup").forEach(p => p.remove());
-  isRunning = false; ws = null; currentReplyEl = null; editorDirty = false;
+  isRunning = false; ws = null; currentReplyEl = null; editorDirty = false; statusMode = "idle";
   if (S.view === "agents") renderAgents();
   else if (S.view === "editor") renderEditorView();
   else if (S.view === "threads") renderThreadsView();
@@ -1920,11 +1930,23 @@ async function deleteThread(tid) {
 }
 
 /* ================= 视图4：聊天 ================= */
-function setStatusIndicator(mode) {
+const PHASE_TEMPLATES = {
+  thinking: "{actor} 思考中",
+  answering: "{actor} 回答中",
+  tool_edit: "{actor} 编辑工具调取指令",
+  delegate: "{actor} 给子 agent 发布任务",
+  tool_wait: "{actor} 等待工具执行完毕",
+};
+
+function setStatusIndicator(mode, actor) {
+  statusMode = mode;
   const ind = $("#statusInd");
   if (!ind) return;
-  if (mode === "thinking") { ind.className = "status-indicator thinking"; ind.innerHTML = `<span class="status-dot thinking"></span>${t("Agent 思考中…")}`; }
-  else if (mode === "answering") { ind.className = "status-indicator answering"; ind.innerHTML = `<span class="status-dot answering"></span>${t("Agent 回答中…")}`; }
+  if (PHASE_TEMPLATES[mode]) {
+    ind.className = "status-indicator " + mode;
+    const label = t(PHASE_TEMPLATES[mode]).replace("{actor}", esc(actor || t("主 agent")));
+    ind.innerHTML = `<span class="status-dot ${mode}"></span>${label}`;
+  }
   else if (mode === "loading") { ind.className = "status-indicator loading"; ind.innerHTML = `<span class="status-dot loading"></span>${t("加载Embedding模型中")}`; }
   else if (mode === "waiting") { ind.className = "status-indicator waiting"; ind.innerHTML = `<span class="status-dot waiting"></span>${t("等待确认…")}`; }
   else { ind.className = "status-indicator"; ind.innerHTML = ""; }
@@ -2681,11 +2703,11 @@ async function renderChatView() {
     } catch (e) { toast(e.message, true); }
   };
 
-  function setRunning(r, status = "thinking") {
+  function setRunning(r, status = "thinking", actor = null) {
     isRunning = r;
     sel.disabled = r;
     updateSendState();
-    if (r) setStatusIndicator(status); else setStatusIndicator("idle");
+    if (r) setStatusIndicator(status, actor || t("主 agent")); else setStatusIndicator("idle");
     if (r) stopBtn.style.display = ""; else stopBtn.style.display = "none";
   }
 
@@ -2879,52 +2901,146 @@ function openChatWs(content, proactive = false, subAgent = null) {
     const proto = location.protocol === "https:" ? "wss" : "ws";
     ws = new WebSocket(`${proto}://${location.host}/api/agents/${encodeURIComponent(S.agentId)}/threads/${encodeURIComponent(S.threadId)}/chat`);
 
-    const buffers = { main_user: "", timeline: [] };
+    const buffers = {
+      main_user: "",
+      // 段序列：{kind:"main",blocks:[]} | {kind:"sub",subs,order,marks,selected,...}
+      // 「末段是否为 main」用于判定新一轮委派，保证严格时间顺序（多轮 = 多分区）。
+      segments: [],
+      configuredSubs: [],   // 配置里的全部子 agent
+      featureEnabled: false, // 配置子 agent ≥2 才启用分区+下拉
+      _domOwner: null,
+    };
     let rafPending = false;
-    let answered = false;
+    let lastPhaseKey = "";
+    const actorOf = (source) => source === "main" ? t("主 agent") : source.replace(/^sub:/, "");
+    // 后端会持续下发 {"type":"phase","source","phase"} 精确驱动状态栏；
+    // leaveLoading 只是「没收到 phase 时」的兜底：仅在仍处于 loading 时推进。
+    const leaveLoading = (next, source) => { if (statusMode === "loading") setStatusIndicator(next, actorOf(source)); };
     const flush = () => { rafPending = false; renderStream(); };
     const schedule = () => { if (!rafPending) { rafPending = true; requestAnimationFrame(flush); } };
 
-    const pushBlock = (group, type, content) => {
-      const last = buffers.timeline[buffers.timeline.length - 1];
-      if (last && last.group === group && last.type === type) last.content += content;
-      else buffers.timeline.push({ group, type, content });
+    const lastSeg = () => buffers.segments[buffers.segments.length - 1];
+
+    // 主 agent 内容：末段非 main 就新开一段
+    const pushMain = (type, content) => {
+      let seg = lastSeg();
+      if (!seg || seg.kind !== "main") { seg = { kind: "main", blocks: [] }; buffers.segments.push(seg); }
+      const last = seg.blocks[seg.blocks.length - 1];
+      if (last && last.type === type) last.content += content;
+      else seg.blocks.push({ type, content });
+    };
+
+    // 子 agent 内容：末段非 sub 就新开一个「本轮委派分区」
+    const pushSub = (name, type, content) => {
+      let seg = lastSeg();
+      if (!seg || seg.kind !== "sub") {
+        seg = { kind: "sub", subs: {}, order: [], marks: {}, selected: null };
+        buffers.segments.push(seg);
+      }
+      if (!seg.subs[name]) { seg.subs[name] = []; seg.order.push(name); if (!(name in seg.marks)) seg.marks[name] = "running"; }
+      const arr = seg.subs[name];
+      const last = arr[arr.length - 1];
+      if (last && last.type === type) last.content += content;
+      else arr.push({ type, content });
     };
 
     const reasoningBlock = (txt) => txt
       ? `<details class="reasoning-block" open><summary>🧠 ${t("思考过程")}</summary><div class="reasoning-body">${esc(txt)}</div></details>`
       : "";
 
+    const renderBlock = (b) =>
+      b.type === "reasoning"
+        ? reasoningBlock(b.content)
+        : b.type === "tool_result"
+          ? `<div class="tool-result-body">${renderMd(b.content)}</div>`
+          : `<div class="ai-msg-block">${renderMd(b.content)}</div>`;
+    const renderBlocks = (blocks) => (blocks || []).map(renderBlock).join("");
+
+    const subOptionLabel = (seg, name) =>
+      name + (seg.marks[name] === "running" ? " ●" : seg.marks[name] === "done" ? " ✓" : "");
+
+    const subContentHtml = (seg, name) => {
+      if (!name) return "";
+      if (!(name in seg.marks)) return `<div class="sub-placeholder">${t("未调用")}</div>`;
+      const blocks = seg.subs[name];
+      if (!blocks || !blocks.length) return `<div class="sub-placeholder">${t("等待输出…")}</div>`;
+      return renderBlocks(blocks);
+    };
+
+    const syncSelectOptions = (seg) => {
+      const selEl = seg._selectEl;
+      if (!selEl) return;
+      const opts = buffers.configuredSubs.length ? buffers.configuredSubs : seg.order;
+      const sig = opts.join("\u0001");
+      if (selEl._sig !== sig) {
+        selEl._sig = sig;
+        selEl.innerHTML = opts.map(n => `<option value="${esc(n)}">${esc(subOptionLabel(seg, n))}</option>`).join("");
+      }
+    };
+
+    const refreshSelectMarks = (seg) => {
+      const selEl = seg._selectEl;
+      if (!selEl) return;
+      for (const o of Array.from(selEl.options)) {
+        const label = subOptionLabel(seg, o.value);
+        if (o.textContent !== label) o.textContent = label;
+      }
+    };
+
+    const buildSegmentEl = (seg) => {
+      seg._el = document.createElement("div");
+      if (seg.kind === "main") { seg._el.className = "seg-main"; return; }
+      seg._el.className = "seg-sub";
+      seg._el.innerHTML = `<div class="sub-stream-divider"><select class="sub-stream-select" title="${t("选择子 agent")}"></select></div><div class="sub-stream-content"></div>`;
+      seg._dividerEl = seg._el.querySelector(".sub-stream-divider");
+      seg._selectEl = seg._el.querySelector(".sub-stream-select");
+      seg._contentEl = seg._el.querySelector(".sub-stream-content");
+      seg._selectEl.onchange = () => { seg.selected = seg._selectEl.value; renderStream(); };
+    };
+
     function renderStream() {
       if (!currentReplyEl) return;
       const pane = $("#historyPane");
       const atBottom = pane && (pane.scrollHeight - pane.scrollTop - pane.clientHeight < 48);
-      let html = "";
-      if (buffers.main_user) html += `<div class="user-msg-block"><div class="user-msg-head">🧑 <strong>${t("用户")}</strong></div><blockquote class="user-msg-quote">${esc(buffers.main_user).replace(/\n/g, "<br>")}</blockquote></div>`;
-      const renderBlock = (b) =>
-        b.type === "reasoning"
-          ? reasoningBlock(b.content)
-          : b.type === "tool_result"
-            ? `<div class="tool-result-body">${renderMd(b.content)}</div>`
-            : `<div class="ai-msg-block">${renderMd(b.content)}</div>`;
-      let openSub = null;
-      const closeSub = () => { if (openSub !== null) { html += "</div>"; openSub = null; } };
-      for (const b of buffers.timeline) {
-        if (b.group === "main") {
-          closeSub();
-          html += renderBlock(b);
+
+      // currentReplyEl 被 appendReplyHeader 重建时，作废缓存的段 DOM 引用
+      if (buffers._domOwner !== currentReplyEl) {
+        buffers._domOwner = currentReplyEl;
+        for (const seg of buffers.segments) { seg._el = null; seg._dividerEl = null; seg._selectEl = null; seg._contentEl = null; }
+      }
+
+      if (buffers.main_user) {
+        if (!currentReplyEl._userEl || currentReplyEl._userEl.parentElement !== currentReplyEl) {
+          currentReplyEl._userEl = document.createElement("div");
+          currentReplyEl._userEl.className = "user-msg-block";
+          currentReplyEl.insertBefore(currentReplyEl._userEl, currentReplyEl.firstChild);
+        }
+        currentReplyEl._userEl.innerHTML = `<div class="user-msg-head">🧑 <strong>${t("用户")}</strong></div><blockquote class="user-msg-quote">${esc(buffers.main_user).replace(/\n/g, "<br>")}</blockquote>`;
+      }
+
+      for (const seg of buffers.segments) {
+        if (!seg._el || seg._el.parentElement !== currentReplyEl) {
+          buildSegmentEl(seg);
+          currentReplyEl.appendChild(seg._el);
+        }
+        if (seg.kind === "main") {
+          seg._el.innerHTML = renderBlocks(seg.blocks);
+          continue;
+        }
+        const showRegion = buffers.featureEnabled;
+        seg._dividerEl.style.display = showRegion ? "" : "none";
+        if (showRegion) {
+          syncSelectOptions(seg);
+          refreshSelectMarks(seg);
+          if (seg.selected == null) seg.selected = seg.order[0] || buffers.configuredSubs[0] || null;
+          if (seg._selectEl.value !== (seg.selected || "")) seg._selectEl.value = seg.selected || "";
+          seg._contentEl.innerHTML = subContentHtml(seg, seg.selected);
         } else {
-          const name = b.group.slice(4);
-          if (name !== openSub) {
-            closeSub();
-            html += `<div style="margin-top:12px;"><span class="sub-tag">🧩 ${t("子 agent")} · ${esc(name)}</span>`;
-            openSub = name;
-          }
-          html += renderBlock(b);
+          const tag = seg.order.length ? `<div class="sub-tag">🧩 ${t("子 agent")} · ${esc(seg.order.join("、"))}</div>` : "";
+          seg._contentEl.innerHTML = tag + renderBlocks(seg.order.flatMap(n => seg.subs[n] || []));
         }
       }
-      closeSub();
-      currentReplyEl.innerHTML = html;
+
       if (pane && (pinned || atBottom)) pane.scrollTop = pane.scrollHeight;
     }
 
@@ -2938,42 +3054,79 @@ function openChatWs(content, proactive = false, subAgent = null) {
       const msg = JSON.parse(ev.data);
       switch (msg.type) {
         case "text":
-          if (msg.source === "main" && !answered) { answered = true; setStatusIndicator("answering"); }
+          if (msg.source === "main" || msg.source.startsWith("sub:")) leaveLoading("answering", msg.source);
           if (msg.source === "main_user") buffers.main_user += msg.text;
-          else if (msg.source === "main") pushBlock("main", "text", msg.text);
-          else { const n = msg.source.replace(/^sub:/, ""); pushBlock("sub:" + n, "text", msg.text); }
+          else if (msg.source === "main") pushMain("text", msg.text);
+          else { const n = msg.source.replace(/^sub:/, ""); pushSub(n, "text", msg.text); }
           schedule();
           break;
         case "reasoning":
-          if (msg.source === "main") pushBlock("main", "reasoning", msg.text);
-          else { const n = msg.source.replace(/^sub:/, ""); pushBlock("sub:" + n, "reasoning", msg.text); }
+          leaveLoading("thinking", msg.source);
+          if (msg.source === "main") pushMain("reasoning", msg.text);
+          else { const n = msg.source.replace(/^sub:/, ""); pushSub(n, "reasoning", msg.text); }
           schedule();
           break;
+        case "sub_agents":
+          buffers.configuredSubs = msg.names || [];
+          buffers.featureEnabled = buffers.configuredSubs.length >= 2;
+          schedule();
+          break;
+        case "subgraph_start": {
+          let seg = lastSeg();
+          if (!seg || seg.kind !== "sub") {
+            seg = { kind: "sub", subs: {}, order: [], marks: {}, selected: null };
+            buffers.segments.push(seg);
+          }
+          if (!seg.subs[msg.name]) { seg.subs[msg.name] = []; seg.order.push(msg.name); }
+          seg.marks[msg.name] = "running";
+          if (!seg.selected) seg.selected = msg.name;
+          schedule();
+          break;
+        }
+        case "subgraph_end": {
+          for (let i = buffers.segments.length - 1; i >= 0; i--) {
+            const seg = buffers.segments[i];
+            if (seg.kind === "sub" && seg.marks[msg.name] === "running") { seg.marks[msg.name] = "done"; break; }
+          }
+          schedule();
+          break;
+        }
+        case "phase": {
+          const key = msg.source + ":" + msg.phase;
+          if (key !== lastPhaseKey) {
+            lastPhaseKey = key;
+            setStatusIndicator(msg.phase, actorOf(msg.source));
+          }
+          break;
+        }
         case "tool_call":
+          leaveLoading("thinking", "main");
           { let tcHtml = `\n\n🔧 **${t("工具调用")}**: \`${esc(msg.name)}\`\n\n`;
           if (msg.args && Object.keys(msg.args).length) tcHtml += "```json\n" + JSON.stringify(msg.args, null, 2) + "\n```\n\n";
-          pushBlock("main", "tool", tcHtml);
+          pushMain("tool", tcHtml);
           schedule(); }
           break;
         case "tool_result":
-          pushBlock("main", "tool_result", `\n✅ **${t("工具结果")}** (\`${esc(msg.name)}\`):\n\n${esc(msg.content)}\n\n`);
+          leaveLoading("thinking", "main");
+          pushMain("tool_result", `\n✅ **${t("工具结果")}** (\`${esc(msg.name)}\`):\n\n${esc(msg.content)}\n\n`);
           schedule();
           break;
         case "interrupt": {
           setStatusIndicator("waiting");
           const ans = await askConfirm(msg.prompt || t("请确认"), subAgent ? { pink: true } : null);
-          if (ans === "yes") setStatusIndicator("thinking");
+          if (ans === "yes") setStatusIndicator("thinking", t("主 agent"));
           ws.send(JSON.stringify({ type: "resume", value: ans }));
           break;
         }
         case "status":
           if (msg.status === "loading") setStatusIndicator("loading");
+          else if (msg.status === "ready") leaveLoading("thinking", "main");
           break;
         case "done":
           resolve(true);
           break;
         case "error":
-          pushBlock("main", "tool", `\n\n> ⚠️ ${esc(msg.message)}\n\n`);
+          pushMain("tool", `\n\n> ⚠️ ${esc(msg.message)}\n\n`);
           schedule();
           resolve(false);
           break;
