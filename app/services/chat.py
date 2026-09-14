@@ -168,6 +168,10 @@ class ChatManager:
         config = self.config_store.load(agent_id)
         return await threads_service.list_threads(config.checkpoint_conn_string)
 
+    async def register_thread(self, agent_id: str, thread_id: str) -> None:
+        config = self.config_store.load(agent_id)
+        await threads_service.register_thread(config.checkpoint_conn_string, thread_id)
+
     async def delete_thread(self, agent_id: str, thread_id: str) -> None:
         config = self.config_store.load(agent_id)
         await threads_service.delete_thread(config.checkpoint_conn_string, thread_id)

@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 from app.deps import chat_manager
 from app.services.messages_json import message_to_dict
 
 router = APIRouter(prefix="/api/agents/{agent_id}/threads", tags=["threads"])
+
+
+class CreateThreadBody(BaseModel):
+    thread_id: str
 
 
 def _load(agent_id: str):
@@ -23,6 +28,16 @@ def _load(agent_id: str):
 async def list_threads(agent_id: str):
     _load(agent_id)
     return await chat_manager.list_threads(agent_id)
+
+
+@router.post("")
+async def create_thread(agent_id: str, body: CreateThreadBody):
+    _load(agent_id)
+    thread_id = body.thread_id.strip()
+    if not thread_id:
+        raise HTTPException(status_code=400, detail="会话名称不能为空")
+    await chat_manager.register_thread(agent_id, thread_id)
+    return {"ok": True, "thread_id": thread_id}
 
 
 @router.delete("/{thread_id}")

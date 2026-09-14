@@ -25,10 +25,46 @@ async def test_connection(conn_string: str, timeout: int = 5) -> tuple[bool, str
         return False, str(e)
 
 
+async def _ensure_thread_meta_table(conn: AsyncConnection) -> None:
+    """会话元数据表：登记「已创建但尚未发送任何消息」的会话。
+
+    checkpoints 表只在第一次对话时才写入，因此仅靠 checkpoints 无法列出
+    「建好名字但还没发消息」的会话。这里用一张独立表把这类会话持久化。
+    """
+    await conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS thread_meta (
+            thread_id TEXT PRIMARY KEY,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )
+        """
+    )
+
+
+async def register_thread(conn_string: str, thread_id: str) -> None:
+    """登记一个会话，使其在发送消息前也出现在会话列表中（幂等）。"""
+    async with await AsyncConnection.connect(conn_string) as conn:
+        await conn.set_autocommit(True)
+        await _ensure_thread_meta_table(conn)
+        await conn.execute(
+            "INSERT INTO thread_meta (thread_id) VALUES (%s) ON CONFLICT (thread_id) DO NOTHING",
+            (thread_id,),
+        )
+
+
 async def list_threads(conn_string: str) -> list[dict]:
-    try:
-        async with await AsyncConnection.connect(conn_string) as conn:
-            await conn.set_autocommit(True)
+    async with await AsyncConnection.connect(conn_string) as conn:
+        await conn.set_autocommit(True)
+        await _ensure_thread_meta_table(conn)
+        meta_rows = await conn.execute(
+            """
+            SELECT thread_id, to_char(created_at, 'YYYY-MM-DD HH24:MI') AS created
+            FROM thread_meta
+            """
+        )
+        meta = {r[0]: r[1] for r in await meta_rows.fetchall()}
+
+        try:
             rows = await conn.execute(
                 """
                 SELECT thread_id,
@@ -36,24 +72,38 @@ async def list_threads(conn_string: str) -> list[dict]:
                        to_char(MAX((checkpoint->>'ts')::timestamptz), 'YYYY-MM-DD HH24:MI') AS last_updated
                 FROM checkpoints
                 GROUP BY thread_id
-                ORDER BY last_updated DESC
                 """
             )
-            return [
-                {"thread_id": r[0], "checkpoints": r[1], "last_updated": r[2]}
-                for r in await rows.fetchall()
-            ]
-    except errors.UndefinedTable:
-        # checkpoints 表尚未创建（该 agent 还没进行过任何对话）→ 视为空列表
-        return []
+            checkpoint_rows = await rows.fetchall()
+        except errors.UndefinedTable:
+            # checkpoints 表尚未创建（该 agent 还没进行过任何对话）
+            checkpoint_rows = []
+
+    # 先放「仅登记、未发消息」的会话，再用真实 checkpoint 数据覆盖
+    merged: dict[str, dict] = {
+        tid: {"thread_id": tid, "checkpoints": 0, "last_updated": created}
+        for tid, created in meta.items()
+    }
+    for r in checkpoint_rows:
+        merged[r[0]] = {"thread_id": r[0], "checkpoints": r[1], "last_updated": r[2]}
+
+    result = list(merged.values())
+    result.sort(key=lambda x: x["last_updated"] or "", reverse=True)
+    return result
 
 
 async def delete_thread(conn_string: str, thread_id: str) -> None:
     async with await AsyncConnection.connect(conn_string) as conn:
         await conn.set_autocommit(True)
-        await conn.execute("DELETE FROM checkpoints WHERE thread_id = %s", (thread_id,))
-        await conn.execute("DELETE FROM checkpoint_blobs WHERE thread_id = %s", (thread_id,))
-        await conn.execute("DELETE FROM checkpoint_writes WHERE thread_id = %s", (thread_id,))
+        await _ensure_thread_meta_table(conn)
+        await conn.execute("DELETE FROM thread_meta WHERE thread_id = %s", (thread_id,))
+        try:
+            await conn.execute("DELETE FROM checkpoints WHERE thread_id = %s", (thread_id,))
+            await conn.execute("DELETE FROM checkpoint_blobs WHERE thread_id = %s", (thread_id,))
+            await conn.execute("DELETE FROM checkpoint_writes WHERE thread_id = %s", (thread_id,))
+        except errors.UndefinedTable:
+            # checkpoints 表尚未创建 → 该会话本就只有元数据，已删除
+            pass
 
 
 async def get_thread_history_markdown(
@@ -83,22 +133,26 @@ async def list_subgraph_nodes(conn_string: str, thread_id: str) -> list[dict]:
     """按子 agent 名（node_name）去重聚合，返回唯一子图节点。"""
     async with await AsyncConnection.connect(conn_string) as conn:
         await conn.set_autocommit(True)
-        rows = await conn.execute(
-            """
-            SELECT split_part(checkpoint_ns, ':', 1) AS node_name,
-                   COUNT(*),
-                   to_char(MAX((checkpoint->>'ts')::timestamptz), 'YYYY-MM-DD HH24:MI') AS last_updated
-            FROM checkpoints
-            WHERE thread_id = %s AND checkpoint_ns != ''
-            GROUP BY node_name
-            ORDER BY MAX(checkpoint_id) DESC
-            """,
-            (thread_id,),
-        )
-        return [
-            {"node_name": r[0], "checkpoints": r[1], "last_updated": r[2]}
-            for r in await rows.fetchall()
-        ]
+        try:
+            rows = await conn.execute(
+                """
+                SELECT split_part(checkpoint_ns, ':', 1) AS node_name,
+                       COUNT(*),
+                       to_char(MAX((checkpoint->>'ts')::timestamptz), 'YYYY-MM-DD HH24:MI') AS last_updated
+                FROM checkpoints
+                WHERE thread_id = %s AND checkpoint_ns != ''
+                GROUP BY node_name
+                ORDER BY MAX(checkpoint_id) DESC
+                """,
+                (thread_id,),
+            )
+            return [
+                {"node_name": r[0], "checkpoints": r[1], "last_updated": r[2]}
+                for r in await rows.fetchall()
+            ]
+        except errors.UndefinedTable:
+            # checkpoints 表尚未创建（该 agent 还没进行过任何对话）→ 无子图
+            return []
 
 
 async def get_subgraph_messages(conn_string: str, thread_id: str, node_name: str) -> list:

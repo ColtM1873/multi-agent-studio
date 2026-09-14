@@ -175,6 +175,7 @@ const I18N_EN = {
   "新建 multi-agent": "New multi-agent",
   "新建会话": "New conversation",
   "无": "None",
+  "未发送消息": "No messages sent yet",
   "无字符串（视数据库设置启用/关闭 SSL）": "No string (SSL enabled/disabled by database settings)",
   "无需提前下载，首次配置会自动下载（需连接 Hugging Face Hub，国内网络可能连不上）。若已离线缓存过，可在下方缓存目录直接使用。": "No need to download in advance; it downloads automatically on first setup (requires connecting to Hugging Face Hub, which may be blocked in China). If already cached, use the cache directory below.",
   "是": "Yes",
@@ -1815,7 +1816,7 @@ async function renderThreadsView() {
         <div class="snapshot-list" id="snapshotList"><div class="muted">${t("加载中…")}</div></div>
       </div>
     </div>`;
-  $("#newThreadBtn").onclick = () => { const n = prompt(t("新会话名称：")); if (n && n.trim()) goChat(S.agentId, S.agentName, n.trim()); };
+  $("#newThreadBtn").onclick = () => createNewThread();
 
   let threads;
   try { threads = await api(`/api/agents/${encodeURIComponent(S.agentId)}/threads`); }
@@ -1841,16 +1842,17 @@ async function renderThreadsView() {
     if (!vis.length) {
       const msg = hiddenCnt ? t("所有会话均已隐藏") : t("暂无会话");
       $("#threadsBox").innerHTML = `<div class="empty"><div class="big">🧵</div>${msg}<br/><br/><button class="btn primary" id="nt2">+ ${t("新建会话")}</button></div>`;
-      const n = $("#nt2"); if (n) n.onclick = () => { const nm = prompt(t("新会话名称：")); if (nm && nm.trim()) goChat(S.agentId, S.agentName, nm.trim()); };
+      const n = $("#nt2"); if (n) n.onclick = () => createNewThread();
     } else {
       $("#threadsBox").innerHTML = `
         <div style="background:var(--surface);border-radius:var(--radius);overflow:hidden;box-shadow:var(--shadow);">
           ${vis.map(th => {
             const hidden = hiddenSet.has(th.thread_id);
+            const cpText = th.checkpoints ? `${th.checkpoints} checkpoints` : t("未发送消息");
             return `
             <div class="thread-row ${hidden ? "thread-hidden" : ""}" data-tid="${esc(th.thread_id)}">
               <span class="tid">${esc(th.thread_id)}</span>
-              <span class="meta"><small>${th.checkpoints} checkpoints</small><small>${esc(th.last_updated || "")}</small>${hidden ? `<small class="hidden-tag">${t("已隐藏")}</small>` : ""}</span>
+              <span class="meta"><small>${esc(cpText)}</small><small>${esc(th.last_updated || "")}</small>${hidden ? `<small class="hidden-tag">${t("已隐藏")}</small>` : ""}</span>
               <button class="btn hide small" data-hide="${esc(th.thread_id)}">${hidden ? t("取消隐藏") : t("隐藏")}</button>
               <button class="btn danger small" data-del="${esc(th.thread_id)}">${t("删除")}</button>
             </div>`;
@@ -1922,6 +1924,19 @@ async function renderThreadsView() {
     if (!open) loadSnapshots();
   };
   $("#snapshotClose").onclick = () => { snapPanel.style.display = "none"; };
+}
+async function createNewThread() {
+  const n = prompt(t("新会话名称："));
+  if (!n || !n.trim()) return;
+  const tid = n.trim();
+  // 先在后端登记会话，确保即使不发消息，退出后也仍在会话列表中
+  try {
+    await api(`/api/agents/${encodeURIComponent(S.agentId)}/threads`, {
+      method: "POST",
+      body: JSON.stringify({ thread_id: tid }),
+    });
+  } catch (e) { toast(e.message, true); return; }
+  goChat(S.agentId, S.agentName, tid);
 }
 async function deleteThread(tid) {
   if (!confirm(`${t("确定删除会话")}「${tid}」？${t("此操作不可撤销。")}`)) return;
