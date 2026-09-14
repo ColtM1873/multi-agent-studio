@@ -450,7 +450,9 @@ async def build_world(
     snapshot_conn_string = config.checkpoint_conn_string
     snapshot_agent_id = config.agent_id
 
-    pass_in_tools = build_file_tools(main_spec.file_tools.root_dir)
+    pass_in_tools = build_file_tools(
+        main_spec.file_tools.root_dir, main_spec.file_tools.pdf_table_extraction
+    )
 
     sub_agent_specs_list = config.sub_agents
     num_of_sub_agents = len(sub_agent_specs_list)

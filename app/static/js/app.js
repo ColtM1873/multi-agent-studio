@@ -170,6 +170,7 @@ const I18N_EN = {
   "数据库名": "Database name",
   "数据库地址": "Database address",
   "文件工具根目录": "File tool root directory",
+  "PDF 表格提取": "PDF table extraction",
   "新会话名称：": "New conversation name:",
   "新建 / 编辑 multi-agent 时，空输入框显示灰色示例文字，帮助快速上手。": "When creating/editing a multi-agent, empty inputs show gray example text to help you get started.",
   "新建 multi-agent": "New multi-agent",
@@ -1570,6 +1571,9 @@ function buildForm(cfg, canEditSubs) {
       ${modelBlockHTML(main.llm_provider_name, main.model, "main_mode")}
       <div class="field"><label>API Key ${info("该模型供应商的 API 密钥（明文存本地配置）。")}</label><input id="f_apikey" value="${esc(main.api_key)}" type="password"${ph("main_api_key")}></div>
       <div class="field"><label>${t("文件工具根目录")} ${info("主 agent 文件工具读写文件的根目录。")}</label><input id="f_rootdir" value="${esc(ft.root_dir)}"${ph("root_dir")}></div>
+      <div class="field full">
+        <label style="flex-direction:row;align-items:center;gap:8px;"><input type="checkbox" id="f_pdf_tables" ${ft.pdf_table_extraction !== false ? "checked" : ""}> ${t("PDF 表格提取")} ${info("读取 PDF 时，用基于框线的检测把表格转成 Markdown 并嵌回正文；关闭后只返回正文文本。")}</label>
+      </div>
       <div class="field"><label>${t("embedding 模型")} <i class="info-icon">!<span class="tip">${t("无需提前下载，首次配置会自动下载（需连接 Hugging Face Hub，国内网络可能连不上）。若已离线缓存过，可在下方缓存目录直接使用。")}</span></i></label>${embSelect}</div>
       <div class="field"><label>${t("embedding 缓存目录")} ${info("本地模型缓存路径，留空用 Hugging Face 默认缓存。")}</label><input id="f_emb_cache" value="${esc(emb.cache_folder)}"${ph("emb_cache")}></div>
       <div class="field"><label>${t("embedding 维度")} ${info("向量维度；bge-m3 为 1024，换模型需对应调整。")}</label><input id="f_emb_dims" value="${esc(emb.dims)}" type="number"></div>
@@ -1749,7 +1753,7 @@ function buildPayload(cfg) {
       api_key: val("f_apikey"),
       llm_provider_name: $("#editorForm").querySelector('[data-mf="llm_provider_name"]').value,
       model: collectModelCfg($("#editorForm")),
-      file_tools: { root_dir: val("f_rootdir") },
+      file_tools: { root_dir: val("f_rootdir"), pdf_table_extraction: $("#f_pdf_tables").is(":checked") },
       embedding: {
         model_name: embModelValue(),
         cache_folder: val("f_emb_cache"),

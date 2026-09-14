@@ -79,6 +79,9 @@ class ModelConfig(BaseModel):
 
 class FileToolsConfig(BaseModel):
     root_dir: str = ""
+    # 读取 PDF 时是否用「基于框线」的表格提取（pdfplumber），并把表格嵌回正文。
+    # 关闭后 PDF 只返回正文文本。旧配置无此字段时默认开启。
+    pdf_table_extraction: bool = True
 
 
 class MCPServerConfig(BaseModel):

@@ -18,14 +18,20 @@
 - `write_file`：整文件覆写。
 - 路径安全：全部落点强制在 `root_dir` 内；二进制内容绝不喂给模型。
 
-三、富格式中间件（借用 MarkItDown，内嵌为函数，不作为 MCP 暴露给模型）
+三、富格式中间件（内嵌为函数，不作为 MCP 暴露给模型）
   对 `.pdf .ppt .pptx .doc .docx .xls .xlsx .odt .ods .odp .epub .html .htm` 等富/专有格式：
-  - **读取**：`read_file` 时先用 MarkItDown 转成 Markdown，再按行分页返回，内容是 Markdown 文本。
+  - **读取**：`read_file` 时先转成 Markdown，再按行分页返回，内容是 Markdown 文本。
+    - **PDF 专用**：用 `pdfminer` 抽正文（空格与双栏阅读顺序可靠），再用 `pdfplumber` 的
+      `find_tables()`（**基于框线**）抽表格，把表格按位置嵌回正文。这样既避免 MarkItDown 的
+      pdfplumber 启发式（`x_tolerance=3`）把字距小的正文粘连成 `Publishedasaconferencepaper...`，
+      又能拿到真正的线框表格。可用 `FileToolsConfig.pdf_table_extraction` 关闭表格提取。
+    - **其余格式**：用 MarkItDown 转 Markdown。
   - **写入/编辑**：属于「只读支持」——**不能把这些格式写成二进制文档**。调用方若以这类扩展名写内容，
     会被**重定向为相同文件名的 `.md`**（如 `the-new-SOTA-paper.pdf` → `the-new-SOTA-paper.md`），
     从而避免模型写出的 Markdown 内容找不到、丢失。
-  - MarkItDown 为**可选依赖**：未安装时，`read_file` 对这些扩展名会返回明确的「转换不可用」错误；
-    `write_file`/`edit_file` 的「重定向为 `.md`」不依赖 MarkItDown，仍照常生效；其余功能不受影响。
+  - 可选依赖：pdfminer/pdfplumber 随 `markitdown[pdf]` 安装；任一缺失时 PDF 会回退到 MarkItDown。
+    MarkItDown 未安装时，`read_file` 对这些扩展名会返回明确的「转换不可用」错误；
+    `write_file`/`edit_file` 的「重定向为 `.md`」不依赖转换库，仍照常生效；其余功能不受影响。
 """
 
 from __future__ import annotations
@@ -133,8 +139,28 @@ def _get_markitdown():
             return None
 
 
-def _convert_to_markdown(path: str) -> tuple[bool, str]:
-    """用 MarkItDown 把富格式文件转成 Markdown 文本。失败返回 (False, 原因)。"""
+def _convert_to_markdown(path: str, pdf_table_extraction: bool = True) -> tuple[bool, str]:
+    """把富格式文件转成 Markdown 文本。失败返回 (False, 原因)。
+
+    - PDF：优先走「pdfminer 正文 + pdfplumber 基于框线表格」的自研路径；
+      失败或结果为空时回退 MarkItDown。
+    - 其余格式：走 MarkItDown。
+    """
+    if os.path.splitext(path)[1].lower() == ".pdf":
+        ok, text_or_err = _convert_pdf_to_markdown(path, pdf_table_extraction)
+        if ok:
+            return True, text_or_err
+        # PDF 路径失败：回退 MarkItDown；若 MarkItDown 也不可用，回传 PDF 侧的具体原因。
+        md_ok, md_text = _convert_with_markitdown(path)
+        if md_ok:
+            return True, md_text
+        return False, text_or_err or md_text
+
+    return _convert_with_markitdown(path)
+
+
+def _convert_with_markitdown(path: str) -> tuple[bool, str]:
+    """用 MarkItDown 转换（可选依赖）。失败返回 (False, 原因)。"""
     md = _get_markitdown()
     if md is None:
         return False, "markitdown 未安装，无法转换该格式。"
@@ -160,6 +186,201 @@ def _md_redirect_path(path: str) -> str:
     """把专有格式路径改为同名 .md 路径（如 x.pdf → x.md）。"""
     root, _ = os.path.splitext(path)
     return root + ".md"
+
+
+# ---------------------------------------------------------------------------
+# PDF 专用：pdfminer 抽正文 + pdfplumber 基于框线抽表格
+# ---------------------------------------------------------------------------
+# 为什么不用 MarkItDown 的 PDF 转换器：它用 pdfplumber 的默认 x_tolerance=3，
+# 对字距很小的 PDF（LaTeX/ICLR 论文正文）不会补空格，导致整行单词粘连；且它的
+# 「词坐标对齐」表格启发式不看框线，常把双栏正文/图注误判成表格。
+# 这里改为：正文交给 pdfminer（空格 + 双栏阅读顺序可靠），表格交给 pdfplumber
+# 的 find_tables()（默认 lines 策略，真正的框线检测）。
+
+
+def _pdf_table_to_markdown(rows: list[list]) -> str:
+    """把 pdfplumber 的二维表格转成管道 Markdown。"""
+    norm_rows: list[list[str]] = []
+    for row in rows:
+        cells: list[str] = []
+        for cell in row:
+            text = "" if cell is None else str(cell)
+            text = text.replace("\r", " ").replace("\n", "<br>").strip().replace("|", "\\|")
+            cells.append(text)
+        if any(cells):
+            norm_rows.append(cells)
+    if not norm_rows:
+        return ""
+    ncol = max(len(r) for r in norm_rows)
+    norm_rows = [r + [""] * (ncol - len(r)) for r in norm_rows]
+    # 去掉所有行都为空的多余列（pdfplumber 会按竖线给出整格宽度，常留空列）。
+    keep = [c for c in range(ncol) if any(row[c] for row in norm_rows)]
+    if not keep:
+        return ""
+    norm_rows = [[row[c] for c in keep] for row in norm_rows]
+    ncol = len(keep)
+    lines = [
+        "| " + " | ".join(norm_rows[0]) + " |",
+        "| " + " | ".join(["---"] * ncol) + " |",
+    ]
+    for row in norm_rows[1:]:
+        lines.append("| " + " | ".join(row) + " |")
+    return "\n".join(lines)
+
+
+def _is_useful_pdf_table(rows: list[list], page_area: float, bbox: tuple) -> bool:
+    """过滤 pdfplumber 的误判（矢量图、整页外框等）。"""
+    nrows = len(rows)
+    ncols = max((len(r) for r in rows), default=0)
+    if nrows < 2 or ncols < 2:
+        return False
+    filled = sum(1 for r in rows for c in r if c and str(c).strip())
+    if filled < max(2, ncols):
+        return False
+    wordy = sum(1 for r in rows for c in r if c and re.search(r"[A-Za-z0-9]", str(c)))
+    if wordy < 2:
+        return False
+    try:
+        area = (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])
+    except Exception:
+        area = 0
+    # 几乎覆盖整页、且格子很少的，基本是页面外框，不是表格。
+    if page_area > 0 and area / page_area > 0.9 and nrows * ncols <= 4:
+        return False
+    return True
+
+
+def _extract_pdf_tables(path: str, enabled: bool) -> dict[int, list[tuple[tuple, str]]]:
+    """逐页用 pdfplumber 基于框线检测表格，返回 {页索引: [(bbox, markdown)]}。"""
+    if not enabled:
+        return {}
+    try:
+        import pdfplumber
+    except Exception:
+        return {}
+
+    tables: dict[int, list[tuple[tuple, str]]] = {}
+    try:
+        with pdfplumber.open(path) as pdf:
+            for idx, page in enumerate(pdf.pages):
+                page_area = float(page.width) * float(page.height)
+                found: list[tuple[tuple, str]] = []
+                try:
+                    raw_tables = page.find_tables()
+                except Exception:
+                    raw_tables = []
+                for table in raw_tables:
+                    try:
+                        rows = table.extract(x_tolerance=1.5)
+                    except Exception:
+                        continue
+                    if not _is_useful_pdf_table(rows, page_area, table.bbox):
+                        continue
+                    md = _pdf_table_to_markdown(rows)
+                    if md:
+                        found.append((tuple(float(v) for v in table.bbox), md))
+                tables[idx] = found
+    except Exception:
+        return {}
+    return tables
+
+
+def _is_vertical_text_noise(text: str, bbox: tuple, page_width: float) -> bool:
+    """判断是否是竖排噪声（如 arXiv 侧边条）：窄、且几乎每行只有一个字符。"""
+    if not (page_width > 0 and (bbox[2] - bbox[0]) < page_width * 0.1):
+        return False
+    stripped = text.strip()
+    # 窄条里的纯符号（如竖排侧边条残留的 "]"）也是噪声。
+    if len(stripped) <= 2 and not re.search(r"[A-Za-z0-9\u4e00-\u9fff]", stripped):
+        return True
+    lines = [ln for ln in text.splitlines() if ln.strip()]
+    if len(lines) < 3:
+        return False
+    single = sum(1 for ln in lines if len(ln.strip()) == 1)
+    return single / len(lines) > 0.6
+
+
+def _extract_pdf_text_pages(path: str) -> list[tuple[float, list[tuple[tuple, str]]]]:
+    """用 pdfminer 逐页抽取正文块，返回 [(页高, [(bbox, text)]), ...]，保持阅读顺序。"""
+    from pdfminer.high_level import extract_pages
+    from pdfminer.layout import LTTextBox
+
+    pages: list[tuple[float, list[tuple[tuple, str]]]] = []
+    for layout in extract_pages(path):
+        height = float(layout.bbox[3])
+        width = float(layout.bbox[2])
+        blocks: list[tuple[tuple, str]] = []
+        for element in layout:
+            if isinstance(element, LTTextBox):
+                text = element.get_text()
+                if not (text and text.strip()):
+                    continue
+                bbox = tuple(float(v) for v in element.bbox)
+                if _is_vertical_text_noise(text, bbox, width):
+                    continue
+                blocks.append((bbox, text))
+        pages.append((height, blocks))
+    return pages
+
+
+def _merge_pdf_page(
+    text_blocks: list[tuple[tuple, str]],
+    tables: list[tuple[tuple, str]],
+    page_height: float,
+) -> str:
+    """把某页的正文块与表格按纵向位置合并。"""
+    # 表格 bbox 来自 pdfplumber（左上原点），转为 pdfminer（左下原点）。
+    pm_tables: list[tuple[tuple, str]] = [
+        ((x0, page_height - bottom, x1, page_height - top), md)
+        for (x0, top, x1, bottom), md in tables
+    ]
+    pm_tables.sort(key=lambda item: item[0][3], reverse=True)  # 从页顶往下
+
+    def _inside_table(bbox: tuple) -> bool:
+        x0, y0, x1, y1 = bbox
+        for (tx0, ty0, tx1, ty1), _ in pm_tables:
+            if not (x1 < tx0 or x0 > tx1 or y1 < ty0 or y0 > ty1):
+                return True
+        return False
+
+    seq: list[dict] = []
+    for bbox, text in text_blocks:
+        if _inside_table(bbox):
+            continue
+        seq.append({"kind": "text", "bbox": bbox, "text": text.rstrip()})
+
+    for table_bbox, md in pm_tables:
+        insert_at = len(seq)
+        for i, item in enumerate(seq):
+            if item["kind"] == "text" and item["bbox"][3] < table_bbox[1]:
+                insert_at = i
+                break
+        seq.insert(insert_at, {"kind": "table", "bbox": table_bbox, "text": md})
+
+    return "\n".join(item["text"] for item in seq if item["text"].strip())
+
+
+def _convert_pdf_to_markdown(path: str, enable_tables: bool) -> tuple[bool, str]:
+    """PDF → Markdown：pdfminer 抽正文 + pdfplumber 基于框线抽表格。"""
+    try:
+        text_pages = _extract_pdf_text_pages(path)
+    except Exception as e:
+        return False, f"pdfminer 解析失败：{e}"
+    if not text_pages:
+        return False, "PDF 未解析出任何页面。"
+
+    tables_by_page = _extract_pdf_tables(path, enable_tables)
+
+    page_mds: list[str] = []
+    for idx, (height, blocks) in enumerate(text_pages):
+        page_md = _merge_pdf_page(blocks, tables_by_page.get(idx, []), height)
+        if page_md.strip():
+            page_mds.append(page_md)
+
+    text = "\n\n".join(page_mds).strip()
+    if not text:
+        return False, "转换结果为空。"
+    return True, text
 
 
 # ---------------------------------------------------------------------------
@@ -374,8 +595,11 @@ def _paginate_lines(raw_lines: list[str], offset: Optional[int], limit: int) -> 
 # ---------------------------------------------------------------------------
 # build_file_tools：用闭包把 root_dir 绑定到每个工具（每个 agent 一份）
 # ---------------------------------------------------------------------------
-def build_file_tools(root_dir: str) -> list[BaseTool]:
-    """构建绑定到指定 root_dir 的文件工具列表。"""
+def build_file_tools(root_dir: str, pdf_table_extraction: bool = True) -> list[BaseTool]:
+    """构建绑定到指定 root_dir 的文件工具列表。
+
+    pdf_table_extraction：读取 PDF 时是否用「基于框线」的表格提取并把表格嵌回正文。
+    """
     root_dir = root_dir or os.getcwd()
 
     @langchain_tool
@@ -384,6 +608,7 @@ def build_file_tools(root_dir: str) -> list[BaseTool]:
             str,
             "The path to the file or directory to read (relative to root_dir or absolute). "
             "富/专有格式（.pdf .ppt .pptx .doc .docx .xls .xlsx .odt .ods .odp .epub .html .htm）会自动转成 Markdown 返回，"
+            "其中 PDF 的表格会以 Markdown 表格保留。"
             "仅支持读取。这些格式不支持写入为原格式——写内容请用 write_file 写为同名 .md 文件。",
         ],
         offset: Annotated[Optional[int], "The line number to start reading from (1-indexed). Defaults to 1."] = None,
@@ -394,7 +619,8 @@ def build_file_tools(root_dir: str) -> list[BaseTool]:
         """读取文件或目录。
 
         对以下富/专有格式：pdf、ppt、pptx、doc、docx、xls、xlsx、odt、ods、odp、epub、html、htm，
-        会自动用 MarkItDown 转成 Markdown 后返回（内容是 Markdown 文本，并带行号分页）。
+        会自动转成 Markdown 后返回（内容是 Markdown 文本，并带行号分页）。其中 PDF 用 pdfminer 抽正文、
+        用 pdfplumber 基于框线抽取表格；其余格式用 MarkItDown 转换。
         注意：这类格式**仅支持读取**（自动转换为 Markdown）——**不支持写入为原格式**；写内容时请改用同名 .md 文件
         （如把内容写到 the-new-SOTA-paper.pdf，实际会保存为 the-new-SOTA-paper.md）。
         普通文本文件仍按行带行号读取，支持 offset/limit 只读中段；目录则列出条目。
@@ -431,7 +657,7 @@ def build_file_tools(root_dir: str) -> list[BaseTool]:
 
         # 富格式：先用 MarkItDown 转成 Markdown，再按行分页返回
         if _is_markitdown_ext(path):
-            ok, text_or_err = _convert_to_markdown(path)
+            ok, text_or_err = _convert_to_markdown(path, pdf_table_extraction)
             if not ok:
                 return f"Error: {text_or_err}"
             raw_lines = text_or_err.splitlines(keepends=True)
