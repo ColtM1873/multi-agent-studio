@@ -26,6 +26,11 @@
       pdfplumber 启发式（`x_tolerance=3`）把字距小的正文粘连成 `Publishedasaconferencepaper...`，
       又能拿到真正的线框表格。可用 `FileToolsConfig.pdf_table_extraction` 关闭表格提取。
     - **其余格式**：用 MarkItDown 转 Markdown。
+  - **转换副本落盘**：读取**专有格式**（`_PROPRIETARY_DOC_EXTENSIONS`）时，会把完整转换结果
+    **落成相同目录下的同名 `.md` 副本**（如 `the-new-SOTA-paper.pdf` → `the-new-SOTA-paper.md`；
+    已存在则不覆盖，以免抹掉模型此前的编辑），并在返回里带 `<md_copy>` 路径与 `<note>` 提示。
+    这样模型之后能**直接用 `edit_file` 改这个 `.md` 的几行**，而不必整文件 `write_file` 重写。
+    注意 `.html/.htm` 只参与读取转换、不参与副本落盘与写入重定向。
   - **写入/编辑**：属于「只读支持」——**不能把这些格式写成二进制文档**。调用方若以这类扩展名写内容，
     会被**重定向为相同文件名的 `.md`**（如 `the-new-SOTA-paper.pdf` → `the-new-SOTA-paper.md`），
     从而避免模型写出的 Markdown 内容找不到、丢失。
@@ -186,6 +191,48 @@ def _md_redirect_path(path: str) -> str:
     """把专有格式路径改为同名 .md 路径（如 x.pdf → x.md）。"""
     root, _ = os.path.splitext(path)
     return root + ".md"
+
+
+def _materialize_md_copy(source_path: str, markdown: str) -> tuple[str, str]:
+    """把富格式转换出的 Markdown 落成同目录同名 .md 副本。
+
+    返回 (md_path, status)，status ∈ {"created", "exists", "failed"}。
+    目标已存在时**不覆盖**（保留模型此前对 .md 的编辑）。
+    """
+    md_path = _md_redirect_path(source_path)
+    if os.path.exists(md_path):
+        return md_path, "exists"
+    try:
+        os.makedirs(os.path.dirname(md_path) or ".", exist_ok=True)
+        with open(md_path, "w", encoding="utf-8", newline="") as f:
+            f.write(markdown)
+    except Exception:
+        return md_path, "failed"
+    return md_path, "created"
+
+
+def _md_copy_note(source_path: str, md_path: str, status: str) -> str:
+    """生成「这是转换副本，请编辑同名 .md」的提示，随 read_file 结果一起返回给模型。"""
+    src_name = os.path.basename(source_path)
+    md_name = os.path.basename(md_path)
+    if status == "failed":
+        return (
+            f"这是由 {src_name} 转换得到的 Markdown 副本（保存为同目录 {md_name} 失败）。"
+            f"如需修改，请用 write_file 把内容写为同名 {md_name}。"
+            f" (This is a Markdown copy converted from {src_name}; saving it as {md_name} failed.)"
+        )
+    if status == "exists":
+        return (
+            f"这是由 {src_name} 转换得到的 Markdown 副本；同目录已存在 {md_name}（未覆盖，可能是你之前的编辑）。"
+            f"如需修改（例如改几行），请直接用 edit_file 编辑 {md_name}，不要编辑原 {src_name}。"
+            f" (Markdown copy of {src_name}; {md_name} already exists and was left untouched. Edit {md_name} with edit_file.)"
+        )
+    return (
+        f"这是由 {src_name} 转换得到的 Markdown 副本，已保存为同目录的 {md_name}。"
+        f"如需修改（例如改几行），请直接用 edit_file 编辑 {md_name}，不要编辑原 {src_name}"
+        f"（PDF 等专有格式无法直接编辑，写入会自动改为同名 .md）。"
+        f" (Markdown copy of {src_name}, saved as {md_name}. Use edit_file on {md_name} to change a few lines.)"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -609,7 +656,9 @@ def build_file_tools(root_dir: str, pdf_table_extraction: bool = True) -> list[B
             "The path to the file or directory to read (relative to root_dir or absolute). "
             "富/专有格式（.pdf .ppt .pptx .doc .docx .xls .xlsx .odt .ods .odp .epub .html .htm）会自动转成 Markdown 返回，"
             "其中 PDF 的表格会以 Markdown 表格保留。"
-            "仅支持读取。这些格式不支持写入为原格式——写内容请用 write_file 写为同名 .md 文件。",
+            "仅支持读取。这些格式不支持写入为原格式——写内容请用 write_file 写为同名 .md 文件。"
+            "读取专有格式（如 PDF）时，会在相同目录自动生成同名 .md 副本（返回里带 <md_copy> 路径），"
+            "之后要修改请直接用 edit_file 编辑那个 .md（可只改几行），不要编辑原文件。",
         ],
         offset: Annotated[Optional[int], "The line number to start reading from (1-indexed). Defaults to 1."] = None,
         limit: Annotated[
@@ -623,6 +672,9 @@ def build_file_tools(root_dir: str, pdf_table_extraction: bool = True) -> list[B
         用 pdfplumber 基于框线抽取表格；其余格式用 MarkItDown 转换。
         注意：这类格式**仅支持读取**（自动转换为 Markdown）——**不支持写入为原格式**；写内容时请改用同名 .md 文件
         （如把内容写到 the-new-SOTA-paper.pdf，实际会保存为 the-new-SOTA-paper.md）。
+        读取专有格式时，会把完整转换结果**落成相同目录下的同名 .md 副本**（已存在则不覆盖），
+        并在返回里带上 `<md_copy>` 路径与提示——模型随后可直接用 edit_file 编辑该 .md（改几行），
+        不必整文件 write_file 重写；编辑原扩展名（如 .pdf）会自动重定向到同名 .md。
         普通文本文件仍按行带行号读取，支持 offset/limit 只读中段；目录则列出条目。
         """
         try:
@@ -655,20 +707,31 @@ def build_file_tools(root_dir: str, pdf_table_extraction: bool = True) -> list[B
         if not os.path.isfile(path):
             return f"Error: not a regular file: {file_path}"
 
-        # 富格式：先用 MarkItDown 转成 Markdown，再按行分页返回
+        # 富格式：先转成 Markdown，再按行分页返回
         if _is_markitdown_ext(path):
             ok, text_or_err = _convert_to_markdown(path, pdf_table_extraction)
             if not ok:
                 return f"Error: {text_or_err}"
-            raw_lines = text_or_err.splitlines(keepends=True)
+            markdown = text_or_err
             ext = os.path.splitext(path)[1].lower()
+
+            header = (
+                f"<path>{path}</path>\n<type>file</type>\n<source_format>{ext}</source_format>\n<converted>true</converted>"
+            )
+            # 专有格式（写入会被重定向为同名 .md 的那批）：把完整转换结果落成同目录同名 .md 副本，
+            # 并明确告诉模型「你读的是副本，之后用 edit_file 直接改这个 .md 即可（改几行），不用整文件重写」。
+            if _is_proprietary_doc_ext(path):
+                md_path, status = _materialize_md_copy(path, markdown)
+                header += (
+                    f"\n<md_copy>{md_path}</md_copy>"
+                    f"\n<note>{_md_copy_note(path, md_path, status)}</note>"
+                )
+
+            raw_lines = markdown.splitlines(keepends=True)
             body, note = _paginate_lines(raw_lines, offset, limit)
             if body is None:
                 return note
-            return (
-                f"<path>{path}</path>\n<type>file</type>\n<source_format>{ext}</source_format>\n<converted>true</converted>\n<content>\n"
-                + "\n".join(body) + note + "\n</content>"
-            )
+            return header + "\n<content>\n" + "\n".join(body) + note + "\n</content>"
 
         if _is_binary(path):
             return f"Cannot read binary file: {file_path}"
