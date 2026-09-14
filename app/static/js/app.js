@@ -269,6 +269,8 @@ const I18N_EN = {
   "记忆吸附": "Memory attachment",
   "裸公式识别": "Auto-detect bare formulas",
   "模型偶尔不带 $ 或 \\( 分隔符直接输出公式（如 s_{t+1}=f(s_t,a_t)）。开启后自动识别并渲染，适合科研 / 数理场景；日常场景建议关闭，以免误判普通文本。": "Models sometimes output formulas without $ or \\( delimiters (e.g. s_{t+1}=f(s_t,a_t)). When enabled, they are detected and rendered automatically—useful for research/math scenarios. Keep it off in everyday use to avoid misinterpreting plain text.",
+  "激进公式渲染": "Aggressive formula rendering",
+  "在「裸公式识别」基础上更激进：支持单字符上下标（如 V_φ、V^π）、希腊字母与数学符号，并会把「看起来是公式」的代码块 / 行内代码也渲染成公式。适合数理场景，可能误判普通文本或代码，建议按需开启。": "More aggressive than auto-detecting bare formulas: also supports single-character sub/superscripts (e.g. V_φ, V^π), Greek letters and math symbols, and renders code blocks / inline code that look like formulas. Suited to math-heavy scenarios; may misinterpret plain text or code, so enable as needed.",
   "记忆存储命名空间，逗号分隔多个层级。": "Memory store namespace, comma-separated for multiple levels.",
   "记忆库（store 数据库）还需启用 pgvector：选中刚建的库 → 点上方「Query Tool」图标 → 粘贴下面这句 → 点执行（或按 F5）：": "The memory store (store database) also needs pgvector: select the database you just created → click the 'Query Tool' icon → paste the line below → click Execute (or press F5):",
   "设为默认": "Set as default",
@@ -784,17 +786,33 @@ const md = window.markdownit ? (() => {
   return inst;
 })() : null;
 /* 裸公式识别：模型偶尔不带 $/\( 分隔符直接输出 LaTeX（如 s_{t+1}=f(s_t,a_t)）。
-   按启发式把「强信号」片段包裹成 \(...\) 交给 KaTeX；强信号 = \命令 或 花括号/数字上下标。 */
-const isBareMathChar = (c) => !!c && /[A-Za-z0-9_^{}().,=+\-*/<>|'~]/.test(c);
-const isBareMathOp = (c) => !!c && /[=+\-*/<>|,^_]/.test(c);
-function bareMathSeedEnd(s, i) {
+   按启发式把「强信号」片段包裹成 \(...\) 交给 KaTeX；强信号 = \命令 或 花括号/数字上下标。
+   激进模式（aggressive=true）：额外支持单字符上下标（V_φ、V^π）、希腊字母与 Unicode 数学符号，
+   并把「看起来是公式」的代码块 / 行内代码去掉代码标记后一并识别。 */
+function isBareMathChar(c, aggressive) {
+  if (!c) return false;
+  if (/[A-Za-z0-9_^{}().,=+\-*/<>|'~]/.test(c)) return true;
+  if (aggressive && /[\u00c0-\u024f\u0370-\u03ff\u1f00-\u1fff\u2200-\u22ff≈≠≤≥±−×÷⋅∞∑∫√∂∇∈∉⊂⊃∪∩→←↔∅∀∃∝∼≃≅≡≪≫]/.test(c)) return true;
+  return false;
+}
+function isBareMathOp(c, aggressive) {
+  if (!c) return false;
+  // 注意：不把表格分隔符 | 当作可跨空格的运算符，否则会吞掉 markdown 表格的竖线
+  if (/[=+\-*/<>,^_]/.test(c)) return true;
+  if (aggressive && /[−≈≠≤≥±×÷⋅Σ∑∫∏∐]/.test(c)) return true;
+  return false;
+}
+function bareMathSeedEnd(s, i, aggressive) {
   const c = s[i];
   if (c === undefined) return -1;
   if (c === "\\") {
     const m = /\\[A-Za-z]+/.exec(s.slice(i));
     return m ? i + m[0].length : -1;
   }
-  if (!/[A-Za-z0-9)\]}]/.test(c)) return -1;
+  const seedStart = aggressive
+    ? /[A-Za-z0-9\u00c0-\u024f\u0370-\u03ff)\]}]/
+    : /[A-Za-z0-9)\]}]/;
+  if (!seedStart.test(c)) return -1;
   const nxt = s[i + 1];
   if (nxt !== "_" && nxt !== "^") return -1;
   const after = s[i + 2];
@@ -807,27 +825,58 @@ function bareMathSeedEnd(s, i) {
     }
     return depth === 0 ? j : -1;
   }
-  return /[0-9]/.test(after || "") ? i + 3 : -1;
+  if (/[0-9]/.test(after || "")) return i + 3;
+  if (aggressive && after && !/\s/.test(after)) {
+    // 单字符上下标（V_φ、s_t）；若下划线后是整词（user_name）则视为 snake_case，不当公式
+    const afterAfter = s[i + 3];
+    if (!/[A-Za-z0-9]/.test(after) || !/[A-Za-z0-9]/.test(afterAfter || "")) return i + 3;
+  }
+  return -1;
 }
-function bareMathExpandLeft(s, start) {
+function matchOpenBraceLeft(s, closeIdx) {
+  let depth = 0;
+  for (let j = closeIdx; j >= 0; j--) {
+    const c = s[j];
+    if (c === "\n") return -1;
+    if (c === "}") depth++;
+    else if (c === "{") { depth--; if (depth === 0) return j; }
+  }
+  return -1;
+}
+function bareMathExpandLeft(s, start, aggressive) {
   while (start > 0) {
     const c = s[start - 1];
-    if (isBareMathChar(c)) { start--; continue; }
+    if (c === "}") {
+      // 左侧是花括号组：整组纳入，避免公式从组中间开始导致括号不配平
+      const open = matchOpenBraceLeft(s, start - 1);
+      if (open >= 0) { start = open; continue; }
+    }
+    if (isBareMathChar(c, aggressive)) { start--; continue; }
     if (c === " " || c === "\t") {
       let k = start - 1;
       while (k > 0 && (s[k] === " " || s[k] === "\t")) k--;
       const leftCh = s[k];
-      if (!isBareMathChar(leftCh)) break;
-      if (isBareMathOp(leftCh) || s[start] === "\\") { start = k; continue; }
+      if (!isBareMathChar(leftCh, aggressive)) break;
+      if (isBareMathOp(leftCh, aggressive) || s[start] === "\\") { start = k; continue; }
     }
     break;
   }
   return start;
 }
-function bareMathExpandRight(s, end) {
+function bareMathExpandRight(s, end, aggressive) {
+  let depth = 0;
   while (end < s.length) {
     const c = s[end];
-    if (isBareMathChar(c)) { end++; continue; }
+    if (depth > 0) {
+      // 已在未闭合的 {} 内：一路吞到配对为止（允许中文/空格等任意非换行字符），保证花括号配平
+      if (c === "\n") break;
+      if (c === "{") depth++;
+      else if (c === "}") depth--;
+      end++;
+      continue;
+    }
+    if (c === "{") { depth++; end++; continue; }
+    if (isBareMathChar(c, aggressive)) { end++; continue; }
     if (c === "\\" && /[A-Za-z]/.test(s[end + 1] || "")) {
       end += 2;
       while (end < s.length && /[A-Za-z]/.test(s[end])) end++;
@@ -838,8 +887,8 @@ function bareMathExpandRight(s, end) {
       while (k < s.length && (s[k] === " " || s[k] === "\t")) k++;
       const prev = s[end - 1];
       const nxt = s[k];
-      const prevOk = isBareMathOp(prev);
-      const nxtOk = isBareMathOp(nxt) || (nxt === "\\" && /[A-Za-z]/.test(s[k + 1] || ""));
+      const prevOk = isBareMathOp(prev, aggressive);
+      const nxtOk = isBareMathOp(nxt, aggressive) || (nxt === "\\" && /[A-Za-z]/.test(s[k + 1] || ""));
       if (prevOk || nxtOk) { end = k; continue; }
     }
     break;
@@ -847,25 +896,53 @@ function bareMathExpandRight(s, end) {
   while (end > 0 && (s[end - 1] === " " || s[end - 1] === "\t")) end--;
   return end;
 }
-function autodetectMath(text) {
+/* 把公式片段里的中文/CJK 连续段包成 \text{...}，让 KaTeX 以正体排版（纯 CJK 段不含 LaTeX 特殊字符，无需转义） */
+function cjkToLatexText(s) {
+  return s.replace(/[\u3000-\u303f\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef]+/g, (m) => "\\text{" + m + "}");
+}
+/* 判断代码（代码块 / 行内代码）内容是否「像公式」：只有含明确数学信号才去掉代码标记，
+   避免把普通代码当公式。仅激进模式使用。 */
+const MATH_LIKE_RE = /\\(?:frac|sqrt|sum|prod|int|iint|oint|alpha|beta|gamma|delta|epsilon|varepsilon|zeta|eta|theta|vartheta|iota|kappa|lambda|mu|nu|xi|pi|rho|sigma|tau|upsilon|phi|varphi|chi|psi|omega|Gamma|Delta|Theta|Lambda|Xi|Pi|Sigma|Phi|Psi|Omega|mathbb|mathcal|mathbf|mathrm|text|cdot|times|div|pm|mp|leq|geq|neq|approx|equiv|in|notin|subset|supset|cup|cap|infty|partial|nabla|forall|exists|to|rightarrow|leftarrow|leftrightarrow|begin|end)\b/;
+function isMathLikeText(t) {
+  const core = String(t == null ? "" : t);
+  if (!core.trim()) return false;
+  if (/[\u0370-\u03ff\u1f00-\u1fff\u2200-\u22ff]/.test(core)) return true;
+  if (/[≈≠≤≥±−×÷⋅∞∑∫√∂∇∈∉⊂⊃∪∩→←↔∅∀∃∝∼≃≅≡≪≫]/.test(core)) return true;
+  if (/[\^_]\{/.test(core)) return true;
+  if (MATH_LIKE_RE.test(core)) return true;
+  return false;
+}
+function autodetectMath(text, aggressive) {
   const stash = [];
   const P = "\u0001";
-  const protect = () => (m) => { stash.push(m); return P + (stash.length - 1) + P; };
+  const keep = (m) => { stash.push(m); return P + (stash.length - 1) + P; };
   let s = String(text == null ? "" : text);
-  s = s.replace(/```[\s\S]*?```/g, protect());
-  s = s.replace(/~~~[\s\S]*?~~~/g, protect());
-  s = s.replace(/`[^`\n]*`/g, protect());
-  s = s.replace(/\$\$[\s\S]*?\$\$/g, protect());
-  s = s.replace(/\\\[[\s\S]*?\\\]/g, protect());
-  s = s.replace(/\\\([^\n]*?\\\)/g, protect());
-  s = s.replace(/\$[^$\n]*?\$/g, protect());
+  if (aggressive) {
+    // 代码块 / 行内代码：内容像公式就去掉代码标记让公式参与识别，否则按原样保护
+    s = s.replace(/```[^\n]*\n?([\s\S]*?)```/g, (m, inner) => (isMathLikeText(inner) ? inner : keep(m)));
+    s = s.replace(/~~~[^\n]*\n?([\s\S]*?)~~~/g, (m, inner) => (isMathLikeText(inner) ? inner : keep(m)));
+    s = s.replace(/`([^`\n]*)`/g, (m, inner) => (isMathLikeText(inner) ? inner : keep(m)));
+  } else {
+    s = s.replace(/```[\s\S]*?```/g, keep);
+    s = s.replace(/~~~[\s\S]*?~~~/g, keep);
+    s = s.replace(/`[^`\n]*`/g, keep);
+  }
+  s = s.replace(/\$\$[\s\S]*?\$\$/g, keep);
+  s = s.replace(/\\\[[\s\S]*?\\\]/g, keep);
+  s = s.replace(/\\\([^\n]*?\\\)/g, keep);
+  s = s.replace(/\$[^$\n]*?\$/g, keep);
+  // 保护 markdown 强调标记的连续运行（** / __ / ~~），避免被裸公式识别吞掉而破坏加粗/斜体；
+  // 必须在代码块保护之后执行，否则代码块内的占位符无法被最终还原。单字符 * / _ 仍作数学字符。
+  s = s.replace(/\*{2,}/g, keep);
+  s = s.replace(/_{2,}/g, keep);
+  s = s.replace(/~{2,}/g, keep);
 
   const spans = [];
   for (let i = 0; i < s.length; i++) {
-    const se = bareMathSeedEnd(s, i);
+    const se = bareMathSeedEnd(s, i, aggressive);
     if (se < 0) continue;
-    const start = bareMathExpandLeft(s, i);
-    const end = bareMathExpandRight(s, se);
+    const start = bareMathExpandLeft(s, i, aggressive);
+    const end = bareMathExpandRight(s, se, aggressive);
     if (s.slice(start, end).indexOf(P) !== -1) { i = se - 1; continue; }
     spans.push({ start, end });
     i = end - 1;
@@ -879,18 +956,25 @@ function autodetectMath(text) {
   }
   let out = "", pos = 0;
   for (const sp of merged) {
-    if (s.slice(sp.start, sp.end).trim() === "") continue;
-    out += s.slice(pos, sp.start) + "\\(" + s.slice(sp.start, sp.end) + "\\)";
+    const raw = s.slice(sp.start, sp.end);
+    if (raw.trim() === "") continue;
+    // 花括号配平校验：不平衡（被截断/未闭合）就不包裹，避免 KaTeX 红色错误框
+    const bare = raw.replace(/\\[{}]/g, "");
+    if ((bare.match(/\{/g) || []).length !== (bare.match(/\}/g) || []).length) continue;
+    out += s.slice(pos, sp.start) + "\\(" + cjkToLatexText(raw) + "\\)";
     pos = sp.end;
   }
   out += s.slice(pos);
   return out.replace(new RegExp(P + "(\\d+)" + P, "g"), (m, idx) => stash[+idx]);
 }
 function bareMathEnabled() { return !!(settingsCache && settingsCache.bare_math_detect); }
+function aggressiveMathEnabled() { return !!(settingsCache && settingsCache.aggressive_math_detect); }
 function renderMd(text) {
   const t = text || "";
   if (!md) return esc(t);
-  return md.render(bareMathEnabled() ? autodetectMath(t) : t);
+  if (aggressiveMathEnabled()) return md.render(autodetectMath(t, true));
+  if (bareMathEnabled()) return md.render(autodetectMath(t, false));
+  return md.render(t);
 }
 
 /* ================= 状态 ================= */
@@ -1051,6 +1135,10 @@ async function openSettings() {
         <label class="toggle"><input type="checkbox" id="set_baremath" ${s.bare_math_detect ? "checked" : ""}><span class="track"></span></label>
       </div>
       <div class="switch-row">
+        <span class="sw-label">${t("激进公式渲染")} <i class="info-icon">!<span class="tip">${t("在「裸公式识别」基础上更激进：支持单字符上下标（如 V_φ、V^π）、希腊字母与数学符号，并会把「看起来是公式」的代码块 / 行内代码也渲染成公式。适合数理场景，可能误判普通文本或代码，建议按需开启。")}</span></i></span>
+        <label class="toggle"><input type="checkbox" id="set_aggressive_math" ${s.aggressive_math_detect ? "checked" : ""}><span class="track"></span></label>
+      </div>
+      <div class="switch-row">
         <span class="sw-label">🖨 ${t("转换 HTML")} <i class="info-icon">!<span class="tip">${t("开启后，浏览历史时每条助手回复下方会出现「转换 HTML」按钮，可将该回复转成可打印的 HTML 文件。")}</span></i></span>
         <label class="toggle"><input type="checkbox" id="set_export_html" ${s.export_html ? "checked" : ""}><span class="track"></span></label>
       </div>
@@ -1138,6 +1226,7 @@ async function openSettings() {
         newline_key: newlineSel.value,
         show_placeholders: mask.querySelector("#set_ph").checked,
         bare_math_detect: mask.querySelector("#set_baremath").checked,
+        aggressive_math_detect: mask.querySelector("#set_aggressive_math").checked,
         export_html: mask.querySelector("#set_export_html").checked,
         export_html_path: mask.querySelector("#set_export_html_path").value,
         export_md: mask.querySelector("#set_export_md").checked,

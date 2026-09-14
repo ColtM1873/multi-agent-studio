@@ -24,6 +24,9 @@ class Settings(BaseModel):
     show_placeholders: bool = True
     # 裸公式识别：无分隔符公式的启发式渲染，默认关闭以避开日常场景误判
     bare_math_detect: bool = False
+    # 激进公式渲染：在裸公式识别基础上支持单字符上下标/希腊字母/数学符号，
+    # 并把「看起来是公式」的代码块与行内代码也渲染成公式，默认关闭
+    aggressive_math_detect: bool = False
     # 历史浏览时各板块默认展开/折叠
     reasoning_expanded: bool = True
     tool_call_expanded: bool = False
