@@ -40,6 +40,20 @@ from app.services.chat import (
 router = APIRouter()
 
 
+def _format_build_error(e: Exception) -> str:
+    """运行时构建失败时，对「缺少 pgvector 扩展」给出可操作的友好提示。"""
+    text = str(e)
+    lowered = text.lower()
+    if "vector" in lowered and ("not available" in lowered or "extension" in lowered):
+        return (
+            "未检测到 PostgreSQL 的 pgvector 扩展，长期记忆/会话存储无法初始化。\n"
+            "请双击运行项目根目录的 install_pgvector.bat 一键安装，"
+            "完成后重启本程序并重试。\n\n"
+            f"原始错误：{text}"
+        )
+    return f"无法构建 agent: {text}"
+
+
 @router.websocket("/api/agents/{agent_id}/threads/{thread_id}/chat")
 async def chat_ws(websocket: WebSocket, agent_id: str, thread_id: str):
     await websocket.accept()
@@ -58,7 +72,7 @@ async def chat_ws(websocket: WebSocket, agent_id: str, thread_id: str):
             {"type": "sub_agents", "names": [s.name for s in runtime.config.sub_agents]}
         )
     except Exception as e:
-        await websocket.send_json({"type": "error", "message": f"无法构建 agent: {e}"})
+        await websocket.send_json({"type": "error", "message": _format_build_error(e)})
         await websocket.close()
         return
 

@@ -29,7 +29,7 @@ Write-Host '================================================'
 Write-Host ''
 
 # ---------- 1. 检查 Python ----------
-Write-Host '[1/5] 检查 Python...'
+Write-Host '[1/6] 检查 Python...'
 $py = Get-Command python -ErrorAction SilentlyContinue
 if (-not $py) {
     Write-Host ''
@@ -41,7 +41,7 @@ if (-not $py) {
 python --version
 
 # ---------- 2. 启用长路径（硬性前置） ----------
-Write-Host '[2/5] 启用 Windows 长路径支持...'
+Write-Host '[2/6] 启用 Windows 长路径支持...'
 try {
     Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name LongPathsEnabled -Value 1 -Type DWord
     $v = (Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name LongPathsEnabled).LongPathsEnabled
@@ -55,7 +55,7 @@ try {
 Write-Host '       长路径支持已启用。'
 
 # ---------- 3. 创建虚拟环境 ----------
-Write-Host '[3/5] 创建虚拟环境 venv...'
+Write-Host '[3/6] 创建虚拟环境 venv...'
 if (-not (Test-Path "$PSScriptRoot\venv")) {
     python -m venv "$PSScriptRoot\venv"
     if ($LASTEXITCODE -ne 0) {
@@ -65,7 +65,7 @@ if (-not (Test-Path "$PSScriptRoot\venv")) {
 }
 
 # ---------- 4. 安装依赖 ----------
-Write-Host '[4/5] 安装依赖（清华源，首次约需几分钟）...'
+Write-Host '[4/6] 安装依赖（清华源，首次约需几分钟）...'
 & "$PSScriptRoot\venv\Scripts\python.exe" -m pip install -r "$PSScriptRoot\requirements.txt" -i https://pypi.tuna.tsinghua.edu.cn/simple
 if ($LASTEXITCODE -ne 0) {
     Write-Host '[错误] 依赖安装失败，请截图上方完整报错信息反馈。'
@@ -83,8 +83,28 @@ if ($mcpVer -and ([version]$mcpVer -ge [version]'2.0.0')) {
     }
 }
 
-# ---------- 5. 打包 exe ----------
-Write-Host '[5/5] 打包 MultiAgentStudio.exe（首次会自动安装打包工具）...'
+# ---------- 5. 可选：一键安装 pgvector ----------
+Write-Host ''
+Write-Host '[5/6] 是否顺便一键安装 PostgreSQL 的 pgvector 扩展？（程序的长期记忆需要它）'
+Write-Host '       说明：会自动识别 PostgreSQL 安装目录与 Visual Studio 编译环境；'
+Write-Host '             没有编译环境时会询问是否使用社区预编译包（会有风险提示）。'
+$pgvAns = Read-Host '       输入 Y 立即安装，直接回车跳过 [Y/N]'
+if ($pgvAns -match '^(y|yes)$') {
+    try {
+        & "$PSScriptRoot\install_pgvector.ps1"
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host '       [提示] pgvector 安装未成功完成，可稍后单独双击 install_pgvector.bat 重试。'
+        }
+    } catch {
+        Write-Host "       [提示] pgvector 安装过程出错：$($_.Exception.Message)"
+        Write-Host '             可稍后单独双击 install_pgvector.bat 重试。'
+    }
+} else {
+    Write-Host '       已跳过。稍后可双击 install_pgvector.bat 单独安装。'
+}
+
+# ---------- 6. 打包 exe ----------
+Write-Host '[6/6] 打包 MultiAgentStudio.exe（首次会自动安装打包工具）...'
 & "$PSScriptRoot\venv\Scripts\python.exe" "$PSScriptRoot\build_exe.py"
 if ($LASTEXITCODE -ne 0) {
     Write-Host '[错误] 打包 exe 失败，请截图上方完整报错信息反馈。'

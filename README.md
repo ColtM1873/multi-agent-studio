@@ -31,7 +31,10 @@ Supervisor（主 agent）                    Workers（子 agent）
 ### 第一步：安装前置软件
 
 1. **安装 Python 3.13**：到 https://www.python.org/downloads/ 下载并安装，安装时**请勾选「Add python.exe to PATH」**。
-2. **安装 PostgreSQL**（需启用 `pgvector` 扩展）：程序用它保存会话历史和长期记忆。
+2. **安装 PostgreSQL**：程序用它保存会话历史和长期记忆。
+3. **安装 pgvector 扩展**（PostgreSQL 不自带，必须单独安装）：安装 PostgreSQL 后，双击项目里的 `install_pgvector.bat` 即可**一键安装**——它会自动识别 PostgreSQL 目录、自动寻找 Visual Studio 编译环境并**从官方源码编译**；若没有编译环境，会提示是否使用社区预编译包（会有风险提示）。装好后**无需打开 psql、也无需手动执行 `CREATE EXTENSION`**，程序会在首次聊天时自动创建。
+
+> 没有安装 Visual Studio 也不影响：`install_pgvector.bat` 会自动回退到预编译包，并明确提示相关风险。
 
 ### 第二步：下载
 
@@ -49,10 +52,12 @@ Supervisor（主 agent）                    Workers（子 agent）
 
 1. 双击 `setup.bat`（或在文件夹空白处**右键** →「**在终端中打开**」→ 输入 `setup.bat` 回车）。
 2. 首次会弹出「用户账户控制」，点「**是**」——这是为了启用 Windows 长路径支持，防止安装时报「路径过长」。
-3. 脚本会自动：创建虚拟环境 → 安装全部依赖（首次约几分钟）→ 打包出 `MultiAgentStudio.exe`。
+3. 脚本会自动：创建虚拟环境 → 安装全部依赖（首次约几分钟）→ 询问是否一键安装 pgvector → 打包出 `MultiAgentStudio.exe`。
 4. 看到「安装完成！已生成 MultiAgentStudio.exe」即可。
 
 > 安装脚本会自动启用 Windows 长路径，因此项目解压到任意目录都能正常安装，不必特意放到 C 盘根目录。
+>
+> 若在 `setup.bat` 中跳过了 pgvector，可随时双击 `install_pgvector.bat` 单独安装。
 
 ### 第六步：启动
 
@@ -73,7 +78,7 @@ Supervisor（主 agent）                    Workers（子 agent）
 
 配置文件在 `configs/<agent_id>.json`（不入库）。用 GUI 创建，关键字段：
 
-- `postgres`：`prefix` / `suffix` / `store_database` / `checkpoint_database` / `store_namespace`
+- `postgres`：`prefix` / `suffix` / `store_database` / `checkpoint_database` / `store_namespace`（GUI 里可「分步填写连接前缀 / 连接后缀」，也可直接粘贴一条完整连接串，程序会自动拆分）
 - `main_agent`：`system_prompt`、`api_key`、`llm_provider_name`、`file_tools.root_dir`、`embedding.*`、`summary.*`、`html_report`、`html_report_prompt`
 - `sub_agents[]`：`name`、`description`、`system_prompt`、`api_key`、`llm_provider_name`、`mcp_servers[]`、`summary.*`
 - 全局设置（`configs/settings.json`）：记忆吸附、吸附条数、完成提示音、未保存提醒等。
@@ -128,6 +133,7 @@ run.py           入口（默认托盘，--console 前台）
 tray.py          系统托盘
 launcher.py      薄启动器（被 build_exe.py 打成 exe）
 setup.bat        一键安装 + 打包
+install_pgvector.bat  一键安装 pgvector 扩展（长期记忆所需，可单独运行）
 app/
   config/        models · store · edits · settings
   runtime/       state_factory · graph_builder · streaming · persistence · prompts
@@ -179,7 +185,10 @@ Supervisor (main agent)                 Workers (sub-agents)
 ### 1. Prerequisites
 
 1. Install **Python 3.13** from https://www.python.org/downloads/ — please check **"Add python.exe to PATH"**.
-2. Install **PostgreSQL** with the `pgvector` extension (for checkpoints and long-term memory).
+2. Install **PostgreSQL** (for checkpoints and long-term memory).
+3. Install the **pgvector** extension (PostgreSQL does not bundle it). After installing PostgreSQL, double-click `install_pgvector.bat` in the project — it auto-detects your PostgreSQL directory, finds the Visual Studio C++ toolchain, and **builds pgvector from the official source**. If no compiler is found, it offers to use a community prebuilt package (with an explicit risk warning). **No need to open psql or run `CREATE EXTENSION` manually** — the app creates it automatically on first chat.
+
+> Visual Studio is optional: `install_pgvector.bat` falls back to a prebuilt package and clearly warns about the associated risk.
 
 ### 2. Download
 
@@ -197,10 +206,12 @@ Supervisor (main agent)                 Workers (sub-agents)
 
 1. Double-click `setup.bat` (or right-click an empty area → **Open in Terminal** → run `setup.bat`).
 2. On the first UAC prompt, click **Yes** — this enables Windows long-path support so torch installs without the "path too long" error.
-3. The script creates the venv, installs all dependencies (a few minutes the first time), and builds `MultiAgentStudio.exe`.
+3. The script creates the venv, installs all dependencies (a few minutes the first time), offers to install pgvector, and builds `MultiAgentStudio.exe`.
 4. Wait for "安装完成！已生成 MultiAgentStudio.exe".
 
 > The installer enables Windows long paths automatically, so the project can be extracted anywhere.
+>
+> If you skipped pgvector in `setup.bat`, you can double-click `install_pgvector.bat` at any time.
 
 ### 6. Launch
 
@@ -221,7 +232,7 @@ Supervisor (main agent)                 Workers (sub-agents)
 
 Configs live in `configs/<agent_id>.json` (not committed). Use the GUI to create them; key fields:
 
-- `postgres`: `prefix` / `suffix` / `store_database` / `checkpoint_database` / `store_namespace`
+- `postgres`: `prefix` / `suffix` / `store_database` / `checkpoint_database` / `store_namespace` (fill prefix/suffix step by step, or paste a full connection string and let the app split it)
 - `main_agent`: `system_prompt`, `api_key`, `llm_provider_name`, `file_tools.root_dir`, `embedding.*`, `summary.*`, `html_report`, `html_report_prompt`
 - `sub_agents[]`: `name`, `description`, `system_prompt`, `api_key`, `llm_provider_name`, `mcp_servers[]`, `summary.*`
 - Global settings (`configs/settings.json`): `memory_attach`, `num_memories_attached`, `notification_sound`, `warn_unsaved_changes`
@@ -274,6 +285,7 @@ run.py           entry point (tray mode by default; --console for foreground)
 tray.py          system tray
 launcher.py      thin launcher (packaged into an exe by build_exe.py)
 setup.bat        one-click install + build
+install_pgvector.bat  one-click install of the pgvector extension (needed for long-term memory; can be run standalone)
 app/
   config/        models · store · edits · settings
   runtime/       state_factory · graph_builder · streaming · persistence · prompts
