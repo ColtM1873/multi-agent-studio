@@ -103,7 +103,7 @@ const I18N_EN = {
   "云端/企业库请选择 SSL 模式": "For cloud/enterprise databases, choose an SSL mode",
   "仅鼠标（Enter 只换行）": "Mouse only (Enter adds a newline)",
   "会话": "Conversations",
-  "会话历史归属的库名，需先在 pgAdmin 建库，创建后不可改。": "Database that holds the conversation history; create it in pgAdmin first. Cannot be changed after creation.",
+  "会话历史归属的库名，即连接串里最后一个 / 后面的那一段（如 postgresql://…:5432/这里）。需先在 pgAdmin 建库，创建后不可改。": "Database that holds the conversation history, i.e. the segment after the last / in the connection string (e.g. postgresql://…:5432/this-part). Create it in pgAdmin first. Cannot be changed after creation.",
   "例如 C:\\Agent_WorkPlace": "e.g. C:\\Agent_WorkPlace",
   "例如 my-agent": "e.g. my-agent",
   "例如 my_agent_checkpoints": "e.g. my_agent_checkpoints",
@@ -190,10 +190,8 @@ const I18N_EN = {
   "显示隐藏对话": "Show hidden conversations",
   "暂无用户消息": "No user messages yet",
   "有未保存的修改，确定离开？": "You have unsaved changes. Leave anyway?",
-  "本地 postgres（localhost/127.0.0.1）自动用 sslmode=disable，省一次 SSL 握手。<br/><br/>云端或企业级 postgres 请选择对应 SSL 模式；「无字符串」表示交由数据库设置决定。": "Local postgres (localhost/127.0.0.1) automatically uses sslmode=disable to skip an SSL handshake.<br/><br/>For cloud or enterprise postgres, choose the corresponding SSL mode; 'No string' leaves it to the database settings.",
   "本地模型缓存路径，留空用 Hugging Face 默认缓存。": "Local model cache path; leave empty to use Hugging Face's default cache.",
   "本地连接，自动使用 sslmode=disable": "Local connection, auto sslmode=disable",
-  "格式：postgresql://用户名:密码@主机:端口/<br/>例如 postgresql://user:passwd@localhost:5432/<br/><br/>下面会实时显示完整连接串。程序会根据主机自动判断是否本地回环。": "Format: postgresql://user:passwd@host:port/<br/>e.g. postgresql://user:passwd@localhost:5432/<br/><br/>The full connection string is shown below in real time. The program auto-detects loopback hosts.",
   "模型 provider": "Model provider",
   "模型来源": "Model source",
   "思考过程": "Thinking process",
@@ -294,6 +292,25 @@ const I18N_EN = {
   "还没有任何 multi-agent 配置": "No multi-agent configurations yet",
   "连接前缀": "Connection prefix",
   "连接后缀": "Connection suffix",
+  "（无）": "(none)",
+  "数据库连接填写方式": "How to fill the database connection",
+  "两种方式二选一：不熟悉「连接前缀/连接后缀」时，可直接粘贴一条完整的连接串，程序会自动拆分。": "Pick either way: if you're unfamiliar with the 'connection prefix/suffix', just paste a full connection string and it will be split automatically.",
+  "分步填写（连接前缀 / 连接后缀）": "Step-by-step (connection prefix / suffix)",
+  "直接填写完整连接串": "Paste a full connection string",
+  "连接前缀 = 连接串里「数据库名」前面的全部内容：协议://用户名:密码@主机:端口/。<br/><br/>例如 postgresql://user:passwd@localhost:5432/<br/><br/>它回答「连到哪台数据库服务器、用哪个账号」。注意结尾的斜杠 / 不能少，数据库名填在上一栏「checkpoint 数据库」。": "Connection prefix = everything before the database name in the connection string: protocol://user:password@host:port/.<br/><br/>e.g. postgresql://user:passwd@localhost:5432/<br/><br/>It answers 'which database server, with which account'. Note the trailing slash / is required; the database name goes in the 'checkpoint database' field above.",
+  "格式：postgresql://用户名:密码@主机:端口/（以斜杠 / 结尾）": "Format: postgresql://user:password@host:port/ (must end with a slash /)",
+  "连接后缀 = 连接串里「数据库名」后面的部分，通常是 ? 开头的参数，最主要的是 SSL 模式。<br/><br/>例如 ?sslmode=disable、?sslmode=require。<br/><br/>本地数据库用 sslmode=disable 即可；云端/企业数据库按服务商要求选择。": "Connection suffix = everything after the database name, usually parameters starting with ?, most importantly the SSL mode.<br/><br/>e.g. ?sslmode=disable, ?sslmode=require.<br/><br/>For a local database, sslmode=disable is fine; for cloud/enterprise databases, choose per your provider's requirement.",
+  "完整连接串": "Full connection string",
+  "直接粘贴数据库服务商提供的整条连接串（PostgreSQL 官方 URI 格式）。<br/><br/>例如 postgresql://user:passwd@localhost:5432/mydb?sslmode=disable<br/><br/>程序会自动拆出连接前缀、数据库名、连接后缀；其中的数据库名会同步到上面的「checkpoint 数据库」。": "Paste the whole connection string provided by your database vendor (official PostgreSQL URI format).<br/><br/>e.g. postgresql://user:passwd@localhost:5432/mydb?sslmode=disable<br/><br/>The app splits it into connection prefix, database name and connection suffix; the database name is synced to the 'checkpoint database' field above.",
+  "按当前填写内容实时拼出的完整连接串（密码已脱敏）。": "The full connection string composed in real time from what you filled in (password masked).",
+  "已识别": "Recognized",
+  "请粘贴完整连接串": "Please paste a full connection string",
+  "连接串必须以 postgresql:// 或 postgres:// 开头": "The connection string must start with postgresql:// or postgres://",
+  "连接串缺少数据库名，格式应为 …/<数据库名>": "The connection string is missing the database name; format should be …/<database name>",
+  "连接串缺少主机地址": "The connection string is missing the host address",
+  "连接串里的数据库名与已绑定的 checkpoint 库不一致，创建后不可更换。": "The database name in the connection string differs from the bound checkpoint database, which cannot be changed after creation.",
+  "读取 PDF 时，用基于框线的检测把表格转成 Markdown 并嵌回正文；关闭后只返回正文文本。": "When reading PDFs, use ruled-line detection to convert tables to Markdown and embed them back into the body; when disabled, only the body text is returned.",
+  "行": "lines",
   "长期记忆存储的库名，可与 checkpoint 库相同或不同。": "Database for long-term memory; can be the same as or different from the checkpoint database.",
   "阶段性总结阈值": "Stage summary threshold",
   "除发送键外，其余 Enter 组合均换行。": "All Enter combos except the send key insert a newline.",
@@ -701,6 +718,50 @@ function maskedPrefix(p) {
     .replace(/(@[^:/]+):\d+\//, "$1:port/");
 }
 
+/* 完整连接串 ⇄ 前缀 + 数据库名 + 后缀
+ * PostgreSQL URI 规范：postgresql://用户名:密码@主机:端口/数据库名?参数
+ * prefix = 数据库名之前（含结尾斜杠），database = 库名，suffix = ? 开头的参数。 */
+function parseConnString(raw) {
+  const s = String(raw || "").trim();
+  if (!s) return { ok: false, empty: true, error: t("请粘贴完整连接串") };
+  const scheme = s.match(/^([a-z][a-z0-9+.-]*):\/\//i);
+  if (!scheme) return { ok: false, error: t("连接串必须以 postgresql:// 或 postgres:// 开头") };
+  const rest = s.slice(scheme[0].length);
+  const at = rest.lastIndexOf("@");
+  const slash = rest.indexOf("/", at >= 0 ? at : 0);
+  if (slash < 0) return { ok: false, error: t("连接串缺少数据库名，格式应为 …/<数据库名>") };
+  const authority = rest.slice(0, slash);
+  if (!authority) return { ok: false, error: t("连接串缺少主机地址") };
+  let tail = rest.slice(slash + 1);
+  let database = tail, suffix = "";
+  const q = tail.indexOf("?");
+  if (q >= 0) { database = tail.slice(0, q); suffix = tail.slice(q); }
+  database = database.replace(/\/+$/, "");
+  if (!database) return { ok: false, error: t("连接串缺少数据库名，格式应为 …/<数据库名>") };
+  return { ok: true, prefix: scheme[0] + authority + "/", database, suffix };
+}
+function composeConnString(prefix, database, suffix) {
+  return String(prefix || "") + String(database || "") + String(suffix || "");
+}
+function currentPgMode() {
+  const r = document.querySelector('input[name="pg_conn_mode"]:checked');
+  return r ? r.value : "split";
+}
+/* 收集当前表单的连接信息（两种填写方式归一化成 prefix/database/suffix）。 */
+function collectPgConn() {
+  if (currentPgMode() === "full") {
+    const parsed = parseConnString($("#f_conn_full").value);
+    if (parsed.ok) {
+      let suffix = parsed.suffix;
+      if (!suffix && isLocalPrefix(parsed.prefix)) suffix = "?sslmode=disable";
+      return { ok: true, prefix: parsed.prefix, database: parsed.database, suffix };
+    }
+    return { ok: false, error: parsed.error, prefix: "", database: $("#f_cpdb").value, suffix: "" };
+  }
+  const s = $("#f_suffix");
+  return { ok: true, prefix: $("#f_prefix").value, database: $("#f_cpdb").value, suffix: s ? s.value || "" : "" };
+}
+
 /* ================= Markdown 渲染器 ================= */
 const md = window.markdownit ? (() => {
   const inst = window.markdownit({
@@ -986,6 +1047,7 @@ let statusMode = "idle";
 let currentReplyEl = null;
 let editorDirty = false;
 let settingsCache = null;
+let pgConnMode = "split";
 let pinned = localStorage.getItem("pin-follow") === "1";
 
 /* ================= 顶栏 ================= */
@@ -1618,9 +1680,15 @@ function buildForm(cfg, canEditSubs) {
   const gap = tokToUnit(sum.summarize_gap_tokenwise);
   const flush = tokToUnit(sum.flush_history_tokenwise);
 
-  const suffixCtrl = isLocal
-    ? `<input id="f_suffix" value="?sslmode=disable" readonly><span class="hint">${t("本地连接，自动使用 sslmode=disable")}</span>`
-    : `<select id="f_suffix">${SSL_OPTIONS.map(o => `<option value="${esc(o.v)}" ${(pg.suffix || "") === o.v ? "selected" : ""}>${esc(t(o.label))}</option>`).join("")}</select><span class="hint">${t("云端/企业库请选择 SSL 模式")}</span>`;
+  const suffixCtrlHTML = (local, value) => local
+    ? `<input id="f_suffix" value="${esc(value || "?sslmode=disable")}" readonly><span class="hint">${t("本地连接，自动使用 sslmode=disable")}</span>`
+    : `<select id="f_suffix">${SSL_OPTIONS.map(o => `<option value="${esc(o.v)}" ${(value || "") === o.v ? "selected" : ""}>${esc(t(o.label))}</option>`).join("")}${SSL_OPTIONS.some(o => o.v === (value || "")) ? "" : `<option value="${esc(value || "")}" selected>${esc(value || t("（无）"))}</option>`}</select><span class="hint">${t("云端/企业库请选择 SSL 模式")}</span>`;
+  const suffixCtrl = suffixCtrlHTML(isLocal, pg.suffix);
+
+  const pgMode = pgConnMode === "full" ? "full" : "split";
+  const fullConnInit = (pg.prefix || "").trim()
+    ? composeConnString(pg.prefix, pg.checkpoint_database, pg.suffix)
+    : "";
 
   const embInOptions = EMB_OPTIONS.includes(emb.model_name);
   const embSelect = `
@@ -1647,13 +1715,27 @@ function buildForm(cfg, canEditSubs) {
     <div class="form-card"><h4>${t("基本信息")}</h4><div class="form-grid">
       <div class="field"><label>agent_id ${info("唯一标识，用作配置文件名 configs/&lt;id&gt;.json，创建后不可改。")}</label><input id="f_agent_id" value="${esc(cfg.agent_id)}" ${canEditSubs ? "" : "readonly"}${ph("agent_id")}></div>
       <div class="field"><label>${t("名称")} name ${info("显示名称，创建后不可改（与历史会话绑定）。")}</label><input id="f_name" value="${esc(cfg.name)}" ${canEditSubs ? "" : "readonly"}${ph("name")}><span class="lock-hint">${canEditSubs ? "" : t("创建后不可改")}</span></div>
-      <div class="field"><label>${t("checkpoint 数据库（会话历史绑定）")} ${info("会话历史归属的库名，需先在 pgAdmin 建库，创建后不可改。")}</label><input id="f_cpdb" value="${esc(pg.checkpoint_database)}" ${canEditSubs ? "" : "readonly"}${ph("checkpoint_database")}><span class="lock-hint">${canEditSubs ? t("需先在 pgAdmin 建库") : t("创建后不可改")}</span></div>
+      <div class="field"><label>${t("checkpoint 数据库（会话历史绑定）")} ${info("会话历史归属的库名，即连接串里最后一个 / 后面的那一段（如 postgresql://…:5432/这里）。需先在 pgAdmin 建库，创建后不可改。")}</label><input id="f_cpdb" value="${esc(pg.checkpoint_database)}" ${canEditSubs ? "" : "readonly"}${ph("checkpoint_database")}><span class="lock-hint">${canEditSubs ? t("需先在 pgAdmin 建库") : t("创建后不可改")}</span></div>
       <div class="field full"><details class="db-help"><summary>${t("📖 不会建数据库？点这里看步骤")}</summary><ol><li>${t("打开")} <b>pgAdmin 4</b>${t("（在开始菜单里搜索「pgAdmin」）。")}</li><li>${t("左侧展开")} <b>Servers → PostgreSQL</b>${t("，双击连接，输入安装 PostgreSQL 时设置的密码。")}</li><li>${t("右键")} <b>Databases → Create → Database…</b>${t("。")}</li><li>${t("在")} <b>Database</b> ${t("一栏填库名（与上面填的 checkpoint 库名保持一致）。")}</li><li>${t("点")} <b>Save</b>${t("。")}</li><li>${t("记忆库（store 数据库）还需启用 pgvector：选中刚建的库 → 点上方「Query Tool」图标 → 粘贴下面这句 → 点执行（或按 F5）：")}<pre>CREATE EXTENSION IF NOT EXISTS vector;</pre></li><li>${t("回到本页，点「保存」。")}</li></ol></details></div>
       <div class="field"><label>${t("store 数据库")} ${info("长期记忆存储的库名，可与 checkpoint 库相同或不同。")}</label><input id="f_sdb" value="${esc(pg.store_database)}"></div>
       <div class="field"><label>${t("store_namespace（逗号分隔）")} ${info("记忆存储命名空间，逗号分隔多个层级。")}</label><input id="f_ns" value="${esc(ns)}"></div>
-      <div class="field full"><label>${t("连接前缀")} prefix <i class="info-icon">!<span class="tip">${t("格式：postgresql://用户名:密码@主机:端口/<br/>例如 postgresql://user:passwd@localhost:5432/<br/><br/>下面会实时显示完整连接串。程序会根据主机自动判断是否本地回环。")}</span></i></label><input id="f_prefix" value="${esc(pg.prefix)}"${ph("prefix")}></div>
-      <div class="field"><label>${t("连接后缀")} suffix <i class="info-icon">!<span class="tip">${t("本地 postgres（localhost/127.0.0.1）自动用 sslmode=disable，省一次 SSL 握手。<br/><br/>云端或企业级 postgres 请选择对应 SSL 模式；「无字符串」表示交由数据库设置决定。")}</span></i></label>${suffixCtrl}</div>
-      <div class="field full"><label>${t("完整连接串示例")}</label><div class="conn-example" id="connExample"></div></div>
+      <div class="field full">
+        <label>${t("数据库连接填写方式")} ${info("两种方式二选一：不熟悉「连接前缀/连接后缀」时，可直接粘贴一条完整的连接串，程序会自动拆分。")}</label>
+        <div class="radio-list" style="flex-direction:row;gap:22px;flex-wrap:wrap;">
+          <label class="radio-item"><input type="radio" name="pg_conn_mode" value="split" ${pgMode === "split" ? "checked" : ""}> ${t("分步填写（连接前缀 / 连接后缀）")}</label>
+          <label class="radio-item"><input type="radio" name="pg_conn_mode" value="full" ${pgMode === "full" ? "checked" : ""}> ${t("直接填写完整连接串")}</label>
+        </div>
+      </div>
+      <div id="pgSplitBlock" style="${pgMode === "split" ? "display:contents;" : "display:none;"}">
+        <div class="field full"><label>${t("连接前缀")} prefix <i class="info-icon">!<span class="tip">${t("连接前缀 = 连接串里「数据库名」前面的全部内容：协议://用户名:密码@主机:端口/。<br/><br/>例如 postgresql://user:passwd@localhost:5432/<br/><br/>它回答「连到哪台数据库服务器、用哪个账号」。注意结尾的斜杠 / 不能少，数据库名填在上一栏「checkpoint 数据库」。")}</span></i></label><input id="f_prefix" value="${esc(pg.prefix)}"${ph("prefix")}><span class="hint">${t("格式：postgresql://用户名:密码@主机:端口/（以斜杠 / 结尾）")}</span></div>
+        <div class="field"><label>${t("连接后缀")} suffix <i class="info-icon">!<span class="tip">${t("连接后缀 = 连接串里「数据库名」后面的部分，通常是 ? 开头的参数，最主要的是 SSL 模式。<br/><br/>例如 ?sslmode=disable、?sslmode=require。<br/><br/>本地数据库用 sslmode=disable 即可；云端/企业数据库按服务商要求选择。")}</span></i></label><div id="suffixCtrlWrap" style="display:flex;flex-direction:column;gap:5px;">${suffixCtrl}</div></div>
+      </div>
+      <div class="field full" id="pgFullBlock" style="${pgMode === "full" ? "" : "display:none;"}">
+        <label>${t("完整连接串")} <i class="info-icon">!<span class="tip">${t("直接粘贴数据库服务商提供的整条连接串（PostgreSQL 官方 URI 格式）。<br/><br/>例如 postgresql://user:passwd@localhost:5432/mydb?sslmode=disable<br/><br/>程序会自动拆出连接前缀、数据库名、连接后缀；其中的数据库名会同步到上面的「checkpoint 数据库」。")}</span></i></label>
+        <textarea id="f_conn_full" rows="3" placeholder="postgresql://user:passwd@localhost:5432/mydb?sslmode=disable">${esc(fullConnInit)}</textarea>
+        <span class="hint" id="connFullHint"></span>
+      </div>
+      <div class="field full"><label>${t("完整连接串示例")} ${info("按当前填写内容实时拼出的完整连接串（密码已脱敏）。")}</label><div class="conn-example" id="connExample"></div></div>
     </div></div>
 
     <div class="form-card"><h4>${t("主 agent")}</h4><div class="form-grid">
@@ -1689,15 +1771,104 @@ function buildForm(cfg, canEditSubs) {
       ${canEditSubs ? `<button class="btn small" id="addSubBtn" type="button">+ ${t("添加子 agent")}</button>` : ""}
     </div>`;
 
-  // 连接示例实时更新（脱敏 + 释义）
+  // ── 数据库连接：分步填写 ⇄ 完整连接串 ──────────────────────
+  const splitBlock = $("#pgSplitBlock");
+  const fullBlock = $("#pgFullBlock");
+  const fullInput = $("#f_conn_full");
+  const fullHint = $("#connFullHint");
+  const suffixWrap = $("#suffixCtrlWrap");
+  const cpdbInput = $("#f_cpdb");
+  const prefixInput = $("#f_prefix");
+
+  const bindSuffixEvents = () => {
+    const el = $("#f_suffix");
+    if (el) el.addEventListener("input", refreshExample);
+  };
+  const setSuffixValue = (value) => {
+    const el = $("#f_suffix");
+    if (!el) return;
+    if (el.tagName === "SELECT") {
+      if (!Array.from(el.options).some(o => o.value === value)) {
+        const opt = document.createElement("option");
+        opt.value = value;
+        opt.textContent = value || t("（无）");
+        el.appendChild(opt);
+      }
+      el.value = value;
+    } else {
+      el.value = value;
+    }
+  };
+
   const refreshExample = () => {
-    const p = maskedPrefix($("#f_prefix").value);
-    const db = $("#f_cpdb").value || t("<数据库名>");
-    const suffix = $("#f_suffix").value || "";
-    $("#connExample").innerHTML = esc(p + db + suffix) +
+    let prefix, db, suffix;
+    if (currentPgMode() === "full") {
+      const parsed = parseConnString(fullInput.value);
+      prefix = parsed.ok ? parsed.prefix : "";
+      db = parsed.ok ? parsed.database : "";
+      suffix = parsed.ok ? parsed.suffix : "";
+    } else {
+      prefix = prefixInput.value;
+      db = cpdbInput.value;
+      const s = $("#f_suffix");
+      suffix = s ? s.value || "" : "";
+    }
+    const full = maskedPrefix(prefix) + (db || t("<数据库名>")) + (suffix || "");
+    $("#connExample").innerHTML = esc(full) +
       `<div class="muted" style="margin-top:6px;font-size:11px;">${t("组成：")}<code>postgresql://</code> ${t("协议")} · <code>${t("用户名:passwd")}</code> ${t("登录凭据")} · <code>@${t("主机:port")}</code> ${t("数据库地址")} · <code>/${t("数据库名")}</code> ${t("库名")} · <code>?sslmode</code> ${t("SSL 模式")}</div>`;
   };
+
+  const updateFullHint = () => {
+    if (!fullHint) return;
+    const parsed = parseConnString(fullInput.value);
+    if (parsed.empty) { fullHint.innerHTML = ""; return; }
+    if (!parsed.ok) { fullHint.innerHTML = `<span class="err-hint">⚠ ${esc(parsed.error)}</span>`; return; }
+    if (cpdbInput.readOnly && cpdbInput.value && cpdbInput.value !== parsed.database) {
+      fullHint.innerHTML = `<span class="err-hint">⚠ ${esc(t("连接串里的数据库名与已绑定的 checkpoint 库不一致，创建后不可更换。"))}</span>`;
+      return;
+    }
+    if (!cpdbInput.readOnly) cpdbInput.value = parsed.database;
+    let suffix = parsed.suffix;
+    if (!suffix && isLocalPrefix(parsed.prefix)) suffix = "?sslmode=disable";
+    fullHint.innerHTML = `<span class="ok-hint">✓ ${t("已识别")}</span> ` +
+      `${t("连接前缀")} <code>${esc(maskedPrefix(parsed.prefix))}</code> · ` +
+      `${t("数据库名")} <code>${esc(parsed.database)}</code> · ` +
+      `${t("连接后缀")} <code>${esc(suffix || t("（无）"))}</code>`;
+  };
+
+  const setPgMode = (mode) => {
+    pgConnMode = mode === "full" ? "full" : "split";
+    splitBlock.style.display = pgConnMode === "split" ? "contents" : "none";
+    fullBlock.style.display = pgConnMode === "full" ? "" : "none";
+    if (pgConnMode === "full") {
+      if ((prefixInput.value || "").trim()) {
+        const s = $("#f_suffix");
+        fullInput.value = composeConnString(prefixInput.value, cpdbInput.value, s ? s.value : "");
+      }
+      updateFullHint();
+    } else {
+      const parsed = parseConnString(fullInput.value);
+      if (parsed.ok) {
+        prefixInput.value = parsed.prefix;
+        if (!cpdbInput.readOnly) cpdbInput.value = parsed.database;
+        let suffix = parsed.suffix;
+        if (!suffix && isLocalPrefix(parsed.prefix)) suffix = "?sslmode=disable";
+        if (isLocalPrefix(parsed.prefix) !== isLocal) {
+          suffixWrap.innerHTML = suffixCtrlHTML(isLocalPrefix(parsed.prefix), suffix);
+          bindSuffixEvents();
+        } else {
+          setSuffixValue(suffix);
+        }
+      }
+    }
+    refreshExample();
+  };
+
+  document.querySelectorAll('input[name="pg_conn_mode"]').forEach(r =>
+    r.addEventListener("change", () => setPgMode(r.value)));
   ["f_prefix", "f_cpdb", "f_suffix", "f_sdb"].forEach(id => { const el = $("#" + id); if (el) el.addEventListener("input", refreshExample); });
+  fullInput.addEventListener("input", () => { updateFullHint(); refreshExample(); });
+  updateFullHint();
   refreshExample();
 
   // embedding 下拉 ↔ 自定义
@@ -1827,14 +1998,16 @@ function hfEndpointValue() {
 
 function buildPayload(cfg) {
   const val = id => $(`#${id}`).value;
+  const conn = collectPgConn();
+  if (!conn.ok) throw new Error(conn.error);
   return {
     agent_id: val("f_agent_id") || slugify(val("f_name")),
     name: val("f_name"),
     postgres: {
-      prefix: val("f_prefix"),
-      suffix: val("f_suffix"),
+      prefix: conn.prefix,
+      suffix: conn.suffix,
       store_database: val("f_sdb"),
-      checkpoint_database: val("f_cpdb"),
+      checkpoint_database: conn.database,
       store_namespace: val("f_ns").split(",").map(x => x.trim()).filter(Boolean),
     },
     main_agent: {
@@ -1842,7 +2015,7 @@ function buildPayload(cfg) {
       api_key: val("f_apikey"),
       llm_provider_name: $("#editorForm").querySelector('[data-mf="llm_provider_name"]').value,
       model: collectModelCfg($("#editorForm")),
-      file_tools: { root_dir: val("f_rootdir"), pdf_table_extraction: $("#f_pdf_tables").is(":checked") },
+      file_tools: { root_dir: val("f_rootdir"), pdf_table_extraction: $("#f_pdf_tables").checked },
       embedding: {
         model_name: embModelValue(),
         cache_folder: val("f_emb_cache"),

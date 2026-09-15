@@ -424,6 +424,10 @@ body {
 .opt-field { padding: 8px 12px; background: #fbfbfd; border: 1px dashed var(--border); border-radius: 8px; }
 .opt-warn { font-size: 11px; color: #b45309; font-weight: 400; }
 .warn-hint { font-size: 12px; color: #b45309; }
+.err-hint { font-size: 12px; color: var(--danger); }
+.ok-hint { font-size: 12px; color: #16a34a; }
+#connFullHint { line-height: 1.7; }
+#connFullHint code { background: #eef2ff; padding: 1px 5px; border-radius: 5px; font-size: 11px; word-break: break-all; }
 
 /* 会话隐藏 */
 .thread-row.thread-hidden { opacity: .5; }
