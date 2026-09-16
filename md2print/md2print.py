@@ -227,6 +227,15 @@ li::marker { color: var(--list_marker); font-weight: 600; }
     box-shadow: none;
   }
   a { color: inherit; }
+  /* 打印时禁止横向滚动：长代码行自动换行，避免页边距较大时内容被裁切。
+     纸张无法拖动滚动条，所以这里必须换成 pre-wrap（而不是 overflow-x:auto）。 */
+  pre {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    overflow-x: visible;
+    max-width: 100%;
+  }
   pre, blockquote, table, img, .math-display {
     break-inside: avoid;
     page-break-inside: avoid;
