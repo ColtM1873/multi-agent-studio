@@ -975,19 +975,56 @@ function isMathLikeText(t) {
   if (MATH_LIKE_RE.test(core)) return true;
   return false;
 }
+/* 按 CommonMark 围栏规则把字符串切成「普通文本 / 围栏代码块」片段：
+   开启围栏必须在行首（最多 3 个前导空格），闭合围栏必须是同种字符且不短于开启围栏。
+   绝不能再用全局正则 ```` ```...``` ```` 盲配——正文 / HTML 块里偶然出现的单个 ```
+   （例如工具结果里转义后仍保留的说明文字）会与真正的围栏错配，配对整体错位后
+   激进模式会把「真围栏 + 假围栏」之间的普通文本误判为公式代码块并删掉标记，
+   遗留一个孤立围栏；markdown-it 会把该孤立围栏当作代码块开头，把其后所有内容
+   （含后续消息的 HTML）全部吞进代码块。 */
+function splitFencedCode(s) {
+  const lines = s.split("\n");
+  const parts = [];
+  let segStart = 0;
+  let i = 0;
+  while (i < lines.length) {
+    const open = /^( {0,3})(`{3,}|~{3,})(.*)$/.exec(lines[i]);
+    if (open && !(open[2][0] === "`" && open[3].indexOf("`") !== -1)) {
+      const ch = open[2][0];
+      const len = open[2].length;
+      let j = i + 1;
+      for (; j < lines.length; j++) {
+        const close = /^( {0,3})(`{3,}|~{3,})[ \t]*$/.exec(lines[j]);
+        if (close && close[2][0] === ch && close[2].length >= len) break;
+      }
+      if (j < lines.length) {
+        if (i > segStart) parts.push({ type: "text", text: lines.slice(segStart, i).join("\n") });
+        parts.push({ type: "code", raw: lines.slice(i, j + 1).join("\n"), inner: lines.slice(i + 1, j).join("\n") });
+        i = j + 1;
+        segStart = i;
+        continue;
+      }
+    }
+    i++;
+  }
+  if (segStart < lines.length) parts.push({ type: "text", text: lines.slice(segStart).join("\n") });
+  return parts;
+}
 function autodetectMath(text, aggressive) {
   const stash = [];
   const P = "\u0001";
   const keep = (m) => { stash.push(m); return P + (stash.length - 1) + P; };
-  let s = String(text == null ? "" : text);
+  let s = String(text == null ? "" : text).replace(/\r\n?/g, "\n");
   if (aggressive) {
     // 代码块 / 行内代码：内容像公式就去掉代码标记让公式参与识别，否则按原样保护
-    s = s.replace(/```[^\n]*\n?([\s\S]*?)```/g, (m, inner) => (isMathLikeText(inner) ? inner : keep(m)));
-    s = s.replace(/~~~[^\n]*\n?([\s\S]*?)~~~/g, (m, inner) => (isMathLikeText(inner) ? inner : keep(m)));
+    s = splitFencedCode(s)
+      .map((p) => (p.type === "code" ? (isMathLikeText(p.inner) ? p.inner : keep(p.raw)) : p.text))
+      .join("\n");
     s = s.replace(/`([^`\n]*)`/g, (m, inner) => (isMathLikeText(inner) ? inner : keep(m)));
   } else {
-    s = s.replace(/```[\s\S]*?```/g, keep);
-    s = s.replace(/~~~[\s\S]*?~~~/g, keep);
+    s = splitFencedCode(s)
+      .map((p) => (p.type === "code" ? keep(p.raw) : p.text))
+      .join("\n");
     s = s.replace(/`[^`\n]*`/g, keep);
   }
   s = s.replace(/\$\$[\s\S]*?\$\$/g, keep);
