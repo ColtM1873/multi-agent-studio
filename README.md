@@ -1,15 +1,95 @@
+[中文](#multi-agent-studio) | [English](#multi-agent-studio-english)
+
 # Multi-Agent Studio
 
-本 Studio 基于 [LangGraph General-Use Multi-Agent Framework](https://github.com/ColtM1873/LangGraph-General-Use-Multi-Agent-Framework) 框架构建。
+> 基于 [LangGraph General-Use Multi-Agent Framework](https://github.com/ColtM1873/LangGraph-General-Use-Multi-Agent-Framework) 构建的**本地多智能体工作台**：Supervisor–Worker 编排 + 现代 Web GUI，Windows 单机运行。
+
+## 目录
+
+- [特性](#特性)
+- [界面预览](#界面预览)
+- [架构](#架构)
+- [快速开始](#快速开始)
+- [版本迁移（升级到新版本）](#版本迁移升级到新版本)
+- [本地 MCP](#本地-mcp)
+- [许可证](#许可证)
 
 ## 特性
 
-- **可视化多智能体配置** —— 在浏览器里创建 / 编辑 / 删除 multi-agent 配置；每份配置是一个 JSON 文件，与一个 PostgreSQL checkpoint 数据库绑定。
-- **会话线程** —— 基于 LangGraph Postgres checkpointer 列出 / 删除 / 继续线程；历史以 Markdown 渲染。
-- **流式对话** —— 通过 WebSocket 实时渲染主 / 子 agent 输出；子 agent 历史按子 agent 名聚合。
-- **长期记忆** —— 用 BGE-M3 embedding + Postgres（pgvector）做语义记忆。
-- **可配置的总结 / 清空历史** —— token 阈值控制阶段性总结与历史清空。
-- **系统托盘** —— 后台常驻 + Windows 托盘图标。
+### 多智能体编排
+
+- **可视化配置** —— 在浏览器里创建 / 编辑 / 删除 multi-agent 配置；每份配置是一个 JSON 文件，并与一个 PostgreSQL checkpoint 库绑定。常用配置可保存为默认模板。
+- **Supervisor–Worker 架构** —— 主 agent 负责理解、拆解与汇总，把任务委派给子 agent；每个子 agent 都是带 checkpointer 的子图，在线程内跨调用保持记忆。
+- **子 agent 即工具** —— 每个子 agent 以「工具」的形式暴露给主 agent（名字 + 描述）；一次可并行调度多个子 agent，并回收它们的报告。
+- **MCP 工具接入** —— 子 agent 可挂载 http / stdio 两种 MCP 工具源，配置页提供连通性检测。
+
+### 模型与提供商
+
+- **官方 provider** —— 内置 openai / anthropic / deepseek / google_genai，直接以 `provider:model` 选择。
+- **任意 OpenAI 兼容模型** —— 填写模型名 + base_url 即可接入第三方端点。
+- **精细采样参数** —— temperature / top_k / top_p / max_tokens / repetition_penalty 逐项可选。
+- **DeepSeek 思考模式修复** —— 一键开启 reasoning_content 回填，规避思考模式 + 工具调用下的间歇性 400。
+
+### 长期记忆
+
+- **语义记忆** —— BGE-M3 embedding + PostgreSQL（pgvector）向量检索。
+- **自动记忆吸附** —— 每条用户消息发送前自动检索相关记忆并附加上下文（条数可配）。
+- **记忆读写工具** —— 主 agent 可主动写入 / 检索长期记忆。
+- **模型下载进度** —— 首次使用自动下载 embedding 模型，界面与托盘实时显示进度。
+
+### 对话与流式体验
+
+- **逐 token 流式输出** —— 基于 WebSocket 实时渲染主 / 子 agent 输出。
+- **思考过程** —— 推理内容独立成块，与正文按真实顺序交错显示。
+- **工具调用可视化** —— 工具调用与结果内联展示并自动去重。
+- **并行子 agent 分区** —— 多个子 agent 并行时按轮次分区，可下拉切换查看各自输出。
+- **细粒度状态栏** —— 实时显示「谁 · 在做什么」（思考中 / 回答中 / 调取工具 / 等待工具 / 加载模型）。
+- **Markdown + 公式** —— markdown-it 渲染、代码高亮、KaTeX 公式，另可选「裸公式识别 / 激进公式渲染」。
+- **阅读友好** —— 正文与思考独立缩放、发送后自动跟随最新输出、可拖动的固定到底部按钮、回复完成提示音、发送 / 换行键可自定义。
+- **图中途确认** —— 需要用户拍板时弹出应用内确认框（子 agent 使用区分样式）。
+
+### 历史、会话与快照
+
+- **会话持久化** —— 列出 / 继续 / 删除会话；只建了名字、尚未发言的空会话也会保留。
+- **历史 Markdown 浏览** —— 主 / 子 agent 历史以 Markdown 只读呈现，并统计消息数与 token 用量。
+- **消息目录** —— 下拉目录按用户消息展开，点击标题即可跳转。
+- **历史消息编辑** —— 进入编辑模式后可按行修改历史消息（可选任意时间、任意类型），逐条提交并即时生效。
+- **快照** —— 每次全量清空前自动保存主 / 子 agent 历史快照，可只读回看或删除。
+- **隐藏会话** —— 按 agent 独立隐藏 / 显示会话。
+
+### 总结与清空
+
+- **阶段性总结** —— token 达到阈值时自动总结，不打断对话。
+- **自动全量清空** —— 达到更高阈值时先快照、再总结、再清空（可保留最近若干轮）。
+- **主动全量总结** —— 手动触发主 agent 或指定子 agent 的全量总结。
+
+### 文件工具与导出
+
+- **自研文件工具** —— read（分页 + 行号）/ edit（字符串级中段修改）/ write / search，以及目录、复制、移动、删除；所有操作限定在根目录内。
+- **富格式读取** —— PDF / Word / PPT / Excel / EPUB / HTML 等自动转 Markdown；PDF 额外用 pdfminer 抽正文、pdfplumber 按框线抽表格；读取时在同目录生成可编辑的 `.md` 副本。
+- **HTML 报告** —— 可选在回复后生成 HTML 报告并自动打开。
+- **导出** —— 一键把单条回复导出为可打印 HTML（A4 优化）或 Markdown 文件。
+
+### 设置与安装
+
+- **全局设置** —— 记忆吸附、导出路径、历史折叠、编辑模式、公式识别等集中配置，支持中 / 英双语切换。
+- **一键部署** —— `setup.bat` 自动创建虚拟环境、安装依赖并打包 `MultiAgentStudio.exe`；Windows 托盘常驻，浏览器自动打开。
+- **pgvector 一键安装** —— 自动识别 PostgreSQL 与编译环境，优先从官方源码编译，失败回退预编译包。
+- **连接串输入** —— PostgreSQL 连接支持「分步填写」或直接粘贴完整连接串。
+
+## 界面预览
+
+### 主界面 · 设置菜单
+
+![主界面设置菜单](show_case_pics/zh-main-settings-menu.png)
+
+### 选择会话
+
+![选择会话](show_case_pics/zh-session-selection.png)
+
+### 子 agent 流式输出
+![子 agent 流式输出](show_case_pics/zh-subagent-streaming_one.png)
+![子 agent 流式输出](show_case_pics/zh-subagent-streaming_two.png)
 
 ## 架构
 
@@ -110,18 +190,98 @@ Supervisor（主 agent）                    Workers（子 agent）
 
 ---
 
-# Multi-Agent Studio
+[中文](#multi-agent-studio) | [English](#multi-agent-studio-english)
 
-This studio is built on top of the [LangGraph General-Use Multi-Agent Framework](https://github.com/ColtM1873/LangGraph-General-Use-Multi-Agent-Framework).
+# Multi-Agent Studio (English)
+
+> A **local multi-agent workbench** built on the [LangGraph General-Use Multi-Agent Framework](https://github.com/ColtM1873/LangGraph-General-Use-Multi-Agent-Framework): Supervisor–Worker orchestration with a modern web GUI, running locally on Windows.
+
+## Table of Contents
+
+- [Features](#features)
+- [Screenshots](#screenshots)
+- [Architecture](#architecture)
+- [Quick Start](#quick-start)
+- [Version migration (upgrading)](#version-migration-upgrading)
+- [Local MCP servers](#local-mcp-servers)
+- [License](#license)
 
 ## Features
 
-- **Visual multi-agent configuration** — create / edit / delete multi-agent configs in the browser; each config is a JSON file bound to a PostgreSQL checkpoint database.
-- **Conversation threads** — list / delete / resume threads backed by LangGraph's Postgres checkpointer; history is rendered as Markdown.
-- **Streaming chat** — real-time Markdown rendering of agent / sub-agent output over WebSocket; sub-agent history is aggregated by sub-agent name.
-- **Long-term memory** — semantic memory with BGE-M3 embeddings + Postgres (pgvector).
-- **Configurable summaries / history flush** — token thresholds for periodic summarization and history flushing.
-- **System tray** — run in the background with a Windows tray icon.
+### Multi-agent orchestration
+
+- **Visual configuration** — create / edit / delete multi-agent configs in the browser; each config is a JSON file bound to a PostgreSQL checkpoint database. Save any config as the default template.
+- **Supervisor–Worker architecture** — the main agent plans, delegates, and summarizes; each sub-agent is a subgraph compiled with `checkpointer=True`, keeping memory across calls within a thread.
+- **Sub-agents as tools** — each sub-agent is exposed to the main agent as a tool (name + description); several sub-agents can be dispatched in parallel in one turn and their reports collected.
+- **MCP tools** — attach `http` / `stdio` MCP servers per sub-agent, with a connectivity check in the config page.
+
+### Models & providers
+
+- **Built-in providers** — openai / anthropic / deepseek / google_genai via a `provider:model` prefix.
+- **Any OpenAI-compatible model** — enter a model name + base_url to use third-party endpoints.
+- **Fine-grained sampling** — opt in per parameter: temperature / top_k / top_p / max_tokens / repetition_penalty.
+- **DeepSeek thinking-mode fix** — one toggle to back-fill `reasoning_content`, avoiding intermittent 400s in thinking mode with tool calls.
+
+### Long-term memory
+
+- **Semantic memory** — BGE-M3 embeddings + PostgreSQL (pgvector) retrieval.
+- **Automatic memory attachment** — before each user message, relevant memories are retrieved and attached as context (count configurable).
+- **Memory tools** — the main agent can write / search long-term memory on its own.
+- **Model download progress** — the embedding model is downloaded on first use, with live progress in the UI and tray.
+
+### Chat & streaming UX
+
+- **Token-by-token streaming** — main / sub-agent output rendered live over WebSocket.
+- **Reasoning display** — thinking is shown in its own collapsible block, interleaved with the body in true order.
+- **Tool-call visualization** — tool calls and results are shown inline and de-duplicated.
+- **Parallel sub-agent partitions** — when several sub-agents run in parallel, output is split per round with a dropdown to switch between them.
+- **Granular status bar** — shows who is doing what in real time (thinking / answering / fetching tools / waiting for tools / loading model).
+- **Markdown + math** — markdown-it rendering, syntax highlighting, KaTeX math, plus optional bare-formula / aggressive formula detection.
+- **Reading comfort** — independent body / reasoning zoom, auto-follow on send, a draggable pin-to-bottom button, a reply-completed chime, and customizable send / newline keys.
+- **In-graph confirmation** — when the graph needs your decision, an in-app confirm dialog appears (sub-agent dialogs use a distinct style).
+
+### History, threads & snapshots
+
+- **Persistent threads** — list / resume / delete conversations; named-but-unused threads survive reloads too.
+- **Markdown history** — main / sub-agent history is shown read-only as Markdown, with message counts and token usage.
+- **Message directory** — a drawer lists user messages and expands each reply's headings for jump-to navigation.
+- **History editing** — enter edit mode to edit historical messages line by line (optionally any time / any type), submitted sequentially and applied instantly.
+- **Snapshots** — before every full flush, main / sub-agent history is snapshotted automatically; browse read-only or delete.
+- **Hide threads** — hide / show conversations independently per agent.
+
+### Summary & history flush
+
+- **Staged summarization** — automatic summaries once a token threshold is reached, without interrupting the conversation.
+- **Automatic full flush** — at a higher threshold: snapshot, summarize, then clear (keeping a configurable number of recent turns).
+- **Proactive full summary** — manually trigger a full summary for the main agent or a chosen sub-agent.
+
+### File tools & export
+
+- **Custom file tools** — read (pagination + line numbers) / edit (precise mid-string edits) / write / search, plus directory, copy, move, delete; everything is sandboxed to the root directory.
+- **Rich-format reading** — PDF / Word / PPT / Excel / EPUB / HTML are converted to Markdown; PDFs additionally use pdfminer for text and pdfplumber for ruled-line tables, and a same-named editable `.md` copy is created on read.
+- **HTML report** — optionally generate an HTML report after a reply and open it automatically.
+- **Export** — one-click export of a single reply to a printable HTML (A4-optimized) or Markdown file.
+
+### Settings & installation
+
+- **Global settings** — memory attachment, export paths, history folding, edit mode, formula detection, and more, with a zh / EN language switch.
+- **One-click deploy** — `setup.bat` creates the venv, installs dependencies, and packages `MultiAgentStudio.exe`; the app lives in the Windows tray and opens the browser automatically.
+- **One-click pgvector install** — auto-detects PostgreSQL and a C++ toolchain, builds from official source first and falls back to a prebuilt package.
+- **Connection-string input** — fill PostgreSQL in steps or paste a full connection string.
+
+## Screenshots
+
+### Main UI · Settings menu
+
+![Main UI settings menu](show_case_pics/en-main-settings-menu.png)
+
+### Thread selection
+
+![Thread selection](show_case_pics/en-session-selection.png)
+
+### Sub-agent streaming output
+
+![Sub-agent streaming output](show_case_pics/en-subagent-streaming.png)
 
 ## Architecture
 
