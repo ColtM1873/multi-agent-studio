@@ -1,7 +1,5 @@
 # Multi-Agent Studio
 
-一个基于 **LangGraph 的 Supervisor-Worker 多智能体框架**，配一套现代 Web 图形界面。
-
 本 Studio 基于 [LangGraph General-Use Multi-Agent Framework](https://github.com/ColtM1873/LangGraph-General-Use-Multi-Agent-Framework) 框架构建。
 
 ## 特性
@@ -72,25 +70,6 @@ Supervisor（主 agent）                    Workers（子 agent）
 
 > 每个 multi-agent 的身份绑定 `checkpoint_database`。创建后子 agent 不可增删 / 改名，但其 prompt / description / MCP 工具 / 模型仍可改。
 
-## 配置
-
-配置文件在 `configs/<agent_id>.json`（不入库）。用 GUI 创建，关键字段：
-
-- `postgres`：`prefix` / `suffix` / `store_database` / `checkpoint_database` / `store_namespace`（GUI 里可「分步填写连接前缀 / 连接后缀」，也可直接粘贴一条完整连接串，程序会自动拆分）
-- `main_agent`：`system_prompt`、`api_key`、`llm_provider_name`、`file_tools.root_dir`、`embedding.*`、`summary.*`、`html_report`、`html_report_prompt`
-- `sub_agents[]`：`name`、`description`、`system_prompt`、`api_key`、`llm_provider_name`、`mcp_servers[]`、`summary.*`
-- 全局设置（`configs/settings.json`）：记忆吸附、吸附条数、完成提示音、未保存提醒等。
-
-## 重新打包
-
-改动代码后想重新生成 exe：
-
-```bash
-build_exe.bat               # 双击运行，或：python build_exe.py
-```
-
-生成 `dist/MultiAgentStudio.exe` 并复制到项目根目录。启动器相对自身目录定位 `run.py` 与 `venv`，不写死任何绝对路径。
-
 ## 版本迁移（升级到新版本）
 
 升级时只需**保留少数「你的数据」，其余代码文件全部覆盖为新版本**即可。PostgreSQL 里的会话历史与长期记忆（checkpoint 库 / store 库）存在数据库里、不在此文件夹中，覆盖文件不会影响它们。
@@ -124,25 +103,6 @@ build_exe.bat               # 双击运行，或：python build_exe.py
 
 `folder_of_MCPs/` 是独立的 FastMCP 服务器（彩云天气、高德地图）。单独启动后，在子 agent 的 `mcp_servers` 里以 `http` 或 `stdio` 方式引用；token 从环境变量读取，见 `.env.example`。
 
-## 目录结构
-
-```
-run.py           入口（默认托盘，--console 前台）
-tray.py          系统托盘
-launcher.py      薄启动器（被 build_exe.py 打成 exe）
-setup.bat        一键安装 + 打包
-install_pgvector.bat  一键安装 pgvector 扩展（长期记忆所需，可单独运行）
-app/
-  config/        models · store · edits · settings
-  runtime/       state_factory · graph_builder · streaming · persistence · prompts
-  services/      threads · chat · history_render
-  api/           agents · threads · chat_ws · settings
-  static/        index.html · css · js
-configs/         multi-agent 配置（不入库）
-snapshots/       会话快照（不入库）
-scripts/         dev_server · verify_phase1
-folder_of_MCPs/  本地 MCP 服务器
-```
 
 ## 许可证
 
@@ -151,8 +111,6 @@ folder_of_MCPs/  本地 MCP 服务器
 ---
 
 # Multi-Agent Studio
-
-A **LangGraph-based Supervisor-Worker multi-agent framework** with a modern web GUI.
 
 This studio is built on top of the [LangGraph General-Use Multi-Agent Framework](https://github.com/ColtM1873/LangGraph-General-Use-Multi-Agent-Framework).
 
@@ -224,23 +182,6 @@ Supervisor (main agent)                 Workers (sub-agents)
 
 > Each multi-agent's identity is bound to `checkpoint_database`. After creation, sub-agents cannot be added / removed / renamed, but their prompts / description / MCP tools / models can still be edited.
 
-## Configuration
-
-Configs live in `configs/<agent_id>.json` (not committed). Use the GUI to create them; key fields:
-
-- `postgres`: `prefix` / `suffix` / `store_database` / `checkpoint_database` / `store_namespace` (fill prefix/suffix step by step, or paste a full connection string and let the app split it)
-- `main_agent`: `system_prompt`, `api_key`, `llm_provider_name`, `file_tools.root_dir`, `embedding.*`, `summary.*`, `html_report`, `html_report_prompt`
-- `sub_agents[]`: `name`, `description`, `system_prompt`, `api_key`, `llm_provider_name`, `mcp_servers[]`, `summary.*`
-- Global settings (`configs/settings.json`): `memory_attach`, `num_memories_attached`, `notification_sound`, `warn_unsaved_changes`
-
-## Rebuild
-
-```bash
-build_exe.bat               # double-click, or run: python build_exe.py
-```
-
-Produces `dist/MultiAgentStudio.exe` and copies it to the project root. The launcher locates `run.py` and `venv` relative to its own directory — no absolute paths are hard-coded.
-
 ## Version migration (upgrading)
 
 When upgrading, **keep only a handful of "your data" items and overwrite everything else with the new version**. Conversation history and long-term memory (checkpoint / store databases) live in PostgreSQL, not in this folder, so overwriting files does not affect them.
@@ -273,26 +214,6 @@ When upgrading, **keep only a handful of "your data" items and overwrite everyth
 ## Local MCP servers
 
 `folder_of_MCPs/` contains standalone FastMCP servers (Caiyun weather, AMap). Run them separately and reference them in a sub-agent's `mcp_servers` via `http` or `stdio` transport. Their tokens are read from environment variables — see `.env.example`.
-
-## Project structure
-
-```
-run.py           entry point (tray mode by default; --console for foreground)
-tray.py          system tray
-launcher.py      thin launcher (packaged into an exe by build_exe.py)
-setup.bat        one-click install + build
-install_pgvector.bat  one-click install of the pgvector extension (needed for long-term memory; can be run standalone)
-app/
-  config/        models · store · edits · settings
-  runtime/       state_factory · graph_builder · streaming · persistence · prompts
-  services/      threads · chat · history_render
-  api/           agents · threads · chat_ws · settings
-  static/        index.html · css · js
-configs/         multi-agent configs (not committed)
-snapshots/       conversation snapshots (not committed)
-scripts/         dev_server · verify_phase1
-folder_of_MCPs/  local MCP servers
-```
 
 ## License
 
