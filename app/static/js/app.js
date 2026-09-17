@@ -130,6 +130,8 @@ const I18N_EN = {
   "参数，逗号分隔（stdio）": "Arguments, comma-separated (stdio)",
   "发送": "Send",
   "发送失败，消息已保留在输入框": "Send failed; message kept in the input box",
+  "发送消息后自动跟随最新输出": "Auto-follow the latest output after sending",
+  "发送新消息后，聊天区自动下滑到最新消息并跟随流式输出；鼠标上滑即可停止跟随，方便回看历史，不会像图钉那样锁死。": "After you send a message, the chat area scrolls to the latest message and follows the streaming output. Scroll up to stop following and review history — unlike the pin button, it does not lock.",
   "发送键": "Send key",
   "发送，": "to send, ",
   "取消": "Cancel",
@@ -1193,6 +1195,10 @@ async function openSettings() {
         </select>
       </div>
       <div class="switch-row">
+        <span class="sw-label">${t("发送消息后自动跟随最新输出")} <i class="info-icon">!<span class="tip">${t("发送新消息后，聊天区自动下滑到最新消息并跟随流式输出；鼠标上滑即可停止跟随，方便回看历史，不会像图钉那样锁死。")}</span></i></span>
+        <label class="toggle"><input type="checkbox" id="set_autoscroll" ${s.auto_scroll_on_send !== false ? "checked" : ""}><span class="track"></span></label>
+      </div>
+      <div class="switch-row">
         <span class="sw-label">${t("裸公式识别")} <i class="info-icon">!<span class="tip">${t("模型偶尔不带 $ 或 \\( 分隔符直接输出公式（如 s_{t+1}=f(s_t,a_t)）。开启后自动识别并渲染，适合科研 / 数理场景；日常场景建议关闭，以免误判普通文本。")}</span></i></span>
         <label class="toggle"><input type="checkbox" id="set_baremath" ${s.bare_math_detect ? "checked" : ""}><span class="track"></span></label>
       </div>
@@ -1296,6 +1302,7 @@ async function openSettings() {
         edit_mode_enabled: mask.querySelector("#set_edit_enabled").checked,
         edit_any_history: mask.querySelector("#set_edit_any").checked,
         edit_all_message_types: mask.querySelector("#set_edit_types").checked,
+        auto_scroll_on_send: mask.querySelector("#set_autoscroll").checked,
       });
       mask.remove();
       toast(t("设置已保存"));
@@ -3011,6 +3018,11 @@ async function renderChatView() {
     setRunning(true);
     currentReplyEl = null;
     appendReplyHeader();
+    // 发送后自动下滑到最新消息并跟随流式输出；鼠标上滑后 atBottom 变 false，自动停止跟随
+    if (!(settingsCache && settingsCache.auto_scroll_on_send === false)) {
+      const pane = $("#historyPane");
+      if (pane) pane.scrollTop = pane.scrollHeight;
+    }
     const ok = await openChatWs(content);
     setRunning(false);
     if (ok) {

@@ -44,6 +44,8 @@ class Settings(BaseModel):
     edit_any_history: bool = False
     # 历史消息编辑：是否允许编辑所有消息类型（默认只编辑 AI 回复正文 text）
     edit_all_message_types: bool = False
+    # 发送消息后自动跳到最新输出并跟随流式（鼠标上滑可停止跟随），默认开启
+    auto_scroll_on_send: bool = True
 
 
 def settings_path(config_dir: Path | str) -> Path:
