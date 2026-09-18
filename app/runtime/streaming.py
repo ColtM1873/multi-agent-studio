@@ -24,22 +24,27 @@ async def run_agent_stream(
     emit: Emit,
     on_interrupt: InterruptHandler | None = None,
     sub_agent_names: set[str] | None = None,
+    sub_agent_state_keys: dict[str, str] | None = None,
 ) -> str:
     """运行一次 agent 调用，把 token/子图/tool 事件流式 emit 出去。
 
     sub_agent_names: 主图里作为「工具」暴露的子 agent 名字集合，用于把主 agent 正在
     生成的 tool_call 区分为「给子 agent 发布任务」还是「编辑普通工具调取指令」。
 
+    sub_agent_state_keys: 子 agent 名 → 该子图 state 里消息列表的键（`state_messages_key`），
+    用于从子图状态快照里抠出子 agent 自己的 tool_call / tool_result。
+
     返回最终的 state 字符串（与旧 stream_ainvoke 一致）。
     """
     sub_names = sub_agent_names or set()
+    sub_state_keys = sub_agent_state_keys or {}
     while True:
         stream = await main_agent.astream_events(input=user_input, config=thread_id_config, version="v3")
 
         await asyncio.gather(
             _consume_messages(stream, emit, sub_names),
-            _consume_subgraphs(stream, emit, sub_names),
-            _consume_values(stream, emit),
+            _consume_subgraphs(stream, emit, sub_names, sub_state_keys),
+            _consume_values(stream.values, emit),
         )
 
         if not await stream.interrupted():
@@ -157,13 +162,28 @@ async def _drain_subgraph(cursor, name: str, emit: Emit, sub_agent_names: set[st
         await emit({"type": "subgraph_end", "name": name})
 
 
-async def _consume_subgraphs(stream, emit: Emit, sub_agent_names: set[str]):
-    """子图（子 agent）的文本流（含思考过程），支持多个子图并行。
+async def _drain_subgraph_values(
+    values_cursor, name: str, messages_key: str, emit: Emit
+):
+    """消费单个子图 handle 的状态快照，emit 子 agent 自己的 tool_call / tool_result。
+
+    与主图 `_consume_values` 同一套逻辑，只是消息键换成子图的 `state_messages_key`，
+    并把事件 source 标成 `sub:<name>`，前端据此放进对应的子 agent 分区。
+    """
+    await _consume_values(
+        values_cursor, emit, source=f"sub:{name}", messages_key=messages_key, emit_phase=False
+    )
+
+
+async def _consume_subgraphs(
+    stream, emit: Emit, sub_agent_names: set[str], sub_agent_state_keys: dict[str, str]
+):
+    """子图（子 agent）的文本流（含思考过程）与工具事件，支持多个子图并行。
 
     关键：LangGraph 的 StreamChannel 是 lazy-subscribe —— 只有在消息被推入其缓冲
     **之前**已订阅，才拿得到；否则并行子图早期的消息会被丢弃。因此这里在「读到
     handle」与「下一次 pump」之间**同步**调用 `__aiter__()` 完成订阅，再为每个
-    handle 起一个独立任务并发消费。
+    handle 起独立任务并发消费（messages 与 values 各一个任务）。
     """
     tasks: list[asyncio.Task] = []
     try:
@@ -174,6 +194,14 @@ async def _consume_subgraphs(stream, emit: Emit, sub_agent_names: set[str]):
             tasks.append(
                 asyncio.create_task(_drain_subgraph(cursor, name, emit, sub_agent_names))
             )
+            # 子 agent 的工具事件同样要「读到 handle 立即同步订阅」，否则早期快照会丢。
+            values_cursor = subgraph.values.__aiter__()
+            messages_key = sub_agent_state_keys.get(name, "messages")
+            tasks.append(
+                asyncio.create_task(
+                    _drain_subgraph_values(values_cursor, name, messages_key, emit)
+                )
+            )
         if tasks:
             await asyncio.gather(*tasks)
     finally:
@@ -182,12 +210,24 @@ async def _consume_subgraphs(stream, emit: Emit, sub_agent_names: set[str]):
                 t.cancel()
 
 
-async def _consume_values(stream, emit: Emit):
-    """主图的 tool call / tool 结果事件。"""
+async def _consume_values(
+    values_iter,
+    emit: Emit,
+    *,
+    source: str = "main",
+    messages_key: str = "messages",
+    emit_phase: bool = True,
+):
+    """从状态快照里抠 tool_call / tool 结果事件。
+
+    主图与子图共用：主图 `messages_key="messages"`、`source="main"`；子图传入各自的
+    `state_messages_key` 与 `sub:<name>`。只有主图需要 `emit_phase`（工具结束后补一条
+    「回到思考中」的状态事件；子 agent 的状态由 `_emit_message_stream` 自己推进）。
+    """
     seen_tool_ids: set[str] = set()
     seen_tool_result_ids: set[str] = set()
-    async for snapshot in stream.values:
-        msgs = snapshot.get("messages", [])
+    async for snapshot in values_iter:
+        msgs = snapshot.get(messages_key, [])
         if not msgs:
             continue
         last = msgs[-1]
@@ -213,14 +253,27 @@ async def _consume_values(stream, emit: Emit):
                             parts.append(f"[reasoning: {str(block.get('reasoning', ''))[:200]}...]")
                 content = "\n\n".join(parts)
             await emit(
-                {"type": "tool_result", "name": getattr(last, "name", "unknown"), "content": str(content)[:2000]}
+                {
+                    "type": "tool_result",
+                    "source": source,
+                    "name": getattr(last, "name", "unknown"),
+                    "content": str(content)[:2000],
+                }
             )
             # 工具结果回流后，主 agent 即将再次 call_main_llm；显式回到「思考中」，
             # 消除「工具执行完毕」到「下一条 LLM 首个 token」之间的状态空档。
-            await emit({"type": "phase", "source": "main", "phase": "thinking"})
+            if emit_phase:
+                await emit({"type": "phase", "source": "main", "phase": "thinking"})
         elif last.type == "ai" and getattr(last, "tool_calls", None):
             for tc in last.tool_calls:
                 tid = tc.get("id", "")
                 if tid and tid not in seen_tool_ids:
                     seen_tool_ids.add(tid)
-                    await emit({"type": "tool_call", "name": tc.get("name", "?"), "args": tc.get("args", {})})
+                    await emit(
+                        {
+                            "type": "tool_call",
+                            "source": source,
+                            "name": tc.get("name", "?"),
+                            "args": tc.get("args", {}),
+                        }
+                    )

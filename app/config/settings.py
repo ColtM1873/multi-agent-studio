@@ -33,6 +33,8 @@ class Settings(BaseModel):
     reasoning_expanded: bool = True
     tool_call_expanded: bool = False
     tool_result_expanded: bool = False
+    # 流式输出时是否显示子 agent 的工具调用 / 工具结果（默认开启，仅影响前端流式渲染）
+    show_sub_agent_tools: bool = True
     # HTML 导出（md2print）：默认开启；输出路径为空时需先在设置里填写
     export_html: bool = True
     export_html_path: str = ""

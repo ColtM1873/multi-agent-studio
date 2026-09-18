@@ -103,6 +103,7 @@ class AgentRuntime:
             emit,
             on_interrupt,
             sub_agent_names={s.name for s in self.config.sub_agents},
+            sub_agent_state_keys={s.name: s.state_messages_key for s in self.config.sub_agents},
         )
 
     async def close(self) -> None:

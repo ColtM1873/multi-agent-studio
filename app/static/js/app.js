@@ -213,6 +213,9 @@ const I18N_EN = {
   "历史浏览时，工具调用板块默认展开还是折叠。": "Whether the tool call section is expanded or collapsed by default when browsing history.",
   "历史浏览时，工具结果板块默认展开还是折叠。": "Whether the tool result section is expanded or collapsed by default when browsing history.",
   "开启后默认展开": "Expanded by default when enabled",
+  "流式显示子 agent 工具": "Stream sub-agent tools",
+  "流式输出时显示的内容": "Content shown during streaming",
+  "开启后，流式输出时子 agent 的工具调用与工具结果会像主 agent 一样实时显示；关闭则只显示子 agent 的正文与思考。": "When enabled, a sub-agent's tool calls and tool results stream in real time like the main agent's; when disabled, only the sub-agent's text and reasoning are shown.",
   "字体颜色设置": "Font color settings",
   "正文": "Body text",
   "调整各板块文字颜色，仅本机生效。": "Adjust the text color of each section; applies on this machine only.",
@@ -1484,6 +1487,11 @@ async function openAdvancedSettings() {
         <span class="sw-label">✅ ${t("工具结果")} <i class="info-icon">!<span class="tip">${t("历史浏览时，工具结果板块默认展开还是折叠。")}</span></i></span>
         <label class="toggle"><input type="checkbox" id="adv_tool_result" ${s.tool_result_expanded ? "checked" : ""}><span class="track"></span></label>
       </div>
+      <div class="muted" style="margin:10px 0 2px;">${t("流式输出时显示的内容")}</div>
+      <div class="switch-row">
+        <span class="sw-label">🧩 ${t("流式显示子 agent 工具")} <i class="info-icon">!<span class="tip">${t("开启后，流式输出时子 agent 的工具调用与工具结果会像主 agent 一样实时显示；关闭则只显示子 agent 的正文与思考。")}</span></i></span>
+        <label class="toggle"><input type="checkbox" id="adv_sub_tools" ${s.show_sub_agent_tools !== false ? "checked" : ""}><span class="track"></span></label>
+      </div>
       <div class="muted" style="margin:10px 0 2px;">${t("记忆检索相似度门槛")}（${t("取值范围 0~1")}）</div>
       <div class="switch-row">
         <span class="sw-label">🔎 ${t("主动搜索记忆门槛")} <i class="info-icon">!<span class="tip">${t("主 agent 主动调用搜索记忆工具时的语义相似度门槛，取值范围 0~1。分数低于该门槛的记忆不会被返回；数值越大越严格、返回的记忆越少。")}</span></i></span>
@@ -1508,6 +1516,7 @@ async function openAdvancedSettings() {
         reasoning_expanded: mask.querySelector("#adv_reasoning").checked,
         tool_call_expanded: mask.querySelector("#adv_tool_call").checked,
         tool_result_expanded: mask.querySelector("#adv_tool_result").checked,
+        show_sub_agent_tools: mask.querySelector("#adv_sub_tools").checked,
         search_memory_threshold: clamp01(mask.querySelector("#adv_search_threshold").value, 0.5),
         attach_memory_threshold: clamp01(mask.querySelector("#adv_attach_threshold").value, 0.7),
       });
@@ -3448,6 +3457,9 @@ function openChatWs(content, proactive = false, subAgent = null, summaryPercent 
     let rafPending = false;
     let lastPhaseKey = "";
     const actorOf = (source) => source === "main" ? t("主 agent") : source.replace(/^sub:/, "");
+    // 流式输出时是否渲染子 agent 的工具调用 / 工具结果（进阶设置，默认开启）。
+    // 后端始终会下发这些事件，这里只决定是否渲染。
+    const showSubTools = !(settingsCache && settingsCache.show_sub_agent_tools === false);
     // 后端会持续下发 {"type":"phase","source","phase"} 精确驱动状态栏；
     // leaveLoading 只是「没收到 phase 时」的兜底：仅在仍处于 loading 时推进。
     const leaveLoading = (next, source) => { if (statusMode === "loading") setStatusIndicator(next, actorOf(source)); };
@@ -3634,18 +3646,27 @@ function openChatWs(content, proactive = false, subAgent = null, summaryPercent 
           }
           break;
         }
-        case "tool_call":
-          leaveLoading("thinking", "main");
-          { let tcHtml = `\n\n🔧 **${t("工具调用")}**: \`${esc(msg.name)}\`\n\n`;
+        case "tool_call": {
+          const isSub = typeof msg.source === "string" && msg.source.startsWith("sub:");
+          if (isSub && !showSubTools) break;
+          leaveLoading("thinking", msg.source || "main");
+          let tcHtml = `\n\n🔧 **${t("工具调用")}**: \`${esc(msg.name)}\`\n\n`;
           if (msg.args && Object.keys(msg.args).length) tcHtml += "```json\n" + JSON.stringify(msg.args, null, 2) + "\n```\n\n";
-          pushMain("tool", tcHtml);
-          schedule(); }
-          break;
-        case "tool_result":
-          leaveLoading("thinking", "main");
-          pushMain("tool_result", `\n✅ **${t("工具结果")}** (\`${esc(msg.name)}\`):\n\n${esc(msg.content)}\n\n`);
+          if (isSub) pushSub(msg.source.replace(/^sub:/, ""), "tool", tcHtml);
+          else pushMain("tool", tcHtml);
           schedule();
           break;
+        }
+        case "tool_result": {
+          const isSub = typeof msg.source === "string" && msg.source.startsWith("sub:");
+          if (isSub && !showSubTools) break;
+          leaveLoading("thinking", msg.source || "main");
+          const rHtml = `\n✅ **${t("工具结果")}** (\`${esc(msg.name)}\`):\n\n${esc(msg.content)}\n\n`;
+          if (isSub) pushSub(msg.source.replace(/^sub:/, ""), "tool_result", rHtml);
+          else pushMain("tool_result", rHtml);
+          schedule();
+          break;
+        }
         case "interrupt": {
           setStatusIndicator("waiting");
           const ans = await askConfirm(msg.prompt || t("请确认"), subAgent ? { pink: true } : null);

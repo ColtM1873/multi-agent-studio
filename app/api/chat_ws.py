@@ -15,8 +15,8 @@
   {"type": "phase", "source": "main"|"sub:<name>",
    "phase": "thinking"|"answering"|"tool_edit"|"delegate"|"tool_wait"}  状态栏阶段
   {"type": "subgraph_start"|"subgraph_end", "name": ...}
-  {"type": "tool_call", "name", "args"}
-  {"type": "tool_result", "name", "content"}
+  {"type": "tool_call", "source": "main"|"sub:<name>", "name", "args"}
+  {"type": "tool_result", "source": "main"|"sub:<name>", "name", "content"}
   {"type": "interrupt", "prompt"}
   {"type": "status", "status": "loading"}  运行时构建中（embedding 模型加载等）
   {"type": "status", "status": "ready"}    运行时已就绪，图/LLM 即将开始
