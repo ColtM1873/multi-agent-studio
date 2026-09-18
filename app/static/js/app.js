@@ -3170,10 +3170,13 @@ async function renderChatView() {
 
   async function send() {
     const raw = input.value;
-    if (!raw.trim() || isRunning) return;
+    if (isRunning) return;
     const userText = raw.replace(/\s+$/, "");
-    const content = (dateInjectAvailable && dateInjectOn)
-      ? datePromptText() + "\n" + userText
+    const injectDate = dateInjectAvailable && dateInjectOn;
+    // 开启日期注入后，允许「只发日期」——输入框为空也可发送
+    if (!userText && !injectDate) return;
+    const content = injectDate
+      ? (userText ? datePromptText() + "\n" + userText : datePromptText())
       : userText;
     setRunning(true);
     currentReplyEl = null;
