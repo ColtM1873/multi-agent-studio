@@ -305,12 +305,17 @@ body {
 
 /* ── modal ──────────────────────────────── */
 .modal-mask { position: fixed; inset: 0; background: rgba(0,0,0,.35); display: flex; align-items: center; justify-content: center; z-index: 1000; }
-.modal { background: var(--surface); border-radius: 16px; padding: 24px; width: 420px; box-shadow: var(--shadow-lg); }
+.modal { background: var(--surface); border-radius: 16px; padding: 24px; width: min(420px, calc(100vw - 32px)); max-width: calc(100vw - 32px); max-height: calc(100vh - 32px); overflow-y: auto; box-shadow: var(--shadow-lg); }
 .modal h3 { margin: 0 0 12px; font-size: 16px; }
 .modal .modal-body { font-size: 14px; line-height: 1.6; color: var(--text); white-space: pre-wrap; }
 .modal .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; flex-wrap: wrap; }
 .modal.modal-pink { background: #fdf0f5; border: 1px solid #f3c4d4; }
 .modal .json-preview { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 12px; font-size: 13px; line-height: 1.5; overflow: auto; max-height: 52vh; white-space: pre; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--text); }
+/* 主界面设置：宽屏分两列，窄屏单列；整体高度受 .modal 的 max-height 约束并可滚动 */
+.modal.settings-modal { width: min(920px, calc(100vw - 32px)); }
+.settings-cols { column-count: 2; column-gap: 28px; }
+.settings-cols > * { break-inside: avoid; }
+@media (max-width: 720px) { .settings-cols { column-count: 1; } }
 
 /* ── 消息统计（横向小字） ───────────────── */
 .msg-stats {

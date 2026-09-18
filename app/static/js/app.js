@@ -1292,8 +1292,9 @@ async function openSettings() {
   const mask = document.createElement("div");
   mask.className = "modal-mask";
   mask.innerHTML = `
-    <div class="modal" style="width:480px;">
+    <div class="modal settings-modal">
       <h3>⚙️ ${t("系统设置")}</h3>
+      <div class="settings-cols">
       <div class="switch-row">
         <span class="sw-label">${t("修改未保存时提醒")} <i class="info-icon">!<span class="tip">${t("编辑 multi-agent 配置时，若做了改动但未保存就离开，弹窗确认。")}</span></i></span>
         <label class="toggle"><input type="checkbox" id="set_warn" ${s.warn_unsaved_changes ? "checked" : ""}><span class="track"></span></label>
@@ -1393,6 +1394,7 @@ async function openSettings() {
           <span class="sw-label">🧩 ${t("历史消息所有类型可编辑")} <i class="info-icon">!<span class="tip">${t("开启后，用户消息、思考过程、工具调用、工具结果都能编辑；关闭时只编辑 AI 回复正文。")}</span></i></span>
           <label class="toggle"><input type="checkbox" id="set_edit_types" ${s.edit_all_message_types ? "checked" : ""}><span class="track"></span></label>
         </div>
+      </div>
       </div>
       <div class="modal-actions" style="justify-content:flex-start; flex-wrap:wrap;">
         <button class="btn small" id="setAdvanced">${t("进阶设置")}</button>
