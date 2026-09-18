@@ -25,20 +25,25 @@ def make_user_input(text: str) -> dict:
     }
 
 
-def make_proactive_summary_input() -> dict:
+def make_proactive_summary_input(summary_percent: float | None = None) -> dict:
     return {
         "messages": [],
         "proactive_summary_requested": True,
+        # 非 None 表示前端已弹「百分比设置框」并确认，图内不再二次确认。
+        "proactive_summary_percent": summary_percent,
         "instructions_for_subagents": {},
         "instructions_ids": {},
         "subagents_reports_submit": {},
     }
 
 
-def make_proactive_summary_input_for_sub_agent(sub_agent_name: str) -> dict:
+def make_proactive_summary_input_for_sub_agent(
+    sub_agent_name: str, summary_percent: float | None = None
+) -> dict:
     return {
         "messages": [],
         "proactive_summary_requested_for_specified_sub_agent": sub_agent_name,
+        "proactive_summary_percent": summary_percent,
         "instructions_for_subagents": {},
         "instructions_ids": {},
         "subagents_reports_submit": {},
@@ -147,6 +152,7 @@ class ChatManager:
             checkpointer=checkpointer,
             memory_attach=settings.memory_attach,
             num_memories_attached=settings.num_memories_attached,
+            default_summary_percent=settings.summary_token_percent,
         )
         return AgentRuntime(config, graph, stack)
 
@@ -204,4 +210,17 @@ class ChatManager:
         config = self.config_store.load(agent_id)
         return await threads_service.get_subgraph_messages_exact(
             config.checkpoint_conn_string, thread_id, node_name
+        )
+
+    async def history_token_usage(
+        self, agent_id: str, thread_id: str, sub_agent: str | None = None
+    ) -> int:
+        """当前历史消息的 token 总数（取最后一条 AIMessage 的 usage_metadata.total_tokens）。
+
+        与图内 proactive_summary_get_usage_count 的取法保持一致，供前端百分比设置框
+        预估「压缩前 / 压缩后」的 token 数量。
+        """
+        config = self.config_store.load(agent_id)
+        return await threads_service.get_history_token_usage(
+            config.checkpoint_conn_string, thread_id, sub_agent
         )

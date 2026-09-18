@@ -2,8 +2,10 @@
 
 客户端→服务端消息：
   {"type": "send", "content": "..."}   发送一轮消息
-  {"type": "proactive_summarize"}      触发主动全量总结（主 agent）
-  {"type": "proactive_summarize_sub", "sub_agent": "..."}  触发子 agent 主动全量总结
+  {"type": "proactive_summarize", "percent": 20}           触发主动全量总结（主 agent）
+  {"type": "proactive_summarize_sub", "sub_agent": "...", "percent": 20}
+                                                          触发子 agent 主动全量总结
+                                                          （percent 缺省 / 非法时走默认或图内确认）
   {"type": "resume", "value": "yes"}   回复 interrupt 中断
   {"type": "stop"}                     关闭
 
@@ -38,6 +40,17 @@ from app.services.chat import (
 )
 
 router = APIRouter()
+
+
+def _to_percent(value) -> float | None:
+    """解析前端传来的总结百分比；非法 / 缺省返回 None（走默认或图内确认）。"""
+    if value is None:
+        return None
+    try:
+        percent = float(value)
+    except (TypeError, ValueError):
+        return None
+    return percent if percent > 0 else None
 
 
 def _format_build_error(e: Exception) -> str:
@@ -90,7 +103,12 @@ async def chat_ws(websocket: WebSocket, agent_id: str, thread_id: str):
         resume_future = asyncio.get_running_loop().create_future()
         return await resume_future
 
-    async def _run(content: str, proactive: bool = False, sub_agent: str | None = None):
+    async def _run(
+        content: str,
+        proactive: bool = False,
+        sub_agent: str | None = None,
+        summary_percent: float | None = None,
+    ):
         import os
 
         html_files: list[str] = []
@@ -106,9 +124,11 @@ async def chat_ws(websocket: WebSocket, agent_id: str, thread_id: str):
 
         try:
             if sub_agent:
-                user_input = make_proactive_summary_input_for_sub_agent(sub_agent)
+                user_input = make_proactive_summary_input_for_sub_agent(
+                    sub_agent, summary_percent
+                )
             elif proactive:
-                user_input = make_proactive_summary_input()
+                user_input = make_proactive_summary_input(summary_percent)
             else:
                 user_input = make_user_input(content)
             final_state = await runtime.run(
@@ -155,13 +175,19 @@ async def chat_ws(websocket: WebSocket, agent_id: str, thread_id: str):
                 if current_run and not current_run.done():
                     await emit({"type": "error", "message": "上一轮仍在运行"})
                     continue
-                current_run = asyncio.create_task(_run("", proactive=True))
+                current_run = asyncio.create_task(
+                    _run("", proactive=True, summary_percent=_to_percent(data.get("percent")))
+                )
             elif mtype == "proactive_summarize_sub":
                 if current_run and not current_run.done():
                     await emit({"type": "error", "message": "上一轮仍在运行"})
                     continue
                 current_run = asyncio.create_task(
-                    _run("", sub_agent=data.get("sub_agent", ""))
+                    _run(
+                        "",
+                        sub_agent=data.get("sub_agent", ""),
+                        summary_percent=_to_percent(data.get("percent")),
+                    )
                 )
             elif mtype == "edit":
                 if current_run and not current_run.done():

@@ -19,7 +19,11 @@ def get_settings():
 async def put_settings(body: Settings):
     old = load_settings(config_store._dir)
     save_settings(config_store._dir, body)
-    # 记忆吸附相关变更会影响图编译，需全量失效重建
-    if old.memory_attach != body.memory_attach or old.num_memories_attached != body.num_memories_attached:
+    # 记忆吸附、默认总结百分比在构建图时被闭包捕获，变更后需全量失效重建
+    if (
+        old.memory_attach != body.memory_attach
+        or old.num_memories_attached != body.num_memories_attached
+        or old.summary_token_percent != body.summary_token_percent
+    ):
         await chat_manager.invalidate_all()
     return body.model_dump()

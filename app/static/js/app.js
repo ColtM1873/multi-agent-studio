@@ -238,6 +238,13 @@ const I18N_EN = {
   "消息目录": "Message directory",
   "主动全量总结": "Proactive Full Summary",
   "主动全量总结失败": "Proactive summary failed",
+  "默认总结百分比": "Default summary percentage",
+  "全量总结时，提示模型把历史压缩到的目标比例（占历史 token 的百分比）。默认与推荐 20%（即五分之一），数值越小越省 token。": "When doing a full summary, the target ratio (as a percentage of history tokens) the model is told to compress to. Default and recommended: 20% (one fifth). Smaller values save more tokens.",
+  "主动总结时手动设置总结百分比": "Set summary percentage manually on proactive summary",
+  "开启后，点击「主动全量总结」会先弹出百分比设置框，可为本次总结单独指定压缩比例；关闭时直接使用上面的默认总结百分比。": "When enabled, clicking 'Proactive Full Summary' first opens a percentage dialog so you can set the compression ratio for this summary; when disabled, the default summary percentage above is used directly.",
+  "请设置本次总结的目标百分比（占当前历史 token 的比例）。": "Set the target percentage for this summary (as a share of the current history tokens).",
+  "将 {total} tokens 数量的历史消息压缩为 {target} tokens": "Compress {total} tokens of history into {target} tokens",
+  "开始总结": "Start summary",
   "添加 MCP": "Add MCP",
   "添加子 agent": "Add sub-agent",
   "清空历史时保留最近几轮对话。": "Keep the most recent turns when clearing history.",
@@ -467,6 +474,52 @@ function askConfirm(prompt, opts) {
       </div>`;
     document.body.appendChild(mask);
     mask.querySelectorAll("[data-v]").forEach(b => b.onclick = () => { resolve(b.dataset.v); mask.remove(); });
+  });
+}
+
+/* 主动总结：百分比设置弹窗（输入框 + 滑条 + 压缩前后 token 预览）
+   返回用户选定的百分比；取消返回 null。 */
+function askSummaryPercent(defaultPercent, totalTokens) {
+  return new Promise(resolve => {
+    const min = 1, max = 100;
+    const clamp = v => Math.min(max, Math.max(min, Math.round(+v || 0)));
+    let pct = clamp(defaultPercent || 20);
+    const fmt = n => Number(n || 0).toLocaleString();
+    const targetOf = p => Math.round((+totalTokens || 0) * p / 100);
+    const mask = document.createElement("div");
+    mask.className = "modal-mask";
+    mask.innerHTML = `
+      <div class="modal" style="width:440px;">
+        <h3>📝 ${t("主动全量总结")}</h3>
+        <div class="modal-body">${t("请设置本次总结的目标百分比（占当前历史 token 的比例）。")}</div>
+        <div class="summary-percent-row">
+          <input type="number" id="sumPctInput" min="${min}" max="${max}" step="1" value="${pct}"><span class="pct-suffix">%</span>
+        </div>
+        <input type="range" id="sumPctRange" min="${min}" max="${max}" step="1" value="${pct}" class="summary-percent-range">
+        <div class="summary-token-preview" id="sumTokenPreview"></div>
+        <div class="modal-actions">
+          <button class="btn" id="sumPctCancel">${t("取消")}</button>
+          <button class="btn primary" id="sumPctStart">${t("开始总结")}</button>
+        </div>
+      </div>`;
+    document.body.appendChild(mask);
+    const input = mask.querySelector("#sumPctInput");
+    const range = mask.querySelector("#sumPctRange");
+    const preview = mask.querySelector("#sumTokenPreview");
+    const updatePreview = () => {
+      preview.textContent = t("将 {total} tokens 数量的历史消息压缩为 {target} tokens")
+        .replace("{total}", fmt(+totalTokens || 0))
+        .replace("{target}", fmt(targetOf(pct)));
+    };
+    input.oninput = () => {
+      const v = +input.value;
+      if (isFinite(v)) { pct = clamp(v); range.value = pct; updatePreview(); }
+    };
+    input.onchange = () => { pct = clamp(input.value); input.value = pct; range.value = pct; updatePreview(); };
+    range.oninput = () => { pct = clamp(range.value); input.value = pct; updatePreview(); };
+    mask.querySelector("#sumPctCancel").onclick = () => { mask.remove(); resolve(null); };
+    mask.querySelector("#sumPctStart").onclick = () => { mask.remove(); resolve(pct); };
+    updatePreview();
   });
 }
 
@@ -1236,6 +1289,14 @@ async function openSettings() {
         <label class="toggle"><input type="checkbox" id="set_autoscroll" ${s.auto_scroll_on_send !== false ? "checked" : ""}><span class="track"></span></label>
       </div>
       <div class="switch-row">
+        <span class="sw-label">${t("默认总结百分比")} <i class="info-icon">!<span class="tip">${t("全量总结时，提示模型把历史压缩到的目标比例（占历史 token 的百分比）。默认与推荐 20%（即五分之一），数值越小越省 token。")}</span></i></span>
+        <span class="sw-inline"><input type="number" id="set_summary_pct" min="1" max="100" value="${s.summary_token_percent ?? 20}"><span class="pct-suffix">%</span></span>
+      </div>
+      <div class="switch-row">
+        <span class="sw-label">${t("主动总结时手动设置总结百分比")} <i class="info-icon">!<span class="tip">${t("开启后，点击「主动全量总结」会先弹出百分比设置框，可为本次总结单独指定压缩比例；关闭时直接使用上面的默认总结百分比。")}</span></i></span>
+        <label class="toggle"><input type="checkbox" id="set_summary_custom" ${s.proactive_summary_custom_percent ? "checked" : ""}><span class="track"></span></label>
+      </div>
+      <div class="switch-row">
         <span class="sw-label">${t("裸公式识别")} <i class="info-icon">!<span class="tip">${t("模型偶尔不带 $ 或 \\( 分隔符直接输出公式（如 s_{t+1}=f(s_t,a_t)）。开启后自动识别并渲染，适合科研 / 数理场景；日常场景建议关闭，以免误判普通文本。")}</span></i></span>
         <label class="toggle"><input type="checkbox" id="set_baremath" ${s.bare_math_detect ? "checked" : ""}><span class="track"></span></label>
       </div>
@@ -1340,6 +1401,8 @@ async function openSettings() {
         edit_any_history: mask.querySelector("#set_edit_any").checked,
         edit_all_message_types: mask.querySelector("#set_edit_types").checked,
         auto_scroll_on_send: mask.querySelector("#set_autoscroll").checked,
+        summary_token_percent: Math.min(100, Math.max(1, +mask.querySelector("#set_summary_pct").value || 20)),
+        proactive_summary_custom_percent: mask.querySelector("#set_summary_custom").checked,
       });
       mask.remove();
       toast(t("设置已保存"));
@@ -2460,10 +2523,7 @@ async function renderChatView() {
   $("#rZoomOut").onclick = () => { changeReasoningZoom(-10); updateReasoningZoomLabel(); };
   $("#rZoomIn").onclick = () => { changeReasoningZoom(10); updateReasoningZoomLabel(); };
   $("#msgDirBtn").onclick = (e) => toggleMsgDrawer(e);
-  $("#proactiveSummaryBtn").onclick = () => {
-    if (sel.value) triggerSubAgentProactiveSummary(sel.value);
-    else triggerProactiveSummary();
-  };
+  $("#proactiveSummaryBtn").onclick = () => openProactiveSummary();
 
   /* ================= 编辑模式 ================= */
   let editModeOn = false;
@@ -3070,12 +3130,32 @@ async function renderChatView() {
     }
   }
 
-  async function triggerProactiveSummary() {
+  async function openProactiveSummary() {
+    const sub = sel.value;
+    const custom = !!(settingsCache && settingsCache.proactive_summary_custom_percent);
+    if (!custom) {
+      if (sub) triggerSubAgentProactiveSummary(sub);
+      else triggerProactiveSummary();
+      return;
+    }
+    let total = 0;
+    try {
+      const q = sub ? `?sub_agent=${encodeURIComponent(sub)}` : "";
+      const r = await api(`/api/agents/${encodeURIComponent(S.agentId)}/threads/${encodeURIComponent(S.threadId)}/token-usage${q}`);
+      total = (r && r.total_tokens) || 0;
+    } catch (e) { /* 取不到 token 数就按 0 估算，不阻断流程 */ }
+    const pct = await askSummaryPercent((settingsCache && settingsCache.summary_token_percent) || 20, total);
+    if (pct == null) return;
+    if (sub) triggerSubAgentProactiveSummary(sub, pct);
+    else triggerProactiveSummary(pct);
+  }
+
+  async function triggerProactiveSummary(summaryPercent = null) {
     if (isRunning) return;
     setRunning(true, "loading");
     currentReplyEl = null;
     appendReplyHeader();
-    const ok = await openChatWs("", true);
+    const ok = await openChatWs("", true, null, summaryPercent);
     if (ok) {
       // 原地刷新历史，避免整页 render() 造成闪屏
       currentReplyEl = null;
@@ -3098,13 +3178,13 @@ async function renderChatView() {
     }
   }
 
-  async function triggerSubAgentProactiveSummary(subAgent) {
+  async function triggerSubAgentProactiveSummary(subAgent, summaryPercent = null) {
     if (isRunning) return;
     if (!subAgent) { toast(t("请先选择要总结的子 agent"), true); return; }
     setRunning(true, "loading");
     currentReplyEl = null;
     appendReplyHeader();
-    const ok = await openChatWs("", false, subAgent);
+    const ok = await openChatWs("", false, subAgent, summaryPercent);
     if (ok) {
       currentReplyEl = null;
       try {
@@ -3226,7 +3306,7 @@ function appendReplyHeader() {
   }
 }
 
-function openChatWs(content, proactive = false, subAgent = null) {
+function openChatWs(content, proactive = false, subAgent = null, summaryPercent = null) {
   return new Promise((resolve) => {
     const proto = location.protocol === "https:" ? "wss" : "ws";
     ws = new WebSocket(`${proto}://${location.host}/api/agents/${encodeURIComponent(S.agentId)}/threads/${encodeURIComponent(S.threadId)}/chat`);
@@ -3375,8 +3455,8 @@ function openChatWs(content, proactive = false, subAgent = null) {
     }
 
     ws.onopen = () => ws.send(JSON.stringify(
-      subAgent ? { type: "proactive_summarize_sub", sub_agent: subAgent }
-        : proactive ? { type: "proactive_summarize" }
+      subAgent ? { type: "proactive_summarize_sub", sub_agent: subAgent, percent: summaryPercent }
+        : proactive ? { type: "proactive_summarize", percent: summaryPercent }
           : { type: "send", content }
     ));
 

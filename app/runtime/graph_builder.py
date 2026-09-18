@@ -34,6 +34,18 @@ SEARCH_MEMORY_THRESHOLD = 0.5
 ATTACH_MEMORY_THRESHOLD = 0.7
 
 
+def _resolve_summary_percent(state, default_percent: float) -> float:
+    """优先用「本次主动总结」指定的百分比，否则回退全局默认。"""
+    percent = state.get("proactive_summary_percent")
+    if percent is None:
+        return default_percent
+    try:
+        percent = float(percent)
+    except (TypeError, ValueError):
+        return default_percent
+    return percent if percent > 0 else default_percent
+
+
 async def _try_capture_snapshot(runnable_config, conn_string: str, agent_id: str) -> None:
     """在真正清空历史前保存一份快照；任何异常都吞掉，绝不影响总结主流程。"""
     try:
@@ -125,6 +137,7 @@ async def build_sub_agent(
     checkpoint_conn_string: str,
     agent_id: str,
     state_type,
+    default_summary_percent: float = 20.0,
 ) -> CompiledStateGraph:
     """构建单个子 agent 的子图（checkpointer=True）。"""
     sub_agent_name = spec.name
@@ -177,13 +190,18 @@ async def build_sub_agent(
     async def final_summarization_prompt(state, config: RunnableConfig):
         await _try_capture_snapshot(config, checkpoint_conn_string, agent_id)
         usage_count = state[history_token_measure_key]
-        summary_prompt = summary_prompt_generator(usage_count=usage_count , proactive_flush= False)
+        summary_prompt = summary_prompt_generator(usage_count=usage_count , proactive_flush= False,
+                                                  summary_percent=default_summary_percent)
         return {state_messages_key: [HumanMessage(content=summary_prompt)]}
     
     async def proactive_final_summarization_prompt(state, config: RunnableConfig):
         await _try_capture_snapshot(config, checkpoint_conn_string, agent_id)
         usage_count = state[history_token_measure_key]
-        summary_prompt = summary_prompt_generator(usage_count=usage_count , proactive_flush= True)
+        summary_prompt = summary_prompt_generator(
+            usage_count=usage_count,
+            proactive_flush=True,
+            summary_percent=_resolve_summary_percent(state, default_summary_percent),
+        )
         return {state_messages_key: [HumanMessage(content=summary_prompt)]}
 
 
@@ -273,6 +291,9 @@ async def build_sub_agent(
 
 
     async def proactive_summary_confirm(state):
+        # 前端已弹「百分比设置框」并确认过时，直接进入总结，不再二次 interrupt。
+        if state.get("proactive_summary_percent") is not None:
+            return Command(goto="proactive_summary_get_usage_count")
         user_opinion = interrupt(f"是否对子agent,{sub_agent_name},进行主动全量总结？注意：会剥离目前所有会话历史（除了设置的保留会话轮数）。")
         if user_opinion == "yes":
             return Command(goto="proactive_summary_get_usage_count")
@@ -421,6 +442,7 @@ async def build_world(
     mcp_client_factory=None,
     memory_attach: bool = False,
     num_memories_attached: int = 3,
+    default_summary_percent: float = 20.0,
 ) -> CompiledStateGraph:
     """构建 Supervisor-Worker 主图（等价于原来的 TheWorld）。
 
@@ -479,6 +501,7 @@ async def build_world(
                 snapshot_conn_string,
                 snapshot_agent_id,
                 state_type,
+                default_summary_percent=default_summary_percent,
             )
         )
 
@@ -634,13 +657,18 @@ async def build_world(
     async def final_summarization_prompt(state, config: RunnableConfig):
         await _try_capture_snapshot(config, snapshot_conn_string, snapshot_agent_id)
         usage_count = state["current_history_token_volume"]
-        summary_prompt = summary_prompt_generator(usage_count=usage_count , proactive_flush= False)
+        summary_prompt = summary_prompt_generator(usage_count=usage_count , proactive_flush= False,
+                                                  summary_percent=default_summary_percent)
         return {"messages": [HumanMessage(content=summary_prompt)]}
-
+    
     async def proactive_final_summarization_prompt(state, config: RunnableConfig):
         await _try_capture_snapshot(config, snapshot_conn_string, snapshot_agent_id)
         usage_count = state["current_history_token_volume"]
-        summary_prompt = summary_prompt_generator(usage_count=usage_count , proactive_flush= True)
+        summary_prompt = summary_prompt_generator(
+            usage_count=usage_count,
+            proactive_flush=True,
+            summary_percent=_resolve_summary_percent(state, default_summary_percent),
+        )
         return {"messages": [HumanMessage(content=summary_prompt)]}
     
     async def final_history_flush(state): 
@@ -802,6 +830,9 @@ async def build_world(
 
 
     async def proactive_summary_confirm(state):
+        # 前端已弹「百分比设置框」并确认过时，直接进入总结，不再二次 interrupt。
+        if state.get("proactive_summary_percent") is not None:
+            return Command(goto="proactive_summary_get_usage_count")
         user_opinion = interrupt("是否进行主动全量总结？注意：会剥离目前所有会话历史（除了设置的保留会话轮数）。")
         if user_opinion == "yes":
             return Command(goto="proactive_summary_get_usage_count")

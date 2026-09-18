@@ -227,6 +227,28 @@ async def get_subgraph_messages_exact(conn_string: str, thread_id: str, node_nam
     return channel_values.get("messages", [])
 
 
+def _last_ai_usage_tokens(messages: list) -> int:
+    """取最后一条 AIMessage 的 usage_metadata.total_tokens（与图内口径一致）。"""
+    from langchain_core.messages import AIMessage
+
+    for msg in reversed(messages or []):
+        if isinstance(msg, AIMessage):
+            meta = msg.usage_metadata or {}
+            return int(meta.get("total_tokens", 0) or 0)
+    return 0
+
+
+async def get_history_token_usage(
+    conn_string: str, thread_id: str, node_name: str | None = None
+) -> int:
+    """当前历史消息的 token 总数；node_name 为空时取主图，否则取该子 agent 的精确 namespace。"""
+    if node_name:
+        messages = await get_subgraph_messages_exact(conn_string, thread_id, node_name)
+    else:
+        messages = await get_main_thread_messages(conn_string, thread_id)
+    return _last_ai_usage_tokens(messages)
+
+
 async def get_subgraph_history_by_node(
     conn_string: str,
     thread_id: str,

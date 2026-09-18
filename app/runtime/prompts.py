@@ -1,14 +1,22 @@
 """通用 prompt 常量（与 various_prompts.py 一致，作为 app 包自包含副本）。"""
 
-history_to_summary = 5
+# 全量总结时目标 summary 占历史 token 的默认比例（百分比）。
+# 默认 20%，即原来的 history_to_summary = 5（五分之一）；用户可在系统设置里调整。
+DEFAULT_SUMMARY_PERCENT = 20
 
 summary_prompt_prefix =  "<primary_objective>\nExtract the highest quality/most relevant context from the entire conversation history."
 
-def summary_prompt_generator (usage_count : int , proactive_flush : bool):
-   count_for_history = None
-   count_for_summary = None
-   numerical_unit_for_history = None
-   numerical_unit_for_summary = None
+
+def _format_token_amount(value : int):
+   """把 token 数量折算成「万 / 千 / 原值」的显示形式，返回 (数值, 单位)。"""
+   if value >= 10000:
+      return value // 10000, "万"
+   if value >= 1000:
+      return value // 1000, "千"
+   return value, ""
+
+
+def summary_prompt_generator (usage_count : int , proactive_flush : bool , summary_percent : float = DEFAULT_SUMMARY_PERCENT):
    prompt1 = None
    prompt2 = None
    if not proactive_flush:
@@ -57,23 +65,19 @@ Please carefully read over the entire conversation history, and extract the most
 Respond ONLY with the extracted context. Do not include any additional information, or text before or after the extracted context.
 """
 
-   if usage_count >= 10000:
-      count_for_history = usage_count // 10000
-      numerical_unit_for_history = "万"
-      if usage_count // history_to_summary >= 10000:
-         count_for_summary = usage_count // ( 10000 * history_to_summary)
-         numerical_unit_for_summary = "万"
-      elif usage_count // history_to_summary >= 1000:
-         count_for_summary = usage_count // ( 1000 * history_to_summary)
-         numerical_unit_for_summary = "千"
-   elif usage_count >= 1000:
-      count_for_history = usage_count // 1000
-      numerical_unit_for_history = "千"
-      if usage_count // history_to_summary >= 1000:
-         count_for_summary = usage_count // ( 1000 * history_to_summary)
-         numerical_unit_for_summary = "千"
-   if not count_for_summary or not count_for_history:
+   try:
+      percent = float(summary_percent)
+   except (TypeError, ValueError):
+      percent = DEFAULT_SUMMARY_PERCENT
+   if percent <= 0:
+      percent = DEFAULT_SUMMARY_PERCENT
+   target_count = int(usage_count * percent / 100)
+
+   if usage_count < 1000 or target_count < 1:
       return summary_prompt
+
+   count_for_history, numerical_unit_for_history = _format_token_amount(usage_count)
+   count_for_summary, numerical_unit_for_summary = _format_token_amount(target_count)
 
    length_prompt = f"""
 鉴于整个会话长度此时已经达到了{count_for_history}{numerical_unit_for_history}tokens，因此请在总结时不要忌惮长度太长。输出大篇幅的总结是被鼓励的，否则不足以覆盖如此长的会话历史。具体来说，{count_for_summary}{numerical_unit_for_summary}tokens长度的总结都是可以接受的。

@@ -46,6 +46,11 @@ class Settings(BaseModel):
     edit_all_message_types: bool = False
     # 发送消息后自动跳到最新输出并跟随流式（鼠标上滑可停止跟随），默认开启
     auto_scroll_on_send: bool = True
+    # 全量总结默认压缩比例（百分比）：目标 summary 占历史 token 的比例。
+    # 默认 20%（即原来的 history_to_summary = 5，五分之一），越小越省 token。
+    summary_token_percent: int = 20
+    # 主动全量总结时是否弹窗让用户为本次总结单独设置压缩百分比，默认关闭。
+    proactive_summary_custom_percent: bool = False
 
 
 def settings_path(config_dir: Path | str) -> Path:

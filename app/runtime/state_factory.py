@@ -32,6 +32,9 @@ SHARED_FIELDS = {
     "subagents_reports_submit": Annotated[dict[str, Any], merge_dicts],
     "instructions_for_subagents": Annotated[dict[str, Any], merge_dicts],
     "request_to_edit_msg_in_the_past" : dict[str , Any] | None,
+    # 主动全量总结时用户为「本次总结」单独指定的压缩百分比；
+    # None 表示未指定（走全局默认 / 保留确认弹窗）。父子图共享，故放这里。
+    "proactive_summary_percent" : float | None,
 }
 
 
@@ -51,6 +54,7 @@ def make_main_state() -> type:
         extracted_summary_ai_msg_as_str : str
         proactive_summary_requested : bool
         proactive_summary_requested_for_specified_sub_agent : str | None
+        proactive_summary_percent : float | None
         request_to_edit_msg_in_the_past : dict[str , Any] | None
     return MainAgentState
 

@@ -56,6 +56,14 @@ async def thread_history(agent_id: str, thread_id: str):
     return {"markdown": md}
 
 
+@router.get("/{thread_id}/token-usage")
+async def thread_token_usage(agent_id: str, thread_id: str, sub_agent: str | None = None):
+    """当前历史消息的 token 总数（主动总结百分比设置框用）。"""
+    _load(agent_id)
+    total = await chat_manager.history_token_usage(agent_id, thread_id, sub_agent)
+    return {"total_tokens": total}
+
+
 @router.get("/{thread_id}/subgraphs")
 async def list_subgraphs(agent_id: str, thread_id: str):
     _load(agent_id)

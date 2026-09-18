@@ -405,6 +405,15 @@ body {
 .toggle input:checked + .track { background: var(--primary); }
 .toggle input:checked + .track::before { transform: translateX(18px); }
 
+/* ── 主动总结百分比设置 ─────────────────── */
+.sw-inline { display: flex; align-items: center; gap: 4px; }
+.sw-inline input[type="number"] { width: 80px; }
+.pct-suffix { font-size: 13px; color: var(--text-muted); }
+.summary-percent-row { display: flex; align-items: center; gap: 6px; margin: 12px 0 4px; }
+.summary-percent-row input[type="number"] { width: 100px; }
+.summary-percent-range { width: 100%; margin: 6px 0; accent-color: var(--primary); }
+.summary-token-preview { font-size: 13px; color: var(--text-muted); margin-top: 6px; line-height: 1.5; }
+
 /* 模型配置块 */
 .model-block { display: contents; }
 .model-source-card {
