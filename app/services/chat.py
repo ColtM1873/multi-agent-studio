@@ -153,6 +153,8 @@ class ChatManager:
             memory_attach=settings.memory_attach,
             num_memories_attached=settings.num_memories_attached,
             default_summary_percent=settings.summary_token_percent,
+            search_memory_threshold=settings.search_memory_threshold,
+            attach_memory_threshold=settings.attach_memory_threshold,
         )
         return AgentRuntime(config, graph, stack)
 

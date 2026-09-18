@@ -249,6 +249,12 @@ const I18N_EN = {
   "请设置本次总结的目标百分比（占当前历史 token 的比例）。": "Set the target percentage for this summary (as a share of the current history tokens).",
   "将 {total} tokens 数量的历史消息压缩为 {target} tokens": "Compress {total} tokens of history into {target} tokens",
   "开始总结": "Start summary",
+  "记忆检索相似度门槛": "Memory retrieval similarity thresholds",
+  "取值范围 0~1": "Range 0~1",
+  "主动搜索记忆门槛": "Proactive memory search threshold",
+  "主 agent 主动调用搜索记忆工具时的语义相似度门槛，取值范围 0~1。分数低于该门槛的记忆不会被返回；数值越大越严格、返回的记忆越少。": "Semantic similarity threshold when the main agent proactively calls the memory search tool, range 0~1. Memories scoring below it are not returned; larger values are stricter and return fewer memories.",
+  "自动吸附记忆门槛": "Automatic memory attach threshold",
+  "收到用户消息时自动检索并吸附相关记忆的语义相似度门槛，取值范围 0~1。分数低于该门槛的记忆不会被吸附；数值越大越严格、吸附的记忆越少。": "Semantic similarity threshold for automatically retrieving and attaching relevant memories on an incoming user message, range 0~1. Memories scoring below it are not attached; larger values are stricter and attach fewer memories.",
   "添加 MCP": "Add MCP",
   "添加子 agent": "Add sub-agent",
   "清空历史时保留最近几轮对话。": "Keep the most recent turns when clearing history.",
@@ -1440,6 +1446,15 @@ async function openAdvancedSettings() {
         <span class="sw-label">✅ ${t("工具结果")} <i class="info-icon">!<span class="tip">${t("历史浏览时，工具结果板块默认展开还是折叠。")}</span></i></span>
         <label class="toggle"><input type="checkbox" id="adv_tool_result" ${s.tool_result_expanded ? "checked" : ""}><span class="track"></span></label>
       </div>
+      <div class="muted" style="margin:10px 0 2px;">${t("记忆检索相似度门槛")}（${t("取值范围 0~1")}）</div>
+      <div class="switch-row">
+        <span class="sw-label">🔎 ${t("主动搜索记忆门槛")} <i class="info-icon">!<span class="tip">${t("主 agent 主动调用搜索记忆工具时的语义相似度门槛，取值范围 0~1。分数低于该门槛的记忆不会被返回；数值越大越严格、返回的记忆越少。")}</span></i></span>
+        <span class="sw-inline"><input type="number" id="adv_search_threshold" min="0" max="1" step="0.05" value="${s.search_memory_threshold ?? 0.5}"></span>
+      </div>
+      <div class="switch-row">
+        <span class="sw-label">📎 ${t("自动吸附记忆门槛")} <i class="info-icon">!<span class="tip">${t("收到用户消息时自动检索并吸附相关记忆的语义相似度门槛，取值范围 0~1。分数低于该门槛的记忆不会被吸附；数值越大越严格、吸附的记忆越少。")}</span></i></span>
+        <span class="sw-inline"><input type="number" id="adv_attach_threshold" min="0" max="1" step="0.05" value="${s.attach_memory_threshold ?? 0.7}"></span>
+      </div>
       <div class="modal-actions">
         <button class="btn" id="advCancel">${t("取消")}</button>
         <button class="btn primary" id="advSave">${t("保存")}</button>
@@ -1449,11 +1464,14 @@ async function openAdvancedSettings() {
   mask.querySelector("#advCancel").onclick = () => mask.remove();
   mask.querySelector("#advSave").onclick = async () => {
     try {
+      const clamp01 = (v, def) => { const n = parseFloat(v); return Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : def; };
       await saveSettings({
         ...s,
         reasoning_expanded: mask.querySelector("#adv_reasoning").checked,
         tool_call_expanded: mask.querySelector("#adv_tool_call").checked,
         tool_result_expanded: mask.querySelector("#adv_tool_result").checked,
+        search_memory_threshold: clamp01(mask.querySelector("#adv_search_threshold").value, 0.5),
+        attach_memory_threshold: clamp01(mask.querySelector("#adv_attach_threshold").value, 0.7),
       });
       mask.remove();
       toast(t("设置已保存"));

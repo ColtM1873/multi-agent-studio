@@ -53,6 +53,10 @@ class Settings(BaseModel):
     summary_token_percent: int = 20
     # 主动全量总结时是否弹窗让用户为本次总结单独设置压缩百分比，默认关闭。
     proactive_summary_custom_percent: bool = False
+    # 主动搜索记忆（read_memory 工具）的语义相似度门槛，取值范围 0~1，越大越严格。
+    search_memory_threshold: float = 0.5
+    # 自动吸附记忆的相似度门槛，取值范围 0~1，越大越严格。
+    attach_memory_threshold: float = 0.7
 
 
 def settings_path(config_dir: Path | str) -> Path:

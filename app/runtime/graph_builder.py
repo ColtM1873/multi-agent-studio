@@ -443,6 +443,8 @@ async def build_world(
     memory_attach: bool = False,
     num_memories_attached: int = 3,
     default_summary_percent: float = 20.0,
+    search_memory_threshold: float = SEARCH_MEMORY_THRESHOLD,
+    attach_memory_threshold: float = ATTACH_MEMORY_THRESHOLD,
 ) -> CompiledStateGraph:
     """构建 Supervisor-Worker 主图（等价于原来的 TheWorld）。
 
@@ -532,7 +534,7 @@ async def build_world(
         outcome = await store.asearch(store_namespace, query=query, limit=number_of_retrieval)
         memories = ""
         for piece in outcome:
-            if piece.score is None or piece.score < SEARCH_MEMORY_THRESHOLD:
+            if piece.score is None or piece.score < search_memory_threshold:
                 continue
             for key, value in piece.value.items():
                 memories = memories + "\n" + key + ":" + value
@@ -548,7 +550,7 @@ async def build_world(
         outcome = await store.asearch(store_namespace, query=query, limit=number_of_retrieval)
         memories = ""
         for piece in outcome:
-            if piece.score is None or piece.score < ATTACH_MEMORY_THRESHOLD:
+            if piece.score is None or piece.score < attach_memory_threshold:
                 continue
             for key, value in piece.value.items():
                 memories = memories + "\n" + key + ":" + value
