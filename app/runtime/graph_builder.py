@@ -470,6 +470,7 @@ async def build_world(
     default_summary_percent: float = 20.0,
     search_memory_threshold: float = SEARCH_MEMORY_THRESHOLD,
     attach_memory_threshold: float = ATTACH_MEMORY_THRESHOLD,
+    pdf_table_extraction: bool = True,
 ) -> CompiledStateGraph:
     """构建 Supervisor-Worker 主图（等价于原来的 TheWorld）。
 
@@ -500,7 +501,7 @@ async def build_world(
     snapshot_agent_id = config.agent_id
 
     pass_in_tools = build_file_tools(
-        main_spec.file_tools.root_dir, main_spec.file_tools.pdf_table_extraction
+        main_spec.file_tools.root_dir, pdf_table_extraction
     )
 
     sub_agent_specs_list = config.sub_agents

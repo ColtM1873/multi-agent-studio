@@ -19,13 +19,14 @@ def get_settings():
 async def put_settings(body: Settings):
     old = load_settings(config_store._dir)
     save_settings(config_store._dir, body)
-    # 记忆吸附、默认总结百分比、记忆相似度门槛在构建图时被闭包捕获，变更后需全量失效重建
+    # 记忆吸附、默认总结百分比、记忆相似度门槛、PDF 表格提取在构建图时被闭包捕获，变更后需全量失效重建
     if (
         old.memory_attach != body.memory_attach
         or old.num_memories_attached != body.num_memories_attached
         or old.summary_token_percent != body.summary_token_percent
         or old.search_memory_threshold != body.search_memory_threshold
         or old.attach_memory_threshold != body.attach_memory_threshold
+        or old.pdf_table_extraction != body.pdf_table_extraction
     ):
         await chat_manager.invalidate_all()
     return body.model_dump()

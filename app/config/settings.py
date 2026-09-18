@@ -59,6 +59,9 @@ class Settings(BaseModel):
     search_memory_threshold: float = 0.5
     # 自动吸附记忆的相似度门槛，取值范围 0~1，越大越严格。
     attach_memory_threshold: float = 0.7
+    # 读取 PDF 时是否用「基于框线」的表格提取（pdfplumber），并把表格嵌回正文。
+    # 关闭后 PDF 只返回正文文本。影响图编译（file tools 闭包），默认开启。
+    pdf_table_extraction: bool = True
 
 
 def settings_path(config_dir: Path | str) -> Path:

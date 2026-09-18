@@ -156,6 +156,7 @@ class ChatManager:
             default_summary_percent=settings.summary_token_percent,
             search_memory_threshold=settings.search_memory_threshold,
             attach_memory_threshold=settings.attach_memory_threshold,
+            pdf_table_extraction=settings.pdf_table_extraction,
         )
         return AgentRuntime(config, graph, stack)
 

@@ -24,7 +24,7 @@
     - **PDF 专用**：用 `pdfminer` 抽正文（空格与双栏阅读顺序可靠），再用 `pdfplumber` 的
       `find_tables()`（**基于框线**）抽表格，把表格按位置嵌回正文。这样既避免 MarkItDown 的
       pdfplumber 启发式（`x_tolerance=3`）把字距小的正文粘连成 `Publishedasaconferencepaper...`，
-      又能拿到真正的线框表格。可用 `FileToolsConfig.pdf_table_extraction` 关闭表格提取。
+      又能拿到真正的线框表格。可用全局设置 `Settings.pdf_table_extraction` 关闭表格提取。
     - **其余格式**：用 MarkItDown 转 Markdown。
   - **转换副本落盘**：读取**专有格式**（`_PROPRIETARY_DOC_EXTENSIONS`）时，会把完整转换结果
     **落成相同目录下的同名 `.md` 副本**（如 `the-new-SOTA-paper.pdf` → `the-new-SOTA-paper.md`；
