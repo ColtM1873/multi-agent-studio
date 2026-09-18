@@ -918,8 +918,12 @@ async def build_world(
         return node_list
 
     async def consume_submitted_reports(state):
+        # 子 agent 编辑请求的收尾：编辑就是「改写+停」（见 ID25 §8.2），完成后必须
+        # 直接 END。这里必须用 Command 做动态路由，且不能再给该节点挂静态边——
+        # 否则静态边会覆盖 Command(goto=END)，导致编辑后仍跑一次 call_main_llm，
+        # 甚至让主 agent 重新调用子 agent、触发子图总结而把刚编辑的内容清掉。
         if (  state.get("request_to_edit_msg_in_the_past") 
-            and state["request_to_edit_msg_in_the_past"]["request_for_subagent"] ):
+            and state["request_to_edit_msg_in_the_past"].get("request_for_subagent") ):
             return Command(goto = END,
                            update = { "request_to_edit_msg_in_the_past" : None})
         tool_message_list_to_return = []
@@ -935,7 +939,13 @@ async def build_world(
                     )
                 )
         initialized_reports_dict = {agent_name: None for agent_name in reports_dict}
-        return {"messages": tool_message_list_to_return, "subagents_reports_submit": initialized_reports_dict}
+        return Command(
+            goto="call_main_llm",
+            update={
+                "messages": tool_message_list_to_return,
+                "subagents_reports_submit": initialized_reports_dict,
+            },
+        )
 
     async def query_to_produce_html(state):
         user_opinion = interrupt("你需要对所给内容输出一份html报告吗？")
@@ -1030,7 +1040,6 @@ async def build_world(
             {"proactive_done": END, "consume_reports": "consume_submitted_reports"},
         )
     main_agent_builder.add_edge("tool_node_front", "consume_submitted_reports")
-    main_agent_builder.add_edge("consume_submitted_reports", "call_main_llm")
     main_agent_builder.add_conditional_edges("produce_html_call_llm", should_continue_main)
     main_agent_builder.add_edge("tool_node", "produce_html_call_llm")
 

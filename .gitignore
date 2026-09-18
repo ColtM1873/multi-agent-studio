@@ -31,3 +31,6 @@ inner_docs/
 md2print/__pycache__/
 md2print/example.html
 md2print/example.md
+
+# inner_docs 使用方案文档（本地保留，不入库）
+INNER_DOCS_GUIDE.md
