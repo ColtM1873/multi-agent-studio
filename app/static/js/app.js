@@ -184,6 +184,10 @@ const I18N_EN = {
   "是": "Yes",
   "显示名称，创建后不可改（与历史会话绑定）。": "Display name, cannot be changed after creation (bound to conversation history).",
   "显示输入示例（灰色占位字）": "Show input examples (gray placeholders)",
+  "显示「注入当前日期」按钮": "Show the \"Inject current date\" button",
+  "开启后，聊天输入框右侧会出现「注入当前日期」按钮；开启该按钮后，发送消息时会在用户消息前面拼接当前日期。": "When enabled, an \"Inject current date\" button appears next to the chat input. When that button is on, the current date is prepended to your message when sending.",
+  "注入当前日期": "Inject current date",
+  "开启后，发送消息时会在用户消息前面拼接当前日期。": "When enabled, the current date is prepended to your message when sending.",
   "暂无会话": "No conversations yet",
   "所有会话均已隐藏": "All conversations are hidden",
   "隐藏": "Hide",
@@ -1289,6 +1293,10 @@ async function openSettings() {
         <label class="toggle"><input type="checkbox" id="set_autoscroll" ${s.auto_scroll_on_send !== false ? "checked" : ""}><span class="track"></span></label>
       </div>
       <div class="switch-row">
+        <span class="sw-label">${t("显示「注入当前日期」按钮")} <i class="info-icon">!<span class="tip">${t("开启后，聊天输入框右侧会出现「注入当前日期」按钮；开启该按钮后，发送消息时会在用户消息前面拼接当前日期。")}</span></i></span>
+        <label class="toggle"><input type="checkbox" id="set_date_inject" ${s.show_date_inject_button !== false ? "checked" : ""}><span class="track"></span></label>
+      </div>
+      <div class="switch-row">
         <span class="sw-label">${t("默认总结百分比")} <i class="info-icon">!<span class="tip">${t("全量总结时，提示模型把历史压缩到的目标比例（占历史 token 的百分比）。默认与推荐 20%（即五分之一），数值越小越省 token。")}</span></i></span>
         <span class="sw-inline"><input type="number" id="set_summary_pct" min="1" max="100" value="${s.summary_token_percent ?? 20}"><span class="pct-suffix">%</span></span>
       </div>
@@ -1401,6 +1409,7 @@ async function openSettings() {
         edit_any_history: mask.querySelector("#set_edit_any").checked,
         edit_all_message_types: mask.querySelector("#set_edit_types").checked,
         auto_scroll_on_send: mask.querySelector("#set_autoscroll").checked,
+        show_date_inject_button: mask.querySelector("#set_date_inject").checked,
         summary_token_percent: Math.min(100, Math.max(1, +mask.querySelector("#set_summary_pct").value || 20)),
         proactive_summary_custom_percent: mask.querySelector("#set_summary_custom").checked,
       });
@@ -2462,8 +2471,9 @@ async function renderChatView() {
       <button id="pinBtn" class="pin-btn" title="${t("跟随最新输出 · 按住可拖动")}">📌</button>
       <div class="input-pane" id="inputPane">
         <div class="input-toolbar"><span class="muted" id="inputHint">${t("输入消息（Enter 发送，Shift+Enter 换行）")}</span><div class="spacer" style="flex:1;"></div></div>
+        <div class="date-inject-hint" id="dateInjectHint" style="display:none;"></div>
         <textarea id="msgInput" placeholder="${t("输入消息…")}"></textarea>
-        <div class="input-actions"><button class="btn" id="stopBtn" style="display:none;">${t("停止")}</button><button class="btn primary" id="sendBtn">${t("发送")}</button></div>
+        <div class="input-actions"><button class="btn" id="dateInjectBtn" style="display:none;" title="${t("开启后，发送消息时会在用户消息前面拼接当前日期。")}"><span class="date-dot"></span>${t("注入当前日期")}</button><button class="btn" id="stopBtn" style="display:none;">${t("停止")}</button><button class="btn primary" id="sendBtn">${t("发送")}</button></div>
       </div>
       <div id="doneBubble" class="done-bubble done-bubble-float" style="display:none;"></div>
     </div>`;
@@ -2512,6 +2522,38 @@ async function renderChatView() {
     const editBtn = $("#editModeBtn");
     if (editBtn) editBtn.style.display = (settings.edit_mode_enabled !== false) ? "" : "none";
   }
+
+  /* ================= 注入当前日期 ================= */
+  const dateInjectAvailable = !(settings && settings.show_date_inject_button === false);
+  let dateInjectOn = localStorage.getItem("date-inject-on") === "1";
+  function datePromptText() {
+    const now = new Date();
+    const y = now.getFullYear(), m = now.getMonth(), d = now.getDate();
+    if (lang === "zh") {
+      return `今天是${y}年${String(m + 1).padStart(2, "0")}月${String(d).padStart(2, "0")}日。`;
+    }
+    const months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+    return `Today's date is ${months[m]} ${d}, ${y}.`;
+  }
+  function refreshDateInjectUI() {
+    const btn = $("#dateInjectBtn"), hint = $("#dateInjectHint");
+    if (btn) btn.classList.toggle("on", dateInjectOn);
+    if (hint) {
+      if (dateInjectOn) { hint.textContent = datePromptText(); hint.style.display = ""; }
+      else { hint.style.display = "none"; }
+    }
+  }
+  const dateInjectBtn = $("#dateInjectBtn");
+  if (dateInjectBtn) {
+    dateInjectBtn.style.display = dateInjectAvailable ? "" : "none";
+    dateInjectBtn.onclick = () => {
+      dateInjectOn = !dateInjectOn;
+      localStorage.setItem("date-inject-on", dateInjectOn ? "1" : "0");
+      refreshDateInjectUI();
+    };
+  }
+  refreshDateInjectUI();
+
   const zoomPctEl = $("#zoomPct");
   const updateZoomLabel = () => { if (zoomPctEl) zoomPctEl.textContent = zoomPct + "%"; };
   updateZoomLabel();
@@ -3111,7 +3153,10 @@ async function renderChatView() {
   async function send() {
     const raw = input.value;
     if (!raw.trim() || isRunning) return;
-    const content = raw.replace(/\s+$/, "");
+    const userText = raw.replace(/\s+$/, "");
+    const content = (dateInjectAvailable && dateInjectOn)
+      ? datePromptText() + "\n" + userText
+      : userText;
     setRunning(true);
     currentReplyEl = null;
     appendReplyHeader();
@@ -3123,7 +3168,7 @@ async function renderChatView() {
     const ok = await openChatWs(content);
     setRunning(false);
     if (ok) {
-      if (input.value.replace(/\s+$/, "") === content) input.value = "";
+      if (input.value.replace(/\s+$/, "") === userText) input.value = "";
       showDoneBubble();
     } else {
       toast(t("发送失败，消息已保留在输入框"), true);

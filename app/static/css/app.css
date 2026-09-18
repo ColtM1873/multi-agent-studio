@@ -176,6 +176,15 @@ body {
   font-family: inherit; font-size: 14px; color: var(--text);
 }
 .input-pane .input-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 6px 14px 10px; }
+.input-pane .date-inject-hint {
+  padding: 0 14px 2px; font-size: 12px; color: #9ca3af;
+  user-select: text; -webkit-user-select: text; white-space: pre-wrap;
+}
+.input-actions .date-dot {
+  display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+  background: #9ca3af; margin-right: 6px; vertical-align: middle;
+}
+#dateInjectBtn.on .date-dot { background: #22c55e; }
 
 .gutter { background: var(--border); opacity: .6; cursor: row-resize; }
 .gutter:hover, .gutter.gutter-horizontal:hover { opacity: 1; background: var(--primary); }

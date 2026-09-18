@@ -22,6 +22,8 @@ class Settings(BaseModel):
     send_key: str = "enter"
     newline_key: str = "shift_enter"
     show_placeholders: bool = True
+    # 聊天输入框是否显示「注入当前日期」按钮（开启后可在会话里选择把当前日期拼接到用户消息前）
+    show_date_inject_button: bool = True
     # 裸公式识别：无分隔符公式的启发式渲染，默认关闭以避开日常场景误判
     bare_math_detect: bool = False
     # 激进公式渲染：在裸公式识别基础上支持单字符上下标/希腊字母/数学符号，
