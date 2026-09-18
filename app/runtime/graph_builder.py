@@ -71,13 +71,32 @@ def make_sub_agent_tool(name: str, description: str) -> StructuredTool:
     )
 
 
+def describe_mcp_error(exc: BaseException) -> str:
+    """把 anyio TaskGroup 的 ExceptionGroup 剥到最内层，给出可读错误。"""
+    current: BaseException = exc
+    seen: set[int] = set()
+    while True:
+        seen.add(id(current))
+        subs = getattr(current, "exceptions", None)
+        if not subs:
+            break
+        nxt = next((s for s in subs if id(s) not in seen), None)
+        if nxt is None:
+            break
+        current = nxt
+    return f"{type(current).__name__}: {current}"
+
+
 def build_mcp_client(servers: list[MCPServerConfig]) -> MultiServerMCPClient:
     config: dict[str, Any] = {}
     for s in servers:
         if s.transport == "http":
-            config[s.name] = {"transport": "http", "url": s.url}
+            entry: dict[str, Any] = {"transport": "http", "url": s.url}
+            if s.headers:
+                entry["headers"] = s.headers
+            config[s.name] = entry
         else:
-            entry: dict[str, Any] = {"transport": "stdio", "command": s.command}
+            entry = {"transport": "stdio", "command": s.command}
             if s.args:
                 entry["args"] = s.args
             if s.env:
@@ -147,14 +166,20 @@ async def build_sub_agent(
     flush_threshold = spec.summary.flush_history_tokenwise
     reserve_rounds = spec.summary.reserve_message_round
 
-    tools = None
-    try:
-        tools = await tools_mcp_client.get_tools()
-    except Exception as e:
-        servers = ", ".join(f"{s.name} ({s.transport})" for s in spec.mcp_servers)
+    tools: list[Any] = []
+    failed: list[str] = []
+    error_details: list[str] = []
+    for server in spec.mcp_servers:
+        try:
+            tools.extend(await tools_mcp_client.get_tools(server_name=server.name))
+        except Exception as e:  # noqa: BLE001
+            failed.append(f"{server.name} ({server.transport})")
+            error_details.append(f"{server.name}: {describe_mcp_error(e)}")
+    if failed:
         raise RuntimeError(
-            f"子 agent [{sub_agent_name}] 的 MCP 服务器连接失败：[{servers}]，请确认这些服务已启动。原始错误: {e}"
-        ) from e
+            f"子 agent [{sub_agent_name}] 的 MCP 服务器连接失败：[{', '.join(failed)}]，"
+            f"请确认这些服务已启动且鉴权配置正确。原始错误: {' | '.join(error_details)}"
+        )
     model = _init_model(llm_provider_name, model_api_key, spec.model)
     model_with_tools = model.bind_tools(tools)
     tools_by_name = {tool.name: tool for tool in tools}

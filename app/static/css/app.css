@@ -145,8 +145,8 @@ body {
 }
 .subagent-box .sub-head { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
 .subagent-box .sub-head .name { font-weight: 700; font-size: 15px; }
-.mcp-row { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
-.mcp-row input, .mcp-row select { flex: 1; }
+.mcp-row { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; flex-wrap: wrap; }
+.mcp-row input, .mcp-row select { flex: 1; min-width: 110px; }
 
 /* ── Thread 表格 ───────────────────────── */
 .thread-table { width: 100%; border-collapse: collapse; background: var(--surface); border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow); }
@@ -310,6 +310,7 @@ body {
 .modal .modal-body { font-size: 14px; line-height: 1.6; color: var(--text); white-space: pre-wrap; }
 .modal .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; flex-wrap: wrap; }
 .modal.modal-pink { background: #fdf0f5; border: 1px solid #f3c4d4; }
+.modal .json-preview { background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 12px; font-size: 13px; line-height: 1.5; overflow: auto; max-height: 52vh; white-space: pre; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--text); }
 
 /* ── 消息统计（横向小字） ───────────────── */
 .msg-stats {

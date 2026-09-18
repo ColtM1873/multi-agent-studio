@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import time
+from typing import Any
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.config.edits import EditRuleViolation, apply_edits
 from app.config.models import MultiAgentConfig
 from app.config.store import slugify
 from app.deps import chat_manager, config_store
+from app.runtime.graph_builder import describe_mcp_error
 from app.runtime.state_factory import (
     assign_extracted_summary_ai_msg_keys,
     assign_history_token_measure_keys,
@@ -28,6 +30,7 @@ class CheckDbBody(BaseModel):
 class CheckMcpBody(BaseModel):
     transport: str = "http"
     url: str | None = None
+    headers: dict[str, str] = Field(default_factory=dict)
     command: str | None = None
 
 
@@ -156,11 +159,19 @@ async def mcp_check(body: CheckMcpBody):
         found = bool(body.command) and shutil.which(body.command) is not None
         return {"ok": found, "error": "" if found else f"未找到命令: {body.command}"}
 
-    import httpx
+    if not body.url:
+        return {"ok": False, "error": "缺少 URL"}
 
+    # 真正发起一次 MCP 握手（initialize + tools/list），
+    # 而不是裸 HTTP GET——后者对 401/400 也会亮绿灯，无法反映鉴权/协议问题。
+    from langchain_mcp_adapters.client import MultiServerMCPClient
+
+    conn: dict[str, Any] = {"transport": "http", "url": body.url, "timeout": 10}
+    if body.headers:
+        conn["headers"] = body.headers
     try:
-        async with httpx.AsyncClient(timeout=5) as client:
-            await client.get(body.url or "", headers={"Accept": "application/json, text/event-stream"})
-        return {"ok": True, "error": ""}
-    except Exception as e:
-        return {"ok": False, "error": str(e)}
+        client = MultiServerMCPClient({"mcp_check": conn})
+        tools = await client.get_tools()
+        return {"ok": True, "error": "", "tools": [t.name for t in tools]}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "error": describe_mcp_error(e)}

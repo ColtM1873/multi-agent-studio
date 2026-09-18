@@ -29,7 +29,7 @@ from app.runtime.state_factory import (
 class _FakeMCPClient:
     """离线验证用：不连接真实 MCP 服务器。"""
 
-    async def get_tools(self):
+    async def get_tools(self, *, server_name=None):
         return []
 
 

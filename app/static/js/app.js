@@ -274,6 +274,11 @@ const I18N_EN = {
   "移除": "Remove",
   "系统设置": "Settings",
   "URL（http）": "URL (http)",
+  "请求头（http），如 Authorization: Bearer xxx；按第一个冒号切成 dict，多个用 ; 分隔，勿加引号": "Headers (http), e.g. Authorization: Bearer xxx; split at the first colon into a dict, separate multiple with ;, no quotes",
+  "查看 JSON 格式示例": "View JSON example",
+  "JSON 格式示例": "JSON example",
+  "该 MCP 表项在配置文件（configs/*.json）中的存储形态：": "How this MCP entry is stored in the config file (configs/*.json):",
+  "关闭": "Close",
   "组成：": "Consists of:",
   "编辑": "Edit",
   "编辑 multi-agent 配置时，若做了改动但未保存就离开，弹窗确认。": "When editing a multi-agent config, prompt on leaving with unsaved changes.",
@@ -533,11 +538,44 @@ function askSummaryPercent(defaultPercent, totalTokens) {
   });
 }
 
-async function checkMcp(transport, url, command) {
+function parseHeaders(str) {
+  const out = {};
+  (str || "").split(/[;\n]/).forEach(part => {
+    const i = part.indexOf(":");
+    if (i <= 0) return;
+    const k = part.slice(0, i).trim();
+    const v = part.slice(i + 1).trim();
+    if (k) out[k] = v;
+  });
+  return out;
+}
+
+function headersToStr(h) {
+  return Object.entries(h || {}).map(([k, v]) => `${k}: ${v}`).join("; ");
+}
+
+async function checkMcp(transport, url, command, headers) {
   try {
-    const r = await api("/api/mcp-check", { method: "POST", body: JSON.stringify({ transport, url: url || null, command: command || null }) });
-    return r.ok;
-  } catch (e) { return false; }
+    return await api("/api/mcp-check", { method: "POST", body: JSON.stringify({ transport, url: url || null, headers: headers || {}, command: command || null }) });
+  } catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
+}
+
+/* 展示某个 MCP 表项保存到配置文件后的 JSON 形态 */
+function showMcpJsonExample(obj) {
+  const mask = document.createElement("div");
+  mask.className = "modal-mask";
+  mask.innerHTML = `
+    <div class="modal" style="width:560px;max-height:82vh;overflow:auto;">
+      <h3>${t("JSON 格式示例")}</h3>
+      <div class="muted" style="margin-bottom:8px;">${t("该 MCP 表项在配置文件（configs/*.json）中的存储形态：")}</div>
+      <pre class="json-preview">${esc(JSON.stringify(obj, null, 2))}</pre>
+      <div class="modal-actions">
+        <button class="btn primary" id="mcpJsonClose">${t("关闭")}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(mask);
+  mask.querySelector("#mcpJsonClose").onclick = () => mask.remove();
+  mask.onclick = e => { if (e.target === mask) mask.remove(); };
 }
 
 /* 系统设置 */
@@ -2067,7 +2105,7 @@ function subAgentBox(s, key, canEdit) {
 }
 
 function mcpRow(m, key) {
-  m = m || { name: "", transport: "http", url: "", command: "", args: [] };
+  m = m || { name: "", transport: "http", url: "", command: "", args: [], headers: {} };
   const div = document.createElement("div");
   div.className = "mcp-row";
   div.innerHTML = `
@@ -2078,17 +2116,37 @@ function mcpRow(m, key) {
       <option value="stdio" ${m.transport === "stdio" ? "selected" : ""}>stdio</option>
     </select>
     <input data-m="url" placeholder="${t("URL（http）")}" value="${esc(m.url || "")}">
+    <input data-m="headers" placeholder="${t("请求头（http），如 Authorization: Bearer xxx；按第一个冒号切成 dict，多个用 ; 分隔，勿加引号")}" title="${t("请求头（http），如 Authorization: Bearer xxx；按第一个冒号切成 dict，多个用 ; 分隔，勿加引号")}" value="${esc(headersToStr(m.headers))}">
     <input data-m="command" placeholder="${t("命令（stdio）")}" value="${esc(m.command || "")}">
     <input data-m="args" placeholder="${t("参数，逗号分隔（stdio）")}" value="${esc((m.args || []).join(","))}">
+    <button class="btn small" data-act="json" type="button" title="${t("查看 JSON 格式示例")}">{ }</button>
     <button class="btn danger small" data-act="rm" type="button">×</button>`;
   div.querySelector('[data-act="rm"]').onclick = () => div.remove();
+  div.querySelector('[data-act="json"]').onclick = () => {
+    const nameV = div.querySelector('[data-m="name"]').value;
+    const trV = div.querySelector('[data-m="transport"]').value;
+    const urlV = div.querySelector('[data-m="url"]').value;
+    const cmdV = div.querySelector('[data-m="command"]').value;
+    const argsV = div.querySelector('[data-m="args"]').value;
+    showMcpJsonExample({
+      name: nameV,
+      transport: trV,
+      url: urlV || null,
+      headers: parseHeaders(div.querySelector('[data-m="headers"]').value),
+      command: cmdV || null,
+      args: argsV ? argsV.split(",").map(x => x.trim()).filter(Boolean) : [],
+      env: {},
+    });
+  };
 
   const dot = div.querySelector("[data-dot]");
   const refresh = async () => {
     dot.className = "dot gray";
-    const t = div.querySelector('[data-m="transport"]').value;
-    const ok = await checkMcp(t, div.querySelector('[data-m="url"]').value, div.querySelector('[data-m="command"]').value);
-    dot.className = "dot " + (ok ? "green" : "red");
+    dot.title = t("点击检测健康状态");
+    const tr = div.querySelector('[data-m="transport"]').value;
+    const res = await checkMcp(tr, div.querySelector('[data-m="url"]').value, div.querySelector('[data-m="command"]').value, parseHeaders(div.querySelector('[data-m="headers"]').value));
+    dot.className = "dot " + (res.ok ? "green" : "red");
+    if (!res.ok && res.error) dot.title = res.error;
   };
   dot.onclick = refresh;
   refresh();
@@ -2101,6 +2159,7 @@ function collectSubAgent(box) {
     name: r.querySelector('[data-m="name"]').value,
     transport: r.querySelector('[data-m="transport"]').value,
     url: r.querySelector('[data-m="url"]').value || null,
+    headers: parseHeaders(r.querySelector('[data-m="headers"]').value),
     command: r.querySelector('[data-m="command"]').value || null,
     args: r.querySelector('[data-m="args"]').value ? r.querySelector('[data-m="args"]').value.split(",").map(x => x.trim()).filter(Boolean) : [],
   }));

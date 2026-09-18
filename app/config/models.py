@@ -88,6 +88,9 @@ class MCPServerConfig(BaseModel):
     name: str
     transport: Literal["http", "stdio"] = "http"
     url: str | None = None
+    # http transport 的请求头，例如 {"Authorization": "Bearer <token>"}。
+    # 远端 MCP（如 GitHub 的 https://api.githubcopilot.com/mcp/）需要鉴权时必填。
+    headers: dict[str, str] = Field(default_factory=dict)
     command: str | None = None
     args: list[str] = Field(default_factory=list)
     env: dict[str, str] = Field(default_factory=dict)
