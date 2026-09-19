@@ -96,6 +96,7 @@ body {
   cursor: pointer;
 }
 .agent-card:hover { transform: translateY(-3px); box-shadow: var(--shadow-lg); }
+.agent-card.agent-hidden { opacity: .5; }
 .agent-card h3 { margin: 0 0 6px; font-size: 18px; }
 .agent-card .meta { color: var(--text-muted); font-size: 13px; line-height: 1.6; }
 .agent-card .meta code { background: #f1f5f9; padding: 1px 6px; border-radius: 5px; font-size: 12px; }

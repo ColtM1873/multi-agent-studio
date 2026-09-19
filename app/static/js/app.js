@@ -195,6 +195,8 @@ const I18N_EN = {
   "取消隐藏": "Unhide",
   "已隐藏": "Hidden",
   "显示隐藏对话": "Show hidden conversations",
+  "显示隐藏multi-agent配置": "Show hidden multi-agent configs",
+  "所有 multi-agent 配置均已隐藏": "All multi-agent configs are hidden",
   "暂无用户消息": "No user messages yet",
   "有未保存的修改，确定离开？": "You have unsaved changes. Leave anyway?",
   "本地模型缓存路径，留空用 Hugging Face 默认缓存。": "Local model cache path; leave empty to use Hugging Face's default cache.",
@@ -1230,6 +1232,8 @@ async function renderAgents() {
   app.innerHTML = topbar();
   const view = document.createElement("div");
   view.className = "view";
+  view.style.display = "flex";
+  view.style.flexDirection = "column";
   app.appendChild(view);
   view.innerHTML = `
     <div style="display:flex;align-items:center;margin-bottom:20px;gap:12px;">
@@ -1240,54 +1244,103 @@ async function renderAgents() {
       <button class="btn small" id="editDefaultBtn">${t("编辑默认配置")}</button>
       <button class="btn primary" id="newBtn">+ ${t("新建 multi-agent")}</button>
     </div>
-    <div id="agentGrid" class="card-grid"><div class="muted">${t("加载中…")}</div></div>`;
+    <div id="agentGridWrap" style="flex:1;overflow:auto;min-height:0;">
+      <div id="agentGrid" class="card-grid"><div class="muted">${t("加载中…")}</div></div>
+    </div>
+    <div class="snapshot-drawer" id="agentsFooter">
+      <button class="showhidden-zone" id="showHiddenAgentsZone" type="button" style="display:none;border-left:none;">
+        <span class="sw-label" id="showHiddenAgentsLabel"></span>
+        <span class="toggle"><input type="checkbox" id="showHiddenAgentsChk"><span class="track"></span></span>
+      </button>
+    </div>`;
 
   $("#newBtn").onclick = () => { S.editingDefault = false; S.agentId = null; S.view = "editor"; render(); };
   $("#editDefaultBtn").onclick = () => { S.editingDefault = true; S.agentId = null; S.view = "editor"; render(); };
   $("#gearBtn").onclick = () => openSettings();
   $("#langBtn").onclick = () => setLang(lang === "zh" ? "en" : "zh");
 
+  const hiddenKey = "hidden_agents";
+  const showKey = "show_hidden_agents";
+  const hiddenSet = new Set(JSON.parse(localStorage.getItem(hiddenKey) || "[]"));
+
   let agents;
   try { agents = await api("/api/agents"); }
   catch (e) { $("#agentGrid").innerHTML = `<div class="empty"><div class="big">⚠️</div>${esc(e.message)}</div>`; return; }
 
-  if (!agents.length) {
-    $("#agentGrid").innerHTML = `<div class="empty"><div class="big">📦</div>${t("还没有任何 multi-agent 配置")}<br/><br/><button class="btn primary" id="newBtn2">+ ${t("新建 multi-agent")}</button></div>`;
-    const n = $("#newBtn2"); if (n) n.onclick = () => { S.editingDefault = false; S.agentId = null; S.view = "editor"; render(); };
-    return;
-  }
+  // 复用已加载的 agents，仅原地重绘列表，避免整页 flash /「加载中」闪屏
+  function drawAgentsBox() {
+    const showNow = localStorage.getItem(showKey) === "1";
+    const vis = showNow ? agents : agents.filter(a => !hiddenSet.has(a.agent_id));
+    const hiddenCnt = agents.filter(a => hiddenSet.has(a.agent_id)).length;
 
-  $("#agentGrid").innerHTML = agents.map(a => `
-    <div class="agent-card" data-id="${esc(a.agent_id)}">
-      <h3>${esc(a.name)}</h3>
-      <div class="meta">
-        ${t("checkpoint 库")}：<code>${esc(a.postgres.checkpoint_database)}</code><br/>
-        ${t("子 agent")}：${a.sub_agents.length} ${t("个")}（${a.sub_agents.map(s => esc(s.name)).join(t("、")) || t("无")}）<br/>
-        ${t("主模型")}：<code>${esc(a.main_agent.llm_provider_name)}</code>
-      </div>
-      <div class="actions">
-        <button class="btn primary small" data-act="open">${t("打开")}</button>
-        <button class="btn small" data-act="edit">${t("编辑")}</button>
-        <button class="btn small" data-act="default">${t("设为默认")}</button>
-        <button class="btn danger small" data-act="del">${t("删除")}</button>
-      </div>
-    </div>`).join("");
+    if (agents.length) {
+      $("#showHiddenAgentsChk").checked = showNow;
+      $("#showHiddenAgentsLabel").textContent = t("显示隐藏multi-agent配置") + (hiddenCnt ? `（${hiddenCnt}）` : "");
+      $("#showHiddenAgentsZone").style.display = "flex";
+    }
 
-  $$(".agent-card").forEach(card => {
-    const id = card.dataset.id;
-    const name = agents.find(a => a.agent_id === id).name;
-    card.addEventListener("click", e => { if (e.target.closest("button")) return; goThreads(id, name); });
-    $$("button", card).forEach(btn => {
-      btn.onclick = (e) => {
-        e.stopPropagation();
-        const act = btn.dataset.act;
-        if (act === "open") goThreads(id, name);
-        else if (act === "edit") { S.editingDefault = false; S.agentId = id; S.view = "editor"; render(); }
-        else if (act === "default") setDefault(id);
-        else if (act === "del") deleteAgent(id, name);
-      };
+    if (!agents.length) {
+      $("#agentGrid").innerHTML = `<div class="empty"><div class="big">📦</div>${t("还没有任何 multi-agent 配置")}<br/><br/><button class="btn primary" id="newBtn2">+ ${t("新建 multi-agent")}</button></div>`;
+      const n = $("#newBtn2"); if (n) n.onclick = () => { S.editingDefault = false; S.agentId = null; S.view = "editor"; render(); };
+      return;
+    }
+
+    if (!vis.length) {
+      $("#agentGrid").innerHTML = `<div class="empty"><div class="big">📦</div>${t("所有 multi-agent 配置均已隐藏")}</div>`;
+      return;
+    }
+
+    $("#agentGrid").innerHTML = vis.map(a => {
+      const hidden = hiddenSet.has(a.agent_id);
+      return `
+      <div class="agent-card ${hidden ? "agent-hidden" : ""}" data-id="${esc(a.agent_id)}">
+        <h3>${esc(a.name)}${hidden ? ` <span class="hidden-tag">${t("已隐藏")}</span>` : ""}</h3>
+        <div class="meta">
+          ${t("checkpoint 库")}：<code>${esc(a.postgres.checkpoint_database)}</code><br/>
+          ${t("子 agent")}：${a.sub_agents.length} ${t("个")}（${a.sub_agents.map(s => esc(s.name)).join(t("、")) || t("无")}）<br/>
+          ${t("主模型")}：<code>${esc(a.main_agent.llm_provider_name)}</code>
+        </div>
+        <div class="actions">
+          <button class="btn primary small" data-act="open">${t("打开")}</button>
+          <button class="btn small" data-act="edit">${t("编辑")}</button>
+          <button class="btn small" data-act="default">${t("设为默认")}</button>
+          <button class="btn hide small" data-act="hide">${hidden ? t("取消隐藏") : t("隐藏")}</button>
+          <button class="btn danger small" data-act="del">${t("删除")}</button>
+        </div>
+      </div>`;
+    }).join("");
+
+    $$(".agent-card").forEach(card => {
+      const id = card.dataset.id;
+      const name = agents.find(a => a.agent_id === id).name;
+      card.addEventListener("click", e => { if (e.target.closest("button")) return; goThreads(id, name); });
+      $$("button", card).forEach(btn => {
+        btn.onclick = (e) => {
+          e.stopPropagation();
+          const act = btn.dataset.act;
+          if (act === "open") goThreads(id, name);
+          else if (act === "edit") { S.editingDefault = false; S.agentId = id; S.view = "editor"; render(); }
+          else if (act === "default") setDefault(id);
+          else if (act === "hide") {
+            if (hiddenSet.has(id)) hiddenSet.delete(id);
+            else hiddenSet.add(id);
+            localStorage.setItem(hiddenKey, JSON.stringify([...hiddenSet]));
+            drawAgentsBox();
+          }
+          else if (act === "del") deleteAgent(id, name);
+        };
+      });
     });
-  });
+  }
+  drawAgentsBox();
+
+  $("#showHiddenAgentsChk").onchange = (e) => { localStorage.setItem(showKey, e.target.checked ? "1" : "0"); drawAgentsBox(); };
+  $("#showHiddenAgentsZone").onclick = (e) => {
+    e.preventDefault();
+    const chk = $("#showHiddenAgentsChk");
+    chk.checked = !chk.checked;
+    chk.dispatchEvent(new Event("change"));
+  };
 }
 
 async function openSettings() {
