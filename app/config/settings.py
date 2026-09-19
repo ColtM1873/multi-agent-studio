@@ -62,6 +62,10 @@ class Settings(BaseModel):
     # 读取 PDF 时是否用「基于框线」的表格提取（pdfplumber），并把表格嵌回正文。
     # 关闭后 PDF 只返回正文文本。影响图编译（file tools 闭包），默认开启。
     pdf_table_extraction: bool = True
+    # 已输入未发送消息跨 multi-agent 流转：开启后，在任一 multi-agent 输入框输入的内容
+    # 会同步更新所有 multi-agent 的未发送消息缓存（等效共用一个缓存）；关闭则各自独立。
+    # 纯前端同步逻辑，不参与图编译，无需 invalidate_all。默认开启。
+    cross_agent_draft_flow: bool = True
 
 
 def settings_path(config_dir: Path | str) -> Path:

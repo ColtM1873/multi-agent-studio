@@ -216,6 +216,9 @@ const I18N_EN = {
   "开启后默认展开": "Expanded by default when enabled",
   "流式显示子 agent 工具": "Stream sub-agent tools",
   "流式输出时显示的内容": "Content shown during streaming",
+  "输入消息缓存": "Input message cache",
+  "已输入未发送消息跨multi-agent流转": "Sync unsent input across multi-agents",
+  "开启后，你在任意 multi-agent 输入框中输入的内容，会同步更新所有 multi-agent 的未发送消息缓存（等效于共用一个缓存）；关闭后各 multi-agent 独立保存。未发送的消息会持久化到本地，退出程序后下次打开仍会保留。": "When enabled, text you type in any multi-agent input box is synced to all multi-agents' unsent-message caches (equivalent to sharing one cache); when disabled, each multi-agent keeps its own. Unsent text is persisted locally and restored the next time you open the app after quitting.",
   "开启后，流式输出时子 agent 的工具调用与工具结果会像主 agent 一样实时显示；关闭则只显示子 agent 的正文与思考。": "When enabled, a sub-agent's tool calls and tool results stream in real time like the main agent's; when disabled, only the sub-agent's text and reasoning are shown.",
   "字体颜色设置": "Font color settings",
   "正文": "Body text",
@@ -1207,6 +1210,7 @@ function bindBack(cb) { const b = $("#backBtn"); if (b) b.onclick = cb; }
 
 /* ================= 视图调度 ================= */
 function render() {
+  flushCurrentDraft();
   app.innerHTML = "";
   $$(".edit-popup").forEach(p => p.remove());
   isRunning = false; ws = null; currentReplyEl = null; editorDirty = false; statusMode = "idle";
@@ -1500,6 +1504,11 @@ async function openAdvancedSettings() {
         <span class="sw-label">📄 ${t("PDF 表格提取")} <i class="info-icon">!<span class="tip">${t("读取 PDF 时，用基于框线的检测把表格转成 Markdown 并嵌回正文；关闭后只返回正文文本。")}</span></i></span>
         <label class="toggle"><input type="checkbox" id="adv_pdf_tables" ${s.pdf_table_extraction !== false ? "checked" : ""}><span class="track"></span></label>
       </div>
+      <div class="muted" style="margin:10px 0 2px;">${t("输入消息缓存")}</div>
+      <div class="switch-row">
+        <span class="sw-label">💾 ${t("已输入未发送消息跨multi-agent流转")} <i class="info-icon">!<span class="tip">${t("开启后，你在任意 multi-agent 输入框中输入的内容，会同步更新所有 multi-agent 的未发送消息缓存（等效于共用一个缓存）；关闭后各 multi-agent 独立保存。未发送的消息会持久化到本地，退出程序后下次打开仍会保留。")}</span></i></span>
+        <label class="toggle"><input type="checkbox" id="adv_cross_draft" ${s.cross_agent_draft_flow !== false ? "checked" : ""}><span class="track"></span></label>
+      </div>
       <div class="muted" style="margin:10px 0 2px;">${t("记忆检索相似度门槛")}（${t("取值范围 0~1")}）</div>
       <div class="switch-row">
         <span class="sw-label">🔎 ${t("主动搜索记忆门槛")} <i class="info-icon">!<span class="tip">${t("主 agent 主动调用搜索记忆工具时的语义相似度门槛，取值范围 0~1。分数低于该门槛的记忆不会被返回；数值越大越严格、返回的记忆越少。")}</span></i></span>
@@ -1526,6 +1535,7 @@ async function openAdvancedSettings() {
         tool_result_expanded: mask.querySelector("#adv_tool_result").checked,
         show_sub_agent_tools: mask.querySelector("#adv_sub_tools").checked,
         pdf_table_extraction: mask.querySelector("#adv_pdf_tables").checked,
+        cross_agent_draft_flow: mask.querySelector("#adv_cross_draft").checked,
         search_memory_threshold: clamp01(mask.querySelector("#adv_search_threshold").value, 0.5),
         attach_memory_threshold: clamp01(mask.querySelector("#adv_attach_threshold").value, 0.7),
       });
@@ -2527,6 +2537,47 @@ function toggleMsgDrawer(e) {
   btn.appendChild(panel);
 }
 
+/* ================= 未发送消息缓存（draft） ================= */
+// 每个 multi-agent 一条、后端落盘。输入时防抖保存；退出会话 / 关闭浏览器 / 退出托盘程序时兜底落盘。
+const DRAFT_DEBOUNCE_MS = 400;
+let draftFlushFn = null; // 当前聊天视图的「立即落盘」函数，供卸载 / 退出视图时调用
+let draftMemCache = {};  // 会话内内存缓存，避免频繁请求、并规避「落盘后立即读取」的竞态
+
+function draftSyncAll() {
+  return !(settingsCache && settingsCache.cross_agent_draft_flow === false);
+}
+// 后端始终按 per-agent 落盘；这里只是会话内缓存：跨 agent 流转时清空其它条目，强制回后端取同步值
+function draftCacheStore(agentId, text) {
+  if (draftSyncAll()) draftMemCache = {};
+  draftMemCache[agentId] = text;
+}
+async function saveDraft(agentId, text) {
+  draftCacheStore(agentId, text);
+  try {
+    await api(`/api/drafts/${encodeURIComponent(agentId)}`, {
+      method: "PUT",
+      body: JSON.stringify({ text, sync_all: draftSyncAll() }),
+    });
+  } catch (e) { /* 缓存写入失败不应阻断交互 */ }
+}
+function saveDraftKeepalive(agentId, text) {
+  draftCacheStore(agentId, text);
+  try {
+    fetch(`/api/drafts/${encodeURIComponent(agentId)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, sync_all: draftSyncAll() }),
+      keepalive: true,
+    });
+  } catch (e) {}
+}
+function flushCurrentDraft() {
+  try { if (draftFlushFn) draftFlushFn(); } catch (e) {}
+}
+window.addEventListener("beforeunload", flushCurrentDraft);
+window.addEventListener("pagehide", flushCurrentDraft);
+window.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flushCurrentDraft(); });
+
 async function renderChatView() {
   app.innerHTML = topbar(t("返回会话"), () => leaveChatView());
   const view = document.createElement("div");
@@ -2645,6 +2696,31 @@ async function renderChatView() {
     };
   }
   refreshDateInjectUI();
+
+  /* ================= 未发送消息缓存：恢复与保存 ================= */
+  const draftInput = $("#msgInput");
+  let draftTimer = null;
+  if (draftInput) {
+    draftInput.addEventListener("input", () => {
+      clearTimeout(draftTimer);
+      draftTimer = setTimeout(() => { draftTimer = null; saveDraft(S.agentId, draftInput.value); }, DRAFT_DEBOUNCE_MS);
+    });
+    // 退出会话 / 关闭浏览器 / 退出托盘程序时兜底落盘（同步 keepalive，不依赖防抖）
+    draftFlushFn = () => {
+      if (draftTimer) { clearTimeout(draftTimer); draftTimer = null; }
+      saveDraftKeepalive(S.agentId, draftInput.value);
+    };
+    if (draftMemCache[S.agentId] !== undefined) {
+      if (draftMemCache[S.agentId] && !draftInput.value) draftInput.value = draftMemCache[S.agentId];
+    } else {
+      try {
+        const d = await api(`/api/drafts/${encodeURIComponent(S.agentId)}`);
+        const txt = (d && d.text) || "";
+        draftMemCache[S.agentId] = txt;
+        if (txt && !draftInput.value) draftInput.value = txt;
+      } catch (e) { /* 无缓存或读取失败，忽略 */ }
+    }
+  }
 
   const zoomPctEl = $("#zoomPct");
   const updateZoomLabel = () => { if (zoomPctEl) zoomPctEl.textContent = zoomPct + "%"; };
@@ -3049,6 +3125,8 @@ async function renderChatView() {
       if (ans !== "yes") return;
       await exitEditMode();
     }
+    flushCurrentDraft();
+    draftFlushFn = null;
     goThreads(S.agentId, S.agentName);
   }
 
@@ -3263,9 +3341,16 @@ async function renderChatView() {
     const ok = await openChatWs(content);
     setRunning(false);
     if (ok) {
-      if (input.value.replace(/\s+$/, "") === userText) input.value = "";
+      if (input.value.replace(/\s+$/, "") === userText) {
+        input.value = "";
+        if (draftTimer) { clearTimeout(draftTimer); draftTimer = null; }
+        saveDraft(S.agentId, "");
+      }
       showDoneBubble();
     } else {
+      // 发送失败：输入框与缓存都保留
+      if (draftTimer) { clearTimeout(draftTimer); draftTimer = null; }
+      saveDraft(S.agentId, input.value);
       toast(t("发送失败，消息已保留在输入框"), true);
     }
   }

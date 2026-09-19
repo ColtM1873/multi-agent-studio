@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+from contextlib import asynccontextmanager
 
 # huggingface_hub 在 import 时读取这些环境变量一次；先设默认国内镜像并禁用 Xet，
 # 避免 huggingface_hub 被 import 时锁定为官方站 / 走被墙的 Xet CAS（per-config 镜像在 persistence 里动态覆盖）
@@ -23,9 +24,21 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api import agents, chat_ws, downloads, export_html, settings, snapshots, threads
+from app.api import agents, chat_ws, downloads, drafts, export_html, settings, snapshots, threads
+from app.deps import draft_store
 
-app = FastAPI(title="Multi-Agent Studio")
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    yield
+    # 退出托盘程序时兜底把未发送消息缓存再落盘一次
+    try:
+        draft_store.flush()
+    except Exception:
+        pass
+
+
+app = FastAPI(title="Multi-Agent Studio", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -50,6 +63,7 @@ app.include_router(chat_ws.router)
 app.include_router(settings.router)
 app.include_router(downloads.router)
 app.include_router(export_html.router)
+app.include_router(drafts.router)
 
 
 @app.get("/api/health")
