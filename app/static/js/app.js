@@ -197,6 +197,17 @@ const I18N_EN = {
   "显示隐藏对话": "Show hidden conversations",
   "显示隐藏multi-agent配置": "Show hidden multi-agent configs",
   "所有 multi-agent 配置均已隐藏": "All multi-agent configs are hidden",
+  "Multi-Agent配置卡片 设置": "Multi-agent config card settings",
+  "调整主界面 multi-agent 卡片的按钮配色 / 样式、绶带与背景，仅本机生效。": "Adjust button colors/styles, ribbon and background of the home-screen multi-agent cards. Applies to this machine only.",
+  "显示绶带": "Show ribbon",
+  "按钮颜色": "Button colors",
+  "按钮样式": "Button style",
+  "开启 = 颜色底白字，关闭 = 白底框线": "On = solid color with white text, off = white background with outline",
+  "绶带": "Ribbon",
+  "颜色": "Color",
+  "条数": "Count",
+  "卡片背景": "Card background",
+  "背景颜色": "Background color",
   "暂无用户消息": "No user messages yet",
   "有未保存的修改，确定离开？": "You have unsaved changes. Leave anyway?",
   "本地模型缓存路径，留空用 Hugging Face 默认缓存。": "Local model cache path; leave empty to use Hugging Face's default cache.",
@@ -691,6 +702,81 @@ function applyColors() {
     if (v) root.style.setProperty(f.css, v);
     else root.style.removeProperty(f.css);
   }
+}
+
+/* Multi-Agent 配置卡片外观（纯 localStorage，仅本机生效） */
+const CARD_THEME_BLUE = "#4f46e5";
+const CARD_BG_DEF = "#ffffff";
+const CARD_BTN_COLORS = [
+  { key: "card-btn-edit-color", label: "编辑", def: CARD_THEME_BLUE },
+  { key: "card-btn-default-color", label: "设为默认", def: CARD_THEME_BLUE },
+  { key: "card-btn-hide-color", label: "隐藏", def: CARD_THEME_BLUE },
+  { key: "card-btn-danger-color", label: "删除", def: "#dc2626" },
+];
+const CARD_BTN_STYLES = [
+  { key: "card-btn-edit-style", label: "编辑", def: "solid" },
+  { key: "card-btn-default-style", label: "设为默认", def: "outline" },
+  { key: "card-btn-hide-style", label: "隐藏", def: "outline" },
+  { key: "card-btn-danger-style", label: "删除", def: "outline" },
+];
+function cardGet(key, def) { const v = localStorage.getItem(key); return v == null ? def : v; }
+function cardSetOrClear(key, val, def) {
+  if (String(val).toLowerCase() === String(def).toLowerCase()) localStorage.removeItem(key);
+  else localStorage.setItem(key, val);
+}
+function cardRibbonCount() {
+  const n = parseInt(cardGet("card-ribbon-count", "2"), 10);
+  return Math.min(5, Math.max(1, isNaN(n) ? 2 : n));
+}
+function ribbonWidth(n) { return Math.round((18 + 9 * (n - 1)) * 2.828) + 12; }
+function agentRibbonsHTML() {
+  const n = cardRibbonCount();
+  let inner = "";
+  for (let i = 0; i < n; i++) inner += `<i style="--i:${i}"></i>`;
+  return `<div class="agent-ribbons" data-n="${n}" style="--card-ribbon-w:${ribbonWidth(n)}px;">${inner}</div>`;
+}
+function isDarkColor(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || "").trim());
+  if (!m) return false;
+  const v = parseInt(m[1], 16);
+  const r = (v >> 16) & 255, g = (v >> 8) & 255, b = v & 255;
+  return (0.299 * r + 0.587 * g + 0.114 * b) < 140;
+}
+function applyCardSettings() {
+  const root = document.documentElement;
+  const setVar = (name, val) => root.style.setProperty(name, val);
+  setVar("--card-btn-edit", cardGet("card-btn-edit-color", CARD_THEME_BLUE));
+  setVar("--card-btn-default", cardGet("card-btn-default-color", CARD_THEME_BLUE));
+  setVar("--card-btn-hide", cardGet("card-btn-hide-color", CARD_THEME_BLUE));
+  setVar("--card-btn-danger", cardGet("card-btn-danger-color", "#dc2626"));
+  root.dataset.styleEdit = cardGet("card-btn-edit-style", "solid");
+  root.dataset.styleDefault = cardGet("card-btn-default-style", "outline");
+  root.dataset.styleHide = cardGet("card-btn-hide-style", "outline");
+  root.dataset.styleDanger = cardGet("card-btn-danger-style", "outline");
+  setVar("--card-ribbon-color", cardGet("card-ribbon-color", CARD_THEME_BLUE));
+  root.dataset.cardRibbon = cardGet("card-ribbon-show", "1") === "0" ? "0" : "1";
+  const bg = cardGet("card-bg", "");
+  if (bg) {
+    setVar("--card-bg", bg);
+    const dark = isDarkColor(bg);
+    setVar("--card-fg", dark ? "#ffffff" : "#1f2328");
+    setVar("--card-meta", dark ? "rgba(255,255,255,.78)" : "#6b7280");
+    setVar("--card-code-bg", dark ? "rgba(255,255,255,.16)" : "#f1f5f9");
+  } else {
+    root.style.removeProperty("--card-bg");
+    root.style.removeProperty("--card-fg");
+    root.style.removeProperty("--card-meta");
+    root.style.removeProperty("--card-code-bg");
+  }
+  const n = cardRibbonCount();
+  const w = ribbonWidth(n) + "px";
+  $$(".agent-ribbons").forEach(el => {
+    el.style.setProperty("--card-ribbon-w", w);
+    if (+el.dataset.n !== n) {
+      el.dataset.n = n;
+      el.innerHTML = Array.from({ length: n }, (_, i) => `<i style="--i:${i}"></i>`).join("");
+    }
+  });
 }
 
 /* HTML 导出（md2print） */
@@ -1294,6 +1380,7 @@ async function renderAgents() {
       const hidden = hiddenSet.has(a.agent_id);
       return `
       <div class="agent-card ${hidden ? "agent-hidden" : ""}" data-id="${esc(a.agent_id)}">
+        ${agentRibbonsHTML()}
         <h3>${esc(a.name)}${hidden ? ` <span class="hidden-tag">${t("已隐藏")}</span>` : ""}</h3>
         <div class="meta">
           ${t("checkpoint 库")}：<code>${esc(a.postgres.checkpoint_database)}</code><br/>
@@ -1301,10 +1388,10 @@ async function renderAgents() {
           ${t("主模型")}：<code>${esc(a.main_agent.llm_provider_name)}</code>
         </div>
         <div class="actions">
-          <button class="btn edit small" data-act="edit">${t("编辑")}</button>
-          <button class="btn default small" data-act="default">${t("设为默认")}</button>
-          <button class="btn hide small" data-act="hide">${hidden ? t("取消隐藏") : t("隐藏")}</button>
-          <button class="btn danger small" data-act="del">${t("删除")}</button>
+          <button class="btn card-btn card-btn-edit small" data-act="edit">${t("编辑")}</button>
+          <button class="btn card-btn card-btn-default small" data-act="default">${t("设为默认")}</button>
+          <button class="btn card-btn card-btn-hide small" data-act="hide">${hidden ? t("取消隐藏") : t("隐藏")}</button>
+          <button class="btn card-btn card-btn-danger small" data-act="del">${t("删除")}</button>
         </div>
       </div>`;
     }).join("");
@@ -1454,6 +1541,7 @@ async function openSettings() {
       <div class="modal-actions" style="justify-content:flex-start; flex-wrap:wrap;">
         <button class="btn small" id="setAdvanced">${t("进阶设置")}</button>
         <button class="btn small" id="setColors">${t("字体颜色设置")}</button>
+        <button class="btn small" id="setCard">${t("Multi-Agent配置卡片 设置")}</button>
         <button class="btn small" id="setHtmlConfig" style="${s.export_html ? "" : "display:none;"}">${t("HTML 转换配置表")}</button>
       </div>
       <div class="modal-actions" style="margin-top:10px;">
@@ -1492,6 +1580,7 @@ async function openSettings() {
   mask.querySelector("#setCancel").onclick = () => mask.remove();
   mask.querySelector("#setAdvanced").onclick = () => { mask.remove(); openAdvancedSettings(); };
   mask.querySelector("#setColors").onclick = () => { mask.remove(); openColorSettings(); };
+  mask.querySelector("#setCard").onclick = () => { mask.remove(); openCardSettings(); };
   mask.querySelector("#setHtmlConfig").onclick = () => { mask.remove(); openHtmlConfigSettings(); };
   mask.querySelector("#setSave").onclick = async () => {
     try {
@@ -1635,6 +1724,94 @@ async function openColorSettings() {
       if (el) localStorage.setItem(f.key, el.value);
     }
     applyColors();
+    mask.remove();
+    toast(t("设置已保存"));
+  };
+}
+
+async function openCardSettings() {
+  const mask = document.createElement("div");
+  mask.className = "modal-mask";
+  const colorRow = (f) => `
+    <div class="switch-row">
+      <span class="sw-label">${t(f.label)}</span>
+      <span class="sw-inline">
+        <input type="color" id="${f.key}" value="${cardGet(f.key, f.def)}">
+        <button class="btn small" type="button" data-reset="${f.key}" data-def="${f.def}">${t("恢复默认")}</button>
+      </span>
+    </div>`;
+  const styleRow = (f) => `
+    <div class="switch-row">
+      <span class="sw-label">${t(f.label)}</span>
+      <label class="toggle"><input type="checkbox" id="${f.key}" ${cardGet(f.key, f.def) === "solid" ? "checked" : ""}><span class="track"></span></label>
+    </div>`;
+  mask.innerHTML = `
+    <div class="modal card-set-modal" style="width:560px;max-height:82vh;overflow:auto;">
+      <h3>🃏 ${t("Multi-Agent配置卡片 设置")}</h3>
+      <div class="muted" style="margin-bottom:4px;">${t("调整主界面 multi-agent 卡片的按钮配色 / 样式、绶带与背景，仅本机生效。")}</div>
+      <div class="card-set-section">
+        <div class="card-set-title">${t("按钮颜色")}</div>
+        <div class="card-set-body">${CARD_BTN_COLORS.map(colorRow).join("")}</div>
+      </div>
+      <div class="card-set-section">
+        <div class="card-set-title">${t("按钮样式")}（${t("开启 = 颜色底白字，关闭 = 白底框线")}）</div>
+        <div class="card-set-body">${CARD_BTN_STYLES.map(styleRow).join("")}</div>
+      </div>
+      <div class="card-set-section">
+        <div class="card-set-title">${t("绶带")}</div>
+        <div class="card-set-body">
+          <div class="switch-row">
+            <span class="sw-label">🎗 ${t("显示绶带")}</span>
+            <label class="toggle"><input type="checkbox" id="card-ribbon-show" ${cardGet("card-ribbon-show", "1") !== "0" ? "checked" : ""}><span class="track"></span></label>
+          </div>
+          <div class="switch-row">
+            <span class="sw-label">${t("颜色")}</span>
+            <span class="sw-inline">
+              <input type="color" id="card-ribbon-color" value="${cardGet("card-ribbon-color", CARD_THEME_BLUE)}">
+              <button class="btn small" type="button" data-reset="card-ribbon-color" data-def="${CARD_THEME_BLUE}">${t("恢复默认")}</button>
+            </span>
+          </div>
+          <div class="switch-row">
+            <span class="sw-label">${t("条数")}</span>
+            <input type="number" id="card-ribbon-count" min="1" max="5" value="${cardRibbonCount()}">
+          </div>
+        </div>
+      </div>
+      <div class="card-set-section">
+        <div class="card-set-title">${t("卡片背景")}</div>
+        <div class="card-set-body">
+          <div class="switch-row">
+            <span class="sw-label">${t("背景颜色")}</span>
+            <span class="sw-inline">
+              <input type="color" id="card-bg" value="${cardGet("card-bg", CARD_BG_DEF)}">
+              <button class="btn small" type="button" data-reset="card-bg" data-def="${CARD_BG_DEF}">${t("恢复默认")}</button>
+            </span>
+          </div>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn" id="cardCancel">${t("取消")}</button>
+        <button class="btn primary" id="cardSave">${t("保存")}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(mask);
+  mask.querySelector("#cardCancel").onclick = () => mask.remove();
+  mask.querySelectorAll("[data-reset]").forEach(btn => {
+    btn.onclick = () => {
+      const el = mask.querySelector("#" + btn.dataset.reset);
+      if (el) el.value = btn.dataset.def;
+    };
+  });
+  mask.querySelector("#cardSave").onclick = () => {
+    CARD_BTN_COLORS.forEach(f => cardSetOrClear(f.key, mask.querySelector("#" + f.key).value, f.def));
+    CARD_BTN_STYLES.forEach(f => cardSetOrClear(f.key, mask.querySelector("#" + f.key).checked ? "solid" : "outline", f.def));
+    cardSetOrClear("card-ribbon-color", mask.querySelector("#card-ribbon-color").value, CARD_THEME_BLUE);
+    cardSetOrClear("card-bg", mask.querySelector("#card-bg").value, CARD_BG_DEF);
+    const cnt = Math.min(5, Math.max(1, parseInt(mask.querySelector("#card-ribbon-count").value, 10) || 2));
+    cardSetOrClear("card-ribbon-count", String(cnt), "2");
+    if (mask.querySelector("#card-ribbon-show").checked) localStorage.removeItem("card-ribbon-show");
+    else localStorage.setItem("card-ribbon-show", "0");
+    applyCardSettings();
     mask.remove();
     toast(t("设置已保存"));
   };
@@ -2388,8 +2565,8 @@ async function renderThreadsView() {
             <div class="thread-row ${hidden ? "thread-hidden" : ""}" data-tid="${esc(th.thread_id)}">
               <span class="tid">${esc(th.thread_id)}</span>
               <span class="meta"><small>${esc(cpText)}</small><small>${esc(th.last_updated || "")}</small>${hidden ? `<small class="hidden-tag">${t("已隐藏")}</small>` : ""}</span>
-              <button class="btn hide small" data-hide="${esc(th.thread_id)}">${hidden ? t("取消隐藏") : t("隐藏")}</button>
-              <button class="btn danger small" data-del="${esc(th.thread_id)}">${t("删除")}</button>
+              <button class="btn card-btn card-btn-hide small" data-hide="${esc(th.thread_id)}">${hidden ? t("取消隐藏") : t("隐藏")}</button>
+              <button class="btn card-btn card-btn-danger small" data-del="${esc(th.thread_id)}">${t("删除")}</button>
             </div>`;
           }).join("")}
         </div>`;
@@ -2436,7 +2613,7 @@ async function renderThreadsView() {
           <span class="snapshot-name">${esc(s.thread_id)}</span>
           <span class="snapshot-meta">${esc(s.created_at)} · ${s.total_messages} ${t("条消息")}</span>
         </div>
-        <button class="btn danger small" data-snap-del="${esc(s.id)}">${t("删除")}</button>
+        <button class="btn card-btn card-btn-danger small" data-snap-del="${esc(s.id)}">${t("删除")}</button>
       </div>`).join("");
 
     $$("#snapshotList .snapshot-row").forEach(row => {
@@ -3886,4 +4063,5 @@ setInterval(pollDownload, 1000);
 
 /* ================= 启动 ================= */
 applyColors();
+applyCardSettings();
 render();

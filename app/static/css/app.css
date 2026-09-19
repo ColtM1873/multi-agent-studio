@@ -74,10 +74,6 @@ body {
 .btn.danger:hover { background: #fef2f2; }
 .btn.hide { color: var(--primary); border-color: #c7d2fe; }
 .btn.hide:hover { background: #eef2ff; }
-.btn.edit { color: #d97706; border-color: #fde68a; }
-.btn.edit:hover { background: #fffbeb; }
-.btn.default { color: #92400e; border-color: #e7d0b8; }
-.btn.default:hover { background: #fdf6ec; }
 .btn.small { padding: 5px 10px; font-size: 13px; border-radius: 8px; }
 .btn:disabled { opacity: .5; cursor: not-allowed; }
 
@@ -91,7 +87,8 @@ body {
   gap: 20px;
 }
 .agent-card {
-  background: var(--surface);
+  background: var(--card-bg, var(--surface));
+  color: var(--card-fg, var(--text));
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 20px;
@@ -101,25 +98,43 @@ body {
   position: relative;
   overflow: hidden;
 }
-.agent-card::before,
-.agent-card::after {
-  content: "";
-  position: absolute;
-  width: 90px;
-  height: 8px;
-  background: var(--primary);
-  transform: rotate(45deg);
+.agent-ribbons {
+  position: absolute; inset: 0;
+  overflow: hidden; border-radius: inherit;
   pointer-events: none;
 }
-.agent-card::before { top: 14px; right: -27px; }
-.agent-card::after { top: 23px; right: -18px; }
+.agent-ribbons i {
+  position: absolute;
+  top: calc(14px + var(--i) * 9px);
+  right: -27px;
+  width: var(--card-ribbon-w, 94px);
+  height: 8px;
+  background: var(--card-ribbon-color, var(--primary));
+  transform: rotate(45deg);
+}
+html[data-card-ribbon="0"] .agent-ribbons { display: none; }
 .agent-card:hover { transform: translateY(-3px); box-shadow: var(--shadow-lg); }
 .agent-card.agent-hidden { opacity: .5; }
 .agent-card h3 { margin: 0 0 6px; font-size: 18px; }
-.agent-card .meta { color: var(--text-muted); font-size: 13px; line-height: 1.6; }
-.agent-card .meta code { background: #f1f5f9; padding: 1px 6px; border-radius: 5px; font-size: 12px; }
+.agent-card .meta { color: var(--card-meta, var(--text-muted)); font-size: 13px; line-height: 1.6; }
+.agent-card .meta code { background: var(--card-code-bg, #f1f5f9); padding: 1px 6px; border-radius: 5px; font-size: 12px; }
+.agent-card .hidden-tag { background: var(--card-code-bg, #f1f5f9); color: var(--card-meta, var(--text-muted)); }
 .agent-card .actions { margin-top: 14px; display: flex; gap: 8px; }
-.agent-card .actions .btn { flex: 1; justify-content: center; }
+.card-btn { color: var(--c); border-color: var(--c); background: var(--surface); }
+.card-btn:hover { border-color: var(--c); filter: brightness(.96); }
+.card-btn-edit { --c: var(--card-btn-edit, var(--primary)); }
+.card-btn-default { --c: var(--card-btn-default, var(--primary)); }
+.card-btn-hide { --c: var(--card-btn-hide, var(--primary)); }
+.card-btn-danger { --c: var(--card-btn-danger, var(--danger)); }
+html[data-style-edit="solid"] .card-btn-edit,
+html[data-style-default="solid"] .card-btn-default,
+html[data-style-hide="solid"] .card-btn-hide,
+html[data-style-danger="solid"] .card-btn-danger { color: #fff; background: var(--c); }
+html[data-style-edit="solid"] .card-btn-edit:hover,
+html[data-style-default="solid"] .card-btn-default:hover,
+html[data-style-hide="solid"] .card-btn-hide:hover,
+html[data-style-danger="solid"] .card-btn-danger:hover { filter: brightness(.92); background: var(--c); }
+.agent-card .actions .card-btn { flex: 1; justify-content: center; }
 
 .section-title { font-size: 20px; font-weight: 700; margin: 0 0 16px; }
 .muted { color: var(--text-muted); font-size: 13px; }
@@ -433,6 +448,11 @@ body {
 .switch-row .sw-label { font-size: 14px; display: flex; align-items: center; gap: 6px; }
 .switch-row input[type="number"] { width: 80px; }
 .switch-row input[type="color"] { width: 46px; height: 30px; padding: 0; border: 1px solid var(--border); border-radius: 6px; background: none; cursor: pointer; }
+/* Multi-Agent 配置卡片设置：板块分区（粗黑横线分隔、标题顶格、小项缩进） */
+.card-set-modal .card-set-section { margin-top: 14px; padding-top: 10px; border-top: 2px solid var(--text); }
+.card-set-modal .card-set-title { font-size: 14px; font-weight: 700; color: var(--text-muted); margin-bottom: 2px; }
+.card-set-modal .card-set-body { padding-left: 18px; }
+.card-set-modal .card-set-body .switch-row { border-bottom: none; padding: 9px 0; }
 .toggle { position: relative; width: 40px; height: 22px; flex-shrink: 0; cursor: pointer; }
 .toggle input { display: none; }
 .toggle .track { position: absolute; inset: 0; background: #d1d5db; border-radius: 999px; transition: .2s; }
