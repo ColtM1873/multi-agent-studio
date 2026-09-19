@@ -1301,9 +1301,8 @@ async function renderAgents() {
           ${t("主模型")}：<code>${esc(a.main_agent.llm_provider_name)}</code>
         </div>
         <div class="actions">
-          <button class="btn primary small" data-act="open">${t("打开")}</button>
-          <button class="btn small" data-act="edit">${t("编辑")}</button>
-          <button class="btn small" data-act="default">${t("设为默认")}</button>
+          <button class="btn edit small" data-act="edit">${t("编辑")}</button>
+          <button class="btn default small" data-act="default">${t("设为默认")}</button>
           <button class="btn hide small" data-act="hide">${hidden ? t("取消隐藏") : t("隐藏")}</button>
           <button class="btn danger small" data-act="del">${t("删除")}</button>
         </div>
@@ -1318,8 +1317,7 @@ async function renderAgents() {
         btn.onclick = (e) => {
           e.stopPropagation();
           const act = btn.dataset.act;
-          if (act === "open") goThreads(id, name);
-          else if (act === "edit") { S.editingDefault = false; S.agentId = id; S.view = "editor"; render(); }
+          if (act === "edit") { S.editingDefault = false; S.agentId = id; S.view = "editor"; render(); }
           else if (act === "default") setDefault(id);
           else if (act === "hide") {
             if (hiddenSet.has(id)) hiddenSet.delete(id);

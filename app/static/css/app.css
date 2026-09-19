@@ -74,6 +74,10 @@ body {
 .btn.danger:hover { background: #fef2f2; }
 .btn.hide { color: var(--primary); border-color: #c7d2fe; }
 .btn.hide:hover { background: #eef2ff; }
+.btn.edit { color: #d97706; border-color: #fde68a; }
+.btn.edit:hover { background: #fffbeb; }
+.btn.default { color: #92400e; border-color: #e7d0b8; }
+.btn.default:hover { background: #fdf6ec; }
 .btn.small { padding: 5px 10px; font-size: 13px; border-radius: 8px; }
 .btn:disabled { opacity: .5; cursor: not-allowed; }
 
@@ -94,13 +98,28 @@ body {
   box-shadow: var(--shadow);
   transition: transform .15s, box-shadow .15s;
   cursor: pointer;
+  position: relative;
+  overflow: hidden;
 }
+.agent-card::before,
+.agent-card::after {
+  content: "";
+  position: absolute;
+  width: 90px;
+  height: 8px;
+  background: var(--primary);
+  transform: rotate(45deg);
+  pointer-events: none;
+}
+.agent-card::before { top: 14px; right: -27px; }
+.agent-card::after { top: 23px; right: -18px; }
 .agent-card:hover { transform: translateY(-3px); box-shadow: var(--shadow-lg); }
 .agent-card.agent-hidden { opacity: .5; }
 .agent-card h3 { margin: 0 0 6px; font-size: 18px; }
 .agent-card .meta { color: var(--text-muted); font-size: 13px; line-height: 1.6; }
 .agent-card .meta code { background: #f1f5f9; padding: 1px 6px; border-radius: 5px; font-size: 12px; }
 .agent-card .actions { margin-top: 14px; display: flex; gap: 8px; }
+.agent-card .actions .btn { flex: 1; justify-content: center; }
 
 .section-title { font-size: 20px; font-weight: 700; margin: 0 0 16px; }
 .muted { color: var(--text-muted); font-size: 13px; }
