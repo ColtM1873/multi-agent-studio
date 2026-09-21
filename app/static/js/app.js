@@ -438,6 +438,14 @@ const I18N_EN = {
   "更改已生效": "Changes applied",
   "编辑历史消息失败": "Failed to edit history message",
   "写入中": "Writing…",
+  "加载模型中": "Loading model…",
+  "写入失败，失败原因：": "Write failed. Reason: ",
+  "写入超时（超过 30 秒未完成），请重试。": "Write timed out (over 30 seconds). Please retry.",
+  "无法连接到服务端，请确认程序仍在运行后重试。": "Cannot connect to the server. Please make sure the app is still running and retry.",
+  "连接已断开，写入未完成。": "Connection closed; the write was not completed.",
+  "（已停止提交剩余 {n} 处改动）": " (stopped submitting the remaining {n} change(s))",
+  "关闭": "Close",
+  "未知错误": "Unknown error",
   "当前处于编辑模式，请先退出编辑模式后再离开。是否退出编辑模式？": "You are in edit mode. Exit edit mode before leaving?",
 };
 const t = (s) => (lang === "zh" || !I18N_EN[s]) ? s : I18N_EN[s];
@@ -1349,6 +1357,8 @@ function render() {
   flushCurrentDraft();
   app.innerHTML = "";
   $$(".edit-popup").forEach(p => p.remove());
+  const errWrap = $(".edit-error-wrap");
+  if (errWrap && (S.view !== "chat" || errWrap.dataset.thread !== String(S.threadId))) errWrap.remove();
   isRunning = false; ws = null; currentReplyEl = null; editorDirty = false; statusMode = "idle";
   if (S.view === "agents") renderAgents();
   else if (S.view === "editor") renderEditorView();
@@ -3027,7 +3037,10 @@ async function renderChatView() {
       editModeBadge.style.display = "none";
     } else {
       editModeBadge.style.display = "";
-      if (mode === "writing") {
+      if (mode === "loading") {
+        editModeBadge.textContent = `⏳ ${t("加载模型中")}`;
+        editModeBadge.className = "edit-mode-badge loading";
+      } else if (mode === "writing") {
         editModeBadge.textContent = `✏️ ${t("写入中")}`;
         editModeBadge.className = "edit-mode-badge writing";
       } else {
@@ -3035,6 +3048,35 @@ async function renderChatView() {
         editModeBadge.className = "edit-mode-badge";
       }
     }
+  }
+
+  /* 持久化报错：右上角常驻，用户点叉号才消失（区别于 4 秒自动消失的 toast） */
+  function showEditError(reason) {
+    let wrap = $(".edit-error-wrap");
+    if (!wrap) {
+      wrap = document.createElement("div");
+      wrap.className = "edit-error-wrap";
+      document.body.appendChild(wrap);
+    }
+    wrap.dataset.thread = String(S.threadId);
+    wrap.innerHTML = "";  // 同一会话重复失败只保留最新一条，避免堆叠
+    const el = document.createElement("div");
+    el.className = "edit-error-banner";
+    const text = document.createElement("div");
+    text.className = "edit-error-text";
+    text.textContent = `${t("写入失败，失败原因：")}${reason}`;
+    const btn = document.createElement("button");
+    btn.className = "edit-error-close";
+    btn.type = "button";
+    btn.setAttribute("aria-label", t("关闭"));
+    btn.textContent = "✕";
+    btn.onclick = () => {
+      el.remove();
+      if (!wrap.children.length) wrap.remove();
+    };
+    el.appendChild(text);
+    el.appendChild(btn);
+    wrap.appendChild(el);
   }
 
   function editableLinesHTML(rawText, field, blockIndex, toolCallIndex, msgIndice) {
@@ -3303,43 +3345,74 @@ async function renderChatView() {
     return clone;
   }
 
-  function submitEditRequest(req) {
+  /* 编辑写入阶段超时（不含「加载模型」阶段；加载阶段由状态徽标单独提示，不设超时）。 */
+  const EDIT_WRITE_TIMEOUT_MS = 30000;
+
+  function submitEditRequest(req, onStage) {
     return new Promise((resolve) => {
       const proto = location.protocol === "https:" ? "wss" : "ws";
       const s = new WebSocket(`${proto}://${location.host}/api/agents/${encodeURIComponent(S.agentId)}/threads/${encodeURIComponent(S.threadId)}/chat`);
       let settled = false;
-      const finish = (ok) => { if (!settled) { settled = true; try { s.close(); } catch (e) {} resolve(ok); } };
+      let writeTimer = null;
+      const finish = (res) => {
+        if (settled) return;
+        settled = true;
+        if (writeTimer) clearTimeout(writeTimer);
+        try { s.close(); } catch (e) {}
+        resolve(res);
+      };
+      // 超时只覆盖「写入」阶段：等后端发出 status:ready（运行时/模型就绪）后才开始计时。
+      const startWriteTimer = () => {
+        if (writeTimer) clearTimeout(writeTimer);
+        writeTimer = setTimeout(
+          () => finish({ ok: false, reason: t("写入超时（超过 30 秒未完成），请重试。") }),
+          EDIT_WRITE_TIMEOUT_MS,
+        );
+      };
       s.onopen = () => s.send(JSON.stringify({ type: "edit", request: req }));
       s.onmessage = (ev) => {
-        const m = JSON.parse(ev.data);
-        if (m.type === "done") finish(true);
-        else if (m.type === "error") finish(false);
+        let m;
+        try { m = JSON.parse(ev.data); } catch (e) { return; }
+        if (m.type === "status" && m.status === "loading") {
+          if (onStage) onStage("loading");
+        } else if (m.type === "status" && m.status === "ready") {
+          if (onStage) onStage("writing");
+          startWriteTimer();
+        } else if (m.type === "done") {
+          finish({ ok: true });
+        } else if (m.type === "error") {
+          finish({ ok: false, reason: m.message || t("未知错误") });
+        }
       };
-      s.onerror = () => finish(false);
-      s.onclose = () => finish(false);
-      setTimeout(() => finish(false), 30000);
+      s.onerror = () => finish({ ok: false, reason: t("无法连接到服务端，请确认程序仍在运行后重试。") });
+      s.onclose = () => finish({ ok: false, reason: t("连接已断开，写入未完成。") });
     });
   }
 
   async function submitEdits() {
     const groups = {};
     edits.forEach(e => { (groups[e.msgIndice] = groups[e.msgIndice] || []).push(e); });
-    let anyFail = false;
-    for (const gk of Object.keys(groups)) {
-      const msgIndice = +gk;
+    const groupKeys = Object.keys(groups);
+    for (let i = 0; i < groupKeys.length; i++) {
+      const msgIndice = +groupKeys[i];
       const original = (editRawMessages || [])[msgIndice];
       if (!original) continue;
-      const substitute = buildSubstituteMessage(original, groups[gk]);
+      const substitute = buildSubstituteMessage(original, groups[groupKeys[i]]);
       const isSub = !!editSubName;
-      const ok = await submitEditRequest({
+      const res = await submitEditRequest({
         request_for_subagent: isSub,
         subagent_name: isSub ? editSubName : null,
         msg_indice: msgIndice,
         substitute_msg: substitute,
-      });
-      if (!ok) anyFail = true;
+      }, (stage) => setEditBadge(stage));
+      if (!res.ok) {
+        const remaining = groupKeys.length - i - 1;
+        let reason = res.reason || t("未知错误");
+        if (remaining > 0) reason += t("（已停止提交剩余 {n} 处改动）").replace("{n}", remaining);
+        return { ok: false, reason };
+      }
     }
-    return !anyFail;
+    return { ok: true };
   }
 
   async function refreshHistory() {
@@ -3386,10 +3459,9 @@ async function renderChatView() {
       if (ans === "yes") shouldSubmit = true;
     }
     if (shouldSubmit) {
-      setEditBadge("writing");
-      const ok = await submitEdits();
-      if (ok) showAppliedBubble();
-      else toast(t("编辑历史消息失败"), true);
+      const res = await submitEdits();
+      if (res.ok) showAppliedBubble();
+      else showEditError(res.reason);
     }
     leaveEditMode();
     await refreshHistory();

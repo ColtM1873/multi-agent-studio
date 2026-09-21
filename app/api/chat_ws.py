@@ -28,6 +28,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
@@ -40,6 +41,8 @@ from app.services.chat import (
 )
 
 router = APIRouter()
+
+logger = logging.getLogger(__name__)
 
 
 def _to_percent(value) -> float | None:
@@ -54,17 +57,56 @@ def _to_percent(value) -> float | None:
 
 
 def _format_build_error(e: Exception) -> str:
-    """运行时构建失败时，对「缺少 pgvector 扩展」给出可操作的友好提示。"""
+    """运行时构建失败时，给出面向用户的人话提示。
+
+    原始异常（含堆栈）由调用处 logger.exception 写入服务端日志（托盘模式为
+    logs/server.log），方便后续排查。
+    """
     text = str(e)
     lowered = text.lower()
     if "vector" in lowered and ("not available" in lowered or "extension" in lowered):
         return (
-            "未检测到 PostgreSQL 的 pgvector 扩展，长期记忆/会话存储无法初始化。\n"
+            "未检测到 PostgreSQL 的 pgvector 扩展，长期记忆/会话存储无法初始化。"
             "请双击运行项目根目录的 install_pgvector.bat 一键安装，"
-            "完成后重启本程序并重试。\n\n"
-            f"原始错误：{text}"
+            "完成后重启本程序并重试。"
         )
-    return f"无法构建 agent: {text}"
+    return "无法初始化该会话的运行环境，请稍后重试；若持续出现，请查看服务端日志 logs/server.log。"
+
+
+def _format_edit_error(e: Exception) -> str:
+    """把「编辑历史消息」过程中抛出的异常翻译成给用户看的人话。
+
+    只面向界面展示自然语言；原始异常（含堆栈）由调用处 logger.exception 写入
+    服务端日志（托盘模式为 logs/server.log），方便后续排查。
+    """
+    text = str(e)
+    lowered = text.lower()
+
+    if "vector" in lowered and ("not available" in lowered or "extension" in lowered):
+        return (
+            "未检测到 PostgreSQL 的 pgvector 扩展，会话存储无法工作。"
+            "请双击运行项目根目录的 install_pgvector.bat 一键安装，"
+            "完成后重启本程序再重试。"
+        )
+    if isinstance(e, asyncio.CancelledError) or "cancelled" in lowered:
+        return "写入被取消（连接已断开或页面已离开），本次改动未完成。"
+    if "out of range" in lowered:
+        return "要修改的消息序号超出当前会话范围，页面历史可能已与后端不同步，请刷新页面后重试。"
+    if "type mismatch" in lowered:
+        return "待替换的消息类型与原文不一致，无法替换，请刷新页面后重试。"
+    if "unsupported message type" in lowered:
+        return "该消息类型暂不支持编辑。"
+    if "recursion" in lowered:
+        return "图执行步数超出上限，本次写入未完成。"
+    if "does not exist" in lowered or "undefinedtable" in lowered:
+        return "会话数据表尚未就绪，请先在该会话发送一条消息，再进入编辑模式。"
+    if "connection" in lowered or "could not connect" in lowered or "connection refused" in lowered:
+        return "无法连接数据库，会话数据暂时无法写入，请确认数据库仍在运行后重试。"
+    if "timeout" in lowered or "timed out" in lowered:
+        return "写入数据库超时，本次改动未完成，请稍后重试。"
+    if "concurrent" in lowered or "invalidupdate" in lowered:
+        return "该会话正有另一个操作在进行，请等它结束后再重试。"
+    return "写入过程中发生了未预期的错误，请稍后重试；若持续出现，请查看服务端日志 logs/server.log。"
 
 
 @router.websocket("/api/agents/{agent_id}/threads/{thread_id}/chat")
@@ -85,6 +127,9 @@ async def chat_ws(websocket: WebSocket, agent_id: str, thread_id: str):
             {"type": "sub_agents", "names": [s.name for s in runtime.config.sub_agents]}
         )
     except Exception as e:
+        logger.exception(
+            "构建运行时失败 (agent_id=%s, thread_id=%s)", agent_id, thread_id
+        )
         await websocket.send_json({"type": "error", "message": _format_build_error(e)})
         await websocket.close()
         return
@@ -159,7 +204,10 @@ async def chat_ws(websocket: WebSocket, agent_id: str, thread_id: str):
             final_state = await runtime.run(thread_id, user_input, emit, on_interrupt)
             await emit({"type": "done", "final_state": final_state})
         except Exception as e:
-            await emit({"type": "error", "message": str(e)})
+            logger.exception(
+                "编辑历史消息失败 (agent_id=%s, thread_id=%s)", agent_id, thread_id
+            )
+            await emit({"type": "error", "message": _format_edit_error(e)})
 
     try:
         while True:

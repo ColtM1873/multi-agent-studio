@@ -547,6 +547,27 @@ html[data-style-danger="solid"] .card-btn-danger:hover { filter: brightness(.92)
   letter-spacing: 1px; white-space: nowrap;
 }
 .edit-mode-badge.writing { background: #f59e0b; }
+.edit-mode-badge.loading { background: #3b82f6; }
+/* 持久化写入失败提示：常驻右上角，点叉号才消失 */
+.edit-error-wrap {
+  position: fixed; top: 68px; right: 20px;
+  display: flex; flex-direction: column; gap: 10px;
+  z-index: 1000; max-width: min(440px, 92vw);
+}
+.edit-error-banner {
+  display: flex; align-items: flex-start; gap: 10px;
+  background: var(--danger); color: #fff;
+  padding: 12px 14px; border-radius: 10px;
+  font-size: 14px; box-shadow: var(--shadow-lg);
+  animation: slidein .2s;
+}
+.edit-error-text { flex: 1; min-width: 0; white-space: pre-wrap; word-break: break-word; line-height: 1.55; }
+.edit-error-close {
+  flex-shrink: 0; background: transparent; border: none;
+  color: #fff; font-size: 16px; line-height: 1; cursor: pointer;
+  padding: 0 2px; opacity: .85;
+}
+.edit-error-close:hover { opacity: 1; }
 .edit-line {
   border-radius: 4px; padding: 0 2px;
   transition: background .12s; cursor: default;
