@@ -973,6 +973,54 @@ const md = window.markdownit ? (() => {
       return '<pre class="hljs"><code>' + inst.utils.escapeHtml(code) + "</code></pre>";
     },
   });
+  // CJK 强调补丁：CommonMark 的侧翼规则在中文里会误伤——
+  // `这是**"引用"**` 中 `**` 左侧是汉字（非空白/标点）、右侧是引号（标点），
+  // 会被判为「不能开启」，导致加粗失效。这里放宽：只要一侧是 CJK 字符、另一侧是标点，
+  // 就允许该 `*`/`**`/`_` 开启或闭合（纯 ASCII 场景不受影响，仍按 CommonMark 处理）。
+  if (inst.inline && inst.inline.State) {
+    const isCjkChar = (cp) => cp > 0 && (
+      (cp >= 0x2E80 && cp <= 0x303F) || (cp >= 0x3040 && cp <= 0x30FF) ||
+      (cp >= 0x3400 && cp <= 0x4DBF) || (cp >= 0x4E00 && cp <= 0x9FFF) ||
+      (cp >= 0xAC00 && cp <= 0xD7AF) || (cp >= 0xF900 && cp <= 0xFAFF) ||
+      (cp >= 0xFE10 && cp <= 0xFE4F) || (cp >= 0xFF00 && cp <= 0xFFEF) ||
+      (cp >= 0x20000 && cp <= 0x2FA1F) ||
+      cp === 0x2018 || cp === 0x2019 || cp === 0x201C || cp === 0x201D ||
+      cp === 0x2013 || cp === 0x2014 || cp === 0x2026 || cp === 0x00B7
+    );
+    const isPunctCp = (cp) => cp > 0 && /\p{P}/u.test(String.fromCodePoint(cp));
+    const cpBefore = (s, i) => {
+      if (i <= 0) return -1;
+      const c = s.charCodeAt(i - 1);
+      if (c >= 0xDC00 && c <= 0xDFFF && i >= 2) {
+        const p = s.charCodeAt(i - 2);
+        if (p >= 0xD800 && p <= 0xDBFF) return (p - 0xD800) * 0x400 + (c - 0xDC00) + 0x10000;
+      }
+      return c;
+    };
+    const cpAfter = (s, i) => {
+      if (i >= s.length) return -1;
+      const c = s.charCodeAt(i);
+      if (c >= 0xD800 && c <= 0xDBFF && i + 1 < s.length) {
+        const n = s.charCodeAt(i + 1);
+        if (n >= 0xDC00 && n <= 0xDFFF) return (c - 0xD800) * 0x400 + (n - 0xDC00) + 0x10000;
+      }
+      return c;
+    };
+    const origScanDelims = inst.inline.State.prototype.scanDelims;
+    inst.inline.State.prototype.scanDelims = function (start, canSplitWord) {
+      const res = origScanDelims.call(this, start, canSplitWord);
+      if (res.can_open && res.can_close) return res;
+      const before = cpBefore(this.src, start);
+      const after = cpAfter(this.src, start + res.length);
+      let canOpen = res.can_open, canClose = res.can_close;
+      if (!canOpen && isCjkChar(before) && isPunctCp(after)) canOpen = true;
+      if (!canClose && isPunctCp(before) && isCjkChar(after)) canClose = true;
+      if (canOpen !== res.can_open || canClose !== res.can_close) {
+        return { can_open: canOpen, can_close: canClose, length: res.length };
+      }
+      return res;
+    };
+  }
   if (window.texmath && window.katex) {
     try {
       inst.use(window.texmath, {
