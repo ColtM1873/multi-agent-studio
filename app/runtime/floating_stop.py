@@ -10,6 +10,7 @@
 - 点击球体：翻转 ``browser_takeover.set_paused()``（红「停止」/ 绿「继续」）。
 - 拖动把手 ``✥``：移动窗口，位置持久化到 ``configs/floating_stop_pos.json``。
 - 每 250ms 轮询全局暂停标志并重新置顶，保证与后端状态一致、不被其它窗口盖住。
+- 定时探测浏览器 CDP 端口：浏览器已关闭（端口无响应）时**自动隐藏**并复位暂停状态为「停止」，无需退出程序。
 
 tkinter 缺失时静默降级（只记日志），不影响其它功能。
 """
@@ -184,7 +185,18 @@ class FloatingStop:
             font=("Segoe UI", 14),
         )
 
-        state = {"paused": False}
+        state = {"paused": False, "shown": False}
+        # 浏览器连接探测节流：每 6 个 tick（≈1.5s）探一次，连续 2 次失败才隐藏。
+        conn = {"tick": 0, "miss": 0}
+
+        def browser_connected() -> bool:
+            """探测浏览器 CDP 端口是否仍可应答；探测不可用时保守返回 True（不误隐藏）。"""
+            try:
+                from app.runtime.browser_takeover import browser_status
+
+                return bool(browser_status()[0])
+            except Exception:  # noqa: BLE001
+                return True
 
         def apply_state(paused: bool) -> None:
             state["paused"] = paused
@@ -230,7 +242,7 @@ class FloatingStop:
         root.geometry(f"{WIN_W}x{WIN_H}+{x}+{y}")
 
         def drain() -> None:
-            from app.runtime.browser_takeover import is_paused
+            from app.runtime.browser_takeover import is_paused, set_paused
 
             try:
                 while True:
@@ -239,6 +251,8 @@ class FloatingStop:
                         self._name = str(arg or "agent")
                         canvas.itemconfigure(name_id, text=f"@{self._name} agent")
                         apply_state(is_paused())
+                        state["shown"] = True
+                        conn["miss"] = 0
                         root.deiconify()
                         try:
                             root.attributes("-topmost", True)
@@ -246,6 +260,7 @@ class FloatingStop:
                         except Exception:  # noqa: BLE001
                             pass
                     elif cmd == "hide":
+                        state["shown"] = False
                         root.withdraw()
             except queue.Empty:
                 pass
@@ -257,6 +272,24 @@ class FloatingStop:
                 root.attributes("-topmost", True)
             except Exception:  # noqa: BLE001
                 pass
+
+            # 浏览器关闭（CDP 端口无响应）后自动隐藏悬浮按钮，不必退出程序。
+            if state["shown"]:
+                conn["tick"] += 1
+                if conn["tick"] >= 6:
+                    conn["tick"] = 0
+                    if browser_connected():
+                        conn["miss"] = 0
+                    else:
+                        conn["miss"] += 1
+                        if conn["miss"] >= 2:
+                            conn["miss"] = 0
+                            state["shown"] = False
+                            root.withdraw()
+                            # 浏览器已关闭：暂停状态随之复位为「停止」，避免重开后仍被短路。
+                            set_paused(False)
+                            apply_state(False)
+
             root.after(250, drain)
 
         self._started.set()
