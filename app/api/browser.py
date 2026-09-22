@@ -26,6 +26,8 @@ router = APIRouter(prefix="/api/browser", tags=["browser"])
 
 class AgentBody(BaseModel):
     agent_id: str | None = None
+    # 前端「实时预览」轮询时传 False：浏览器未连接则直接返回，避免轮询触发自动启动。
+    allow_open: bool = True
 
 
 class PauseBody(BaseModel):
@@ -109,6 +111,11 @@ def viewport_dom(body: AgentBody | None = None):
     """调用 tool-3：返回当前聚焦标签页 viewport 的全量 DOM（前端拼进输入框）。"""
     if is_paused():
         return {"ok": False, "content": "", "error": STOP_TEXT}
+    allow_open = True if body is None else body.allow_open
+    if not allow_open:
+        connected, port = browser_status()
+        if not connected:
+            return {"ok": False, "content": "", "error": "浏览器未打开", "port": port}
     try:
         from browser_agent import tool_3_get_viewport_dom
 

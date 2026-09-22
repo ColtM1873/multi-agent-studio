@@ -205,6 +205,9 @@ const I18N_EN = {
   "请先点击「继续」按钮，再提示 Agent 接管浏览器。": "Please click \"Continue\" first, then ask the agent to take over.",
   "打开浏览器失败": "Failed to open the browser",
   "获取当前页面内容失败": "Failed to fetch the current page content",
+  "本对话已注入过接管提示（每个对话仅注入一次）": "This conversation already has the takeover hint (only once per conversation).",
+  "已开启：发送时会把当前聚焦标签页内容追加到消息之后（发送后自动关闭）": "On: the focused tab's content will be appended after your message when sending (turns off automatically after sending).",
+  "正在获取当前页面内容…": "Fetching the current page content…",
   "编辑敏感信息表单": "Edit sensitive info form",
   "用于浏览器接管：Agent 遇到表单类「可填入元素」时填 <名称>，后台会替换成右侧的真实内容；左侧填「名称」，右侧填「真实内容」。表单里没有的名称会按 Agent 原文原样填入。": "For browser takeover: when the agent fills a form-like \"fillable element\", it writes <name>; the backend replaces it with the real content on the right. Put the name on the left and the real content on the right. Names not in the form are filled exactly as the agent wrote them.",
   "信息名称（表项）": "Info name (field)",
@@ -2997,10 +3000,13 @@ async function renderChatView() {
         <div class="input-toolbar"><span class="muted" id="inputHint">${t("输入消息（Enter 发送，Shift+Enter 换行）")}</span><div class="spacer" style="flex:1;"></div></div>
         <div class="date-inject-hint" id="dateInjectHint" style="display:none;"></div>
         <div class="input-main">
-          <textarea id="msgInput" placeholder="${t("输入消息…")}"></textarea>
+          <div class="input-main-left">
+            <textarea id="msgInput" placeholder="${t("输入消息…")}"></textarea>
+            <div class="takeover-dom-preview" id="takeoverDomPreview" style="display:none;"></div>
+          </div>
           <div class="browser-takeover-actions" id="browserTakeoverActions" style="display:none;">
             <button class="btn small" id="sensitiveInjectBtn">${t("注入 敏感信息替换列表")}</button>
-            <button class="btn small" id="browserHintBtn">${t("提示Agent开始接管浏览器")}</button>
+            <button class="btn small" id="browserHintBtn"><span class="tk-dot"></span>${t("提示Agent开始接管浏览器")}</button>
             <button class="btn small" id="openBrowserBtn">${t("打开浏览器")}</button>
           </div>
         </div>
@@ -3085,13 +3091,21 @@ async function renderChatView() {
   }
   refreshDateInjectUI();
 
+  /* ============ 浏览器接管：提示注入开关状态（供 send() 读取） ============ */
+  // 「提示Agent开始接管浏览器」= 开关式状态：开启后实时预览当前聚焦标签页内容，
+  // 发送时把该内容追加到用户消息之后；发送成功后自动关闭。不再有「每个对话仅注入一次」限制。
+  let takeoverHintOn = false;
+  let takeoverPreviewText = "";
+  let takeoverHintReset = null;
+
   /* ================= 浏览器接管 ================= */
   (async () => {
     const actionsEl = $("#browserTakeoverActions");
     const openBtn = $("#openBrowserBtn");
     const hintBtn = $("#browserHintBtn");
     const sensitiveBtn = $("#sensitiveInjectBtn");
-    if (!actionsEl || !openBtn || !hintBtn || !sensitiveBtn) return;
+    const previewEl = $("#takeoverDomPreview");
+    if (!actionsEl || !openBtn || !hintBtn || !sensitiveBtn || !previewEl) return;
 
     let takeoverOn = false;
     try {
@@ -3106,10 +3120,69 @@ async function renderChatView() {
 
     let paused = false;
     let lastConnected = false;
+    let domTimer = null;
+    let domFetching = false;
+
+    const wrapDom = dom => `<当前聚焦标签页的可见内容>\n${dom}\n</当前聚焦标签页的可见内容>`;
 
     function updateHintState() {
-      hintBtn.classList.toggle("is-disabled", paused);
+      hintBtn.classList.toggle("on", takeoverHintOn);
+      hintBtn.classList.toggle("is-disabled", paused && !takeoverHintOn);
+      hintBtn.title = takeoverHintOn
+        ? t("已开启：发送时会把当前聚焦标签页内容追加到消息之后（发送后自动关闭）")
+        : "";
+      if (takeoverHintOn) {
+        previewEl.textContent = takeoverPreviewText || t("正在获取当前页面内容…");
+        previewEl.style.display = "";
+      } else {
+        previewEl.textContent = "";
+        previewEl.style.display = "none";
+      }
     }
+
+    async function fetchPreview(allowOpen) {
+      if (domFetching) return null;
+      domFetching = true;
+      try {
+        const r = await api("/api/browser/viewport-dom", {
+          method: "POST",
+          body: JSON.stringify({ agent_id: S.agentId, allow_open: !!allowOpen }),
+        });
+        if (takeoverHintOn && r && r.ok && r.content) {
+          takeoverPreviewText = wrapDom(r.content);
+          updateHintState();
+        }
+        return r;
+      } catch (e) {
+        return null;
+      } finally {
+        domFetching = false;
+      }
+    }
+
+    function stopDomPolling() {
+      if (domTimer) { clearInterval(domTimer); domTimer = null; }
+    }
+
+    function startDomPolling() {
+      stopDomPolling();
+      // 每 1 秒刷新一次预览，保证内容在「点击发送前一秒」仍是最新的。
+      // 轮询用 allow_open=false：浏览器未连接时不触发自动启动，仅沿用最后一次内容。
+      domTimer = setInterval(() => {
+        if (!actionsEl.isConnected || !takeoverHintOn) { stopDomPolling(); return; }
+        // agent 运行期间不轮询，避免与图内浏览器工具并发争用 CDP 连接
+        if (paused || !lastConnected || isRunning) return;
+        fetchPreview(false);
+      }, 1000);
+    }
+
+    // 供 send() 在发送成功后自动关闭开关
+    takeoverHintReset = () => {
+      takeoverHintOn = false;
+      takeoverPreviewText = "";
+      stopDomPolling();
+      updateHintState();
+    };
 
     function showInfoModal(text) {
       const mask = document.createElement("div");
@@ -3152,16 +3225,6 @@ async function renderChatView() {
       return { connected: !!st.connected, wasConnected };
     }
 
-    function appendViewportDom(dom) {
-      const input = $("#msgInput");
-      if (!input) return;
-      const wrapped = `<当前聚焦标签页的可见内容>\n${dom}\n</当前聚焦标签页的可见内容>`;
-      const cur = input.value.replace(/\s+$/, "");
-      input.value = cur ? cur + "\n" + wrapped : wrapped;
-      input.dispatchEvent(new Event("input"));
-      input.scrollTop = input.scrollHeight;
-    }
-
     function appendSensitiveList(names) {
       const input = $("#msgInput");
       if (!input) return;
@@ -3199,23 +3262,33 @@ async function renderChatView() {
     };
 
     hintBtn.onclick = async () => {
+      if (takeoverHintOn) { takeoverHintReset(); return; }
       if (paused) { showInfoModal(t("请先点击「继续」按钮，再提示 Agent 接管浏览器。")); return; }
+      takeoverHintOn = true;
+      takeoverPreviewText = "";
+      updateHintState();  // 先显示「正在获取…」
       try {
-        const r = await api("/api/browser/viewport-dom", { method: "POST", body: JSON.stringify({ agent_id: S.agentId }) });
-        if (!r.ok) { toast(r.error || t("获取当前页面内容失败"), true); return; }
-        appendViewportDom(r.content);
+        // 首次抓取允许自动打开浏览器（沿用原「提示接管」行为）
+        const r = await fetchPreview(true);
         const { connected, wasConnected } = await refreshBrowserUI();
         if (connected) await showFloating();
         if (connected && !wasConnected) showIntroPopup();  // 仅当本次提示自动打开了浏览器才弹
-      } catch (e) { toast(e.message, true); }
+        if (!r || !r.ok) {
+          takeoverHintReset();
+          toast((r && r.error) || t("获取当前页面内容失败"), true);
+          return;
+        }
+        startDomPolling();
+      } catch (e) { takeoverHintReset(); toast(e.message, true); }
     };
 
+    updateHintState();
     await refreshBrowserUI();
     if (lastConnected) await showFloating();
 
     // 定时同步暂停状态：系统级悬浮按钮可独立翻转暂停，前端据此更新提示按钮置灰
     const pollId = setInterval(async () => {
-      if (!actionsEl.isConnected) { clearInterval(pollId); return; }
+      if (!actionsEl.isConnected) { clearInterval(pollId); stopDomPolling(); return; }
       await refreshBrowserUI();
     }, 2000);
   })();
@@ -3910,11 +3983,14 @@ async function renderChatView() {
     if (isRunning) return;
     const userText = raw.replace(/\s+$/, "");
     const injectDate = dateInjectAvailable && dateInjectOn;
-    // 开启日期注入后，允许「只发日期」——输入框为空也可发送
-    if (!userText && !injectDate) return;
-    const content = injectDate
+    const injectTakeover = takeoverHintOn && !!takeoverPreviewText;
+    // 开启日期注入 / 浏览器接管提示后，允许「空输入」发送
+    if (!userText && !injectDate && !injectTakeover) return;
+    let content = injectDate
       ? (userText ? datePromptText() + "\n" + userText : datePromptText())
       : userText;
+    // 浏览器接管提示：把当前聚焦标签页内容（已包裹）追加到用户消息之后
+    if (injectTakeover) content = content ? content + "\n" + takeoverPreviewText : takeoverPreviewText;
     setRunning(true);
     currentReplyEl = null;
     appendReplyHeader();
@@ -3931,6 +4007,8 @@ async function renderChatView() {
         if (draftTimer) { clearTimeout(draftTimer); draftTimer = null; }
         saveDraft(S.agentId, "");
       }
+      // 浏览器接管提示为「一次性状态」：发送成功后自动关闭
+      if (takeoverHintOn && takeoverHintReset) takeoverHintReset();
       showDoneBubble();
     } else {
       // 发送失败：输入框与缓存都保留

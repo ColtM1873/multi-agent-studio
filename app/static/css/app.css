@@ -213,6 +213,16 @@ html[data-style-danger="solid"] .card-btn-danger:hover { filter: brightness(.92)
 /* 输入区主行：左侧文本框占满，右侧给浏览器接管按钮留出独立一列 */
 .input-pane .input-main { flex: 1; display: flex; min-height: 0; }
 .input-pane .input-main textarea { flex: 1; min-width: 0; }
+/* 输入框下方：浏览器接管「实时预览」灰色只读块（可选中/复制，不可编辑） */
+.input-pane .input-main-left { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.input-pane .input-main-left textarea { min-height: 0; }
+.input-pane .takeover-dom-preview {
+  flex: 0 0 auto; max-height: 72px; overflow: auto; margin: 0 14px 6px;
+  padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg); color: var(--text-muted); font-size: 12px; line-height: 1.45;
+  white-space: pre-wrap; word-break: break-word;
+  user-select: text; -webkit-user-select: text;
+}
 .input-pane .input-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 6px 14px 10px; }
 .input-pane .date-inject-hint {
   padding: 0 14px 2px; font-size: 12px; color: #9ca3af;
@@ -231,6 +241,13 @@ html[data-style-danger="solid"] .card-btn-danger:hover { filter: brightness(.92)
   padding: 8px 14px 6px 8px; overflow-y: auto;
 }
 .browser-takeover-actions .btn { white-space: nowrap; }
+/* 「提示Agent开始接管浏览器」开关：开启后长亮绿灯（发送后自动关闭） */
+.browser-takeover-actions .tk-dot {
+  display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+  background: #9ca3af; margin-right: 6px; vertical-align: middle;
+}
+#browserHintBtn.on { border-color: #22c55e; color: #15803d; }
+#browserHintBtn.on .tk-dot { background: #22c55e; box-shadow: 0 0 4px #22c55e; }
 .btn.is-disabled { opacity: .5; cursor: not-allowed; }
 .takeover-switch-field { background: #eef2ff; border: 1px solid #c7d2fe; border-radius: 10px; padding: 10px 12px; }
 .takeover-switch-field label { font-weight: 600; }
