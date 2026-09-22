@@ -86,6 +86,15 @@ class CDPClient:
     def on(self, method: str, callback: Callable[[dict], None]) -> None:
         self._event_handlers[method].append(callback)
 
+    def off(self, method: str, callback: Callable[[dict], None]) -> None:
+        handlers = self._event_handlers.get(method)
+        if not handlers:
+            return
+        try:
+            handlers.remove(callback)
+        except ValueError:
+            pass
+
     def close(self) -> None:
         self._closed = True
         try:

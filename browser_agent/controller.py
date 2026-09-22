@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import threading
 import time
 from typing import Optional
 
@@ -26,6 +28,16 @@ OK = "成功"
 FAIL = "失败"
 PARTIAL_FAIL = "部分失败"
 NOT_CALLED = "未进行互动元素调用"
+
+# After an action that may navigate (a click), give the browser this long to
+# *start* a navigation before falling back to the DOM-quiet heuristic. This
+# closes the "pre-commit gap": right after a click the old document is still
+# fully loaded and looks perfectly quiet, so without this grace window the
+# stabilizer returns before the navigation even begins and the caller sees a
+# diff against the stale page.
+NAV_GRACE_SECONDS = 4.0
+# Once a hard navigation has started, wait this long for the load event.
+NAV_LOAD_TIMEOUT = 15.0
 
 
 class BrowserController:
@@ -213,8 +225,10 @@ class BrowserController:
             executor = ActionExecutor(self.client, session)
             if category == "input":
                 executor.input_text(node.backend_node_id, fill)
+                self._stabilize(target_id)
             elif category == "drag":
                 executor.drag(node.backend_node_id, drag_pct)
+                self._stabilize(target_id)
             elif category == "scroll":
                 diff = self._scroll_and_collect(
                     executor, node.backend_node_id, target_id, old_text
@@ -222,13 +236,16 @@ class BrowserController:
                 notice = self._title_change_notice(target_id, old_name)
                 return self._base_result(INCREMENTAL, OK, notice + diff, include_tabs=False)
             else:
-                executor.click(node.backend_node_id)
+                # A click may trigger a navigation; wait for it to actually
+                # begin/finish instead of trusting the stale DOM's quietness.
+                with self._watch_navigation(session) as nav_state:
+                    executor.click(node.backend_node_id)
+                    self._settle_navigation(session, nav_state)
         except ActionError as exc:
             return self._base_result(INCREMENTAL, FAIL, "无", str(exc), include_tabs=False)
         except CDPError as exc:
             return self._base_result(INCREMENTAL, FAIL, "无", str(exc), include_tabs=False)
 
-        self._stabilize(target_id)
         new_focus = self._resolve_focused_target()
         if new_focus and new_focus != old_focus:
             new_tree = self.capture_tree(new_focus)
@@ -410,23 +427,37 @@ class BrowserController:
         executor = ActionExecutor(self.client, session)
         success_count = 0
         error_msg = ""
-        for index, (_name, category, backend_node_id) in enumerate(plan):
-            try:
-                if category == "input":
-                    executor.input_text(backend_node_id, fills[index])
-                else:
-                    executor.click(backend_node_id)
-            except (ActionError, CDPError) as exc:
-                error_msg = str(exc)
-                break
-            success_count += 1
 
-        if error_msg and success_count == 0:
-            return self._base_result(
-                INCREMENTAL, FAIL, "无", error_msg, include_tabs=False
-            )
+        def _run_plan() -> None:
+            nonlocal success_count, error_msg
+            for index, (_name, category, backend_node_id) in enumerate(plan):
+                try:
+                    if category == "input":
+                        executor.input_text(backend_node_id, fills[index])
+                    else:
+                        executor.click(backend_node_id)
+                except (ActionError, CDPError) as exc:
+                    error_msg = str(exc)
+                    break
+                success_count += 1
 
-        self._stabilize(target_id)
+        if has_click:
+            # The trailing click may navigate; watch for it and wait properly.
+            with self._watch_navigation(session) as nav_state:
+                _run_plan()
+                if error_msg and success_count == 0:
+                    return self._base_result(
+                        INCREMENTAL, FAIL, "无", error_msg, include_tabs=False
+                    )
+                self._settle_navigation(session, nav_state)
+        else:
+            _run_plan()
+            if error_msg and success_count == 0:
+                return self._base_result(
+                    INCREMENTAL, FAIL, "无", error_msg, include_tabs=False
+                )
+            self._stabilize(target_id)
+
         new_focus = self._resolve_focused_target()
         focus_changed = bool(new_focus and new_focus != old_focus)
 
@@ -448,12 +479,11 @@ class BrowserController:
             )
         return self._base_result(mode, OK, content, include_tabs=focus_changed)
 
-    def _stabilize(self, target_id: str) -> None:
+    def _quiet(
+        self, session: str, quiet_seconds: float = 0.7, timeout: float = 6.0
+    ) -> None:
+        """Block until the session's DOM fingerprint stops changing."""
         assert self.client is not None
-        try:
-            session = self.client.attach(target_id)
-        except CDPError:
-            return
 
         def probe() -> Optional[str]:
             try:
@@ -471,7 +501,91 @@ class BrowserController:
             except Exception:
                 return None
 
-        poll_until_quiet(probe, quiet_seconds=0.4, timeout=6.0)
+        poll_until_quiet(probe, quiet_seconds=quiet_seconds, timeout=timeout)
+
+    def _stabilize(self, target_id: str) -> None:
+        assert self.client is not None
+        try:
+            session = self.client.attach(target_id)
+        except CDPError:
+            return
+        self._quiet(session)
+
+    @contextlib.contextmanager
+    def _watch_navigation(self, session: str):
+        """Watch CDP navigation events for ``session`` while an action runs.
+
+        Yields a state dict with ``hard`` (real document navigation),
+        ``soft`` (same-document / SPA route change) and ``load`` events.
+        """
+        assert self.client is not None
+        state = {
+            "hard": threading.Event(),
+            "soft": threading.Event(),
+            "load": threading.Event(),
+        }
+
+        # Only the main frame matters: sub-frame loads (iframes/ads) must not
+        # be mistaken for a real navigation.
+        try:
+            frame_tree = self.client.send(
+                "Page.getFrameTree", {}, session_id=session, timeout=3.0
+            )
+            main_frame_id = (
+                (frame_tree.get("frameTree") or {}).get("frame") or {}
+            ).get("id")
+        except Exception:
+            main_frame_id = None
+
+        def _is_main_frame(params: dict) -> bool:
+            if main_frame_id is None:
+                return True
+            return (
+                params.get("frameId") == main_frame_id
+                or (params.get("frame") or {}).get("id") == main_frame_id
+            )
+
+        def _handler(event: threading.Event, require_main: bool):
+            def handle(params: dict) -> None:
+                if params.get("__sessionId") != session:
+                    return
+                if require_main and not _is_main_frame(params):
+                    return
+                event.set()
+
+            return handle
+
+        watchers = [
+            ("Page.frameStartedLoading", _handler(state["hard"], True)),
+            ("Page.frameNavigated", _handler(state["hard"], True)),
+            ("Page.navigatedWithinDocument", _handler(state["soft"], True)),
+            ("Page.loadEventFired", _handler(state["load"], False)),
+        ]
+        for method, handler in watchers:
+            self.client.on(method, handler)
+        try:
+            yield state
+        finally:
+            for method, handler in watchers:
+                self.client.off(method, handler)
+
+    def _settle_navigation(self, session: str, state: dict) -> None:
+        """Settle the page after an action, tolerating an induced navigation.
+
+        Waits ``NAV_GRACE_SECONDS`` for a navigation to begin; if a real
+        navigation starts, waits for its load event first. Then always waits
+        for the DOM to go quiet (covers same-document route changes and async
+        rendering as well).
+        """
+        deadline = time.time() + NAV_GRACE_SECONDS
+        while time.time() < deadline:
+            if state["hard"].is_set() or state["soft"].is_set() or state["load"].is_set():
+                break
+            time.sleep(0.05)
+
+        if state["hard"].is_set():
+            state["load"].wait(NAV_LOAD_TIMEOUT)
+        self._quiet(session)
 
     # ------------------------------------------------------------------ #
     # result dicts
@@ -558,6 +672,43 @@ class BrowserController:
             time.sleep(0.15)
         self._stabilize(target_id)
 
+    def _wait_ready_new_tab(
+        self, target_id: str, expected_url: str = "", timeout: float = NAV_LOAD_TIMEOUT
+    ) -> None:
+        """Wait for a freshly created tab to finish its *initial* navigation.
+
+        A brand-new target starts on ``about:blank`` which already reports
+        ``readyState == "complete"``; ``_wait_ready`` would therefore return
+        immediately and capture an empty page. Here we refuse to accept the
+        page until the real document has committed (``location.href`` has left
+        ``about:blank``) and is complete, then wait for the DOM to go quiet.
+        """
+        assert self.client is not None
+        session = self.client.attach(target_id)
+        self.client.enable_page_domains(session)
+        allow_blank = bool(expected_url) and expected_url.startswith("about:")
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            try:
+                result = self.client.send(
+                    "Runtime.evaluate",
+                    {
+                        "expression": "document.readyState + '|' + location.href",
+                        "returnByValue": True,
+                    },
+                    session_id=session,
+                    timeout=3.0,
+                )
+                value = str((result.get("result") or {}).get("value") or "")
+            except Exception:
+                value = ""
+            ready_state, _, href = value.partition("|")
+            committed = allow_blank or (bool(href) and href != "about:blank")
+            if committed and ready_state == "complete":
+                break
+            time.sleep(0.1)
+        self._quiet(session)
+
     def _full_result_for(self, target_id: str, action_ok: str = NOT_CALLED) -> dict:
         tree = self.capture_tree(target_id)
         content = self.serialize_tree(tree, target_id)
@@ -603,12 +754,13 @@ class BrowserController:
         if index <= 0 or index >= len(entries):
             return self._base_result(FULL, FAIL, "无", "无法返回：没有可回退的历史记录")
         try:
-            self.client.send(
-                "Page.navigateToHistoryEntry",
-                {"entryId": entries[index - 1]["id"]},
-                session_id=session,
-            )
-            self._wait_ready(target_id)
+            with self._watch_navigation(session) as nav_state:
+                self.client.send(
+                    "Page.navigateToHistoryEntry",
+                    {"entryId": entries[index - 1]["id"]},
+                    session_id=session,
+                )
+                self._settle_navigation(session, nav_state)
         except CDPError as exc:
             return self._base_result(FULL, FAIL, "无", str(exc))
         result = self._full_result_for(target_id)
@@ -631,8 +783,9 @@ class BrowserController:
         session = self.client.attach(target_id)
         self.client.enable_page_domains(session)
         try:
-            self.client.send("Page.reload", {"ignoreCache": False}, session_id=session)
-            self._wait_ready(target_id)
+            with self._watch_navigation(session) as nav_state:
+                self.client.send("Page.reload", {"ignoreCache": False}, session_id=session)
+                self._settle_navigation(session, nav_state)
         except CDPError as exc:
             return self._base_result(INCREMENTAL, FAIL, "无", str(exc), include_tabs=False)
         new_tree = self.capture_tree(target_id)
@@ -693,5 +846,5 @@ class BrowserController:
             self.client.send("Target.activateTarget", {"targetId": target_id})
         except CDPError:
             pass
-        self._wait_ready(target_id)
+        self._wait_ready_new_tab(target_id, target_url)
         return self._full_result_for(target_id)
