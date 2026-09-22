@@ -247,6 +247,14 @@ html[data-style-danger="solid"] .card-btn-danger:hover { filter: brightness(.92)
 }
 .takeover-drag:hover { background: rgba(0,0,0,.62); }
 
+/* ── 敏感信息表单 ───────────────────────── */
+.modal.sensitive-modal { width: min(640px, calc(100vw - 32px)); }
+.sensitive-head, .sensitive-row { display: grid; grid-template-columns: 1fr 1fr auto auto; gap: 8px; align-items: center; }
+.sensitive-head { font-size: 12px; color: var(--text-muted); padding: 0 2px 6px; }
+.sensitive-row { margin-bottom: 8px; }
+.sensitive-row input { width: 100%; }
+.sensitive-row .sens-minus, .sensitive-row .sens-plus { width: 34px; padding: 0; font-size: 16px; line-height: 1; }
+
 .gutter { background: var(--border); opacity: .6; cursor: row-resize; }
 .gutter:hover, .gutter.gutter-horizontal:hover { opacity: 1; background: var(--primary); }
 .gutter-horizontal { cursor: col-resize; }

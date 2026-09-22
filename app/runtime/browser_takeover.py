@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
@@ -30,6 +31,59 @@ def set_paused(value: bool) -> None:
 
 def is_paused() -> bool:
     return _paused
+
+
+# ── 敏感信息脱敏（仅作用于「可填入」元素的 fill 内容）─────────────────────
+# LLM 被要求把「名称」用 <> 包裹填入（如 <姓名>），这里在真正交给 browser_agent
+# 之前，把 <名称> 替换成敏感信息表单里配置的真实值；表单里没有的名称原样保留。
+_SENSITIVE_RE = re.compile(r"<([^<>\n]+)>")
+
+
+def _load_sensitive_map() -> dict[str, str]:
+    """读取全局设置里的敏感信息表单，构建 {名称: 真实值}。"""
+    try:
+        from app.config.settings import load_settings
+        from app.deps import config_store
+
+        settings = load_settings(config_store._dir)
+    except Exception:  # noqa: BLE001
+        return {}
+    mapping: dict[str, str] = {}
+    for entry in settings.sensitive_info:
+        name = (entry.name or "").strip()
+        if name:
+            mapping[name] = entry.value
+    return mapping
+
+
+def apply_sensitive_replacement(text: str) -> str:
+    """把 ``<名称>`` 替换为敏感信息表单中的真实值；无对应表项则原样保留。"""
+    if not text or "<" not in text:
+        return text
+    mapping = _load_sensitive_map()
+    if not mapping:
+        return text
+
+    def _repl(match: re.Match) -> str:
+        key = match.group(1).strip()
+        return mapping.get(key, match.group(0))
+
+    return _SENSITIVE_RE.sub(_repl, text)
+
+
+def _preprocess_interact(kwargs: dict) -> dict:
+    """tool-2：只替换可填入元素的 fill。"""
+    if "fill" in kwargs:
+        kwargs["fill"] = apply_sensitive_replacement(kwargs.get("fill") or "")
+    return kwargs
+
+
+def _preprocess_interact_many(kwargs: dict) -> dict:
+    """tool-11：只替换可填入元素的 fill_list。"""
+    fills = kwargs.get("fill_list")
+    if isinstance(fills, list):
+        kwargs["fill_list"] = [apply_sensitive_replacement(str(f) if f is not None else "") for f in fills]
+    return kwargs
 
 
 # ── 有参工具的 args_schema（描述照搬 browser_agent/schemas.py）─────────────
@@ -68,12 +122,21 @@ class InteractManyArgs(BaseModel):
     )
 
 
-def _wrap(fn, description: str, args_schema=None) -> StructuredTool:
-    """把一个 browser_agent 同步工具包成 LangChain StructuredTool。"""
+def _wrap(fn, description: str, args_schema=None, preprocess=None) -> StructuredTool:
+    """把一个 browser_agent 同步工具包成 LangChain StructuredTool。
+
+    ``preprocess`` 可选：在参数校验之后、真正调用底层工具之前，对 kwargs 做变换
+    （如把可填入元素的 fill 里的 ``<名称>`` 替换为敏感信息真实值）。
+    """
 
     async def _call(**kwargs) -> str:
         if _paused:
             return STOP_TEXT
+        if preprocess is not None:
+            try:
+                kwargs = preprocess(dict(kwargs))
+            except Exception:  # noqa: BLE001
+                pass
         try:
             result = await asyncio.to_thread(fn, **kwargs)
         except Exception as exc:  # noqa: BLE001
@@ -104,7 +167,7 @@ def build_browser_tools() -> list[StructuredTool]:
 
     return [
         _wrap(ba.tool_1_open_browser, desc("tool_1_open_browser"), NoArgs),
-        _wrap(ba.tool_2_interact, desc("tool_2_interact"), InteractArgs),
+        _wrap(ba.tool_2_interact, desc("tool_2_interact"), InteractArgs, _preprocess_interact),
         _wrap(ba.tool_3_get_viewport_dom, desc("tool_3_get_viewport_dom"), NoArgs),
         _wrap(ba.tool_4_list_tabs, desc("tool_4_list_tabs"), NoArgs),
         _wrap(ba.tool_5_switch_tab, desc("tool_5_switch_tab"), SwitchTabArgs),
@@ -113,7 +176,7 @@ def build_browser_tools() -> list[StructuredTool]:
         _wrap(ba.tool_8_close_tab, desc("tool_8_close_tab"), CloseTabArgs),
         _wrap(ba.tool_9_navigate, desc("tool_9_navigate"), NavigateArgs),
         _wrap(ba.tool_10_tab_url_map, desc("tool_10_tab_url_map"), NoArgs),
-        _wrap(ba.tool_11_interact_many, desc("tool_11_interact_many"), InteractManyArgs),
+        _wrap(ba.tool_11_interact_many, desc("tool_11_interact_many"), InteractManyArgs, _preprocess_interact_many),
     ]
 
 

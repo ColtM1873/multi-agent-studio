@@ -204,6 +204,18 @@ const I18N_EN = {
   "请先点击「继续」按钮，再提示 Agent 接管浏览器。": "Please click \"Continue\" first, then ask the agent to take over.",
   "打开浏览器失败": "Failed to open the browser",
   "获取当前页面内容失败": "Failed to fetch the current page content",
+  "编辑敏感信息表单": "Edit sensitive info form",
+  "用于浏览器接管：Agent 遇到表单类「可填入元素」时填 <名称>，后台会替换成右侧的真实内容；左侧填「名称」，右侧填「真实内容」。表单里没有的名称会按 Agent 原文原样填入。": "For browser takeover: when the agent fills a form-like \"fillable element\", it writes <name>; the backend replaces it with the real content on the right. Put the name on the left and the real content on the right. Names not in the form are filled exactly as the agent wrote them.",
+  "信息名称（表项）": "Info name (field)",
+  "实际填入内容": "Actual content to fill",
+  "例如 姓名": "e.g. Name",
+  "例如 张三": "e.g. John Doe",
+  "删除本行": "Delete this row",
+  "在下方新增一行": "Add a new row below",
+  "注入 敏感信息替换列表": "Inject sensitive-info replacement list",
+  "敏感信息替换列表：": "Sensitive-info replacement list:",
+  "请遇到如下需要填写的内容时，直接将下述列表中的名称原文加上<>包裹后填入。比如，若下述列表中有「姓名」，那么在遇到「请输入你姓名」之后的可填入元素时，直接填写为<姓名>即可。CDP 在后台实现时，会将下列列表中的名称原文（带<>包裹）替换为真实值；若列表中没有对应名称，则按原文原样填入。": "When you encounter a field to fill, write the name from the list below wrapped in <> and fill that in. For example, if the list contains \"Name\", then for a fillable element after \"Please enter your name\", fill it with <Name>. The CDP backend will replace the wrapped name with the real value; if a name is not in the list, fill it exactly as written.",
+  "敏感信息表单为空，请先在主界面「编辑敏感信息表单」中添加": "The sensitive-info form is empty. Please add entries via \"Edit sensitive info form\" on the main screen first.",
   "暂无会话": "No conversations yet",
   "所有会话均已隐藏": "All conversations are hidden",
   "隐藏": "Hide",
@@ -1400,6 +1412,7 @@ async function renderAgents() {
       <div class="spacer" style="flex:1;"></div>
       <button class="btn small" id="langBtn" title="切换语言 / Switch language">${lang === "zh" ? "EN" : "中文"}</button>
       <button class="gear-btn" id="gearBtn" title="${t("系统设置")}">⚙️</button>
+      <button class="btn small" id="editSensitiveBtn">${t("编辑敏感信息表单")}</button>
       <button class="btn small" id="editDefaultBtn">${t("编辑默认配置")}</button>
       <button class="btn primary" id="newBtn">+ ${t("新建 multi-agent")}</button>
     </div>
@@ -1415,6 +1428,7 @@ async function renderAgents() {
 
   $("#newBtn").onclick = () => { S.editingDefault = false; S.agentId = null; S.view = "editor"; render(); };
   $("#editDefaultBtn").onclick = () => { S.editingDefault = true; S.agentId = null; S.view = "editor"; render(); };
+  $("#editSensitiveBtn").onclick = () => openSensitiveForm();
   $("#gearBtn").onclick = () => openSettings();
   $("#langBtn").onclick = () => setLang(lang === "zh" ? "en" : "zh");
 
@@ -1685,6 +1699,61 @@ async function openSettings() {
         summary_token_percent: Math.min(100, Math.max(1, +mask.querySelector("#set_summary_pct").value || 20)),
         proactive_summary_custom_percent: mask.querySelector("#set_summary_custom").checked,
       });
+      mask.remove();
+      toast(t("设置已保存"));
+    } catch (e) { toast(e.message, true); }
+  };
+}
+
+async function openSensitiveForm() {
+  let s;
+  try { s = await getSettings(); } catch (e) { toast(e.message, true); return; }
+  const mask = document.createElement("div");
+  mask.className = "modal-mask";
+  mask.innerHTML = `
+    <div class="modal sensitive-modal">
+      <h3>🔐 ${t("编辑敏感信息表单")}</h3>
+      <div class="muted" style="margin-bottom:10px;">${esc(t("用于浏览器接管：Agent 遇到表单类「可填入元素」时填 <名称>，后台会替换成右侧的真实内容；左侧填「名称」，右侧填「真实内容」。表单里没有的名称会按 Agent 原文原样填入。"))}</div>
+      <div class="sensitive-head"><span>${t("信息名称（表项）")}</span><span>${t("实际填入内容")}</span><span></span><span></span></div>
+      <div id="sensitiveRows"></div>
+      <div class="modal-actions">
+        <button class="btn" id="sensCancel">${t("取消")}</button>
+        <button class="btn primary" id="sensSave">${t("保存")}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(mask);
+
+  const rowsEl = mask.querySelector("#sensitiveRows");
+
+  function addRow(name = "", value = "", afterEl = null) {
+    const row = document.createElement("div");
+    row.className = "sensitive-row";
+    row.innerHTML = `
+      <input class="sens-name" placeholder="${t("例如 姓名")}" value="${esc(name)}">
+      <input class="sens-value" placeholder="${t("例如 张三")}" value="${esc(value)}">
+      <button class="btn small sens-minus" type="button" title="${t("删除本行")}">−</button>
+      <button class="btn small sens-plus" type="button" title="${t("在下方新增一行")}">+</button>`;
+    row.querySelector(".sens-minus").onclick = () => row.remove();
+    row.querySelector(".sens-plus").onclick = () => addRow("", "", row);
+    if (afterEl && afterEl.parentNode === rowsEl) afterEl.after(row);
+    else rowsEl.appendChild(row);
+    return row;
+  }
+
+  const initial = (s.sensitive_info || []);
+  if (initial.length) initial.forEach(e => addRow(e.name || "", e.value || ""));
+  else addRow();
+
+  mask.querySelector("#sensCancel").onclick = () => mask.remove();
+  mask.querySelector("#sensSave").onclick = async () => {
+    try {
+      const sensitive_info = $$(".sensitive-row", rowsEl)
+        .map(r => ({
+          name: r.querySelector(".sens-name").value.trim(),
+          value: r.querySelector(".sens-value").value,
+        }))
+        .filter(e => e.name);
+      await saveSettings({ ...s, sensitive_info });
       mask.remove();
       toast(t("设置已保存"));
     } catch (e) { toast(e.message, true); }
@@ -2928,6 +2997,7 @@ async function renderChatView() {
         <div class="date-inject-hint" id="dateInjectHint" style="display:none;"></div>
         <textarea id="msgInput" placeholder="${t("输入消息…")}"></textarea>
         <div class="browser-takeover-actions" id="browserTakeoverActions" style="display:none;">
+          <button class="btn" id="sensitiveInjectBtn">${t("注入 敏感信息替换列表")}</button>
           <button class="btn" id="browserHintBtn">${t("提示Agent开始接管浏览器")}</button>
           <button class="btn" id="openBrowserBtn">${t("打开浏览器")}</button>
         </div>
@@ -3029,7 +3099,8 @@ async function renderChatView() {
     const nameEl = $("#takeoverName");
     const actionEl = $("#takeoverAction");
     const dragEl = $("#takeoverDrag");
-    if (!actionsEl || !openBtn || !hintBtn || !floatEl || !ballEl || !dragEl) return;
+    const sensitiveBtn = $("#sensitiveInjectBtn");
+    if (!actionsEl || !openBtn || !hintBtn || !floatEl || !ballEl || !dragEl || !sensitiveBtn) return;
 
     let takeoverOn = false;
     try {
@@ -3104,6 +3175,31 @@ async function renderChatView() {
       input.dispatchEvent(new Event("input"));
       input.scrollTop = input.scrollHeight;
     }
+
+    function appendSensitiveList(names) {
+      const input = $("#msgInput");
+      if (!input) return;
+      const usage = t("请遇到如下需要填写的内容时，直接将下述列表中的名称原文加上<>包裹后填入。比如，若下述列表中有「姓名」，那么在遇到「请输入你姓名」之后的可填入元素时，直接填写为<姓名>即可。CDP 在后台实现时，会将下列列表中的名称原文（带<>包裹）替换为真实值；若列表中没有对应名称，则按原文原样填入。");
+      const jsonText = JSON.stringify({
+        "使用方式": usage,
+        "直接填名称原文列表": names,
+      }, null, 2);
+      const block = `${t("敏感信息替换列表：")}\n${jsonText}`;
+      const cur = input.value.replace(/\s+$/, "");
+      input.value = cur ? cur + "\n" + block : block;
+      input.dispatchEvent(new Event("input"));
+      input.scrollTop = input.scrollHeight;
+    }
+
+    sensitiveBtn.onclick = async () => {
+      let names = [];
+      try {
+        const st = await api("/api/settings");
+        names = (st.sensitive_info || []).map(e => (e.name || "").trim()).filter(Boolean);
+      } catch (e) {}
+      if (!names.length) { toast(t("敏感信息表单为空，请先在主界面「编辑敏感信息表单」中添加"), true); return; }
+      appendSensitiveList(names);
+    };
 
     openBtn.onclick = async () => {
       if (openBtn.classList.contains("is-disabled")) return;

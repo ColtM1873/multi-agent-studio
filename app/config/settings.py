@@ -9,9 +9,16 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 SETTINGS_FILE_NAME = "settings.json"
+
+
+class SensitiveEntry(BaseModel):
+    """敏感信息表单的一行：name = 表单里 LLM 需要填的「名称」，value = 真实内容。"""
+
+    name: str = ""
+    value: str = ""
 
 
 class Settings(BaseModel):
@@ -69,6 +76,10 @@ class Settings(BaseModel):
     # 浏览器接管：每次打开浏览器时是否弹出说明弹窗（介绍红色浮动按钮的停止/继续作用）。
     # 纯前端展示，不参与图编译。默认开启。
     browser_takeover_intro_popup: bool = True
+    # 敏感信息表单：浏览器接管填写「可填入元素」时，LLM 用 <名称> 占位，
+    # 后台按本表把 <名称> 替换为真实值（表单里没有的名称原样保留）。
+    # 工具调用时实时读取，不参与图编译，无需 invalidate_all。
+    sensitive_info: list[SensitiveEntry] = Field(default_factory=list)
 
 
 def settings_path(config_dir: Path | str) -> Path:
