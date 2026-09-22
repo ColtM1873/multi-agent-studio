@@ -189,6 +189,21 @@ const I18N_EN = {
   "开启后，聊天输入框右侧会出现「注入当前日期」按钮；开启该按钮后，发送消息时会在用户消息前面拼接当前日期。": "When enabled, an \"Inject current date\" button appears next to the chat input. When that button is on, the current date is prepended to your message when sending.",
   "注入当前日期": "Inject current date",
   "开启后，发送消息时会在用户消息前面拼接当前日期。": "When enabled, the current date is prepended to your message when sending.",
+  "开启浏览器接管功能": "Enable browser takeover",
+  "开启后，会向主 agent 注入一组浏览器接管工具（占用上下文）。只有需要让 agent 操作浏览器时才开启。": "When enabled, a set of browser-takeover tools is injected into the main agent (consuming context). Only turn it on when the agent needs to operate a browser.",
+  "显示浏览器接管说明弹窗": "Show the browser-takeover intro popup",
+  "每次打开浏览器时，弹窗说明红色浮动按钮（停止/继续）的作用。关闭后不再弹出。": "Each time the browser is opened, show a popup explaining the red floating button (Stop/Continue). Turn off to suppress it.",
+  "提示Agent开始接管浏览器": "Ask the agent to start taking over the browser",
+  "打开浏览器": "Open browser",
+  "浏览器已打开（当前只支持接管一个浏览器）": "Browser already open (only one browser can be taken over)",
+  "继续": "Continue",
+  "拖动": "Drag",
+  "浏览器接管说明": "Browser takeover guide",
+  "知道了": "Got it",
+  "这是「浏览器接管」控制按钮。红色表示 Agent 可以操作浏览器；点击它会把状态切到绿色「继续」，此时 Agent 的所有浏览器操作会被立即暂停，等待你的后续指示。你可以在它旁边的 ✥ 把手处拖动它，避免遮挡页面。再次点击可恢复。": "This is the browser-takeover control. Red means the agent may operate the browser; click it to switch to green \"Continue\", which immediately pauses all browser actions until you give further instructions. Drag the ✥ handle beside it to move it out of the way. Click again to resume.",
+  "请先点击「继续」按钮，再提示 Agent 接管浏览器。": "Please click \"Continue\" first, then ask the agent to take over.",
+  "打开浏览器失败": "Failed to open the browser",
+  "获取当前页面内容失败": "Failed to fetch the current page content",
   "暂无会话": "No conversations yet",
   "所有会话均已隐藏": "All conversations are hidden",
   "隐藏": "Hide",
@@ -1546,6 +1561,10 @@ async function openSettings() {
         <label class="toggle"><input type="checkbox" id="set_date_inject" ${s.show_date_inject_button !== false ? "checked" : ""}><span class="track"></span></label>
       </div>
       <div class="switch-row">
+        <span class="sw-label">${t("显示浏览器接管说明弹窗")} <i class="info-icon">!<span class="tip">${t("每次打开浏览器时，弹窗说明红色浮动按钮（停止/继续）的作用。关闭后不再弹出。")}</span></i></span>
+        <label class="toggle"><input type="checkbox" id="set_browser_popup" ${s.browser_takeover_intro_popup !== false ? "checked" : ""}><span class="track"></span></label>
+      </div>
+      <div class="switch-row">
         <span class="sw-label">${t("默认总结百分比")} <i class="info-icon">!<span class="tip">${t("全量总结时，提示模型把历史压缩到的目标比例（占历史 token 的百分比）。默认与推荐 20%（即五分之一），数值越小越省 token。")}</span></i></span>
         <span class="sw-inline"><input type="number" id="set_summary_pct" min="1" max="100" value="${s.summary_token_percent ?? 20}"><span class="pct-suffix">%</span></span>
       </div>
@@ -1662,6 +1681,7 @@ async function openSettings() {
         edit_all_message_types: mask.querySelector("#set_edit_types").checked,
         auto_scroll_on_send: mask.querySelector("#set_autoscroll").checked,
         show_date_inject_button: mask.querySelector("#set_date_inject").checked,
+        browser_takeover_intro_popup: mask.querySelector("#set_browser_popup").checked,
         summary_token_percent: Math.min(100, Math.max(1, +mask.querySelector("#set_summary_pct").value || 20)),
         proactive_summary_custom_percent: mask.querySelector("#set_summary_custom").checked,
       });
@@ -2196,6 +2216,7 @@ function buildForm(cfg, canEditSubs) {
   const htmlReport = main.html_report;
   const htmlPrompt = main.html_report_prompt || DEFAULT_HTML_PROMPT;
   const reactPrompt = main.react_prompt !== false;
+  const browserTakeover = !!main.browser_takeover;
 
   form.innerHTML = `
     <div class="form-card"><h4>${t("基本信息")}</h4><div class="form-grid">
@@ -2225,6 +2246,9 @@ function buildForm(cfg, canEditSubs) {
     </div></div>
 
     <div class="form-card"><h4>${t("主 agent")}</h4><div class="form-grid">
+      <div class="field full takeover-switch-field">
+        <label style="flex-direction:row;align-items:center;gap:8px;"><input type="checkbox" id="f_browser_takeover" ${browserTakeover ? "checked" : ""}> 🌐 ${t("开启浏览器接管功能")} ${info("开启后，会向主 agent 注入一组浏览器接管工具（占用上下文）。只有需要让 agent 操作浏览器时才开启。")}</label>
+      </div>
       ${modelBlockHTML(main.llm_provider_name, main.model, "main_mode")}
       <div class="field"><label>API Key ${info("该模型供应商的 API 密钥（明文存本地配置）。")}</label><input id="f_apikey" value="${esc(main.api_key)}" type="password"${ph("main_api_key")}></div>
       <div class="field"><label>${t("文件工具根目录")} ${info("主 agent 文件工具读写文件的根目录。")}</label><input id="f_rootdir" value="${esc(ft.root_dir)}"${ph("root_dir")}></div>
@@ -2537,6 +2561,7 @@ function buildPayload(cfg) {
       html_report: $("#f_html_report").checked,
       html_report_prompt: val("f_html_prompt"),
       react_prompt: $("#f_react_prompt").checked,
+      browser_takeover: $("#f_browser_takeover").checked,
     },
     sub_agents: $$(".subagent-box").map(collectSubAgent),
     output: cfg.output || { stream_output_dir: "" },
@@ -2902,9 +2927,20 @@ async function renderChatView() {
         <div class="input-toolbar"><span class="muted" id="inputHint">${t("输入消息（Enter 发送，Shift+Enter 换行）")}</span><div class="spacer" style="flex:1;"></div></div>
         <div class="date-inject-hint" id="dateInjectHint" style="display:none;"></div>
         <textarea id="msgInput" placeholder="${t("输入消息…")}"></textarea>
+        <div class="browser-takeover-actions" id="browserTakeoverActions" style="display:none;">
+          <button class="btn" id="browserHintBtn">${t("提示Agent开始接管浏览器")}</button>
+          <button class="btn" id="openBrowserBtn">${t("打开浏览器")}</button>
+        </div>
         <div class="input-actions"><button class="btn" id="dateInjectBtn" style="display:none;" title="${t("开启后，发送消息时会在用户消息前面拼接当前日期。")}"><span class="date-dot"></span>${t("注入当前日期")}</button><button class="btn" id="stopBtn" style="display:none;">${t("停止")}</button><button class="btn primary" id="sendBtn">${t("发送")}</button></div>
       </div>
       <div id="doneBubble" class="done-bubble done-bubble-float" style="display:none;"></div>
+      <div class="takeover-float" id="takeoverFloat" style="display:none;">
+        <div class="takeover-ball" id="takeoverBall">
+          <div class="tb-name" id="takeoverName"></div>
+          <div class="tb-action" id="takeoverAction">${t("停止")}</div>
+        </div>
+        <div class="takeover-drag" id="takeoverDrag" title="${t("拖动")}">✥</div>
+      </div>
     </div>`;
 
   const chatBody = $("#chatBody");
@@ -2982,6 +3018,162 @@ async function renderChatView() {
     };
   }
   refreshDateInjectUI();
+
+  /* ================= 浏览器接管 ================= */
+  (async () => {
+    const actionsEl = $("#browserTakeoverActions");
+    const openBtn = $("#openBrowserBtn");
+    const hintBtn = $("#browserHintBtn");
+    const floatEl = $("#takeoverFloat");
+    const ballEl = $("#takeoverBall");
+    const nameEl = $("#takeoverName");
+    const actionEl = $("#takeoverAction");
+    const dragEl = $("#takeoverDrag");
+    if (!actionsEl || !openBtn || !hintBtn || !floatEl || !ballEl || !dragEl) return;
+
+    let takeoverOn = false;
+    try {
+      const cfg = await api(`/api/agents/${encodeURIComponent(S.agentId)}`);
+      takeoverOn = !!(cfg.main_agent && cfg.main_agent.browser_takeover);
+    } catch (e) { return; }
+    if (!takeoverOn) return;
+    // 视图可能已被重新渲染，元素已脱离文档：放弃绑定
+    if (!actionsEl.isConnected) return;
+
+    actionsEl.style.display = "flex";
+    nameEl.textContent = `@${S.agentName} agent`;
+
+    let ballPaused = false;
+    let ballShown = false;
+    let lastConnected = false;
+
+    function updateBall() {
+      ballEl.classList.toggle("paused", ballPaused);
+      actionEl.textContent = ballPaused ? t("继续") : t("停止");
+      hintBtn.classList.toggle("is-disabled", ballPaused);
+    }
+
+    function showBall() {
+      if (ballShown || !floatEl.isConnected) return;
+      ballShown = true;
+      floatEl.style.display = "flex";
+      applyFloatPos();
+    }
+
+    function showInfoModal(text) {
+      const mask = document.createElement("div");
+      mask.className = "modal-mask";
+      mask.innerHTML = `<div class="modal"><div class="modal-body">${esc(text)}</div><div class="modal-actions"><button class="btn primary" id="tkInfoOk">${t("知道了")}</button></div></div>`;
+      document.body.appendChild(mask);
+      mask.querySelector("#tkInfoOk").onclick = () => mask.remove();
+    }
+
+    function showIntroPopup() {
+      if (settings && settings.browser_takeover_intro_popup === false) return;
+      const mask = document.createElement("div");
+      mask.className = "modal-mask";
+      mask.innerHTML = `<div class="modal"><h3>🌐 ${t("浏览器接管说明")}</h3><div class="modal-body">${esc(t("这是「浏览器接管」控制按钮。红色表示 Agent 可以操作浏览器；点击它会把状态切到绿色「继续」，此时 Agent 的所有浏览器操作会被立即暂停，等待你的后续指示。你可以在它旁边的 ✥ 把手处拖动它，避免遮挡页面。再次点击可恢复。"))}</div><div class="modal-actions"><button class="btn primary" id="tkIntroOk">${t("知道了")}</button></div></div>`;
+      document.body.appendChild(mask);
+      mask.querySelector("#tkIntroOk").onclick = () => mask.remove();
+    }
+
+    async function refreshBrowserUI() {
+      let st = { connected: false, port: null, paused: false };
+      try { st = await api("/api/browser/status"); } catch (e) {}
+      const wasConnected = lastConnected;
+      lastConnected = !!st.connected;
+      ballPaused = !!st.paused;
+      if (st.connected) {
+        openBtn.classList.add("is-disabled");
+        openBtn.title = t("浏览器已打开（当前只支持接管一个浏览器）");
+        showBall();
+      } else {
+        openBtn.classList.remove("is-disabled");
+        openBtn.title = "";
+      }
+      updateBall();
+      return { connected: !!st.connected, wasConnected };
+    }
+
+    function appendViewportDom(dom) {
+      const input = $("#msgInput");
+      if (!input) return;
+      const wrapped = `<当前聚焦标签页的可见内容>\n${dom}\n</当前聚焦标签页的可见内容>`;
+      const cur = input.value.replace(/\s+$/, "");
+      input.value = cur ? cur + "\n" + wrapped : wrapped;
+      input.dispatchEvent(new Event("input"));
+      input.scrollTop = input.scrollHeight;
+    }
+
+    openBtn.onclick = async () => {
+      if (openBtn.classList.contains("is-disabled")) return;
+      try {
+        const r = await api("/api/browser/open", { method: "POST", body: "{}" });
+        if (!r.ok) { toast(r.error || t("打开浏览器失败"), true); return; }
+        await refreshBrowserUI();
+        showIntroPopup();
+      } catch (e) { toast(e.message, true); }
+    };
+
+    hintBtn.onclick = async () => {
+      if (ballPaused) { showInfoModal(t("请先点击「继续」按钮，再提示 Agent 接管浏览器。")); return; }
+      try {
+        const r = await api("/api/browser/viewport-dom", { method: "POST", body: "{}" });
+        if (!r.ok) { toast(r.error || t("获取当前页面内容失败"), true); return; }
+        appendViewportDom(r.content);
+        const { connected, wasConnected } = await refreshBrowserUI();
+        if (connected && !wasConnected) showIntroPopup();  // 仅当本次提示自动打开了浏览器才弹
+      } catch (e) { toast(e.message, true); }
+    };
+
+    ballEl.onclick = async () => {
+      ballPaused = !ballPaused;
+      updateBall();
+      try { await api("/api/browser/pause", { method: "POST", body: JSON.stringify({ paused: ballPaused }) }); } catch (e) {}
+    };
+
+    /* 拖动：仅把手可拖，位置本地持久化 */
+    const FLOAT_KEY = "takeover-float-pos";
+    function clampPos(pos) {
+      const w = floatEl.offsetWidth || 130, h = floatEl.offsetHeight || 70;
+      return {
+        left: Math.min(Math.max(0, pos.left), Math.max(0, window.innerWidth - w)),
+        top: Math.min(Math.max(0, pos.top), Math.max(0, window.innerHeight - h)),
+      };
+    }
+    function applyFloatPos() {
+      let pos = null;
+      try { pos = JSON.parse(localStorage.getItem(FLOAT_KEY) || "null"); } catch (e) {}
+      if (!pos || typeof pos.left !== "number" || typeof pos.top !== "number") {
+        pos = { left: window.innerWidth - (floatEl.offsetWidth || 130) - 24, top: 90 };
+      }
+      pos = clampPos(pos);
+      floatEl.style.left = pos.left + "px";
+      floatEl.style.top = pos.top + "px";
+    }
+    dragEl.onmousedown = (e) => {
+      e.preventDefault();
+      const rect = floatEl.getBoundingClientRect();
+      const offX = e.clientX - rect.left, offY = e.clientY - rect.top;
+      const onMove = (ev) => {
+        const p = clampPos({ left: ev.clientX - offX, top: ev.clientY - offY });
+        floatEl.style.left = p.left + "px";
+        floatEl.style.top = p.top + "px";
+      };
+      const onUp = () => {
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+        localStorage.setItem(FLOAT_KEY, JSON.stringify({
+          left: parseFloat(floatEl.style.left) || 0,
+          top: parseFloat(floatEl.style.top) || 0,
+        }));
+      };
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
+    };
+
+    await refreshBrowserUI();
+  })();
 
   /* ================= 未发送消息缓存：恢复与保存 ================= */
   const draftInput = $("#msgInput");

@@ -24,7 +24,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api import agents, chat_ws, downloads, drafts, export_html, settings, snapshots, threads
+from app.api import agents, browser, chat_ws, downloads, drafts, export_html, settings, snapshots, threads
 from app.deps import draft_store
 
 
@@ -64,6 +64,7 @@ app.include_router(settings.router)
 app.include_router(downloads.router)
 app.include_router(export_html.router)
 app.include_router(drafts.router)
+app.include_router(browser.router)
 
 
 @app.get("/api/health")

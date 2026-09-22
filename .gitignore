@@ -34,3 +34,7 @@ md2print/example.md
 
 # inner_docs 使用方案文档（本地保留，不入库）
 INNER_DOCS_GUIDE.md
+
+# 浏览器接管运行时产物（browser_agent 在仓库根生成，本地保留，不入库）
+/config.json
+/.chrome-profile/

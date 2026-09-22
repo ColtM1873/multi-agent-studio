@@ -24,6 +24,7 @@ from app.config.models import (
 )
 from app.runtime.file_tools import build_file_tools
 from app.runtime.deepseek_reasoning_fix import apply_deepseek_reasoning_fix, is_deepseek_config
+from app.runtime.browser_takeover import build_browser_tools
 from app.runtime.prompts import MEMORY_ATTACH_MARKER, USER_MSG_PREFIX, ReAct_system_prompt, summary_prompt_generator, subagent_call_prompt, summary_prompt_prefix,trimmed_summary_prompt
 from app.runtime.state_factory import make_main_state, make_sub_agent_state
 from app.services import snapshot as snapshot_service
@@ -583,7 +584,10 @@ async def build_world(
         return memories
 
     memory_tools = [write_memory, read_memory]
-    non_agent_tools = memory_tools + pass_in_tools
+    # 浏览器接管：开启后把 browser_agent 的 11 个工具并入主 agent 的非子图工具，
+    # 从而被 bind_tools 注入、并由 tool_node_front 执行（见 inner_docs/ID56）。
+    browser_tools = build_browser_tools() if main_spec.browser_takeover else []
+    non_agent_tools = memory_tools + pass_in_tools + browser_tools
     main_nonagent_tools_by_name = {tool.name: tool for tool in non_agent_tools}
     main_model_with_tools = main_model.bind_tools(sub_agent_tools + non_agent_tools)
 

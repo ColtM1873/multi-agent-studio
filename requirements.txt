@@ -17,3 +17,6 @@ pystray==0.19.5
 pillow==12.3.0
 sentence-transformers==5.7.0
 markitdown[pdf,docx,pptx,xlsx,xls]==0.1.7
+# 浏览器接管工具（browser_agent）：CDP WebSocket 客户端 + HTTP 就绪探测
+websocket-client==1.9.0
+requests==2.34.2

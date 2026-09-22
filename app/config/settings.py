@@ -66,6 +66,9 @@ class Settings(BaseModel):
     # 会同步更新所有 multi-agent 的未发送消息缓存（等效共用一个缓存）；关闭则各自独立。
     # 纯前端同步逻辑，不参与图编译，无需 invalidate_all。默认开启。
     cross_agent_draft_flow: bool = True
+    # 浏览器接管：每次打开浏览器时是否弹出说明弹窗（介绍红色浮动按钮的停止/继续作用）。
+    # 纯前端展示，不参与图编译。默认开启。
+    browser_takeover_intro_popup: bool = True
 
 
 def settings_path(config_dir: Path | str) -> Path:
