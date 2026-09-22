@@ -201,6 +201,7 @@ const I18N_EN = {
   "浏览器接管说明": "Browser takeover guide",
   "知道了": "Got it",
   "这是「浏览器接管」控制按钮。红色表示 Agent 可以操作浏览器；点击它会把状态切到绿色「继续」，此时 Agent 的所有浏览器操作会被立即暂停，等待你的后续指示。你可以在它旁边的 ✥ 把手处拖动它，避免遮挡页面。再次点击可恢复。": "This is the browser-takeover control. Red means the agent may operate the browser; click it to switch to green \"Continue\", which immediately pauses all browser actions until you give further instructions. Drag the ✥ handle beside it to move it out of the way. Click again to resume.",
+  "已在桌面显示一个始终置顶的「停止」悬浮按钮（无论切到哪个应用或页面都能看到）。红色表示 Agent 可以操作浏览器；点击它变成绿色「继续」，此时 Agent 的所有浏览器操作会被立即暂停，等待你的后续指示。可拖动它旁边的 ✥ 把手移动位置，再次点击可恢复。": "A desktop-level, always-on-top \"Stop\" button has been shown (visible no matter which app or page you switch to). Red means the agent may operate the browser; click it to turn green \"Continue\", which immediately pauses all browser actions until you give further instructions. Drag the ✥ handle beside it to move it. Click again to resume.",
   "请先点击「继续」按钮，再提示 Agent 接管浏览器。": "Please click \"Continue\" first, then ask the agent to take over.",
   "打开浏览器失败": "Failed to open the browser",
   "获取当前页面内容失败": "Failed to fetch the current page content",
@@ -2995,22 +2996,17 @@ async function renderChatView() {
       <div class="input-pane" id="inputPane">
         <div class="input-toolbar"><span class="muted" id="inputHint">${t("输入消息（Enter 发送，Shift+Enter 换行）")}</span><div class="spacer" style="flex:1;"></div></div>
         <div class="date-inject-hint" id="dateInjectHint" style="display:none;"></div>
-        <textarea id="msgInput" placeholder="${t("输入消息…")}"></textarea>
-        <div class="browser-takeover-actions" id="browserTakeoverActions" style="display:none;">
-          <button class="btn" id="sensitiveInjectBtn">${t("注入 敏感信息替换列表")}</button>
-          <button class="btn" id="browserHintBtn">${t("提示Agent开始接管浏览器")}</button>
-          <button class="btn" id="openBrowserBtn">${t("打开浏览器")}</button>
+        <div class="input-main">
+          <textarea id="msgInput" placeholder="${t("输入消息…")}"></textarea>
+          <div class="browser-takeover-actions" id="browserTakeoverActions" style="display:none;">
+            <button class="btn small" id="sensitiveInjectBtn">${t("注入 敏感信息替换列表")}</button>
+            <button class="btn small" id="browserHintBtn">${t("提示Agent开始接管浏览器")}</button>
+            <button class="btn small" id="openBrowserBtn">${t("打开浏览器")}</button>
+          </div>
         </div>
         <div class="input-actions"><button class="btn" id="dateInjectBtn" style="display:none;" title="${t("开启后，发送消息时会在用户消息前面拼接当前日期。")}"><span class="date-dot"></span>${t("注入当前日期")}</button><button class="btn" id="stopBtn" style="display:none;">${t("停止")}</button><button class="btn primary" id="sendBtn">${t("发送")}</button></div>
       </div>
       <div id="doneBubble" class="done-bubble done-bubble-float" style="display:none;"></div>
-      <div class="takeover-float" id="takeoverFloat" style="display:none;">
-        <div class="takeover-ball" id="takeoverBall">
-          <div class="tb-name" id="takeoverName"></div>
-          <div class="tb-action" id="takeoverAction">${t("停止")}</div>
-        </div>
-        <div class="takeover-drag" id="takeoverDrag" title="${t("拖动")}">✥</div>
-      </div>
     </div>`;
 
   const chatBody = $("#chatBody");
@@ -3094,13 +3090,8 @@ async function renderChatView() {
     const actionsEl = $("#browserTakeoverActions");
     const openBtn = $("#openBrowserBtn");
     const hintBtn = $("#browserHintBtn");
-    const floatEl = $("#takeoverFloat");
-    const ballEl = $("#takeoverBall");
-    const nameEl = $("#takeoverName");
-    const actionEl = $("#takeoverAction");
-    const dragEl = $("#takeoverDrag");
     const sensitiveBtn = $("#sensitiveInjectBtn");
-    if (!actionsEl || !openBtn || !hintBtn || !floatEl || !ballEl || !dragEl || !sensitiveBtn) return;
+    if (!actionsEl || !openBtn || !hintBtn || !sensitiveBtn) return;
 
     let takeoverOn = false;
     try {
@@ -3112,23 +3103,12 @@ async function renderChatView() {
     if (!actionsEl.isConnected) return;
 
     actionsEl.style.display = "flex";
-    nameEl.textContent = `@${S.agentName} agent`;
 
-    let ballPaused = false;
-    let ballShown = false;
+    let paused = false;
     let lastConnected = false;
 
-    function updateBall() {
-      ballEl.classList.toggle("paused", ballPaused);
-      actionEl.textContent = ballPaused ? t("继续") : t("停止");
-      hintBtn.classList.toggle("is-disabled", ballPaused);
-    }
-
-    function showBall() {
-      if (ballShown || !floatEl.isConnected) return;
-      ballShown = true;
-      floatEl.style.display = "flex";
-      applyFloatPos();
+    function updateHintState() {
+      hintBtn.classList.toggle("is-disabled", paused);
     }
 
     function showInfoModal(text) {
@@ -3143,9 +3123,16 @@ async function renderChatView() {
       if (settings && settings.browser_takeover_intro_popup === false) return;
       const mask = document.createElement("div");
       mask.className = "modal-mask";
-      mask.innerHTML = `<div class="modal"><h3>🌐 ${t("浏览器接管说明")}</h3><div class="modal-body">${esc(t("这是「浏览器接管」控制按钮。红色表示 Agent 可以操作浏览器；点击它会把状态切到绿色「继续」，此时 Agent 的所有浏览器操作会被立即暂停，等待你的后续指示。你可以在它旁边的 ✥ 把手处拖动它，避免遮挡页面。再次点击可恢复。"))}</div><div class="modal-actions"><button class="btn primary" id="tkIntroOk">${t("知道了")}</button></div></div>`;
+      mask.innerHTML = `<div class="modal"><h3>🌐 ${t("浏览器接管说明")}</h3><div class="modal-body">${esc(t("已在桌面显示一个始终置顶的「停止」悬浮按钮（无论切到哪个应用或页面都能看到）。红色表示 Agent 可以操作浏览器；点击它变成绿色「继续」，此时 Agent 的所有浏览器操作会被立即暂停，等待你的后续指示。可拖动它旁边的 ✥ 把手移动位置，再次点击可恢复。"))}</div><div class="modal-actions"><button class="btn primary" id="tkIntroOk">${t("知道了")}</button></div></div>`;
       document.body.appendChild(mask);
       mask.querySelector("#tkIntroOk").onclick = () => mask.remove();
+    }
+
+    function showFloating() {
+      return api("/api/browser/floating", {
+        method: "POST",
+        body: JSON.stringify({ agent_id: S.agentId, show: true }),
+      }).catch(() => {});
     }
 
     async function refreshBrowserUI() {
@@ -3153,16 +3140,15 @@ async function renderChatView() {
       try { st = await api("/api/browser/status"); } catch (e) {}
       const wasConnected = lastConnected;
       lastConnected = !!st.connected;
-      ballPaused = !!st.paused;
+      paused = !!st.paused;
       if (st.connected) {
         openBtn.classList.add("is-disabled");
         openBtn.title = t("浏览器已打开（当前只支持接管一个浏览器）");
-        showBall();
       } else {
         openBtn.classList.remove("is-disabled");
         openBtn.title = "";
       }
-      updateBall();
+      updateHintState();
       return { connected: !!st.connected, wasConnected };
     }
 
@@ -3204,71 +3190,34 @@ async function renderChatView() {
     openBtn.onclick = async () => {
       if (openBtn.classList.contains("is-disabled")) return;
       try {
-        const r = await api("/api/browser/open", { method: "POST", body: "{}" });
+        const r = await api("/api/browser/open", { method: "POST", body: JSON.stringify({ agent_id: S.agentId }) });
         if (!r.ok) { toast(r.error || t("打开浏览器失败"), true); return; }
         await refreshBrowserUI();
+        await showFloating();
         showIntroPopup();
       } catch (e) { toast(e.message, true); }
     };
 
     hintBtn.onclick = async () => {
-      if (ballPaused) { showInfoModal(t("请先点击「继续」按钮，再提示 Agent 接管浏览器。")); return; }
+      if (paused) { showInfoModal(t("请先点击「继续」按钮，再提示 Agent 接管浏览器。")); return; }
       try {
-        const r = await api("/api/browser/viewport-dom", { method: "POST", body: "{}" });
+        const r = await api("/api/browser/viewport-dom", { method: "POST", body: JSON.stringify({ agent_id: S.agentId }) });
         if (!r.ok) { toast(r.error || t("获取当前页面内容失败"), true); return; }
         appendViewportDom(r.content);
         const { connected, wasConnected } = await refreshBrowserUI();
+        if (connected) await showFloating();
         if (connected && !wasConnected) showIntroPopup();  // 仅当本次提示自动打开了浏览器才弹
       } catch (e) { toast(e.message, true); }
     };
 
-    ballEl.onclick = async () => {
-      ballPaused = !ballPaused;
-      updateBall();
-      try { await api("/api/browser/pause", { method: "POST", body: JSON.stringify({ paused: ballPaused }) }); } catch (e) {}
-    };
-
-    /* 拖动：仅把手可拖，位置本地持久化 */
-    const FLOAT_KEY = "takeover-float-pos";
-    function clampPos(pos) {
-      const w = floatEl.offsetWidth || 130, h = floatEl.offsetHeight || 70;
-      return {
-        left: Math.min(Math.max(0, pos.left), Math.max(0, window.innerWidth - w)),
-        top: Math.min(Math.max(0, pos.top), Math.max(0, window.innerHeight - h)),
-      };
-    }
-    function applyFloatPos() {
-      let pos = null;
-      try { pos = JSON.parse(localStorage.getItem(FLOAT_KEY) || "null"); } catch (e) {}
-      if (!pos || typeof pos.left !== "number" || typeof pos.top !== "number") {
-        pos = { left: window.innerWidth - (floatEl.offsetWidth || 130) - 24, top: 90 };
-      }
-      pos = clampPos(pos);
-      floatEl.style.left = pos.left + "px";
-      floatEl.style.top = pos.top + "px";
-    }
-    dragEl.onmousedown = (e) => {
-      e.preventDefault();
-      const rect = floatEl.getBoundingClientRect();
-      const offX = e.clientX - rect.left, offY = e.clientY - rect.top;
-      const onMove = (ev) => {
-        const p = clampPos({ left: ev.clientX - offX, top: ev.clientY - offY });
-        floatEl.style.left = p.left + "px";
-        floatEl.style.top = p.top + "px";
-      };
-      const onUp = () => {
-        document.removeEventListener("mousemove", onMove);
-        document.removeEventListener("mouseup", onUp);
-        localStorage.setItem(FLOAT_KEY, JSON.stringify({
-          left: parseFloat(floatEl.style.left) || 0,
-          top: parseFloat(floatEl.style.top) || 0,
-        }));
-      };
-      document.addEventListener("mousemove", onMove);
-      document.addEventListener("mouseup", onUp);
-    };
-
     await refreshBrowserUI();
+    if (lastConnected) await showFloating();
+
+    // 定时同步暂停状态：系统级悬浮按钮可独立翻转暂停，前端据此更新提示按钮置灰
+    const pollId = setInterval(async () => {
+      if (!actionsEl.isConnected) { clearInterval(pollId); return; }
+      await refreshBrowserUI();
+    }, 2000);
   })();
 
   /* ================= 未发送消息缓存：恢复与保存 ================= */

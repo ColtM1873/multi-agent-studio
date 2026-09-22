@@ -3,6 +3,9 @@
 浏览器为**全局单例**（跨会话/跨 agent 存活），暂停标志也是全局的。
 所有端点用同步 ``def`` 定义：FastAPI 会在线程池执行，避免阻塞事件循环
 （browser_agent 的工具是阻塞式同步调用）。
+
+系统级「停止/继续」浮动按钮由后端 ``FloatingStop``（tkinter 置顶窗口）负责，
+不依赖网页；这里提供打开/显示/隐藏它的入口。
 """
 
 from __future__ import annotations
@@ -16,29 +19,65 @@ from app.runtime.browser_takeover import (
     is_paused,
     set_paused,
 )
+from app.runtime.floating_stop import FloatingStop
 
 router = APIRouter(prefix="/api/browser", tags=["browser"])
+
+
+class AgentBody(BaseModel):
+    agent_id: str | None = None
 
 
 class PauseBody(BaseModel):
     paused: bool
 
 
+class FloatingBody(BaseModel):
+    agent_id: str | None = None
+    show: bool = True
+
+
+def _resolve_agent_name(agent_id: str | None) -> str:
+    if not agent_id:
+        return "agent"
+    try:
+        from app.deps import config_store
+
+        return config_store.load(agent_id).name or "agent"
+    except Exception:  # noqa: BLE001
+        return "agent"
+
+
+def _floating_pos_path():
+    try:
+        from app.deps import config_store
+
+        return config_store._dir / "floating_stop_pos.json"
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _show_floating(agent_id: str | None) -> None:
+    FloatingStop.instance().show(_resolve_agent_name(agent_id), _floating_pos_path())
+
+
 @router.get("/status")
 def get_status():
-    """浏览器连接状态 + 当前暂停状态（前端据此置灰按钮 / 显示小球）。"""
+    """浏览器连接状态 + 当前暂停状态（前端据此置灰按钮 / 同步提示按钮）。"""
     connected, port = browser_status()
     return {"connected": connected, "port": port, "paused": is_paused()}
 
 
 @router.post("/open")
-def open_browser():
-    """打开（或复用）浏览器。返回是否就绪与实际端口。"""
+def open_browser(body: AgentBody | None = None):
+    """打开（或复用）浏览器，并显示系统级浮动按钮。返回是否就绪与实际端口。"""
     try:
         from browser_agent import tool_1_open_browser
 
         tool_1_open_browser()  # ensure_connected：复用或启动
         connected, port = browser_status()
+        if connected:
+            _show_floating(body.agent_id if body else None)
         return {
             "ok": connected,
             "port": port,
@@ -55,8 +94,18 @@ def pause(body: PauseBody):
     return {"paused": is_paused()}
 
 
+@router.post("/floating")
+def floating(body: FloatingBody):
+    """显示 / 隐藏系统级浮动按钮（进入会话且浏览器已连接时调用，保证按钮出现）。"""
+    if body.show:
+        _show_floating(body.agent_id)
+    else:
+        FloatingStop.instance().hide()
+    return {"ok": True}
+
+
 @router.post("/viewport-dom")
-def viewport_dom():
+def viewport_dom(body: AgentBody | None = None):
     """调用 tool-3：返回当前聚焦标签页 viewport 的全量 DOM（前端拼进输入框）。"""
     if is_paused():
         return {"ok": False, "content": "", "error": STOP_TEXT}
@@ -64,6 +113,8 @@ def viewport_dom():
         from browser_agent import tool_3_get_viewport_dom
 
         result = tool_3_get_viewport_dom()
+        if browser_status()[0]:
+            _show_floating(body.agent_id if body else None)
         return {
             "ok": result.get("action_ok") != "失败",
             "content": result.get("content") or "",

@@ -83,6 +83,24 @@ if ($mcpVer -and ([version]$mcpVer -ge [version]'2.0.0')) {
     }
 }
 
+# 校验浏览器接管运行时依赖（websocket-client / requests）；缺失会导致「打开浏览器」报 ModuleNotFoundError
+$missingDeps = & "$PSScriptRoot\venv\Scripts\python.exe" -c "import importlib.util as u; print(','.join(m for m in ['websocket','requests'] if u.find_spec(m) is None))" 2>$null
+if ($missingDeps) {
+    Write-Host "       检测到缺失依赖 [$missingDeps]，正在补装..."
+    & "$PSScriptRoot\venv\Scripts\python.exe" -m pip install -r "$PSScriptRoot\requirements.txt" -i https://pypi.tuna.tsinghua.edu.cn/simple
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host '[错误] 补装依赖失败，请截图上方报错信息反馈。'
+        exit 1
+    }
+}
+
+# 系统级「停止/继续」悬浮按钮依赖标准库 tkinter（无法用 pip 安装）；缺失时仅警告
+& "$PSScriptRoot\venv\Scripts\python.exe" -c "import tkinter" 2>$null
+if ($LASTEXITCODE -ne 0) {
+    Write-Host '       [警告] 未检测到 tkinter，浏览器接管的系统级「停止/继续」悬浮按钮将不可用。'
+    Write-Host '             可在重装 Python 时勾选 "tcl/tk and IDLE" 修复该组件。'
+}
+
 # ---------- 5. 可选：一键安装 pgvector ----------
 Write-Host ''
 Write-Host '[5/6] 是否顺便一键安装 PostgreSQL 的 pgvector 扩展？（程序的长期记忆需要它）'

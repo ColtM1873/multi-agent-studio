@@ -210,6 +210,9 @@ html[data-style-danger="solid"] .card-btn-danger:hover { filter: brightness(.92)
   flex: 1; border: none; outline: none; resize: none; padding: 8px 16px;
   font-family: inherit; font-size: 14px; color: var(--text);
 }
+/* 输入区主行：左侧文本框占满，右侧给浏览器接管按钮留出独立一列 */
+.input-pane .input-main { flex: 1; display: flex; min-height: 0; }
+.input-pane .input-main textarea { flex: 1; min-width: 0; }
 .input-pane .input-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 6px 14px 10px; }
 .input-pane .date-inject-hint {
   padding: 0 14px 2px; font-size: 12px; color: #9ca3af;
@@ -222,30 +225,18 @@ html[data-style-danger="solid"] .card-btn-danger:hover { filter: brightness(.92)
 #dateInjectBtn.on .date-dot { background: #22c55e; }
 
 /* ── 浏览器接管 ─────────────────────────── */
-.browser-takeover-actions { display: flex; gap: 8px; padding: 4px 14px 0; }
+/* 右侧独立一列，三个按钮竖排（位于「注入当前日期 / 发送」按钮上方） */
+.browser-takeover-actions {
+  display: flex; flex-direction: column; gap: 6px; justify-content: flex-start;
+  padding: 8px 14px 6px 8px; overflow-y: auto;
+}
+.browser-takeover-actions .btn { white-space: nowrap; }
 .btn.is-disabled { opacity: .5; cursor: not-allowed; }
 .takeover-switch-field { background: #eef2ff; border: 1px solid #c7d2fe; border-radius: 10px; padding: 10px 12px; }
 .takeover-switch-field label { font-weight: 600; }
 
-.takeover-float {
-  position: fixed; z-index: 99999; display: flex; align-items: center; gap: 16px;
-  user-select: none; -webkit-user-select: none;
-}
-.takeover-ball {
-  background: #dc2626; color: #fff; border-radius: 16px;
-  padding: 10px 18px; text-align: center; cursor: pointer; min-width: 96px;
-  box-shadow: 0 6px 20px rgba(0,0,0,.28); transition: background .15s ease;
-}
-.takeover-ball:hover { filter: brightness(1.06); }
-.takeover-ball.paused { background: #16a34a; }
-.takeover-ball .tb-name { font-size: 12px; line-height: 1.2; opacity: .95; white-space: nowrap; }
-.takeover-ball .tb-action { font-size: 30px; font-weight: 800; line-height: 1.15; letter-spacing: 2px; }
-.takeover-drag {
-  width: 30px; height: 30px; border-radius: 8px; background: rgba(0,0,0,.45); color: #fff;
-  display: flex; align-items: center; justify-content: center; cursor: move; font-size: 16px;
-  box-shadow: 0 4px 12px rgba(0,0,0,.28);
-}
-.takeover-drag:hover { background: rgba(0,0,0,.62); }
+/* 注：系统级「停止/继续」按钮由后端 tkinter 置顶窗口实现（app/runtime/floating_stop.py），
+   不再使用网页内浮层，故这里不再有 .takeover-float/.takeover-ball 样式。 */
 
 /* ── 敏感信息表单 ───────────────────────── */
 .modal.sensitive-modal { width: min(640px, calc(100vw - 32px)); }
