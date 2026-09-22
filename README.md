@@ -23,6 +23,16 @@
 - **子 agent 即工具** —— 每个子 agent 以「工具」的形式暴露给主 agent（名字 + 描述）；一次可并行调度多个子 agent，并回收它们的报告。
 - **MCP 工具接入** —— 子 agent 可挂载 http / stdio 两种 MCP 工具源，配置页提供连通性检测。
 
+### 浏览器接管
+
+- **让主 agent 直接操作浏览器** —— 内置 `browser_agent`，主 agent 可驱动本机 Chrome/Edge 完成导航、点击、输入、拖动、滚动与多标签页管理；面向**纯文本 LLM**（无需多模态 / 视觉）。
+- **省 token 的 DOM 呈现** —— 首帧给完整 DOM 基线，之后每次互动只回传新增 / 变化的内容；以地标 + 缩进树 + 语义标签（`<可点击元素 eN>` / `<可输入元素 eN>` / `<可拖动元素 eN>` / `<可滚动元素 eN>`）呈现，标题保留层级。
+- **整页与双向滚动** —— 文档级滚动条暴露为可滚动元素；滚动用 `scroll_delta` 指定方向（正数向下、负数向上，单位为步）。
+- **拟人交互** —— 真实鼠标 / 键盘事件轨迹（非直接调用元素接口），React / Vue 受控输入有原生 setter 兜底。
+- **提示接管开关** —— 输入区可实时预览当前聚焦标签页的**只读** DOM，发送消息时自动附着，发送后自动关闭。
+- **全局急停** —— 桌面级始终置顶的「停止 / 继续」悬浮球（跨应用可见），浏览器关闭后自动隐藏并复位。
+- **敏感信息脱敏** —— LLM 填写时用 `<名称>` 占位，工具调用时按全局「敏感信息表单」替换为真实值，真实隐私不进入模型上下文。
+
 ### 模型与提供商
 
 - **官方 provider** —— 内置 openai / anthropic / deepseek / google_genai，直接以 `provider:model` 选择。
@@ -47,6 +57,7 @@
 - **Markdown + 公式** —— markdown-it 渲染、代码高亮、KaTeX 公式，另可选「裸公式识别 / 激进公式渲染」。
 - **阅读友好** —— 正文与思考独立缩放、发送后自动跟随最新输出、可拖动的固定到底部按钮、回复完成提示音、发送 / 换行键可自定义。
 - **图中途确认** —— 需要用户拍板时弹出应用内确认框（子 agent 使用区分样式）。
+- **未发送草稿持久化** —— 输入框内容按 agent 落盘，退出会话 / 关闭浏览器 / 退出托盘程序后仍可恢复；跨 agent 流转可配。
 
 ### 历史、会话与快照
 
@@ -54,6 +65,7 @@
 - **历史 Markdown 浏览** —— 主 / 子 agent 历史以 Markdown 只读呈现，并统计消息数与 token 用量。
 - **消息目录** —— 下拉目录按用户消息展开，点击标题即可跳转。
 - **历史消息编辑** —— 进入编辑模式后可按行修改历史消息（可选任意时间、任意类型），逐条提交并即时生效。
+- **编辑失败可读报错** —— 编辑提交按「加载模型 / 写入」分阶段超时，写入失败时以右上角持久化提示条给出可关闭的原因，且失败即停。
 - **快照** —— 每次全量清空前自动保存主 / 子 agent 历史快照，可只读回看或删除。
 - **隐藏会话** —— 按 agent 独立隐藏 / 显示会话。
 
@@ -76,6 +88,7 @@
 - **一键部署** —— `setup.bat` 自动创建虚拟环境、安装依赖并打包 `MultiAgentStudio.exe`；Windows 托盘常驻，浏览器自动打开。
 - **pgvector 一键安装** —— 自动识别 PostgreSQL 与编译环境，优先从官方源码编译，失败回退预编译包。
 - **连接串输入** —— PostgreSQL 连接支持「分步填写」或直接粘贴完整连接串。
+- **卡片外观与隐藏** —— multi-agent 卡片列表的按钮配色 / 样式、角落绶带、卡片背景可配（本机偏好）；支持隐藏配置并用「显示隐藏」开关查看。
 
 ## 界面预览
 
@@ -98,6 +111,7 @@ Supervisor（主 agent）                    Workers（子 agent）
   ├─ 文件工具                              ├─ MCP 工具（http / stdio）
   ├─ 记忆工具（写 / 读）                    └─ checkpointer=True 的子图
   ├─ 子 agent 工具（作为 tool 呈现）
+  ├─ 浏览器工具（接管 Chrome/Edge）
   └─ 总结 / 清空历史
 ```
 
@@ -163,10 +177,11 @@ Supervisor（主 agent）                    Workers（子 agent）
 | `configs/` | 所有 multi-agent 配置（`<agent_id>.json`、`default.json`）与全局设置（`settings.json`）。含 API key、system prompt、数据库连接、阈值等。 |
 | `snapshots/` | 全量总结前自动保存的会话快照（若生成过）。 |
 | `.env` | 本地 MCP 服务器读取的 token 等环境变量。 |
+| `.chrome-profile/` | 浏览器接管使用的自动化 Chrome profile（用过浏览器接管才有）。保留可复用网站登录态；不保留则需重新登录。 |
 
 ### 可以直接覆盖（用新版本替换）
 
-`app/`、`run.py`、`tray.py`、`launcher.py`、`scripts/`、`folder_of_MCPs/`、`md2print/`（源码）、`requirements.txt`、`setup.bat`、`setup.ps1`、`build_exe.py`、`build_exe.bat`、`icon.ico`、`.env.example`、`README.md`、`LICENSE` 等。
+`app/`、`browser_agent/`、`run.py`、`tray.py`、`launcher.py`、`scripts/`、`folder_of_MCPs/`、`md2print/`（源码）、`requirements.txt`、`setup.bat`、`setup.ps1`、`build_exe.py`、`build_exe.bat`、`icon.ico`、`.env.example`、`README.md`、`LICENSE` 等。
 
 ### 会自动重新生成（无需手动保留）
 
@@ -215,6 +230,16 @@ Supervisor（主 agent）                    Workers（子 agent）
 - **Sub-agents as tools** — each sub-agent is exposed to the main agent as a tool (name + description); several sub-agents can be dispatched in parallel in one turn and their reports collected.
 - **MCP tools** — attach `http` / `stdio` MCP servers per sub-agent, with a connectivity check in the config page.
 
+### Browser takeover
+
+- **Let the main agent drive a browser** — a built-in `browser_agent` lets the main agent operate the local Chrome/Edge: navigation, clicking, typing, dragging, scrolling and multi-tab management; designed for a **text-only LLM** (no multimodality / vision required).
+- **Token-friendly DOM** — the first frame returns a full DOM baseline; each later interaction returns only the new/changed content, rendered as landmarks + an indented tree with semantic tags (`<可点击元素 eN>` / `<可输入元素 eN>` / `<可拖动元素 eN>` / `<可滚动元素 eN>`), keeping heading levels.
+- **Whole-page & bidirectional scrolling** — the document-level scrollbar is exposed as a scrollable element; scrolling uses `scroll_delta` for direction (positive = down, negative = up, unit = step).
+- **Human-like interaction** — real mouse/keyboard event paths (not direct element API calls); controlled React/Vue inputs fall back to the native setter.
+- **Takeover-hint toggle** — the input area can show a live **read-only** preview of the focused tab's DOM, auto-attached to the message on send and closed after a successful send.
+- **Global stop** — a desktop-level always-on-top "Stop / Continue" floating ball (visible across apps); it auto-hides and resets when the browser closes.
+- **Sensitive-info desensitization** — the LLM uses `<name>` placeholders when filling; on tool call they are replaced with real values from the global "sensitive info form", keeping real secrets out of the model context.
+
 ### Models & providers
 
 - **Built-in providers** — openai / anthropic / deepseek / google_genai via a `provider:model` prefix.
@@ -239,6 +264,7 @@ Supervisor（主 agent）                    Workers（子 agent）
 - **Markdown + math** — markdown-it rendering, syntax highlighting, KaTeX math, plus optional bare-formula / aggressive formula detection.
 - **Reading comfort** — independent body / reasoning zoom, auto-follow on send, a draggable pin-to-bottom button, a reply-completed chime, and customizable send / newline keys.
 - **In-graph confirmation** — when the graph needs your decision, an in-app confirm dialog appears (sub-agent dialogs use a distinct style).
+- **Unsent draft persistence** — the input box is persisted per agent and survives leaving a thread, closing the browser, or quitting the tray app; cross-agent flow is configurable.
 
 ### History, threads & snapshots
 
@@ -246,6 +272,7 @@ Supervisor（主 agent）                    Workers（子 agent）
 - **Markdown history** — main / sub-agent history is shown read-only as Markdown, with message counts and token usage.
 - **Message directory** — a drawer lists user messages and expands each reply's headings for jump-to navigation.
 - **History editing** — enter edit mode to edit historical messages line by line (optionally any time / any type), submitted sequentially and applied instantly.
+- **Readable edit failures** — edit submission times out per stage (loading model / writing); on failure a persistent, dismissible reason is shown in the top-right, and submission stops.
 - **Snapshots** — before every full flush, main / sub-agent history is snapshotted automatically; browse read-only or delete.
 - **Hide threads** — hide / show conversations independently per agent.
 
@@ -268,6 +295,7 @@ Supervisor（主 agent）                    Workers（子 agent）
 - **One-click deploy** — `setup.bat` creates the venv, installs dependencies, and packages `MultiAgentStudio.exe`; the app lives in the Windows tray and opens the browser automatically.
 - **One-click pgvector install** — auto-detects PostgreSQL and a C++ toolchain, builds from official source first and falls back to a prebuilt package.
 - **Connection-string input** — fill PostgreSQL in steps or paste a full connection string.
+- **Card appearance & hiding** — configure the multi-agent card list's button colors/styles, corner ribbon and card background (local preference); configs can be hidden and revealed via a "show hidden" toggle.
 
 ## Screenshots
 
@@ -290,6 +318,7 @@ Supervisor (main agent)                 Workers (sub-agents)
   ├─ file tools                          ├─ MCP tools (http / stdio)
   ├─ memory tools (write/read)           └─ subgraph with checkpointer=True
   ├─ sub-agent tools (as tools)
+  ├─ browser tools (take over Chrome/Edge)
   └─ summarization / history flush
 ```
 
@@ -355,10 +384,11 @@ When upgrading, **keep only a handful of "your data" items and overwrite everyth
 | `configs/` | All multi-agent configs (`<agent_id>.json`, `default.json`) and global settings (`settings.json`). Contains API keys, system prompts, DB connections, thresholds, etc. |
 | `snapshots/` | Conversation snapshots saved automatically before a full summary (if any were generated). |
 | `.env` | Environment variables (e.g. tokens) read by the local MCP servers. |
+| `.chrome-profile/` | The automation Chrome profile used by browser takeover (present only if you used it). Keep it to reuse website logins; otherwise you will need to sign in again. |
 
 ### Safe to overwrite (replace with the new version)
 
-`app/`, `run.py`, `tray.py`, `launcher.py`, `scripts/`, `folder_of_MCPs/`, `md2print/` (source), `requirements.txt`, `setup.bat`, `setup.ps1`, `build_exe.py`, `build_exe.bat`, `icon.ico`, `.env.example`, `README.md`, `LICENSE`, etc.
+`app/`, `browser_agent/`, `run.py`, `tray.py`, `launcher.py`, `scripts/`, `folder_of_MCPs/`, `md2print/` (source), `requirements.txt`, `setup.bat`, `setup.ps1`, `build_exe.py`, `build_exe.bat`, `icon.ico`, `.env.example`, `README.md`, `LICENSE`, etc.
 
 ### Regenerated automatically (no need to keep)
 
