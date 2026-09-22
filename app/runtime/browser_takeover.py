@@ -98,6 +98,14 @@ class InteractArgs(BaseModel):
         0, ge=0, le=100,
         description="仅用于『可拖动』元素的目标位置百分比(0-100)；其他情况传 0。",
     )
+    scroll_delta: int = Field(
+        0, ge=-6, le=6,
+        description=(
+            "仅用于『可滚动』元素：正数向下滚、负数向上滚，单位为步"
+            "（每步约 0.7 个可见高度），绝对值上限 6；其他情况传 0"
+            "（对可滚动元素传 0 等同向下 6 步）。"
+        ),
+    )
 
 
 class SwitchTabArgs(BaseModel):

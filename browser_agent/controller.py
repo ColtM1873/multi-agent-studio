@@ -65,6 +65,9 @@ class _ContainerScroller:
     def at_bottom(self) -> bool:
         return self._executor.at_bottom(self._id)
 
+    def at_top(self) -> bool:
+        return self._executor.at_top(self._id)
+
 
 class _PageScroller:
     """Scrolls the document-level (whole page) scrollbar (``#page``)."""
@@ -83,6 +86,9 @@ class _PageScroller:
 
     def at_bottom(self) -> bool:
         return self._executor.page_at_bottom()
+
+    def at_top(self) -> bool:
+        return self._executor.page_at_top()
 
 
 class BrowserController:
@@ -259,7 +265,29 @@ class BrowserController:
     # ------------------------------------------------------------------ #
     # interaction (tool-2)
     # ------------------------------------------------------------------ #
-    def interact(self, name: str, fill: str = "", drag_pct: int = 0) -> dict:
+    @staticmethod
+    def _scroll_plan(scroll_delta: int) -> tuple[int, int]:
+        """Map ``scroll_delta`` to ``(direction, steps)``.
+
+        Positive = scroll down, negative = scroll up; the magnitude is the
+        number of steps (each step is ``0.7 * visible height``). ``0`` keeps the
+        legacy default: a full downward sweep (6 steps). Capped at 6 steps.
+        """
+        try:
+            delta = int(scroll_delta or 0)
+        except (TypeError, ValueError):
+            delta = 0
+        if delta == 0:
+            return 1, 6
+        return (1 if delta > 0 else -1), max(1, min(abs(delta), 6))
+
+    def interact(
+        self,
+        name: str,
+        fill: str = "",
+        drag_pct: int = 0,
+        scroll_delta: int = 0,
+    ) -> dict:
         try:
             self.ensure_connected()
         except (BrowserLaunchError, CDPError) as exc:
@@ -309,7 +337,15 @@ class BrowserController:
                     if node.tag == PAGE_SCROLL_TAG
                     else _ContainerScroller(executor, node.backend_node_id)
                 )
-                diff = self._scroll_and_collect(scroller, target_id, old_lines, registry)
+                direction, steps = self._scroll_plan(scroll_delta)
+                diff = self._scroll_and_collect(
+                    scroller,
+                    target_id,
+                    old_lines,
+                    registry,
+                    direction=direction,
+                    max_steps=steps,
+                )
                 notice = self._title_change_notice(target_id, old_name).strip()
                 content = "\n\n".join(p for p in (notice, diff) if p)
                 return self._base_result(INCREMENTAL, OK, content, include_tabs=False)
@@ -343,16 +379,18 @@ class BrowserController:
         target_id: str,
         base_lines: list[OutLine],
         registry: NameRegistry,
+        direction: int = 1,
         max_steps: int = 6,
     ) -> str:
         """Scroll a scroller in overlap-preserving steps, accumulating content.
 
         ``scroller`` is either a ``_ContainerScroller`` or a ``_PageScroller``.
-        Each step is smaller than the visible height, so consecutive viewports
-        always overlap. Newly revealed lines are accumulated across every step,
-        so the returned diff is contiguous and never skips content between the
-        pre-scroll and post-scroll snapshots. Only new/changed lines are
-        emitted (no ``-``/``~`` prefixes).
+        ``direction`` is ``+1`` (down) or ``-1`` (up). Each step is smaller than
+        the visible height, so consecutive viewports always overlap. Newly
+        revealed lines are accumulated across every step, so the returned diff
+        is contiguous and never skips content between the pre-scroll and
+        post-scroll snapshots. Only new/changed lines are emitted (no
+        ``-``/``~`` prefixes).
         """
         client_h = scroller.client_height()
         if client_h and client_h > 0:
@@ -361,14 +399,16 @@ class BrowserController:
             step = max(1.0, float(client_h) * 0.7)
         else:
             step = 120.0
+        down = direction >= 0
+        signed_step = step if down else -step
 
         added: list[OutLine] = []
         seen: set[tuple[int, str]] = set()
         prev_lines = base_lines
         last_top = scroller.scroll_top()
 
-        for _ in range(max_steps):
-            top = scroller.scroll_step(step)
+        for _ in range(max(1, max_steps)):
+            top = scroller.scroll_step(signed_step)
             if top is None:
                 break
             if last_top is not None and abs(top - last_top) < 1:
@@ -384,7 +424,7 @@ class BrowserController:
                     added.append(line)
             prev_lines = lines
 
-            if scroller.at_bottom():
+            if (scroller.at_bottom() if down else scroller.at_top()):
                 break
 
         if not added:

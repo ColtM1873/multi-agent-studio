@@ -304,7 +304,7 @@ class DOMSerializer:
             # Document-level scrollbar: a single inline tag carrying the hint.
             self._emit_content(
                 depth,
-                f"<可滚动元素 {name}> 整页滚动条：向下滚动整个页面 </可滚动元素 {name}>",
+                f"<可滚动元素 {name}> 整页滚动条：用 scroll_delta 向下(正)/向上(负)滚动整个页面 </可滚动元素 {name}>",
                 (name,),
             )
             return

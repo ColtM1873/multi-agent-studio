@@ -49,6 +49,7 @@ def capture_raw(client: CDPClient, session_id: str) -> dict[str, Any]:
         "scroll_height": 0.0,
         "client_height": 0.0,
         "scroll_top": 0.0,
+        "device_scale": 1.0,
     }
     try:
         result = client.send(
@@ -58,7 +59,8 @@ def capture_raw(client: CDPClient, session_id: str) -> dict[str, Any]:
                 "|| document.documentElement; return {url: document.URL, "
                 "title: document.title, rs: document.readyState, "
                 "to: performance.timeOrigin, sh: se ? se.scrollHeight : 0, "
-                "ch: se ? se.clientHeight : 0, st: se ? se.scrollTop : 0};})()",
+                "ch: se ? se.clientHeight : 0, st: se ? se.scrollTop : 0, "
+                "dpr: window.devicePixelRatio || 1};})()",
                 "returnByValue": True,
             },
             session_id=session_id,
@@ -71,6 +73,7 @@ def capture_raw(client: CDPClient, session_id: str) -> dict[str, Any]:
         page["scroll_height"] = float(value.get("sh") or 0)
         page["client_height"] = float(value.get("ch") or 0)
         page["scroll_top"] = float(value.get("st") or 0)
+        page["device_scale"] = float(value.get("dpr") or 1.0) or 1.0
     except Exception:
         pass
 

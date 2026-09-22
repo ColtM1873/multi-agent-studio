@@ -84,10 +84,17 @@ def _sparse_int(data: object) -> dict[int, int]:
     return {}
 
 
-def _parse_snapshot(snapshot: dict, styles_order: list[str]) -> tuple[dict[int, dict], dict[int, str]]:
+def _parse_snapshot(
+    snapshot: dict, styles_order: list[str], device_scale: float = 1.0
+) -> tuple[dict[int, dict], dict[int, str]]:
     backend_to_layout: dict[int, dict] = {}
     backend_to_value: dict[int, str] = {}
     strings = snapshot.get("strings", [])
+    # ``DOMSnapshot`` bounds are in *device* pixels (multiplied by
+    # ``window.devicePixelRatio``), while the viewport / scroll metrics are in
+    # CSS pixels. Normalize here so every bbox comparison (viewport filter,
+    # clip, overflow) uses one consistent unit (fixes ID65 §11.1 dpr limit).
+    scale = device_scale if device_scale and device_scale > 0 else 1.0
     for doc in snapshot.get("documents", []):
         nodes = doc.get("nodes", {})
         layout = doc.get("layout", {})
@@ -107,7 +114,7 @@ def _parse_snapshot(snapshot: dict, styles_order: list[str]) -> tuple[dict[int, 
             backend_id = backend_ids[node_idx]
             entry: dict = {}
             if i < len(bounds) and bounds[i]:
-                entry["bbox"] = tuple(bounds[i][:4])
+                entry["bbox"] = tuple(float(v) / scale for v in bounds[i][:4])
             if i < len(paint_orders):
                 entry["paint_order"] = paint_orders[i]
             style_map: dict[str, str] = {}
@@ -137,8 +144,9 @@ def _parse_ax(ax_tree: dict) -> dict[int, dict]:
 
 def build_enhanced_tree(raw: dict) -> EnhancedTree:
     viewport = viewport_from_metrics(raw.get("metrics", {}))
+    device_scale = float((raw.get("page") or {}).get("device_scale") or 1.0) or 1.0
     backend_to_layout, backend_to_value = _parse_snapshot(
-        raw.get("snapshot", {}), raw.get("styles_order", [])
+        raw.get("snapshot", {}), raw.get("styles_order", []), device_scale
     )
     backend_to_ax = _parse_ax(raw.get("ax_tree", {}))
 

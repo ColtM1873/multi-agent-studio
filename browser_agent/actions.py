@@ -298,6 +298,19 @@ class ActionExecutor:
         except Exception:
             return True
 
+    def at_top(self, backend_node_id: int) -> bool:
+        object_id = self._resolve(backend_node_id)
+        if not object_id:
+            return True
+        try:
+            return bool(
+                self._call_on_node(
+                    object_id, "function(){return this.scrollTop <= 1;}"
+                )
+            )
+        except Exception:
+            return True
+
     # ------------------------------------------------------------------ #
     # document-level (whole page) scrolling
     # ------------------------------------------------------------------ #
@@ -348,6 +361,16 @@ class ActionExecutor:
                 "(() => {const se = document.scrollingElement "
                 "|| document.documentElement; return se.scrollTop + "
                 "se.clientHeight >= se.scrollHeight - 1;})()"
+            )
+            return bool(result)
+        except Exception:
+            return True
+
+    def page_at_top(self) -> bool:
+        try:
+            result = self._eval(
+                "(() => {const se = document.scrollingElement "
+                "|| document.documentElement; return se.scrollTop <= 1;})()"
             )
             return bool(result)
         except Exception:

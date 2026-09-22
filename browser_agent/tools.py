@@ -14,9 +14,11 @@ def tool_1_open_browser() -> dict:
     return BrowserController.instance().full_dom(action_ok=NOT_CALLED)
 
 
-def tool_2_interact(name: str, fill: str = "", drag_pct: int = 0) -> dict:
+def tool_2_interact(
+    name: str, fill: str = "", drag_pct: int = 0, scroll_delta: int = 0
+) -> dict:
     """与单个互动元素互动（点击/输入/拖动/滚动），返回增量 DOM。"""
-    return BrowserController.instance().interact(name, fill, drag_pct)
+    return BrowserController.instance().interact(name, fill, drag_pct, scroll_delta)
 
 
 def tool_3_get_viewport_dom() -> dict:
