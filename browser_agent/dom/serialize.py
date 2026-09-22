@@ -146,9 +146,10 @@ class OutLine:
 
     depth: int
     text: str
-    kind: str  # "header" | "content"
-    ancestors: tuple[tuple[int, str], ...]  # enclosing group headers
+    kind: str  # "header" | "content" | "close"
+    ancestors: tuple[tuple[int, str, str], ...]  # (depth, opening, closing)
     interactive: tuple[str, ...]  # interactive names appearing on this line
+    closing: str = ""  # closing tag emitted when this header's group ends
 
 
 class DOMSerializer:
@@ -156,9 +157,10 @@ class DOMSerializer:
         self.registry = registry
         self.max_chars = max_chars
         self._lines: list[OutLine] = []
-        self._stack: list[tuple[int, str]] = []
+        self._stack: list[tuple[int, str, str]] = []
         self._buffer = ""
         self._buffer_names: list[str] = []
+        self._buffer_labels: list[str] = []
 
     # ------------------------------------------------------------------ #
     # public API
@@ -185,6 +187,7 @@ class DOMSerializer:
         self._stack = []
         self._buffer = ""
         self._buffer_names = []
+        self._buffer_labels = []
         self._render_children(tree.root, 0, None)
         self._flush(0)
         return list(self._lines)
@@ -251,14 +254,20 @@ class DOMSerializer:
             return
 
         if category:
-            if self._has_interactive_descendant(child):
+            if category == "click" and self._has_interactive_descendant(child):
+                # A clickable wrapper around other interactive elements (e.g. a
+                # media-control bar) is noise: the model would never call the
+                # wrapper. Skip it (assign no name) and render its children.
                 self._flush(depth)
-                name = self.registry.get_or_create(child)
-                header = f"[{CATEGORY_TAGS[category][0]} {name}]"
-                self._group(child, depth, header, clip, interactive=(name,))
+                for grand in child.children:
+                    self._render_child(grand, depth, clip)
             else:
                 name = self.registry.get_or_create(child)
-                self._append_inline(self._interactive_text(child, category, name), [name])
+                self._append_inline(
+                    self._interactive_text(child, category, name),
+                    [name],
+                    [self._interactive_label(child, category)],
+                )
             return
 
         if self._is_text_block(child):
@@ -282,44 +291,62 @@ class DOMSerializer:
         header: str,
         clip: Optional[BBox],
         interactive: tuple[str, ...] = (),
+        closing: str = "",
     ) -> None:
-        self._emit_header(depth, header, interactive)
-        self._stack.append((depth, header))
+        self._emit_header(depth, header, interactive, closing)
+        self._stack.append((depth, header, closing))
         self._render_children(node, depth + 1, clip)
         self._stack.pop()
 
     def _group_scroll(self, node: EnhancedNode, depth: int, clip: Optional[BBox]) -> None:
         name = self.registry.get_or_create(node)
-        header = f"[可滚动元素 {name}]"
-        self._emit_header(depth, header, (name,))
-        self._stack.append((depth, header))
         if node.tag == PAGE_SCROLL_TAG:
+            # Document-level scrollbar: a single inline tag carrying the hint.
             self._emit_content(
-                depth + 1,
-                f"（整页滚动条：向下滚动整个页面；调用 tool_2 传入 {name} 即可）",
+                depth,
+                f"<可滚动元素 {name}> 整页滚动条：向下滚动整个页面 </可滚动元素 {name}>",
+                (name,),
             )
+            return
+        opening = f"<可滚动元素 {name}>"
+        closing = f"</可滚动元素 {name}>"
+        self._emit_header(depth, opening, (name,), closing)
+        self._stack.append((depth, opening, closing))
+        before = len(self._lines)
         self._render_children(node, depth + 1, node.bbox)
+        if len(self._lines) == before:
+            self._emit_content(depth + 1, "（可滚动区域）")
         self._stack.pop()
+        self._emit_close(depth, closing)
 
     def _group_image(self, node: EnhancedNode, depth: int) -> None:
         self._emit_header(depth, "[图片]")
-        self._stack.append((depth, "[图片]"))
+        self._stack.append((depth, "[图片]", ""))
         alt = node.attributes.get("alt") or node.ax_name or "图片"
         self._emit_content(depth + 1, self._truncate(alt, 120))
         self._stack.pop()
 
     def _emit_header(
+        self,
+        depth: int,
+        text: str,
+        interactive: tuple[str, ...] = (),
+        closing: str = "",
+    ) -> None:
+        self._lines.append(
+            OutLine(depth, text, "header", tuple(self._stack), tuple(interactive), closing)
+        )
+
+    def _emit_content(
         self, depth: int, text: str, interactive: tuple[str, ...] = ()
     ) -> None:
         self._lines.append(
-            OutLine(depth, text, "header", tuple(self._stack), tuple(interactive))
+            OutLine(depth, text, "content", tuple(self._stack), tuple(interactive))
         )
 
-    def _emit_content(self, depth: int, text: str) -> None:
-        names = tuple(self._buffer_names)
-        self._buffer_names = []
+    def _emit_close(self, depth: int, text: str) -> None:
         self._lines.append(
-            OutLine(depth, text, "content", tuple(self._stack), names)
+            OutLine(depth, text, "close", tuple(self._stack), ())
         )
 
     def _flush(self, depth: int) -> None:
@@ -327,6 +354,7 @@ class DOMSerializer:
         names = self._buffer_names
         self._buffer = ""
         self._buffer_names = []
+        self._buffer_labels = []
         if not text:
             return
         self._lines.append(
@@ -340,17 +368,29 @@ class DOMSerializer:
         normalized = " ".join(text.split())
         if not normalized:
             return
+        # Skip a text node that just repeats the label of the interactive tag
+        # immediately before it (e.g. a button rendered as
+        # ``<可点击元素 eN>进入全屏模式</可点击元素 eN>`` followed by its visible
+        # text ``全屏``). The tag's label already carries the meaning.
+        if self._buffer.endswith(">") and self._buffer_labels:
+            last = self._buffer_labels[-1]
+            if last and normalized in last:
+                return
         if len(normalized) > MAX_TEXT_LENGTH:
             normalized = normalized[:MAX_TEXT_LENGTH]
         if self._buffer and not self._buffer.endswith((" ", ">")):
             self._buffer += " "
         self._buffer += normalized
 
-    def _append_inline(self, piece: str, names: list[str]) -> None:
+    def _append_inline(
+        self, piece: str, names: list[str], labels: Optional[list[str]] = None
+    ) -> None:
         if not piece:
             return
         self._buffer += piece
         self._buffer_names.extend(names)
+        if labels:
+            self._buffer_labels.extend(labels)
 
     # ------------------------------------------------------------------ #
     # classification helpers
@@ -417,15 +457,17 @@ class DOMSerializer:
                 return True
         return False
 
+    def _interactive_label(self, node: EnhancedNode, category: str) -> str:
+        if category == "input":
+            value = self._input_value(node)
+            return value if value else node.attributes.get("placeholder", "")
+        return self._label(node)
+
     def _interactive_text(
         self, node: EnhancedNode, category: str, name: str
     ) -> str:
         tag, _ = CATEGORY_TAGS[category]
-        if category == "input":
-            value = self._input_value(node)
-            label = value if value else node.attributes.get("placeholder", "")
-        else:
-            label = self._label(node)
+        label = self._interactive_label(node, category)
         return f"<{tag} {name}>{label}</{tag} {name}>"
 
     def _input_value(self, node: EnhancedNode) -> str:

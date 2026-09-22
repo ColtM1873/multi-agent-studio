@@ -26,7 +26,11 @@ def _key(line: OutLine) -> tuple[int, str]:
 
 
 def changed_lines(old_lines: list[OutLine], new_lines: list[OutLine]) -> list[OutLine]:
-    """Return the new/changed lines (in new order), dropping unchanged lines."""
+    """Return the new/changed lines (in new order), dropping unchanged lines.
+
+    Closing tags (``kind == "close"``) are structural: they are never emitted
+    directly, they are flushed by the ancestor cursor in ``format_lines``.
+    """
     old_keys = [_key(line) for line in old_lines]
     new_keys = [_key(line) for line in new_lines]
     matcher = difflib.SequenceMatcher(None, old_keys, new_keys, autojunk=False)
@@ -34,34 +38,45 @@ def changed_lines(old_lines: list[OutLine], new_lines: list[OutLine]) -> list[Ou
     for tag, _i1, _i2, j1, j2 in matcher.get_opcodes():
         if tag in ("equal", "delete"):
             continue
-        out.extend(new_lines[j1:j2])
+        out.extend(line for line in new_lines[j1:j2] if line.kind != "close")
     return out
 
 
-def _emit(out: list[str], cursor: list[tuple[int, str]], line: OutLine) -> None:
-    """Append ``line`` with only the ancestor headers not already printed."""
+def _emit(out: list[str], cursor: list[tuple[int, str, str]], line: OutLine) -> None:
+    """Append ``line``, closing/opening ancestor groups as needed.
+
+    ``cursor`` holds the currently open groups as ``(depth, opening, closing)``.
+    """
     path = list(line.ancestors)
     common = 0
     while common < len(path) and common < len(cursor) and path[common] == cursor[common]:
         common += 1
-    for depth, text in path[common:]:
+    # Close the groups we are leaving, innermost first.
+    for depth, _opening, closing in reversed(cursor[common:]):
+        if closing:
+            out.append("\t" * depth + closing)
+    for depth, opening, _closing in path[common:]:
         if depth == 0 and out:
             out.append("")
-        out.append("\t" * depth + text)
+        out.append("\t" * depth + opening)
     if line.depth == 0 and out:
         out.append("")
     out.append("\t" * line.depth + line.text)
     if line.kind == "header":
-        cursor[:] = path + [(line.depth, line.text)]
+        cursor[:] = path + [(line.depth, line.text, line.closing)]
     else:
         cursor[:] = path
 
 
 def format_lines(lines: list[OutLine], max_chars: int = MAX_DIFF_CHARS) -> str:
     out: list[str] = []
-    cursor: list[tuple[int, str]] = []
+    cursor: list[tuple[int, str, str]] = []
     for line in lines:
         _emit(out, cursor, line)
+    # Flush any groups still open at the end.
+    for depth, _opening, closing in reversed(cursor):
+        if closing:
+            out.append("\t" * depth + closing)
     text = "\n".join(out)
     if len(text) > max_chars:
         text = text[:max_chars] + "\n…（diff 已截断）"
