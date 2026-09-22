@@ -9,6 +9,12 @@ from .capture import viewport_from_metrics
 
 _VIEWPORT_MARGIN = 1000.0
 
+# Synthetic tag for the document-level (whole page) scrollbar. ``html``/``body``
+# are deliberately excluded from the scrollable classification (see IDBT02
+# 8.3/14.6), which left the global scrollbar unreachable by the LLM; this node
+# re-exposes it as a normal interactive scroll element.
+PAGE_SCROLL_TAG = "#page"
+
 
 @dataclass
 class EnhancedNode:
@@ -171,6 +177,20 @@ def build_enhanced_tree(raw: dict) -> EnhancedTree:
                 title = doc.get("title", "")
     for node in nodes:
         node.doc_token = doc_token
+
+    if float(page.get("scroll_height") or 0) > float(page.get("client_height") or 0) + 4:
+        page_node = EnhancedNode(
+            node_id=-1,
+            backend_node_id=-1,
+            frame_id="",
+            node_type=1,
+            tag=PAGE_SCROLL_TAG,
+            doc_token=doc_token,
+        )
+        page_node.parent = synthetic_root
+        synthetic_root.children.insert(0, page_node)
+        nodes.insert(0, page_node)
+
     return EnhancedTree(root=synthetic_root, nodes=nodes, viewport=viewport, url=url, title=title)
 
 

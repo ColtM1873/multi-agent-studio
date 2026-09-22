@@ -10,13 +10,19 @@ from typing import Optional
 from .actions import ActionError, ActionExecutor
 from .cdp import CDPClient, CDPError, poll_until_quiet
 from .dom import (
+    PAGE_SCROLL_TAG,
     DOMSerializer,
     EnhancedTree,
     NameRegistry,
+    OutLine,
     build_enhanced_tree,
     capture_raw,
+    changed_lines,
     classify,
     compute_diff,
+    compute_lost,
+    format_lines,
+    format_lost,
 )
 from .launcher import BrowserLauncher, BrowserLaunchError
 from .tab_registry import TabRegistry
@@ -38,6 +44,45 @@ NOT_CALLED = "未进行互动元素调用"
 NAV_GRACE_SECONDS = 4.0
 # Once a hard navigation has started, wait this long for the load event.
 NAV_LOAD_TIMEOUT = 15.0
+
+
+class _ContainerScroller:
+    """Scrolls an element-level scroll container (``[可滚动元素 eN]``)."""
+
+    def __init__(self, executor: ActionExecutor, backend_node_id: int) -> None:
+        self._executor = executor
+        self._id = backend_node_id
+
+    def client_height(self) -> Optional[float]:
+        return self._executor.client_height(self._id)
+
+    def scroll_top(self) -> Optional[float]:
+        return self._executor.scroll_top(self._id)
+
+    def scroll_step(self, step: float) -> Optional[float]:
+        return self._executor.scroll_step(self._id, step)
+
+    def at_bottom(self) -> bool:
+        return self._executor.at_bottom(self._id)
+
+
+class _PageScroller:
+    """Scrolls the document-level (whole page) scrollbar (``#page``)."""
+
+    def __init__(self, executor: ActionExecutor) -> None:
+        self._executor = executor
+
+    def client_height(self) -> Optional[float]:
+        return self._executor.page_client_height()
+
+    def scroll_top(self) -> Optional[float]:
+        return self._executor.page_scroll_top()
+
+    def scroll_step(self, step: float) -> Optional[float]:
+        return self._executor.page_scroll_step(step)
+
+    def at_bottom(self) -> bool:
+        return self._executor.page_at_bottom()
 
 
 class BrowserController:
@@ -182,6 +227,35 @@ class BrowserController:
         registry = self._registry_for(target_id)
         return DOMSerializer(registry).serialize(tree)
 
+    def serialize_lines_tree(self, tree: EnhancedTree, target_id: str) -> list[OutLine]:
+        registry = self._registry_for(target_id)
+        return DOMSerializer(registry).serialize_lines(tree)
+
+    def _incremental_content(
+        self,
+        old_lines: list[OutLine],
+        new_tree: EnhancedTree,
+        target_id: str,
+        notice: str = "",
+        old_url: str = "",
+    ) -> str:
+        """Build an incremental result: new/changed lines + lost interactive names.
+
+        ``old_lines`` must be captured *before* the interaction (while the
+        registry's active set still reflects the old tree): serializing the old
+        tree after ``reconcile`` would re-activate removed keys and break the
+        lost-element detection.
+        """
+        registry = self._registry_for(target_id)
+        new_lines = self.serialize_lines_tree(new_tree, target_id)
+        diff = compute_diff(old_lines, new_lines, old_url, new_tree.url)
+        lost = compute_lost(old_lines, new_lines, registry)
+        parts = [notice.strip(), diff]
+        lost_text = format_lost(lost)
+        if lost_text:
+            parts.append(lost_text)
+        return "\n\n".join(p for p in parts if p)
+
     # ------------------------------------------------------------------ #
     # interaction (tool-2)
     # ------------------------------------------------------------------ #
@@ -215,7 +289,7 @@ class BrowserController:
             )
 
         category = classify(node)
-        old_text = self.serialize_tree(old_tree, target_id)
+        old_lines = self.serialize_lines_tree(old_tree, target_id)
         old_focus = self.focused_target_id
         old_name = self._name_for_target(target_id)
 
@@ -230,11 +304,15 @@ class BrowserController:
                 executor.drag(node.backend_node_id, drag_pct)
                 self._stabilize(target_id)
             elif category == "scroll":
-                diff = self._scroll_and_collect(
-                    executor, node.backend_node_id, target_id, old_text
+                scroller = (
+                    _PageScroller(executor)
+                    if node.tag == PAGE_SCROLL_TAG
+                    else _ContainerScroller(executor, node.backend_node_id)
                 )
-                notice = self._title_change_notice(target_id, old_name)
-                return self._base_result(INCREMENTAL, OK, notice + diff, include_tabs=False)
+                diff = self._scroll_and_collect(scroller, target_id, old_lines, registry)
+                notice = self._title_change_notice(target_id, old_name).strip()
+                content = "\n\n".join(p for p in (notice, diff) if p)
+                return self._base_result(INCREMENTAL, OK, content, include_tabs=False)
             else:
                 # A click may trigger a navigation; wait for it to actually
                 # begin/finish instead of trusting the stale DOM's quietness.
@@ -253,27 +331,30 @@ class BrowserController:
             return self._base_result(FULL, OK, new_text, include_tabs=True)
 
         new_tree = self.capture_tree(target_id)
-        new_text = self.serialize_tree(new_tree, target_id)
-        diff = compute_diff(old_text, new_text)
         notice = self._title_change_notice(target_id, old_name)
-        return self._base_result(INCREMENTAL, OK, notice + diff, include_tabs=False)
+        content = self._incremental_content(
+            old_lines, new_tree, target_id, notice, old_url=old_tree.url
+        )
+        return self._base_result(INCREMENTAL, OK, content, include_tabs=False)
 
     def _scroll_and_collect(
         self,
-        executor: ActionExecutor,
-        backend_node_id: int,
+        scroller: object,
         target_id: str,
-        base_text: str,
+        base_lines: list[OutLine],
+        registry: NameRegistry,
         max_steps: int = 6,
     ) -> str:
-        """Scroll a container in overlap-preserving steps, accumulating content.
+        """Scroll a scroller in overlap-preserving steps, accumulating content.
 
-        Each step is smaller than the container's visible height, so consecutive
-        viewports always overlap. Newly revealed lines are accumulated across
-        every step, so the returned diff is contiguous and never skips content
-        between the pre-scroll and post-scroll snapshots.
+        ``scroller`` is either a ``_ContainerScroller`` or a ``_PageScroller``.
+        Each step is smaller than the visible height, so consecutive viewports
+        always overlap. Newly revealed lines are accumulated across every step,
+        so the returned diff is contiguous and never skips content between the
+        pre-scroll and post-scroll snapshots. Only new/changed lines are
+        emitted (no ``-``/``~`` prefixes).
         """
-        client_h = executor.client_height(backend_node_id)
+        client_h = scroller.client_height()
         if client_h and client_h > 0:
             # Always smaller than the visible height so consecutive viewports
             # overlap; this is what guarantees no content is skipped.
@@ -281,13 +362,13 @@ class BrowserController:
         else:
             step = 120.0
 
-        added: list[str] = []
-        seen: set[str] = set()
-        prev_text = base_text
-        last_top = executor.scroll_top(backend_node_id)
+        added: list[OutLine] = []
+        seen: set[tuple[int, str]] = set()
+        prev_lines = base_lines
+        last_top = scroller.scroll_top()
 
         for _ in range(max_steps):
-            top = executor.scroll_step(backend_node_id, step)
+            top = scroller.scroll_step(step)
             if top is None:
                 break
             if last_top is not None and abs(top - last_top) < 1:
@@ -295,30 +376,24 @@ class BrowserController:
             last_top = top
 
             tree = self.capture_tree(target_id)
-            text = self.serialize_tree(tree, target_id)
-            for line in compute_diff(prev_text, text).splitlines():
-                if line.startswith(("+ ", "~ ")):
-                    payload = line[2:]
-                    if payload not in seen:
-                        seen.add(payload)
-                        added.append(line)
-            prev_text = text
+            lines = self.serialize_lines_tree(tree, target_id)
+            for line in changed_lines(prev_lines, lines):
+                key = (line.depth, line.text)
+                if key not in seen:
+                    seen.add(key)
+                    added.append(line)
+            prev_lines = lines
 
-            if executor.at_bottom(backend_node_id):
+            if scroller.at_bottom():
                 break
 
-        removed = [
-            line
-            for line in compute_diff(base_text, prev_text).splitlines()
-            if line.startswith("- ")
-        ]
-        out = removed + added
-        if not out:
+        if not added:
             return "（页面无变化）"
-        result = "\n".join(out)
-        if len(result) > 40000:
-            result = result[:40000] + "\n…（diff 已截断）"
-        return result
+        content = format_lines(added)
+        lost_text = format_lost(compute_lost(base_lines, prev_lines, registry))
+        if lost_text:
+            content = content + "\n\n" + lost_text
+        return content
 
     def _resolve_interactive_node(
         self, registry: NameRegistry, tree: EnhancedTree, name: str
@@ -414,7 +489,7 @@ class BrowserController:
             plan.append((click_name, "click", node.backend_node_id))
 
         # ---- serial execution ----
-        old_text = self.serialize_tree(tree, target_id)
+        old_lines = self.serialize_lines_tree(tree, target_id)
         old_focus = self.focused_target_id
         old_name = self._name_for_target(target_id)
 
@@ -467,9 +542,10 @@ class BrowserController:
             mode = FULL
         else:
             new_tree = self.capture_tree(target_id)
-            new_text = self.serialize_tree(new_tree, target_id)
             notice = self._title_change_notice(target_id, old_name)
-            content = notice + compute_diff(old_text, new_text)
+            content = self._incremental_content(
+                old_lines, new_tree, target_id, notice, old_url=tree.url
+            )
             mode = INCREMENTAL
 
         if error_msg:
@@ -778,7 +854,7 @@ class BrowserController:
         if target_id is None:
             return self._base_result(INCREMENTAL, FAIL, "无", "没有可用的标签页", include_tabs=False)
         old_tree = self._prev_trees.get(target_id) or self.capture_tree(target_id)
-        old_text = self.serialize_tree(old_tree, target_id)
+        old_lines = self.serialize_lines_tree(old_tree, target_id)
         old_name = self._name_for_target(target_id)
         session = self.client.attach(target_id)
         self.client.enable_page_domains(session)
@@ -789,10 +865,11 @@ class BrowserController:
         except CDPError as exc:
             return self._base_result(INCREMENTAL, FAIL, "无", str(exc), include_tabs=False)
         new_tree = self.capture_tree(target_id)
-        new_text = self.serialize_tree(new_tree, target_id)
-        diff = compute_diff(old_text, new_text)
         notice = self._title_change_notice(target_id, old_name)
-        return self._base_result(INCREMENTAL, OK, notice + diff, include_tabs=False)
+        content = self._incremental_content(
+            old_lines, new_tree, target_id, notice, old_url=old_tree.url
+        )
+        return self._base_result(INCREMENTAL, OK, content, include_tabs=False)
 
     def close_tab(self, tab_id: str) -> dict:
         """tool-8: close a tab, return the remaining tab list."""

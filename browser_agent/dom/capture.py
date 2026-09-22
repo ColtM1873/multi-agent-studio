@@ -41,13 +41,24 @@ def capture_raw(client: CDPClient, session_id: str) -> dict[str, Any]:
 
     metrics = client.send("Page.getLayoutMetrics", {}, session_id=session_id)
 
-    page = {"url": "", "title": "", "ready_state": "", "time_origin": ""}
+    page = {
+        "url": "",
+        "title": "",
+        "ready_state": "",
+        "time_origin": "",
+        "scroll_height": 0.0,
+        "client_height": 0.0,
+        "scroll_top": 0.0,
+    }
     try:
         result = client.send(
             "Runtime.evaluate",
             {
-                "expression": "({url: document.URL, title: document.title, "
-                "rs: document.readyState, to: performance.timeOrigin})",
+                "expression": "(() => {const se = document.scrollingElement "
+                "|| document.documentElement; return {url: document.URL, "
+                "title: document.title, rs: document.readyState, "
+                "to: performance.timeOrigin, sh: se ? se.scrollHeight : 0, "
+                "ch: se ? se.clientHeight : 0, st: se ? se.scrollTop : 0};})()",
                 "returnByValue": True,
             },
             session_id=session_id,
@@ -57,6 +68,9 @@ def capture_raw(client: CDPClient, session_id: str) -> dict[str, Any]:
         page["title"] = value.get("title", "")
         page["ready_state"] = value.get("rs", "")
         page["time_origin"] = str(value.get("to", ""))
+        page["scroll_height"] = float(value.get("sh") or 0)
+        page["client_height"] = float(value.get("ch") or 0)
+        page["scroll_top"] = float(value.get("st") or 0)
     except Exception:
         pass
 

@@ -299,6 +299,61 @@ class ActionExecutor:
             return True
 
     # ------------------------------------------------------------------ #
+    # document-level (whole page) scrolling
+    # ------------------------------------------------------------------ #
+    def _eval(self, expression: str) -> object:
+        result = self._send(
+            "Runtime.evaluate",
+            {"expression": expression, "returnByValue": True},
+        )
+        return (result.get("result") or {}).get("value")
+
+    def page_scroll_step(self, delta_y: float) -> Optional[float]:
+        """Scroll the document by ``delta_y`` CSS px; return the new scrollTop.
+
+        The whole-page scrollbar belongs to the viewport, not an element, so a
+        wheel event would be captured by whatever inner scroller sits under the
+        cursor. ``window.scrollBy`` deterministically drives the document.
+        """
+        try:
+            self._eval(f"window.scrollBy(0, {float(delta_y)});")
+        except Exception:
+            pass
+        _sleep(0.15, 0.35)
+        return self.page_scroll_top()
+
+    def page_scroll_top(self) -> Optional[float]:
+        try:
+            return float(
+                self._eval(
+                    "(document.scrollingElement || document.documentElement).scrollTop"
+                )
+            )
+        except Exception:
+            return None
+
+    def page_client_height(self) -> Optional[float]:
+        try:
+            return float(
+                self._eval(
+                    "(document.scrollingElement || document.documentElement).clientHeight"
+                )
+            )
+        except Exception:
+            return None
+
+    def page_at_bottom(self) -> bool:
+        try:
+            result = self._eval(
+                "(() => {const se = document.scrollingElement "
+                "|| document.documentElement; return se.scrollTop + "
+                "se.clientHeight >= se.scrollHeight - 1;})()"
+            )
+            return bool(result)
+        except Exception:
+            return True
+
+    # ------------------------------------------------------------------ #
     # keyboard helpers
     # ------------------------------------------------------------------ #
     def _type_char(self, char: str) -> None:

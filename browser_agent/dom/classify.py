@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .build import EnhancedNode
+from .build import PAGE_SCROLL_TAG, EnhancedNode
 
 CLICKABLE_TAGS = {"a", "button", "summary", "label", "option"}
 CLICKABLE_INPUT_TYPES = {
@@ -91,7 +91,11 @@ def is_draggable(node: EnhancedNode) -> bool:
 
 
 def is_scrollable(node: EnhancedNode) -> bool:
-    if not node.is_element or not node.bbox:
+    if not node.is_element:
+        return False
+    if node.tag == PAGE_SCROLL_TAG:
+        return True
+    if not node.bbox:
         return False
     if node.tag in ("html", "body"):
         return False
