@@ -125,6 +125,67 @@ def _has_text(node: EnhancedNode) -> bool:
     return False
 
 
+def has_svg_descendant(node: EnhancedNode) -> bool:
+    """True if ``node`` contains an ``<svg>`` (i.e. looks like an icon)."""
+    for child in node.children:
+        if child.is_text:
+            continue
+        if child.is_element and child.tag == "svg":
+            return True
+        if has_svg_descendant(child):
+            return True
+    return False
+
+
+def _has_following_pointer_labeled_sibling(node: EnhancedNode) -> bool:
+    """True if a *following* sibling is clickable by ``cursor:pointer`` and labeled.
+
+    Only following siblings count: a radio / checkbox control sits before its
+    text label, whereas a trailing icon is usually a different action (expand /
+    delete) that must not be relabeled as the row's control.
+    """
+    parent = node.parent
+    if parent is None:
+        return False
+    seen = False
+    for sibling in parent.children:
+        if sibling is node:
+            seen = True
+            continue
+        if not seen or not sibling.is_element:
+            continue
+        if sibling.hidden or not sibling.visible or not sibling.in_viewport:
+            continue
+        if sibling.styles.get("cursor") != "pointer":
+            continue
+        if sibling.ax_name or _has_text(sibling):
+            return True
+    return False
+
+
+def is_control_icon(node: EnhancedNode) -> bool:
+    """True if ``node`` is an unlabeled ``cursor:pointer`` icon that *precedes*
+    a labeled ``cursor:pointer`` sibling.
+
+    Component libraries render such rows as ``[icon][label]`` (a radio / checkbox
+    circle before the option text). The icon is the *real, separately-callable
+    control* (clicking it selects), while the label owns its own action (expand /
+    navigate) or is a no-op. Naming the icon lets the LLM address the control
+    directly.
+    """
+    if not node.is_element or _is_disabled(node):
+        return False
+    if node.styles.get("cursor") != "pointer":
+        return False
+    if node.ax_name or _has_text(node):
+        return False
+    if not node.bbox:
+        return False
+    if not has_svg_descendant(node):
+        return False
+    return _has_following_pointer_labeled_sibling(node)
+
+
 def is_clickable(node: EnhancedNode) -> bool:
     if not node.is_element or _is_disabled(node):
         return False
@@ -141,7 +202,38 @@ def is_clickable(node: EnhancedNode) -> bool:
     tabindex = node.attributes.get("tabindex")
     if tabindex is not None and tabindex.isdigit() and int(tabindex) >= 0:
         return True
+    if is_control_icon(node):
+        return True
     return False
+
+
+def has_text(node: EnhancedNode) -> bool:
+    """Public alias for ``_has_text``: does ``node`` (or a descendant) have text?"""
+    return _has_text(node)
+
+
+def is_cursor_pointer_only(node: EnhancedNode) -> bool:
+    """True if ``node`` is clickable *only* because of ``cursor:pointer``.
+
+    Such an element carries no semantic click signal (tag / role / action
+    ``input`` / ``tabindex``) — typically a plain ``<span>`` label styled with
+    ``cursor:pointer``. Some component libraries render a control as an
+    unlabeled icon followed by exactly such a label (radio / checkbox rows),
+    where the label is a no-op and the icon is the real, selectable control.
+    The caller uses this to detect that brittle case and retry on the icon.
+    """
+    if not node.is_element or _is_disabled(node):
+        return False
+    if node.tag in CLICKABLE_TAGS:
+        return False
+    if node.tag == "input" and _input_type(node) in CLICKABLE_INPUT_TYPES:
+        return False
+    if node.role in CLICKABLE_ROLES:
+        return False
+    tabindex = node.attributes.get("tabindex")
+    if tabindex is not None and tabindex.isdigit() and int(tabindex) >= 0:
+        return False
+    return node.styles.get("cursor") == "pointer"
 
 
 def classify(node: EnhancedNode) -> str:

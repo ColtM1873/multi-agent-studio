@@ -13,6 +13,7 @@ from .cdp import CDPClient, CDPError, poll_until_quiet
 from .dom import (
     PAGE_SCROLL_TAG,
     DOMSerializer,
+    EnhancedNode,
     EnhancedTree,
     NameRegistry,
     OutLine,
@@ -24,6 +25,8 @@ from .dom import (
     compute_lost,
     format_lines,
     format_lost,
+    is_control_icon,
+    is_cursor_pointer_only,
     read_outer_html,
 )
 from .launcher import BrowserLauncher, BrowserLaunchError
@@ -310,6 +313,30 @@ class BrowserController:
             return 1, 6
         return (1 if delta > 0 else -1), max(1, min(abs(delta), 6))
 
+    def _alternative_click_target(self, node: EnhancedNode) -> Optional[int]:
+        """The unlabeled control icon that may be the real action behind a label.
+
+        Some component libraries render a control as ``[icon][text label]``
+        (radio / checkbox / expand rows) where the *icon* carries the action and
+        the label is a no-op or only expands. The icon is now named as its own
+        entry (``选择：…``, see ``classify.is_control_icon``); this is the fallback
+        for when the LLM still clicks the plain label: if that changed nothing,
+        retry on the icon.
+
+        Only a *preceding* sibling qualifies: radio / checkbox / expand icons sit
+        before their label, whereas a trailing icon (delete / close) is a
+        different action and must not be substituted.
+        """
+        parent = node.parent
+        if parent is None:
+            return None
+        for sibling in parent.children:
+            if sibling is node:
+                break
+            if is_control_icon(sibling):
+                return sibling.backend_node_id
+        return None
+
     def interact(
         self,
         name: str,
@@ -382,9 +409,25 @@ class BrowserController:
             else:
                 # A click may trigger a navigation; wait for it to actually
                 # begin/finish instead of trusting the stale DOM's quietness.
+                retry_id = (
+                    self._alternative_click_target(node)
+                    if is_cursor_pointer_only(node)
+                    else None
+                )
+                # Snapshot the DOM before acting so we can tell a real change
+                # from a no-op (a serialized diff would be polluted by the
+                # ``:hover`` the move induces, the raw markup is not).
+                before_sig = executor.dom_signature() if retry_id is not None else ""
                 with self._watch_navigation(session) as nav_state:
                     executor.click(node.backend_node_id)
                     self._settle_navigation(session, nav_state)
+                if retry_id is not None and before_sig:
+                    if executor.dom_signature() == before_sig:
+                        # The (named) label did nothing; the real control is the
+                        # unlabeled icon sibling (radio/checkbox rows).
+                        with self._watch_navigation(session) as nav_state:
+                            executor.click(retry_id)
+                            self._settle_navigation(session, nav_state)
         except ActionError as exc:
             return self._base_result(INCREMENTAL, FAIL, "无", str(exc), include_tabs=False)
         except CDPError as exc:

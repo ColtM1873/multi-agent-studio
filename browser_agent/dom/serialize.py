@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from .build import PAGE_SCROLL_TAG, EnhancedNode, EnhancedTree
-from .classify import CLICKABLE_INPUT_TYPES, CLICKABLE_ROLES, classify
+from .classify import CLICKABLE_INPUT_TYPES, CLICKABLE_ROLES, classify, is_control_icon
 from .registry import NameRegistry
 
 SKIP_TAGS = {
@@ -742,6 +742,13 @@ class DOMSerializer:
             value = self._input_value(node)
             return value if value else node.attributes.get("placeholder", "")
         label = self._label(node)
+        # An unlabeled control icon (radio / checkbox circle) pairs with a text
+        # label; name it after that text but keep it distinguishable from the
+        # label's own clickable entry (which expands / navigates): “选择：重庆市”.
+        if not label and category == "click" and is_control_icon(node):
+            paired = self._pointer_sibling_label(node)
+            if paired:
+                label = f"选择：{paired}"
         # A composite control (e.g. a select box) often shows only its value or
         # placeholder (“请选择”). Prefix the associated field label so the LLM
         # can tell which field it is: “政治面貌：请选择”.
@@ -750,6 +757,23 @@ class DOMSerializer:
             if prefix and prefix not in label:
                 label = f"{prefix}：{label}" if label else prefix
         return label
+
+    def _pointer_sibling_label(self, node: EnhancedNode) -> str:
+        """The text of the nearest ``cursor:pointer`` labeled sibling of ``node``."""
+        parent = node.parent
+        if parent is None:
+            return ""
+        for sibling in parent.children:
+            if sibling is node or not sibling.is_element:
+                continue
+            if sibling.hidden or not sibling.visible or not sibling.in_viewport:
+                continue
+            if sibling.styles.get("cursor") != "pointer":
+                continue
+            text = self._collect_text(sibling)
+            if text:
+                return text
+        return ""
 
     def _has_field_input_descendant(self, node: EnhancedNode) -> bool:
         """True if ``node`` wraps a form field (input / textarea / select)."""

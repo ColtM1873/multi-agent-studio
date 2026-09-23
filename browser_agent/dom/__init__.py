@@ -2,7 +2,17 @@
 
 from .build import PAGE_SCROLL_TAG, EnhancedNode, EnhancedTree, build_enhanced_tree
 from .capture import capture_raw, read_outer_html, viewport_from_metrics
-from .classify import classify, is_clickable, is_draggable, is_input, is_scrollable
+from .classify import (
+    classify,
+    has_svg_descendant,
+    has_text,
+    is_clickable,
+    is_control_icon,
+    is_cursor_pointer_only,
+    is_draggable,
+    is_input,
+    is_scrollable,
+)
 from .diff import changed_lines, compute_diff, compute_lost, format_lines, format_lost
 from .registry import NameRegistry
 from .serialize import DOMSerializer, OutLine
@@ -16,7 +26,11 @@ __all__ = [
     "read_outer_html",
     "viewport_from_metrics",
     "classify",
+    "has_svg_descendant",
+    "has_text",
     "is_clickable",
+    "is_control_icon",
+    "is_cursor_pointer_only",
     "is_draggable",
     "is_input",
     "is_scrollable",

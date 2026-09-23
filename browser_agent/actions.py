@@ -321,6 +321,29 @@ class ActionExecutor:
         )
         return (result.get("result") or {}).get("value")
 
+    def dom_signature(self) -> str:
+        """A cheap fingerprint of the live DOM, used to detect no-op actions.
+
+        Computed in-page as a rolling hash over ``documentElement.outerHTML`` so
+        only a short digest crosses the wire. Unlike a serialized snapshot it is
+        immune to the ``:hover`` state our own mouse move induces (hover can
+        change *computed* styles such as ``cursor`` without touching the markup),
+        so ``signature_before == signature_after`` reliably means "the page was
+        not changed".
+        """
+        try:
+            value = self._eval(
+                "(() => {"
+                "const s = document.documentElement.outerHTML;"
+                "let h = 0;"
+                "for (let i = 0; i < s.length; i++) { h = (h * 31 + s.charCodeAt(i)) | 0; }"
+                "return s.length + ':' + h;"
+                "})()"
+            )
+        except Exception:
+            return ""
+        return str(value) if value is not None else ""
+
     def page_scroll_step(self, delta_y: float) -> Optional[float]:
         """Scroll the document by ``delta_y`` CSS px; return the new scrollTop.
 
