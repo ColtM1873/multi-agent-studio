@@ -186,10 +186,29 @@ def is_control_icon(node: EnhancedNode) -> bool:
     return _has_following_pointer_labeled_sibling(node)
 
 
+def _is_anchor_clickable(node: EnhancedNode) -> bool:
+    """True if an ``<a>`` is a real link / carries a click signal.
+
+    A bare ``<a>`` with no ``href`` is frequently used as a decorative wrapper
+    (e.g. the required-field ``*`` mark: ``<a class="form-item__required">``
+    holding only an ``<svg>``). Treating every ``<a>`` as clickable gave those
+    marks a name with no label ("``<可点击元素 eN></可点击元素 eN>``"). An
+    ``<a>`` is only a link when it has an ``href`` (even empty), or when it
+    carries another click signal (an inline ``on*`` handler, an ARIA role,
+    ``cursor:pointer`` or ``tabindex`` — the generic checks below).
+    """
+    if node.attributes.get("href") is not None:
+        return True
+    return any(name.lower().startswith("on") for name in node.attributes)
+
+
 def is_clickable(node: EnhancedNode) -> bool:
     if not node.is_element or _is_disabled(node):
         return False
-    if node.tag in CLICKABLE_TAGS:
+    if node.tag == "a":
+        if _is_anchor_clickable(node):
+            return True
+    elif node.tag in CLICKABLE_TAGS:
         return True
     if node.tag == "input" and _input_type(node) in CLICKABLE_INPUT_TYPES:
         return True
@@ -224,7 +243,10 @@ def is_cursor_pointer_only(node: EnhancedNode) -> bool:
     """
     if not node.is_element or _is_disabled(node):
         return False
-    if node.tag in CLICKABLE_TAGS:
+    if node.tag == "a":
+        if _is_anchor_clickable(node):
+            return False
+    elif node.tag in CLICKABLE_TAGS:
         return False
     if node.tag == "input" and _input_type(node) in CLICKABLE_INPUT_TYPES:
         return False

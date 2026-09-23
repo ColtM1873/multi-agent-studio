@@ -276,19 +276,25 @@ class DOMSerializer:
                 self._emit_blank(depth)
             return
 
-        if child.tag in SKIP_TAGS or child.hidden or not child.in_viewport:
+        if child.tag in SKIP_TAGS or child.hidden:
             return
         if not self._in_clip(child, clip):
             return
 
-        if not child.visible:
-            # The node itself has no visible box (typically zero-area), but its
-            # element descendants may still be laid out and visible. This is the
-            # classic portal/dropdown case: `<div style="position:absolute;
-            # width:100%">` wraps an absolutely positioned popup, so the wrapper
-            # collapses to height 0 while the popup is clearly visible. Recurse
-            # transparently instead of pruning the whole subtree; the node's own
-            # (invisible) text is skipped.
+        if not child.visible or not child.in_viewport:
+            # The node itself has no visible box (typically zero-area), or its
+            # own box is outside the viewport, but its element descendants may
+            # still be laid out and visible. Two classic cases:
+            #   * portal/dropdown: `<div style="position:absolute;width:100%">`
+            #     wraps an absolutely positioned popup, so the wrapper collapses
+            #     to height 0 while the popup is clearly visible;
+            #   * deep scroll: the root/ICB or a fixed shell reports a
+            #     viewport-sized box (`y=0`) that no longer intersects
+            #     `scroll_y ± margin`, yet its descendants use page coordinates
+            #     and are on screen.
+            # Recurse transparently instead of pruning the whole subtree; the
+            # node's own (invisible / off-screen) text is skipped, and each
+            # descendant is still filtered by its own visibility/viewport box.
             for grand in child.children:
                 if not grand.is_text:
                     self._render_child(grand, depth, clip)
@@ -745,7 +751,11 @@ class DOMSerializer:
         # An unlabeled control icon (radio / checkbox circle) pairs with a text
         # label; name it after that text but keep it distinguishable from the
         # label's own clickable entry (which expands / navigates): “选择：重庆市”.
-        if not label and category == "click" and is_control_icon(node):
+        # A native checkbox / radio input is the same "control + text" shape
+        # without an icon, so it gets the same treatment instead of an empty tag.
+        if not label and category == "click" and (
+            is_control_icon(node) or self._is_choice_input(node)
+        ):
             paired = self._pointer_sibling_label(node)
             if paired:
                 label = f"选择：{paired}"
@@ -757,6 +767,13 @@ class DOMSerializer:
             if prefix and prefix not in label:
                 label = f"{prefix}：{label}" if label else prefix
         return label
+
+    def _is_choice_input(self, node: EnhancedNode) -> bool:
+        """True for a native ``<input type=checkbox|radio>``."""
+        return (
+            node.tag == "input"
+            and node.attributes.get("type", "").lower() in ("checkbox", "radio")
+        )
 
     def _pointer_sibling_label(self, node: EnhancedNode) -> str:
         """The text of the nearest ``cursor:pointer`` labeled sibling of ``node``."""
@@ -894,7 +911,7 @@ class DOMSerializer:
                 return True
         return False
 
-    def _is_separate_control(self, node: EnhancedNode) -> bool:
+    def _is_separate_control(self, node: EnhancedNode, root: Optional[EnhancedNode] = None) -> bool:
         """True if ``node`` is an independent control, not a mere internal part.
 
         Used to tell a clickable *wrapper* (whose children are the real,
@@ -906,8 +923,10 @@ class DOMSerializer:
         *semantic* signal (``a``/``button``/``select``/``textarea``/``summary``,
         an action ``input`` type, an ARIA control role, ``contenteditable``, or a
         separate scroll/drag capability). Elements that are merely
-        ``cursor:pointer`` (e.g. a placeholder), and a plain text input with no
-        value / placeholder / accessible name (a typeahead field), do not count.
+        ``cursor:pointer`` (e.g. a placeholder) do not count. A plain text input
+        only counts when it is a real field of its own: a select's typeahead
+        input lives *inside* the box (``root``) and carries the selected value,
+        so it must be treated as a part, not a separate control.
         """
         if not node.is_element or node.hidden or not node.visible or not node.in_viewport:
             return False
@@ -917,6 +936,11 @@ class DOMSerializer:
             itype = node.attributes.get("type", "text").lower()
             if itype in CLICKABLE_INPUT_TYPES:
                 return True
+            if self._has_clickable_ancestor(node, root):
+                # A text input wrapped by a clickable composite control (the
+                # select box itself) is that control's internal typeahead, not a
+                # field the model should address directly.
+                return False
             return bool(node.input_value or node.attributes.get("placeholder"))
         if node.role in CLICKABLE_ROLES:
             return True
@@ -924,13 +948,34 @@ class DOMSerializer:
             return True
         return classify(node) in ("scroll", "drag")
 
-    def _has_separate_interactive_descendant(self, node: EnhancedNode) -> bool:
+    def _has_clickable_ancestor(
+        self, node: EnhancedNode, root: Optional[EnhancedNode] = None
+    ) -> bool:
+        """True if ``node`` sits inside a clickable container at or below ``root``.
+
+        ``root`` is the composite control being tested (the caller), so the walk
+        stops once it reaches ``root`` after checking it as well.
+        """
+        ancestor = node.parent
+        while ancestor is not None:
+            if ancestor.is_element and classify(ancestor) == "click":
+                return True
+            if ancestor is root:
+                break
+            ancestor = ancestor.parent
+        return False
+
+    def _has_separate_interactive_descendant(
+        self, node: EnhancedNode, root: Optional[EnhancedNode] = None
+    ) -> bool:
+        if root is None:
+            root = node
         for child in node.children:
             if child.is_text:
                 continue
-            if self._is_separate_control(child):
+            if self._is_separate_control(child, root):
                 return True
-            if self._has_separate_interactive_descendant(child):
+            if self._has_separate_interactive_descendant(child, root):
                 return True
         return False
 
