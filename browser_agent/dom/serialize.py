@@ -139,6 +139,48 @@ MAX_TEXT_LENGTH = 200
 
 BBox = tuple[float, float, float, float]
 
+_SCROLL_OPEN = "<可滚动元素 "
+_SCROLL_CLOSE = "</可滚动元素 "
+
+
+def _is_scroll_open(text: str) -> bool:
+    return text.lstrip().startswith(_SCROLL_OPEN)
+
+
+def _is_scroll_boundary(text: str) -> bool:
+    # A closing line, or the single-line ``#page`` tag (which both opens and
+    # closes on the same line).
+    stripped = text.lstrip()
+    return stripped.startswith(_SCROLL_CLOSE) or (
+        stripped.startswith(_SCROLL_OPEN) and _SCROLL_CLOSE in stripped
+    )
+
+
+def separate_scroll_blocks(lines: list[str]) -> list[str]:
+    """Put a blank line before/after every scrollable-element block.
+
+    Scroll blocks can appear at any depth, so the top-level blank-line rule in
+    ``serialize`` is not enough. This gives every ``<可滚动元素 eN>`` block a
+    clear boundary in both the full serialization and the incremental diff.
+    """
+    out: list[str] = []
+    for line in lines:
+        if _is_scroll_open(line) and out and out[-1] != "":
+            out.append("")
+        out.append(line)
+        if _is_scroll_boundary(line):
+            out.append("")
+    cleaned: list[str] = []
+    for line in out:
+        if line == "" and cleaned and cleaned[-1] == "":
+            continue
+        cleaned.append(line)
+    while cleaned and cleaned[0] == "":
+        cleaned.pop(0)
+    while cleaned and cleaned[-1] == "":
+        cleaned.pop()
+    return cleaned
+
 
 @dataclass(frozen=True)
 class OutLine:
@@ -177,7 +219,7 @@ class DOMSerializer:
             parts.append("\t" * line.depth + line.text)
         parts.append("")
         parts.append(self._page_info(tree))
-        text = "\n".join(parts)
+        text = "\n".join(separate_scroll_blocks(parts))
         if len(text) > self.max_chars:
             text = text[: self.max_chars] + "\n…（内容已截断，可用 tool-3 获取全量）"
         return text
@@ -223,7 +265,7 @@ class DOMSerializer:
         level = self._heading_level(child)
         if level:
             self._flush(depth)
-            self._group(child, depth, f"[{level}级标题]", clip)
+            self._group_or_scroll(child, depth, f"[{level}级标题]", clip)
             return
 
         if self._is_image(child):
@@ -234,12 +276,12 @@ class DOMSerializer:
         landmark = self._landmark_for(child)
         if landmark:
             self._flush(depth)
-            self._group(child, depth, f"[{landmark}]", clip)
+            self._group_or_scroll(child, depth, f"[{landmark}]", clip)
             return
 
         if child.tag == "figure":
             self._flush(depth)
-            self._group(child, depth, "[图]", clip)
+            self._group_or_scroll(child, depth, "[图]", clip)
             return
 
         # An unnamed ``<section>`` is a generic block container. Only surface it
@@ -247,32 +289,32 @@ class DOMSerializer:
         # ``[文本]`` branch below is the better, less noisy fit).
         if child.tag == "section" and self._has_blockish_descendant(child):
             self._flush(depth)
-            self._group(child, depth, "[区块]", clip)
+            self._group_or_scroll(child, depth, "[区块]", clip)
             return
 
         if child.tag == "dl":
             self._flush(depth)
-            self._group(child, depth, "[定义列表]", clip)
+            self._group_or_scroll(child, depth, "[定义列表]", clip)
             return
 
         if child.tag == "dt":
             self._flush(depth)
-            self._group(child, depth, "[术语]", clip)
+            self._group_or_scroll(child, depth, "[术语]", clip)
             return
 
         if child.tag == "dd":
             self._flush(depth)
-            self._group(child, depth, "[描述]", clip)
+            self._group_or_scroll(child, depth, "[描述]", clip)
             return
 
         if child.tag in ("ul", "ol") or child.role == "list":
             self._flush(depth)
-            self._group(child, depth, "[列表]", clip)
+            self._group_or_scroll(child, depth, "[列表]", clip)
             return
 
         if child.tag == "table" or child.role == "table":
             self._flush(depth)
-            self._group(child, depth, "[表格]", clip)
+            self._group_or_scroll(child, depth, "[表格]", clip)
             return
 
         # ``<tr>``: keep the row on a single line but separate the cells with
@@ -299,7 +341,12 @@ class DOMSerializer:
         category = classify(child)
         if category == "scroll":
             self._flush(depth)
-            self._group_scroll(child, depth, clip)
+            if (child.tag == "li" or child.role == "listitem") and self._has_blockish_descendant(child):
+                # A scrollable rich list item wraps the scroll element around its
+                # ``[列表项]`` boundary.
+                self._group_or_scroll(child, depth, "[列表项]", clip)
+            else:
+                self._group_scroll(child, depth, clip)
             return
 
         if category:
@@ -366,7 +413,28 @@ class DOMSerializer:
         self._render_children(node, depth + 1, clip)
         self._stack.pop()
 
-    def _group_scroll(self, node: EnhancedNode, depth: int, clip: Optional[BBox]) -> None:
+    def _group_or_scroll(
+        self, node: EnhancedNode, depth: int, header: str, clip: Optional[BBox]
+    ) -> None:
+        """Render a structural group, wrapping it in the scroll element if needed.
+
+        A landmark/list/table/… can itself be a scroll container (e.g. an
+        ``<aside style="overflow-y:auto">`` job list). The scroll element is the
+        outer boundary the LLM interacts with; the structural header
+        (``[侧栏]`` / ``[列表]`` …) is rendered inside it.
+        """
+        if classify(node) == "scroll":
+            self._group_scroll(node, depth, clip, inner_header=header)
+        else:
+            self._group(node, depth, header, clip)
+
+    def _group_scroll(
+        self,
+        node: EnhancedNode,
+        depth: int,
+        clip: Optional[BBox],
+        inner_header: str = "",
+    ) -> None:
         name = self.registry.get_or_create(node)
         if node.tag == PAGE_SCROLL_TAG:
             # Document-level scrollbar: a single inline tag carrying the hint.
@@ -381,7 +449,10 @@ class DOMSerializer:
         self._emit_header(depth, opening, (name,), closing)
         self._stack.append((depth, opening, closing))
         before = len(self._lines)
-        self._render_children(node, depth + 1, node.bbox)
+        if inner_header:
+            self._group(node, depth + 1, inner_header, node.bbox)
+        else:
+            self._render_children(node, depth + 1, node.bbox)
         if len(self._lines) == before:
             self._emit_content(depth + 1, "（可滚动区域）")
         self._stack.pop()

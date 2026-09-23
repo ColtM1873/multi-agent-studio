@@ -15,7 +15,7 @@ import difflib
 import re
 from typing import Optional
 
-from .serialize import OutLine
+from .serialize import OutLine, separate_scroll_blocks
 
 MAX_DIFF_CHARS = 40000
 MAX_LOST = 50
@@ -77,7 +77,7 @@ def format_lines(lines: list[OutLine], max_chars: int = MAX_DIFF_CHARS) -> str:
     for depth, _opening, closing in reversed(cursor):
         if closing:
             out.append("\t" * depth + closing)
-    text = "\n".join(out)
+    text = "\n".join(separate_scroll_blocks(out))
     if len(text) > max_chars:
         text = text[:max_chars] + "\n…（diff 已截断）"
     return text
