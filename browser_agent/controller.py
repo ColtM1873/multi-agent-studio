@@ -178,6 +178,28 @@ class BrowserController:
             return f"[标签页标题变更] {old_name} → {new_name}\n"
         return ""
 
+    def _opened_tab_names(self, old_target_ids: set) -> list:
+        """Names of page tabs that appeared since ``old_target_ids``.
+
+        Used to tell the LLM that a click opened a background tab even though
+        the focused tab (and therefore the visible page) did not change.
+        """
+        opened: list = []
+        for target in self._live_targets():
+            if target["targetId"] not in old_target_ids:
+                opened.append(self._tab_registry.name(target))
+        return opened
+
+    def _new_tab_notice(self, opened_names: list) -> str:
+        """Hint for "a click opened a background tab, focus did not move"."""
+        opened = "、".join(opened_names)
+        focus = self.focused_tab_label() or "未知标签页"
+        return (
+            f"[新标签页] 本次互动在当前聚焦标签页之外新打开了标签页（{opened}），"
+            f"但当前聚焦标签页并未改变（仍为 {focus}），因此当前聚焦页没有内容变化或只有少量内容变化。"
+            f"如需查看或操作新标签页，使用 tool_5_switch_tab 切换到目标标签页。"
+        )
+
     def _resolve_focused_target(self) -> Optional[str]:
         targets = self._page_targets()
         if not targets:
@@ -327,6 +349,7 @@ class BrowserController:
         old_lines = self.serialize_lines_tree(old_tree, target_id)
         old_focus = self.focused_target_id
         old_name = self._name_for_target(target_id)
+        old_target_ids = {t["targetId"] for t in self._live_targets()}
 
         try:
             session = self.client.attach(target_id)
@@ -372,6 +395,15 @@ class BrowserController:
             new_tree = self.capture_tree(new_focus)
             new_text = self.serialize_tree(new_tree, new_focus)
             return self._base_result(FULL, OK, new_text, include_tabs=True)
+
+        # The click may have opened a background tab without moving focus. The
+        # focused page then looks unchanged and an incremental diff would read
+        # "（页面无变化）", which falsely implies nothing happened; tell the LLM
+        # explicitly and hand it the full tab list instead.
+        opened_names = self._opened_tab_names(old_target_ids)
+        if opened_names:
+            content = self._new_tab_notice(opened_names)
+            return self._base_result(INCREMENTAL, OK, content, include_tabs=True)
 
         new_tree = self.capture_tree(target_id)
         notice = self._title_change_notice(target_id, old_name)
@@ -539,6 +571,7 @@ class BrowserController:
         old_lines = self.serialize_lines_tree(tree, target_id)
         old_focus = self.focused_target_id
         old_name = self._name_for_target(target_id)
+        old_target_ids = {t["targetId"] for t in self._live_targets()}
 
         try:
             session = self.client.attach(target_id)
@@ -582,11 +615,21 @@ class BrowserController:
 
         new_focus = self._resolve_focused_target()
         focus_changed = bool(new_focus and new_focus != old_focus)
+        opened_names = (
+            []
+            if (focus_changed or error_msg)
+            else self._opened_tab_names(old_target_ids)
+        )
 
         if focus_changed:
             new_tree = self.capture_tree(new_focus)
             content = self.serialize_tree(new_tree, new_focus)
             mode = FULL
+        elif opened_names:
+            # Trailing click opened a background tab without moving focus:
+            # replace the (empty) incremental diff with an explicit hint.
+            content = self._new_tab_notice(opened_names)
+            mode = INCREMENTAL
         else:
             new_tree = self.capture_tree(target_id)
             notice = self._title_change_notice(target_id, old_name)
@@ -595,12 +638,13 @@ class BrowserController:
             )
             mode = INCREMENTAL
 
+        include_tabs = focus_changed or bool(opened_names)
         if error_msg:
             action_ok = PARTIAL_FAIL if success_count > 0 else FAIL
             return self._base_result(
-                mode, action_ok, content, error=error_msg, include_tabs=focus_changed
+                mode, action_ok, content, error=error_msg, include_tabs=include_tabs
             )
-        return self._base_result(mode, OK, content, include_tabs=focus_changed)
+        return self._base_result(mode, OK, content, include_tabs=include_tabs)
 
     def _quiet(
         self, session: str, quiet_seconds: float = 0.7, timeout: float = 6.0
