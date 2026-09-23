@@ -15,6 +15,7 @@ from pydantic import BaseModel
 
 from app.runtime.browser_takeover import (
     STOP_TEXT,
+    _apply_browser_timing,
     browser_status,
     is_paused,
     make_sensitive_masker,
@@ -77,6 +78,7 @@ def open_browser(body: AgentBody | None = None):
     try:
         from browser_agent import tool_1_open_browser
 
+        _apply_browser_timing()
         tool_1_open_browser()  # ensure_connected：复用或启动
         connected, port = browser_status()
         if connected:
@@ -120,6 +122,7 @@ def viewport_dom(body: AgentBody | None = None):
     try:
         from browser_agent import tool_3_get_viewport_dom
 
+        _apply_browser_timing()
         result = tool_3_get_viewport_dom()
         if browser_status()[0]:
             _show_floating(body.agent_id if body else None)

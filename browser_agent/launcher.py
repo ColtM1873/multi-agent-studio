@@ -16,6 +16,7 @@ from typing import Optional
 import requests
 
 from . import config as cfgmod
+from . import timing
 
 
 class BrowserLaunchError(RuntimeError):
@@ -86,10 +87,12 @@ class BrowserLauncher:
         except OSError as exc:  # pragma: no cover - platform dependent
             raise BrowserLaunchError(f"启动浏览器失败: {exc}") from exc
 
-        port = self._read_devtools_port(active_port_file, timeout=25.0)
+        port = self._read_devtools_port(
+            active_port_file, timeout=timing.get().launch.ready_timeout
+        )
         self.port = port
         self.cdp_url = f"http://127.0.0.1:{port}/"
-        ws_url = self._wait_until_ready(port, timeout=25.0)
+        ws_url = self._wait_until_ready(port, timeout=timing.get().launch.ready_timeout)
         self.ws_url = ws_url
 
         cfgmod.update_config(
@@ -118,7 +121,7 @@ class BrowserLauncher:
         port = cfg.get("last_port")
         if isinstance(port, int) and self._is_port_ready(port):
             try:
-                ws_url = self._wait_until_ready(port, timeout=2.0)
+                ws_url = self._wait_until_ready(port, timeout=timing.get().launch.reuse_timeout)
             except BrowserLaunchError:
                 return None
             self.port = port
@@ -140,7 +143,7 @@ class BrowserLauncher:
                     first_line = text.splitlines()[0].strip()
                     if first_line.isdigit():
                         return int(first_line)
-            time.sleep(0.1)
+            time.sleep(timing.get().launch.devtools_poll_interval)
         raise BrowserLaunchError(
             "等待 DevToolsActivePort 超时；请确认浏览器已启动且 --user-data-dir 为非默认目录。"
         )
@@ -148,7 +151,10 @@ class BrowserLauncher:
     @staticmethod
     def _is_port_ready(port: int) -> bool:
         try:
-            resp = requests.get(f"http://127.0.0.1:{port}/json/version", timeout=1.0)
+            resp = requests.get(
+                f"http://127.0.0.1:{port}/json/version",
+                timeout=timing.get().launch.port_probe_timeout,
+            )
             return resp.status_code == 200
         except requests.RequestException:
             return False
@@ -159,7 +165,10 @@ class BrowserLauncher:
         last_err: Optional[Exception] = None
         while time.time() < deadline:
             try:
-                resp = requests.get(f"http://127.0.0.1:{port}/json/version", timeout=1.0)
+                resp = requests.get(
+                    f"http://127.0.0.1:{port}/json/version",
+                    timeout=timing.get().launch.port_probe_timeout,
+                )
                 if resp.status_code == 200:
                     data = resp.json()
                     ws_url = data.get("webSocketDebuggerUrl")
@@ -167,5 +176,5 @@ class BrowserLauncher:
                         return ws_url
             except (requests.RequestException, ValueError) as exc:
                 last_err = exc
-            time.sleep(0.2)
+            time.sleep(timing.get().launch.cdp_poll_interval)
         raise BrowserLaunchError(f"等待 CDP 就绪超时: {last_err}")

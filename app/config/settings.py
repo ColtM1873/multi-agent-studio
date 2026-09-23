@@ -89,6 +89,9 @@ class Settings(BaseModel):
     # 以及「提示接管」预览块）在交给 LLM 之前，会把敏感信息表单里的「真实内容」反向替换回
     # 对应的 <名称>，从而完全不向 LLM 暴露真实值。工具调用时实时读取，不参与图编译。
     privacy_mask_mode: bool = False
+    # 浏览器交互延迟（导航宽限、加载超时、判稳静默窗、轮询间隔、CDP 命令超时、拟人停顿等）。
+    # 结构见 browser_agent/timing.py，工具调用时实时读取并覆盖，故改完即生效、无需 invalidate_all。
+    browser_timing: dict = Field(default_factory=dict)
 
 
 def settings_path(config_dir: Path | str) -> Path:

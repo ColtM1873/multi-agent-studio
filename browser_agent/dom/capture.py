@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..cdp import CDPClient
+from .. import timing
 
 REQUIRED_COMPUTED_STYLES = [
     "display",
@@ -101,7 +102,7 @@ def read_outer_html(client: CDPClient, session_id: str) -> str:
                 "returnByValue": True,
             },
             session_id=session_id,
-            timeout=20.0,
+            timeout=timing.get().cdp.outer_html_timeout,
         )
         return str((result.get("result") or {}).get("value") or "")
     except Exception:

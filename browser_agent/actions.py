@@ -12,6 +12,7 @@ import time
 from typing import Optional
 
 from .cdp import CDPClient
+from . import timing
 
 
 class ActionError(RuntimeError):
@@ -88,7 +89,7 @@ class ActionExecutor:
             self._send("DOM.scrollIntoViewIfNeeded", {"backendNodeId": backend_node_id})
         except Exception:
             pass
-        _sleep(0.05, 0.12)
+        _sleep(*timing.get().actions.node_box)
 
         try:
             res = self._send("DOM.getContentQuads", {"backendNodeId": backend_node_id})
@@ -154,7 +155,7 @@ class ActionExecutor:
             x = x0 + (x1 - x0) * eased + random.uniform(-1.5, 1.5)
             y = y0 + (y1 - y0) * eased + random.uniform(-1.5, 1.5)
             self._dispatch_mouse("mouseMoved", x, y)
-            _sleep(0.008, 0.025)
+            _sleep(*timing.get().actions.move_step)
         self._dispatch_mouse("mouseMoved", x1, y1)
         self._mouse = (x1, y1)
 
@@ -191,26 +192,26 @@ class ActionExecutor:
         x = center[0] + random.uniform(-1.0, 1.0)
         y = center[1] + random.uniform(-1.0, 1.0)
         self._human_move((x, y))
-        _sleep(0.04, 0.12)
+        _sleep(*timing.get().actions.click_hover)
 
         if self._is_occluded(backend_node_id, x, y):
             self._js_click(backend_node_id)
             return {"degraded": True, "reason": "occluded"}
 
         self._dispatch_mouse("mousePressed", x, y, button="left", buttons=1, click_count=1)
-        _sleep(0.05, 0.12)
+        _sleep(*timing.get().actions.click_press)
         self._dispatch_mouse("mouseReleased", x, y, button="left", buttons=0, click_count=1)
         return {"degraded": False}
 
     def input_text(self, backend_node_id: int, text: str) -> dict:
         click_result = self.click(backend_node_id)
-        _sleep(0.08, 0.18)
+        _sleep(*timing.get().actions.input_focus)
         self._clear_field()
-        _sleep(0.05, 0.1)
+        _sleep(*timing.get().actions.input_clear)
 
         for char in text:
             self._type_char(char)
-            _sleep(0.03, 0.12)
+            _sleep(*timing.get().actions.type_char)
 
         current = self._read_value(backend_node_id)
         if current is not None and text not in (current or ""):
@@ -232,9 +233,9 @@ class ActionExecutor:
             target = (x + w * (pct / 100.0), y + h / 2.0)
 
         self._human_move(start)
-        _sleep(0.05, 0.12)
+        _sleep(*timing.get().actions.drag_press)
         self._dispatch_mouse("mousePressed", start[0], start[1], button="left", buttons=1, click_count=1)
-        _sleep(0.05, 0.12)
+        _sleep(*timing.get().actions.drag_press)
 
         x0, y0 = start
         x1, y1 = target
@@ -245,7 +246,7 @@ class ActionExecutor:
             mx = x0 + (x1 - x0) * eased
             my = y0 + (y1 - y0) * eased
             self._dispatch_mouse("mouseMoved", mx, my, button="left", buttons=1)
-            _sleep(0.01, 0.03)
+            _sleep(*timing.get().actions.drag_move)
         self._mouse = (x1, y1)
         self._dispatch_mouse("mouseReleased", x1, y1, button="left", buttons=0, click_count=1)
         return {"degraded": False}
@@ -259,7 +260,7 @@ class ActionExecutor:
         if self._mouse != center:
             self._human_move((cx, cy))
         self._dispatch_mouse("mouseWheel", cx, cy, delta_x=0, delta_y=delta_y)
-        _sleep(0.15, 0.35)
+        _sleep(*timing.get().actions.scroll_settle)
         return self.scroll_top(backend_node_id)
 
     def scroll_top(self, backend_node_id: int) -> Optional[float]:
@@ -355,7 +356,7 @@ class ActionExecutor:
             self._eval(f"window.scrollBy(0, {float(delta_y)});")
         except Exception:
             pass
-        _sleep(0.15, 0.35)
+        _sleep(*timing.get().actions.scroll_settle)
         return self.page_scroll_top()
 
     def page_scroll_top(self) -> Optional[float]:

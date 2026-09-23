@@ -464,6 +464,71 @@ const I18N_EN = {
   "代码·函数": "Code function",
   "代码·常量": "Code constant",
   "代码·变量": "Code variable",
+  "浏览器交互延迟设置": "Browser interaction delay settings",
+  "调整 LLM 操作浏览器时各环节的等待时长，单位为秒。数值越小响应越快，但过小可能抓不到刚加载 / 刚跳转的页面；数值越大越稳妥但更慢。修改保存后，下一次浏览器工具调用即生效。": "Tune the wait times (in seconds) at each step of browser interaction. Smaller values respond faster but may miss pages that just loaded or navigated; larger values are safer but slower. Changes take effect on the next browser tool call.",
+  "导航与稳定化（对延迟影响最大）": "Navigation & stabilization (biggest latency impact)",
+  "页面就绪与标签页": "Page ready & tabs",
+  "CDP 命令与探测超时": "CDP command & probe timeouts",
+  "浏览器启动": "Browser launch",
+  "拟人交互微延迟（每项为 [最小, 最大] 随机秒数）": "Human-like micro delays (each is a random [min, max] in seconds)",
+  "导航宽限窗口": "Navigation grace window",
+  "每次可能触发跳转的操作（点击 / 返回 / 刷新 / 新开标签页）后，先等导航「开始」的最长时间。用于避免页面还没开始跳转就被误判为已稳定、抓到旧页面。值越大越稳妥，但每次点击最多多等这么久。默认 4.0 秒。": "After any action that may navigate (click / back / refresh / new tab), the max time to first wait for the navigation to *start*. This prevents treating a not-yet-navigated page as stable and capturing the stale one. Larger is safer but adds up to this much per click. Default 4.0 s.",
+  "导航加载超时": "Navigation load timeout",
+  "确认导航开始后，等待页面 load 完成（loadEventFired）的最长时间；也用于新标签页首次就绪。站点很慢时可调大，但真正失败的场景也会多等。默认 15.0 秒。": "Once a navigation has started, the max time to wait for the page load event (loadEventFired); also used for a new tab's first ready. Increase for slow sites, but failed cases will also wait longer. Default 15.0 s.",
+  "DOM 判稳静默窗": "DOM quiet window",
+  "页面的 DOM 指纹（readyState + outerHTML 长度）连续保持不变达到这个时长，才认为页面渲染完成。异步渲染（SPA）常需要它兜底；太小会抓到中间态。默认 0.7 秒。": "The page is considered settled only once its DOM fingerprint (readyState + outerHTML length) stays unchanged for this long. Async rendering (SPAs) often needs it; too small may capture an intermediate state. Default 0.7 s.",
+  "判稳总超时": "Max settle timeout",
+  "等待 DOM 判稳的总上限；超过则不再等待，直接返回当前页面。默认 6.0 秒。": "The overall cap for waiting until the DOM settles; after this it returns the current page without waiting further. Default 6.0 s.",
+  "判稳探测间隔": "Settle probe interval",
+  "判稳过程中每隔多久探测一次 DOM 指纹。越小判定越及时，但探测命令更频繁。默认 0.15 秒。": "How often to probe the DOM fingerprint while settling. Smaller reacts sooner but sends probes more often. Default 0.15 s.",
+  "导航宽限轮询间隔": "Navigation grace poll interval",
+  "在「导航宽限窗口」内，每隔多久检查一次导航是否已经开始。默认 0.05 秒。": "How often to check whether a navigation has started, within the navigation grace window. Default 0.05 s.",
+  "标签页就绪等待超时": "Tab-ready timeout",
+  "切换标签页（tool_5）时，等待该页 readyState 变为 complete 的最长时间。默认 15.0 秒。": "When switching tabs (tool_5), the max time to wait for the tab's readyState to become complete. Default 15.0 s.",
+  "标签页就绪轮询间隔": "Tab-ready poll interval",
+  "切换标签页时轮询 readyState 的间隔。默认 0.15 秒。": "The readyState polling interval when switching tabs. Default 0.15 s.",
+  "新标签页轮询间隔": "New-tab poll interval",
+  "打开新标签页（tool_9）时，轮询 readyState 与 location.href 的间隔。默认 0.1 秒。": "When opening a new tab (tool_9), the polling interval for readyState and location.href. Default 0.1 s.",
+  "关闭标签页等待超时": "Close-tab timeout",
+  "关闭标签页后，等待该标签页真正从目标列表消失的最长时间。默认 3.0 秒。": "After closing a tab, the max time to wait for it to actually disappear from the target list. Default 3.0 s.",
+  "关闭标签页轮询间隔": "Close-tab poll interval",
+  "关闭标签页时的轮询间隔。默认 0.1 秒。": "The polling interval when closing a tab. Default 0.1 s.",
+  "CDP 命令超时": "CDP command timeout",
+  "单条 Chrome DevTools Protocol 命令的默认超时。抓取 DOM、注入点击等绝大多数命令都使用它；过小会在慢页面上误报超时。默认 30.0 秒。": "Default timeout for a single Chrome DevTools Protocol command. Used by most commands (DOM capture, click injection, etc.); too small reports false timeouts on slow pages. Default 30.0 s.",
+  "短探测超时": "Short probe timeout",
+  "轻量探测命令（读取 readyState、hasFocus、主帧树等）的超时，比默认命令超时短。默认 3.0 秒。": "Timeout for lightweight probe commands (reading readyState, hasFocus, main frame tree, etc.), shorter than the default command timeout. Default 3.0 s.",
+  "原始 HTML 读取超时": "Raw HTML read timeout",
+  "debug 模式下读取整页原始 HTML 的超时，仅影响调试日志。默认 20.0 秒。": "Timeout for reading the full raw HTML in debug mode; only affects debug logs. Default 20.0 s.",
+  "启动就绪总超时": "Launch-ready timeout",
+  "启动浏览器后，等待 DevToolsActivePort 端口文件与 CDP 服务就绪的总超时。机器慢或安全软件拦截时可调大。默认 25.0 秒。": "After launching the browser, the overall timeout for the DevToolsActivePort file and CDP service to become ready. Increase on slow machines or when security software interferes. Default 25.0 s.",
+  "端口文件轮询间隔": "Port-file poll interval",
+  "启动时轮询 DevToolsActivePort 文件的间隔。默认 0.1 秒。": "The polling interval for the DevToolsActivePort file during launch. Default 0.1 s.",
+  "CDP 服务轮询间隔": "CDP service poll interval",
+  "启动时轮询 /json/version 等待 CDP 服务就绪的间隔。默认 0.2 秒。": "The polling interval for /json/version while waiting for the CDP service during launch. Default 0.2 s.",
+  "复用浏览器就绪超时": "Reuse-ready timeout",
+  "复用上一次已启动的浏览器时，等待其 CDP 就绪的超时；超时则改为重新启动。默认 2.0 秒。": "When reusing a previously launched browser, the timeout for its CDP to become ready; on timeout it launches a fresh one. Default 2.0 s.",
+  "端口探测超时": "Port probe timeout",
+  "检测浏览器端口是否存活（GET /json/version）的单次超时，也用于浮动按钮的连接状态轮询。默认 1.0 秒。": "Single-attempt timeout for checking whether the browser port is alive (GET /json/version); also used by the floating button's connection polling. Default 1.0 s.",
+  "鼠标移动每步间隔": "Mouse move per-step interval",
+  "拟人移动鼠标时，每个中间点的间隔范围（随机取值）。减小可加快点击，但过小可能被反爬识别。默认 0.008 ~ 0.025 秒。": "Interval range between each intermediate point when moving the mouse human-likely (random). Smaller speeds up clicks but may be detected by anti-bot. Default 0.008 ~ 0.025 s.",
+  "元素定位后停顿": "Post-locate settle",
+  "把元素滚动进视口后、获取其几何信息前的停顿。默认 0.05 ~ 0.12 秒。": "Pause after scrolling an element into view and before reading its geometry. Default 0.05 ~ 0.12 s.",
+  "点击悬停停顿": "Click hover settle",
+  "鼠标移到目标上后、按下鼠标之前的停顿。默认 0.04 ~ 0.12 秒。": "Pause after moving onto the target and before pressing. Default 0.04 ~ 0.12 s.",
+  "按下到松开停顿": "Press-to-release settle",
+  "鼠标按下与松开之间的停顿。默认 0.05 ~ 0.12 秒。": "Pause between mouse press and release. Default 0.05 ~ 0.12 s.",
+  "输入聚焦停顿": "Input focus settle",
+  "点击输入框聚焦后、开始输入前的停顿。默认 0.08 ~ 0.18 秒。": "Pause after clicking to focus an input and before typing. Default 0.08 ~ 0.18 s.",
+  "清空输入框停顿": "Input clear settle",
+  "清空输入框原有内容后的停顿。默认 0.05 ~ 0.10 秒。": "Pause after clearing an input's existing content. Default 0.05 ~ 0.10 s.",
+  "逐字符输入间隔": "Per-character typing interval",
+  "逐字符输入时，每个字符之间的间隔。长文本会明显累加耗时，是输入类操作最主要的延迟来源。默认 0.03 ~ 0.12 秒。": "Interval between characters when typing. Long text accumulates noticeably; this is the main latency source for input actions. Default 0.03 ~ 0.12 s.",
+  "拖动按下停顿": "Drag press settle",
+  "拖动时在起点按下鼠标前后的停顿。默认 0.05 ~ 0.12 秒。": "Pause around pressing the mouse at the drag start point. Default 0.05 ~ 0.12 s.",
+  "拖动移动每步间隔": "Drag move per-step interval",
+  "拖动过程中鼠标移动每个中间点的间隔。默认 0.01 ~ 0.03 秒。": "Interval between each intermediate point while dragging. Default 0.01 ~ 0.03 s.",
+  "滚动步间停顿": "Scroll step settle",
+  "每次滚动（滚轮 / 整页）后等待页面响应的停顿；滚动类操作可能连续多步，累加后较可观。默认 0.15 ~ 0.35 秒。": "Pause after each scroll (wheel / full page) to let the page respond; scrolling may run several steps, so it adds up. Default 0.15 ~ 0.35 s.",
   "快照": "Snapshots",
   "快照列表": "Snapshot list",
   "暂无快照": "No snapshots yet",
@@ -890,6 +955,78 @@ const HTML_CFG_SCHEMA = [
     { p: ["colors", "code_function"], label: "代码·函数", type: "color" },
     { p: ["colors", "code_constant"], label: "代码·常量", type: "color" },
     { p: ["colors", "code_variable"], label: "代码·变量", type: "color" },
+  ]},
+];
+
+/* 浏览器交互延迟设置（browser_agent/timing.py） */
+const BROWSER_DELAY_SCHEMA = [
+  { section: "导航与稳定化（对延迟影响最大）", items: [
+    { p: ["nav", "grace_seconds"], label: "导航宽限窗口", def: 4.0, step: 0.1,
+      desc: "每次可能触发跳转的操作（点击 / 返回 / 刷新 / 新开标签页）后，先等导航「开始」的最长时间。用于避免页面还没开始跳转就被误判为已稳定、抓到旧页面。值越大越稳妥，但每次点击最多多等这么久。默认 4.0 秒。" },
+    { p: ["nav", "load_timeout"], label: "导航加载超时", def: 15.0, step: 0.5,
+      desc: "确认导航开始后，等待页面 load 完成（loadEventFired）的最长时间；也用于新标签页首次就绪。站点很慢时可调大，但真正失败的场景也会多等。默认 15.0 秒。" },
+    { p: ["nav", "quiet_seconds"], label: "DOM 判稳静默窗", def: 0.7, step: 0.1,
+      desc: "页面的 DOM 指纹（readyState + outerHTML 长度）连续保持不变达到这个时长，才认为页面渲染完成。异步渲染（SPA）常需要它兜底；太小会抓到中间态。默认 0.7 秒。" },
+    { p: ["nav", "quiet_timeout"], label: "判稳总超时", def: 6.0, step: 0.5,
+      desc: "等待 DOM 判稳的总上限；超过则不再等待，直接返回当前页面。默认 6.0 秒。" },
+    { p: ["nav", "probe_interval"], label: "判稳探测间隔", def: 0.15, step: 0.01,
+      desc: "判稳过程中每隔多久探测一次 DOM 指纹。越小判定越及时，但探测命令更频繁。默认 0.15 秒。" },
+    { p: ["nav", "settle_poll_interval"], label: "导航宽限轮询间隔", def: 0.05, step: 0.01,
+      desc: "在「导航宽限窗口」内，每隔多久检查一次导航是否已经开始。默认 0.05 秒。" },
+  ]},
+  { section: "页面就绪与标签页", items: [
+    { p: ["ready", "timeout"], label: "标签页就绪等待超时", def: 15.0, step: 0.5,
+      desc: "切换标签页（tool_5）时，等待该页 readyState 变为 complete 的最长时间。默认 15.0 秒。" },
+    { p: ["ready", "poll_interval"], label: "标签页就绪轮询间隔", def: 0.15, step: 0.01,
+      desc: "切换标签页时轮询 readyState 的间隔。默认 0.15 秒。" },
+    { p: ["ready", "new_tab_poll_interval"], label: "新标签页轮询间隔", def: 0.1, step: 0.01,
+      desc: "打开新标签页（tool_9）时，轮询 readyState 与 location.href 的间隔。默认 0.1 秒。" },
+    { p: ["ready", "close_timeout"], label: "关闭标签页等待超时", def: 3.0, step: 0.5,
+      desc: "关闭标签页后，等待该标签页真正从目标列表消失的最长时间。默认 3.0 秒。" },
+    { p: ["ready", "close_poll_interval"], label: "关闭标签页轮询间隔", def: 0.1, step: 0.01,
+      desc: "关闭标签页时的轮询间隔。默认 0.1 秒。" },
+  ]},
+  { section: "CDP 命令与探测超时", items: [
+    { p: ["cdp", "command_timeout"], label: "CDP 命令超时", def: 30.0, step: 1,
+      desc: "单条 Chrome DevTools Protocol 命令的默认超时。抓取 DOM、注入点击等绝大多数命令都使用它；过小会在慢页面上误报超时。默认 30.0 秒。" },
+    { p: ["cdp", "probe_timeout"], label: "短探测超时", def: 3.0, step: 0.5,
+      desc: "轻量探测命令（读取 readyState、hasFocus、主帧树等）的超时，比默认命令超时短。默认 3.0 秒。" },
+    { p: ["cdp", "outer_html_timeout"], label: "原始 HTML 读取超时", def: 20.0, step: 1,
+      desc: "debug 模式下读取整页原始 HTML 的超时，仅影响调试日志。默认 20.0 秒。" },
+  ]},
+  { section: "浏览器启动", items: [
+    { p: ["launch", "ready_timeout"], label: "启动就绪总超时", def: 25.0, step: 1,
+      desc: "启动浏览器后，等待 DevToolsActivePort 端口文件与 CDP 服务就绪的总超时。机器慢或安全软件拦截时可调大。默认 25.0 秒。" },
+    { p: ["launch", "devtools_poll_interval"], label: "端口文件轮询间隔", def: 0.1, step: 0.01,
+      desc: "启动时轮询 DevToolsActivePort 文件的间隔。默认 0.1 秒。" },
+    { p: ["launch", "cdp_poll_interval"], label: "CDP 服务轮询间隔", def: 0.2, step: 0.01,
+      desc: "启动时轮询 /json/version 等待 CDP 服务就绪的间隔。默认 0.2 秒。" },
+    { p: ["launch", "reuse_timeout"], label: "复用浏览器就绪超时", def: 2.0, step: 0.5,
+      desc: "复用上一次已启动的浏览器时，等待其 CDP 就绪的超时；超时则改为重新启动。默认 2.0 秒。" },
+    { p: ["launch", "port_probe_timeout"], label: "端口探测超时", def: 1.0, step: 0.1,
+      desc: "检测浏览器端口是否存活（GET /json/version）的单次超时，也用于浮动按钮的连接状态轮询。默认 1.0 秒。" },
+  ]},
+  { section: "拟人交互微延迟（每项为 [最小, 最大] 随机秒数）", items: [
+    { p: ["actions", "move_step"], label: "鼠标移动每步间隔", def: [0.008, 0.025], pair: true, step: 0.005,
+      desc: "拟人移动鼠标时，每个中间点的间隔范围（随机取值）。减小可加快点击，但过小可能被反爬识别。默认 0.008 ~ 0.025 秒。" },
+    { p: ["actions", "node_box"], label: "元素定位后停顿", def: [0.05, 0.12], pair: true, step: 0.01,
+      desc: "把元素滚动进视口后、获取其几何信息前的停顿。默认 0.05 ~ 0.12 秒。" },
+    { p: ["actions", "click_hover"], label: "点击悬停停顿", def: [0.04, 0.12], pair: true, step: 0.01,
+      desc: "鼠标移到目标上后、按下鼠标之前的停顿。默认 0.04 ~ 0.12 秒。" },
+    { p: ["actions", "click_press"], label: "按下到松开停顿", def: [0.05, 0.12], pair: true, step: 0.01,
+      desc: "鼠标按下与松开之间的停顿。默认 0.05 ~ 0.12 秒。" },
+    { p: ["actions", "input_focus"], label: "输入聚焦停顿", def: [0.08, 0.18], pair: true, step: 0.01,
+      desc: "点击输入框聚焦后、开始输入前的停顿。默认 0.08 ~ 0.18 秒。" },
+    { p: ["actions", "input_clear"], label: "清空输入框停顿", def: [0.05, 0.10], pair: true, step: 0.01,
+      desc: "清空输入框原有内容后的停顿。默认 0.05 ~ 0.10 秒。" },
+    { p: ["actions", "type_char"], label: "逐字符输入间隔", def: [0.03, 0.12], pair: true, step: 0.01,
+      desc: "逐字符输入时，每个字符之间的间隔。长文本会明显累加耗时，是输入类操作最主要的延迟来源。默认 0.03 ~ 0.12 秒。" },
+    { p: ["actions", "drag_press"], label: "拖动按下停顿", def: [0.05, 0.12], pair: true, step: 0.01,
+      desc: "拖动时在起点按下鼠标前后的停顿。默认 0.05 ~ 0.12 秒。" },
+    { p: ["actions", "drag_move"], label: "拖动移动每步间隔", def: [0.01, 0.03], pair: true, step: 0.005,
+      desc: "拖动过程中鼠标移动每个中间点的间隔。默认 0.01 ~ 0.03 秒。" },
+    { p: ["actions", "scroll_settle"], label: "滚动步间停顿", def: [0.15, 0.35], pair: true, step: 0.01,
+      desc: "每次滚动（滚轮 / 整页）后等待页面响应的停顿；滚动类操作可能连续多步，累加后较可观。默认 0.15 ~ 0.35 秒。" },
   ]},
 ];
 
@@ -1667,6 +1804,7 @@ async function openSettings() {
         <button class="btn small" id="setColors">${t("字体颜色设置")}</button>
         <button class="btn small" id="setCard">${t("Multi-Agent配置卡片 设置")}</button>
         <button class="btn small" id="setHtmlConfig" style="${s.export_html ? "" : "display:none;"}">${t("HTML 转换配置表")}</button>
+        <button class="btn small" id="setBrowserDelay">${t("浏览器交互延迟设置")}</button>
       </div>
       <div class="modal-actions" style="margin-top:10px;">
         <div class="spacer" style="flex:1;"></div>
@@ -1706,6 +1844,7 @@ async function openSettings() {
   mask.querySelector("#setColors").onclick = () => { mask.remove(); openColorSettings(); };
   mask.querySelector("#setCard").onclick = () => { mask.remove(); openCardSettings(); };
   mask.querySelector("#setHtmlConfig").onclick = () => { mask.remove(); openHtmlConfigSettings(); };
+  mask.querySelector("#setBrowserDelay").onclick = () => { mask.remove(); openBrowserDelaySettings(); };
   mask.querySelector("#setSave").onclick = async () => {
     try {
       await saveSettings({
@@ -2059,6 +2198,98 @@ async function openHtmlConfigSettings() {
   mask.querySelector("#cfgSave").onclick = async () => {
     try {
       await saveSettings({ ...s, export_html_config: collect() });
+      mask.remove();
+      toast(t("设置已保存"));
+    } catch (e) { toast(e.message, true); }
+  };
+}
+
+async function openBrowserDelaySettings() {
+  let defaults = {}, s;
+  try {
+    defaults = (await api("/api/browser-timing")).defaults || {};
+  } catch (e) { toast(e.message, true); return; }
+  try { s = await getSettings(); } catch (e) { s = {}; }
+  const cfg = s.browser_timing || {};
+  const mask = document.createElement("div");
+  mask.className = "modal-mask";
+
+  const fid = (path) => "bt-" + path.join("_");
+  const getVal = (p) => {
+    const v = cfgGet(cfg, p);
+    return (v === "" || v == null) ? cfgGet(defaults, p) : v;
+  };
+  const asPair = (v, fallback) => {
+    if (Array.isArray(v)) return v;
+    if (v !== "" && v != null) return [v, v];
+    return Array.isArray(fallback) ? fallback : [0, 0];
+  };
+
+  const sections = BROWSER_DELAY_SCHEMA.map(sec => {
+    const rows = sec.items.map(it => {
+      const id = fid(it.p);
+      const step = it.step || 0.01;
+      let input;
+      if (it.pair) {
+        const arr = asPair(getVal(it.p), it.def);
+        input = `<span class="sw-inline"><input type="number" id="${id}_min" min="0" step="${step}" value="${esc(String(arr[0]))}"><span class="muted">~</span><input type="number" id="${id}_max" min="0" step="${step}" value="${esc(String(arr[1]))}"></span>`;
+      } else {
+        input = `<input type="number" id="${id}" min="0" step="${step}" value="${esc(String(getVal(it.p)))}">`;
+      }
+      return `<div class="delay-item"><div class="switch-row"><span class="sw-label">${t(it.label)}</span>${input}</div><div class="muted delay-desc">${t(it.desc)}</div></div>`;
+    }).join("");
+    return `<div class="delay-section-title">${t(sec.section)}</div>${rows}`;
+  }).join("");
+
+  mask.innerHTML = `
+    <div class="modal" style="width:640px;max-height:84vh;overflow:auto;">
+      <h3>⏱ ${t("浏览器交互延迟设置")}</h3>
+      <div class="muted" style="margin-bottom:6px;">${t("调整 LLM 操作浏览器时各环节的等待时长，单位为秒。数值越小响应越快，但过小可能抓不到刚加载 / 刚跳转的页面；数值越大越稳妥但更慢。修改保存后，下一次浏览器工具调用即生效。")}</div>
+      ${sections}
+      <div class="modal-actions">
+        <button class="btn" id="btReset">${t("恢复默认")}</button>
+        <div class="spacer" style="flex:1;"></div>
+        <button class="btn" id="btCancel">${t("取消")}</button>
+        <button class="btn primary" id="btSave">${t("保存")}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(mask);
+
+  const collect = () => {
+    const out = {};
+    BROWSER_DELAY_SCHEMA.forEach(sec => sec.items.forEach(it => {
+      const id = fid(it.p);
+      if (it.pair) {
+        let mn = parseFloat(mask.querySelector("#" + id + "_min").value);
+        let mx = parseFloat(mask.querySelector("#" + id + "_max").value);
+        if (!Number.isFinite(mn)) mn = 0;
+        if (!Number.isFinite(mx)) mx = 0;
+        cfgSet(out, it.p, [mn, mx]);
+      } else {
+        let v = parseFloat(mask.querySelector("#" + id).value);
+        if (!Number.isFinite(v)) v = 0;
+        cfgSet(out, it.p, v);
+      }
+    }));
+    return out;
+  };
+
+  mask.querySelector("#btCancel").onclick = () => mask.remove();
+  mask.querySelector("#btReset").onclick = () => {
+    BROWSER_DELAY_SCHEMA.forEach(sec => sec.items.forEach(it => {
+      const id = fid(it.p);
+      if (it.pair) {
+        const arr = asPair(cfgGet(defaults, it.p), it.def);
+        mask.querySelector("#" + id + "_min").value = arr[0];
+        mask.querySelector("#" + id + "_max").value = arr[1];
+      } else {
+        mask.querySelector("#" + id).value = cfgGet(defaults, it.p);
+      }
+    }));
+  };
+  mask.querySelector("#btSave").onclick = async () => {
+    try {
+      await saveSettings({ ...s, browser_timing: collect() });
       mask.remove();
       toast(t("设置已保存"));
     } catch (e) { toast(e.message, true); }

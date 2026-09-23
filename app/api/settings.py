@@ -15,6 +15,29 @@ def get_settings():
     return load_settings(config_store._dir).model_dump()
 
 
+def _deep_merge(base: dict, override: dict) -> dict:
+    out = dict(base)
+    for key, value in (override or {}).items():
+        if isinstance(value, dict) and isinstance(out.get(key), dict):
+            out[key] = _deep_merge(out[key], value)
+        else:
+            out[key] = value
+    return out
+
+
+@router.get("/browser-timing")
+def get_browser_timing():
+    """浏览器交互延迟的有效配置（默认值深合并用户覆盖项）与原始默认值。"""
+    from browser_agent import timing as ba_timing
+
+    settings = load_settings(config_store._dir)
+    defaults = ba_timing.defaults()
+    return {
+        "config": _deep_merge(defaults, settings.browser_timing or {}),
+        "defaults": defaults,
+    }
+
+
 @router.put("/settings")
 async def put_settings(body: Settings):
     old = load_settings(config_store._dir)

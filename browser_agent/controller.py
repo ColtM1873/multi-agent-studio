@@ -7,7 +7,7 @@ import threading
 import time
 from typing import Optional
 
-from . import debug
+from . import debug, timing
 from .actions import ActionError, ActionExecutor
 from .cdp import CDPClient, CDPError, poll_until_quiet
 from .dom import (
@@ -40,15 +40,9 @@ FAIL = "失败"
 PARTIAL_FAIL = "部分失败"
 NOT_CALLED = "未进行互动元素调用"
 
-# After an action that may navigate (a click), give the browser this long to
-# *start* a navigation before falling back to the DOM-quiet heuristic. This
-# closes the "pre-commit gap": right after a click the old document is still
-# fully loaded and looks perfectly quiet, so without this grace window the
-# stabilizer returns before the navigation even begins and the caller sees a
-# diff against the stale page.
-NAV_GRACE_SECONDS = 4.0
-# Once a hard navigation has started, wait this long for the load event.
-NAV_LOAD_TIMEOUT = 15.0
+# 所有时长（导航宽限、加载超时、判稳静默窗、轮询间隔、命令超时、拟人停顿…）
+# 统一由 ``browser_agent.timing`` 提供，app 层可在每次调用前按设置覆盖。
+# 见 ``timing.NavTiming`` 等；此处不再保留硬编码常量。
 
 
 class _ContainerScroller:
@@ -130,7 +124,9 @@ class BrowserController:
                 self.client = None
 
         info = self.launcher.ensure_browser()
-        self.client = CDPClient(info["ws_url"])
+        self.client = CDPClient(
+            info["ws_url"], command_timeout=timing.get().cdp.command_timeout
+        )
         try:
             self.client.send("Target.setDiscoverTargets", {"discover": True})
         except CDPError:
@@ -217,7 +213,7 @@ class BrowserController:
                     "Runtime.evaluate",
                     {"expression": "document.hasFocus()", "returnByValue": True},
                     session_id=session,
-                    timeout=3.0,
+                    timeout=timing.get().cdp.probe_timeout,
                 )
                 if (result.get("result") or {}).get("value") is True:
                     self.focused_target_id = target_id
@@ -690,10 +686,18 @@ class BrowserController:
         return self._base_result(mode, OK, content, include_tabs=include_tabs)
 
     def _quiet(
-        self, session: str, quiet_seconds: float = 0.7, timeout: float = 6.0
+        self,
+        session: str,
+        quiet_seconds: Optional[float] = None,
+        timeout: Optional[float] = None,
     ) -> None:
         """Block until the session's DOM fingerprint stops changing."""
         assert self.client is not None
+        cfg = timing.get()
+        if quiet_seconds is None:
+            quiet_seconds = cfg.nav.quiet_seconds
+        if timeout is None:
+            timeout = cfg.nav.quiet_timeout
 
         def probe() -> Optional[str]:
             try:
@@ -705,13 +709,18 @@ class BrowserController:
                         "returnByValue": True,
                     },
                     session_id=session,
-                    timeout=3.0,
+                    timeout=cfg.cdp.probe_timeout,
                 )
                 return str((result.get("result") or {}).get("value"))
             except Exception:
                 return None
 
-        poll_until_quiet(probe, quiet_seconds=quiet_seconds, timeout=timeout)
+        poll_until_quiet(
+            probe,
+            quiet_seconds=quiet_seconds,
+            timeout=timeout,
+            interval=cfg.nav.probe_interval,
+        )
 
     def _stabilize(self, target_id: str) -> None:
         assert self.client is not None
@@ -739,7 +748,7 @@ class BrowserController:
         # be mistaken for a real navigation.
         try:
             frame_tree = self.client.send(
-                "Page.getFrameTree", {}, session_id=session, timeout=3.0
+                "Page.getFrameTree", {}, session_id=session, timeout=timing.get().cdp.probe_timeout
             )
             main_frame_id = (
                 (frame_tree.get("frameTree") or {}).get("frame") or {}
@@ -782,19 +791,20 @@ class BrowserController:
     def _settle_navigation(self, session: str, state: dict) -> None:
         """Settle the page after an action, tolerating an induced navigation.
 
-        Waits ``NAV_GRACE_SECONDS`` for a navigation to begin; if a real
-        navigation starts, waits for its load event first. Then always waits
+        Waits ``timing.get().nav.grace_seconds`` for a navigation to begin; if a
+        real navigation starts, waits for its load event first. Then always waits
         for the DOM to go quiet (covers same-document route changes and async
         rendering as well).
         """
-        deadline = time.time() + NAV_GRACE_SECONDS
+        cfg = timing.get().nav
+        deadline = time.time() + cfg.grace_seconds
         while time.time() < deadline:
             if state["hard"].is_set() or state["soft"].is_set() or state["load"].is_set():
                 break
-            time.sleep(0.05)
+            time.sleep(cfg.settle_poll_interval)
 
         if state["hard"].is_set():
-            state["load"].wait(NAV_LOAD_TIMEOUT)
+            state["load"].wait(cfg.load_timeout)
         self._quiet(session)
 
     # ------------------------------------------------------------------ #
@@ -862,8 +872,11 @@ class BrowserController:
             return legacy
         return None
 
-    def _wait_ready(self, target_id: str, timeout: float = 15.0) -> None:
+    def _wait_ready(self, target_id: str, timeout: Optional[float] = None) -> None:
         assert self.client is not None
+        cfg = timing.get()
+        if timeout is None:
+            timeout = cfg.ready.timeout
         session = self.client.attach(target_id)
         self.client.enable_page_domains(session)
         deadline = time.time() + timeout
@@ -873,17 +886,17 @@ class BrowserController:
                     "Runtime.evaluate",
                     {"expression": "document.readyState", "returnByValue": True},
                     session_id=session,
-                    timeout=3.0,
+                    timeout=cfg.cdp.probe_timeout,
                 )
                 if (result.get("result") or {}).get("value") == "complete":
                     break
             except Exception:
                 pass
-            time.sleep(0.15)
+            time.sleep(cfg.ready.poll_interval)
         self._stabilize(target_id)
 
     def _wait_ready_new_tab(
-        self, target_id: str, expected_url: str = "", timeout: float = NAV_LOAD_TIMEOUT
+        self, target_id: str, expected_url: str = "", timeout: Optional[float] = None
     ) -> None:
         """Wait for a freshly created tab to finish its *initial* navigation.
 
@@ -894,6 +907,9 @@ class BrowserController:
         ``about:blank``) and is complete, then wait for the DOM to go quiet.
         """
         assert self.client is not None
+        cfg = timing.get()
+        if timeout is None:
+            timeout = cfg.nav.load_timeout
         session = self.client.attach(target_id)
         self.client.enable_page_domains(session)
         allow_blank = bool(expected_url) and expected_url.startswith("about:")
@@ -907,7 +923,7 @@ class BrowserController:
                         "returnByValue": True,
                     },
                     session_id=session,
-                    timeout=3.0,
+                    timeout=cfg.cdp.probe_timeout,
                 )
                 value = str((result.get("result") or {}).get("value") or "")
             except Exception:
@@ -916,7 +932,7 @@ class BrowserController:
             committed = allow_blank or (bool(href) and href != "about:blank")
             if committed and ready_state == "complete":
                 break
-            time.sleep(0.1)
+            time.sleep(cfg.ready.new_tab_poll_interval)
         self._quiet(session)
 
     def _full_result_for(self, target_id: str, action_ok: str = NOT_CALLED) -> dict:
@@ -1019,11 +1035,12 @@ class BrowserController:
             self.client.send("Target.closeTarget", {"targetId": target_id})
         except CDPError as exc:
             return {"tabs": self.tab_labels(), "error": str(exc)}
-        deadline = time.time() + 3.0
+        cfg = timing.get().ready
+        deadline = time.time() + cfg.close_timeout
         while time.time() < deadline:
             if target_id not in {t["targetId"] for t in self._page_targets()}:
                 break
-            time.sleep(0.1)
+            time.sleep(cfg.close_poll_interval)
         self._registries.pop(target_id, None)
         self._prev_trees.pop(target_id, None)
         self._tab_registry.forget(target_id)

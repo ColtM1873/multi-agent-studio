@@ -294,6 +294,22 @@ def _load_settings_safe():
         return None
 
 
+def _apply_browser_timing() -> None:
+    """按全局「浏览器交互延迟设置」覆盖 browser_agent 的运行时延迟。
+
+    每次工具调用前现读设置并覆盖（只覆盖已知键），因此改完保存后下一次调用即生效，
+    无需 invalidate/重建 runtime。读取失败时保持 browser_agent 的默认值。
+    """
+    try:
+        from browser_agent import timing as ba_timing
+
+        settings = _load_settings_safe()
+        if settings is not None:
+            ba_timing.configure(getattr(settings, "browser_timing", None) or {})
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def _debug_enabled() -> bool:
     """调用时实时读取「浏览器工具 debug 模式」开关。"""
     settings = _load_settings_safe()
@@ -394,6 +410,8 @@ def _wrap(fn, description: str, args_schema=None, preprocess=None) -> Structured
     async def _call(**kwargs) -> str:
         if _paused:
             return STOP_TEXT
+        # 按全局「浏览器交互延迟设置」覆盖运行时延迟（调用时现读，改完即生效）。
+        _apply_browser_timing()
         # 记录 LLM 原始输入（敏感信息替换前的 kwargs）。
         llm_input = dict(kwargs)
         if preprocess is not None:

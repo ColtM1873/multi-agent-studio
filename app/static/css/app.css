@@ -670,3 +670,11 @@ html[data-style-danger="solid"] .card-btn-danger:hover { filter: brightness(.92)
   padding: 14px 28px; border-radius: 12px; box-shadow: var(--shadow-lg);
   z-index: 1100;
 }
+
+/* 浏览器交互延迟设置面板 */
+.delay-section-title { margin: 14px 0 4px; font-weight: 700; color: var(--text); }
+.delay-item { margin: 6px 0 10px; }
+.delay-item .switch-row { margin-bottom: 2px; }
+.delay-item .sw-inline { gap: 6px; }
+.delay-item input[type="number"] { width: 96px; }
+.delay-desc { font-size: 12px; line-height: 1.45; }
