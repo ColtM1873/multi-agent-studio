@@ -248,6 +248,9 @@ html[data-style-danger="solid"] .card-btn-danger:hover { filter: brightness(.92)
 }
 #browserHintBtn.on { border-color: #22c55e; color: #15803d; }
 #browserHintBtn.on .tk-dot { background: #22c55e; box-shadow: 0 0 4px #22c55e; }
+/* 「隐私遮蔽模式」开关：开启后长亮绿灯（全局持久化，不随发送关闭） */
+#privacyMaskBtn.on { border-color: #22c55e; color: #15803d; }
+#privacyMaskBtn.on .tk-dot { background: #22c55e; box-shadow: 0 0 4px #22c55e; }
 .btn.is-disabled { opacity: .5; cursor: not-allowed; }
 .takeover-switch-field { background: #eef2ff; border: 1px solid #c7d2fe; border-radius: 10px; padding: 10px 12px; }
 .takeover-switch-field label { font-weight: 600; }

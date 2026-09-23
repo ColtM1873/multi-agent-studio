@@ -17,6 +17,7 @@ from app.runtime.browser_takeover import (
     STOP_TEXT,
     browser_status,
     is_paused,
+    make_sensitive_masker,
     set_paused,
 )
 from app.runtime.floating_stop import FloatingStop
@@ -122,10 +123,17 @@ def viewport_dom(body: AgentBody | None = None):
         result = tool_3_get_viewport_dom()
         if browser_status()[0]:
             _show_floating(body.agent_id if body else None)
+        content = result.get("content") or ""
+        error = result.get("error") or ""
+        # 隐私遮蔽模式：预览块会随用户消息一起发给 LLM，同样需要遮蔽真实敏感值。
+        mask = make_sensitive_masker()
+        if mask is not None:
+            content = mask(content)
+            error = mask(error)
         return {
             "ok": result.get("action_ok") != "失败",
-            "content": result.get("content") or "",
-            "error": result.get("error") or "",
+            "content": content,
+            "error": error,
             "port": browser_status()[1],
         }
     except Exception as exc:  # noqa: BLE001

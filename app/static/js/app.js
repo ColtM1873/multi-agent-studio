@@ -264,6 +264,17 @@ const I18N_EN = {
   "已输入未发送消息跨multi-agent流转": "Sync unsent input across multi-agents",
   "开启后，你在任意 multi-agent 输入框中输入的内容，会同步更新所有 multi-agent 的未发送消息缓存（等效于共用一个缓存）；关闭后各 multi-agent 独立保存。未发送的消息会持久化到本地，退出程序后下次打开仍会保留。": "When enabled, text you type in any multi-agent input box is synced to all multi-agents' unsent-message caches (equivalent to sharing one cache); when disabled, each multi-agent keeps its own. Unsent text is persisted locally and restored the next time you open the app after quitting.",
   "开启后，流式输出时子 agent 的工具调用与工具结果会像主 agent 一样实时显示；关闭则只显示子 agent 的正文与思考。": "When enabled, a sub-agent's tool calls and tool results stream in real time like the main agent's; when disabled, only the sub-agent's text and reasoning are shown.",
+  "浏览器接管": "Browser takeover",
+  "浏览器工具debug模式": "Browser tool debug mode",
+  "开启后，LLM 每次调用浏览器工具都会在程序根目录的 browser_takeover_debug_logs 文件夹下，按小时记录一份日志（含整个 viewport 的原始 DOM、处理后的 DOM、LLM 输入、工具返回的 content），便于排查。": "When enabled, every browser tool call by the LLM writes an hourly log under the browser_takeover_debug_logs folder in the program root (the whole viewport's raw DOM, processed DOM, LLM input and returned content) to help troubleshooting.",
+  "隐私遮蔽模式": "Privacy masking mode",
+  "开启隐私遮蔽模式": "Enable privacy masking mode",
+  "暂不开启": "Not now",
+  "隐私遮蔽模式已开启": "Privacy masking mode enabled",
+  "已开启：浏览器工具返回给 LLM 的内容与预览块都会把真实敏感值替换为 <名称>；点击关闭": "On: browser tool output and the preview block replace real sensitive values with <name> before reaching the LLM; click to turn off",
+  "点击开启隐私遮蔽模式：在网页内容返回给 LLM 前，把敏感信息真实值替换为 <名称>": "Click to enable privacy masking: replace real sensitive values with <name> before web content reaches the LLM",
+  "建议开启隐私遮蔽模式": "Enabling privacy masking mode is recommended",
+  "隐私遮蔽模式开启后，所有从浏览器返回给 LLM 的网页内容（DOM、diff 等）以及下方「提示接管」预览块，都会在交给 LLM 之前，把其中出现的、与敏感信息表单「真实内容」相同的文字全部替换为对应的 <名称>，从而完全不向 LLM 暴露这些真实信息。\n\n⚠️ 请慎重填写：不要加入过于常见的信息。例如表单里填了「年龄 → 17」，那么网页里独立的 17 都会被替换成 <年龄>（纯数字/纯英文会做边界判断以减少误伤，例如 2017 不会被替换，但 17 岁会被替换）。请尽量只填写足够独特的内容。": "When privacy masking is on, all web content returned from the browser to the LLM (DOM, diff, etc.) and the 'hint takeover' preview block below will have any text matching a sensitive-info 'real value' replaced with the corresponding <name> before it reaches the LLM, so the real values are never exposed to the LLM.\n\n⚠️ Fill with care: do not add overly common values. For example, if you set 'age → 17', every standalone 17 in web content becomes <age> (pure numbers/English get boundary checks to reduce false hits, e.g. 2017 is left alone but '17 years' is replaced). Prefer values that are unique enough.",
   "字体颜色设置": "Font color settings",
   "正文": "Body text",
   "调整各板块文字颜色，仅本机生效。": "Adjust the text color of each section; applies on this machine only.",
@@ -1800,6 +1811,11 @@ async function openAdvancedSettings() {
         <span class="sw-label">💾 ${t("已输入未发送消息跨multi-agent流转")} <i class="info-icon">!<span class="tip">${t("开启后，你在任意 multi-agent 输入框中输入的内容，会同步更新所有 multi-agent 的未发送消息缓存（等效于共用一个缓存）；关闭后各 multi-agent 独立保存。未发送的消息会持久化到本地，退出程序后下次打开仍会保留。")}</span></i></span>
         <label class="toggle"><input type="checkbox" id="adv_cross_draft" ${s.cross_agent_draft_flow !== false ? "checked" : ""}><span class="track"></span></label>
       </div>
+      <div class="muted" style="margin:10px 0 2px;">${t("浏览器接管")}</div>
+      <div class="switch-row">
+        <span class="sw-label">🐞 ${t("浏览器工具debug模式")} <i class="info-icon">!<span class="tip">${t("开启后，LLM 每次调用浏览器工具都会在程序根目录的 browser_takeover_debug_logs 文件夹下，按小时记录一份日志（含整个 viewport 的原始 DOM、处理后的 DOM、LLM 输入、工具返回的 content），便于排查。")}</span></i></span>
+        <label class="toggle"><input type="checkbox" id="adv_browser_debug" ${s.browser_takeover_debug ? "checked" : ""}><span class="track"></span></label>
+      </div>
       <div class="muted" style="margin:10px 0 2px;">${t("记忆检索相似度门槛")}（${t("取值范围 0~1")}）</div>
       <div class="switch-row">
         <span class="sw-label">🔎 ${t("主动搜索记忆门槛")} <i class="info-icon">!<span class="tip">${t("主 agent 主动调用搜索记忆工具时的语义相似度门槛，取值范围 0~1。分数低于该门槛的记忆不会被返回；数值越大越严格、返回的记忆越少。")}</span></i></span>
@@ -1827,6 +1843,7 @@ async function openAdvancedSettings() {
         show_sub_agent_tools: mask.querySelector("#adv_sub_tools").checked,
         pdf_table_extraction: mask.querySelector("#adv_pdf_tables").checked,
         cross_agent_draft_flow: mask.querySelector("#adv_cross_draft").checked,
+        browser_takeover_debug: mask.querySelector("#adv_browser_debug").checked,
         search_memory_threshold: clamp01(mask.querySelector("#adv_search_threshold").value, 0.5),
         attach_memory_threshold: clamp01(mask.querySelector("#adv_attach_threshold").value, 0.7),
       });
@@ -3006,6 +3023,7 @@ async function renderChatView() {
           </div>
           <div class="browser-takeover-actions" id="browserTakeoverActions" style="display:none;">
             <button class="btn small" id="sensitiveInjectBtn">${t("注入 敏感信息替换列表")}</button>
+            <button class="btn small" id="privacyMaskBtn"><span class="tk-dot"></span>${t("隐私遮蔽模式")}</button>
             <button class="btn small" id="browserHintBtn"><span class="tk-dot"></span>${t("提示Agent开始接管浏览器")}</button>
             <button class="btn small" id="openBrowserBtn">${t("打开浏览器")}</button>
           </div>
@@ -3104,8 +3122,9 @@ async function renderChatView() {
     const openBtn = $("#openBrowserBtn");
     const hintBtn = $("#browserHintBtn");
     const sensitiveBtn = $("#sensitiveInjectBtn");
+    const privacyBtn = $("#privacyMaskBtn");
     const previewEl = $("#takeoverDomPreview");
-    if (!actionsEl || !openBtn || !hintBtn || !sensitiveBtn || !previewEl) return;
+    if (!actionsEl || !openBtn || !hintBtn || !sensitiveBtn || !privacyBtn || !previewEl) return;
 
     let takeoverOn = false;
     try {
@@ -3122,6 +3141,30 @@ async function renderChatView() {
     let lastConnected = false;
     let domTimer = null;
     let domFetching = false;
+
+    // 隐私遮蔽模式：全局设置持久化，绿灯表示开启；开关即时生效（后端调用时读取）。
+    let privacyOn = !!(settings && settings.privacy_mask_mode);
+
+    function updatePrivacyUI() {
+      privacyBtn.classList.toggle("on", privacyOn);
+      privacyBtn.title = privacyOn
+        ? t("已开启：浏览器工具返回给 LLM 的内容与预览块都会把真实敏感值替换为 <名称>；点击关闭")
+        : t("点击开启隐私遮蔽模式：在网页内容返回给 LLM 前，把敏感信息真实值替换为 <名称>");
+    }
+
+    async function setPrivacyMode(on) {
+      const prev = privacyOn;
+      privacyOn = on;
+      updatePrivacyUI();
+      try {
+        const cur = settingsCache || await getSettings();
+        await saveSettings({ ...cur, privacy_mask_mode: on });
+      } catch (e) {
+        privacyOn = prev;
+        updatePrivacyUI();
+        toast(e.message, true);
+      }
+    }
 
     const wrapDom = dom => `<当前聚焦标签页的可见内容>\n${dom}\n</当前聚焦标签页的可见内容>`;
 
@@ -3201,6 +3244,22 @@ async function renderChatView() {
       mask.querySelector("#tkIntroOk").onclick = () => mask.remove();
     }
 
+    // 用户注入敏感信息替换列表后：若隐私遮蔽模式未开启，弹窗提示并解释。
+    function showPrivacyPrompt() {
+      const mask = document.createElement("div");
+      mask.className = "modal-mask";
+      mask.innerHTML = `<div class="modal"><h3>🕶️ ${t("建议开启隐私遮蔽模式")}</h3><div class="modal-body" style="white-space:pre-wrap;">${esc(t("隐私遮蔽模式开启后，所有从浏览器返回给 LLM 的网页内容（DOM、diff 等）以及下方「提示接管」预览块，都会在交给 LLM 之前，把其中出现的、与敏感信息表单「真实内容」相同的文字全部替换为对应的 <名称>，从而完全不向 LLM 暴露这些真实信息。\n\n⚠️ 请慎重填写：不要加入过于常见的信息。例如表单里填了「年龄 → 17」，那么网页里独立的 17 都会被替换成 <年龄>（纯数字/纯英文会做边界判断以减少误伤，例如 2017 不会被替换，但 17 岁会被替换）。请尽量只填写足够独特的内容。"))}</div><div class="modal-actions"><button class="btn" id="pmLater">${t("暂不开启")}</button><button class="btn primary" id="pmOn">${t("开启隐私遮蔽模式")}</button></div></div>`;
+      document.body.appendChild(mask);
+      mask.querySelector("#pmLater").onclick = () => mask.remove();
+      mask.querySelector("#pmOn").onclick = async () => {
+        mask.remove();
+        await setPrivacyMode(true);
+        if (privacyOn) toast(t("隐私遮蔽模式已开启"));
+      };
+    }
+
+    privacyBtn.onclick = () => { setPrivacyMode(!privacyOn); };
+
     function showFloating() {
       return api("/api/browser/floating", {
         method: "POST",
@@ -3248,6 +3307,8 @@ async function renderChatView() {
       } catch (e) {}
       if (!names.length) { toast(t("敏感信息表单为空，请先在主界面「编辑敏感信息表单」中添加"), true); return; }
       appendSensitiveList(names);
+      // 注入后提示用户开启隐私遮蔽模式（未开启时才弹）
+      if (!privacyOn) showPrivacyPrompt();
     };
 
     openBtn.onclick = async () => {
@@ -3283,6 +3344,7 @@ async function renderChatView() {
     };
 
     updateHintState();
+    updatePrivacyUI();
     await refreshBrowserUI();
     if (lastConnected) await showFloating();
 

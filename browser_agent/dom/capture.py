@@ -87,6 +87,27 @@ def capture_raw(client: CDPClient, session_id: str) -> dict[str, Any]:
     }
 
 
+def read_outer_html(client: CDPClient, session_id: str) -> str:
+    """Return the page's raw HTML (``documentElement.outerHTML``).
+
+    Used only by the debug logger (see ``browser_agent/debug.py``) to record the
+    unprocessed DOM. Returns ``""`` on any failure so it never breaks a tool call.
+    """
+    try:
+        result = client.send(
+            "Runtime.evaluate",
+            {
+                "expression": "document.documentElement ? document.documentElement.outerHTML : ''",
+                "returnByValue": True,
+            },
+            session_id=session_id,
+            timeout=20.0,
+        )
+        return str((result.get("result") or {}).get("value") or "")
+    except Exception:
+        return ""
+
+
 def viewport_from_metrics(metrics: dict) -> dict[str, float]:
     layout = metrics.get("cssLayoutViewport") or metrics.get("layoutViewport") or {}
     visual = metrics.get("cssVisualViewport") or metrics.get("visualViewport") or {}

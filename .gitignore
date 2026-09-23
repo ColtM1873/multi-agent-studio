@@ -38,3 +38,4 @@ INNER_DOCS_GUIDE.md
 # 浏览器接管运行时产物（browser_agent 在仓库根生成，本地保留，不入库）
 /config.json
 /.chrome-profile/
+/browser_takeover_debug_logs/

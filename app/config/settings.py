@@ -76,10 +76,19 @@ class Settings(BaseModel):
     # 浏览器接管：每次打开浏览器时是否弹出说明弹窗（介绍红色浮动按钮的停止/继续作用）。
     # 纯前端展示，不参与图编译。默认开启。
     browser_takeover_intro_popup: bool = True
+    # 浏览器接管：debug 模式。开启后，LLM 每次调用浏览器工具都会在程序根目录的
+    # browser_takeover_debug_logs/ 下按小时落盘一份人类可读日志（原始 DOM /
+    # 处理后的 DOM / LLM 输入 / 工具返回的 content）。工具调用时实时读取，
+    # 不参与图编译，无需 invalidate_all。默认关闭。
+    browser_takeover_debug: bool = False
     # 敏感信息表单：浏览器接管填写「可填入元素」时，LLM 用 <名称> 占位，
     # 后台按本表把 <名称> 替换为真实值（表单里没有的名称原样保留）。
     # 工具调用时实时读取，不参与图编译，无需 invalidate_all。
     sensitive_info: list[SensitiveEntry] = Field(default_factory=list)
+    # 隐私遮蔽模式：开启后，浏览器工具返回给 LLM 的一切网页内容（DOM/diff/tabs/error 等，
+    # 以及「提示接管」预览块）在交给 LLM 之前，会把敏感信息表单里的「真实内容」反向替换回
+    # 对应的 <名称>，从而完全不向 LLM 暴露真实值。工具调用时实时读取，不参与图编译。
+    privacy_mask_mode: bool = False
 
 
 def settings_path(config_dir: Path | str) -> Path:

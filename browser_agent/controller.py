@@ -7,6 +7,7 @@ import threading
 import time
 from typing import Optional
 
+from . import debug
 from .actions import ActionError, ActionExecutor
 from .cdp import CDPClient, CDPError, poll_until_quiet
 from .dom import (
@@ -23,6 +24,7 @@ from .dom import (
     compute_lost,
     format_lines,
     format_lost,
+    read_outer_html,
 )
 from .launcher import BrowserLauncher, BrowserLaunchError
 from .tab_registry import TabRegistry
@@ -227,6 +229,11 @@ class BrowserController:
         registry.reconcile(tree)
         self._prev_trees[target_id] = tree
         self.focused_target_id = target_id
+        # Debug 模式：记录原始 HTML 与处理后的序列化 DOM（未开启时静默跳过）。
+        if debug.current_capture() is not None:
+            raw_html = read_outer_html(self.client, session)
+            processed = self.serialize_tree(tree, target_id)
+            debug.record_dom(raw_html, processed, tree.url, tree.title)
         return tree
 
     def serialize_tree(self, tree: EnhancedTree, target_id: str) -> str:
