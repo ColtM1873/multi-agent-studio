@@ -24,7 +24,13 @@ from dataclasses import dataclass
 from typing import Optional
 
 from .build import PAGE_SCROLL_TAG, EnhancedNode, EnhancedTree
-from .classify import CLICKABLE_INPUT_TYPES, CLICKABLE_ROLES, classify, is_control_icon
+from .classify import (
+    CLICKABLE_INPUT_TYPES,
+    CLICKABLE_ROLES,
+    classify,
+    is_clickable,
+    is_control_icon,
+)
 from .registry import NameRegistry
 
 SKIP_TAGS = {
@@ -145,6 +151,32 @@ _PRESERVE_NEWLINE_WHITE_SPACE = {"pre", "pre-wrap", "pre-line", "break-spaces"}
 _TRUNCATION_NOTE = (
     f"…（本行原文超过 {MAX_TEXT_LENGTH} 字符，已按上限截断，后面还有内容）"
 )
+
+# Lowercase keywords that make a ``class`` token look like a human-authored
+# control name (``phoenix-calendar-prev-year-btn``) rather than an obfuscated
+# style hash (``sc-gIDmLj``). Only used as a last-resort label for interactive
+# elements that expose no accessible name / text / title (see ``_fallback_label``).
+_SEMANTIC_TOKEN_HINTS = (
+    "btn", "button", "icon", "close", "prev", "previous", "next", "back",
+    "forward", "add", "delete", "remove", "search", "upload", "download",
+    "edit", "menu", "tab", "arrow", "expand", "collapse", "play", "pause",
+    "refresh", "reload", "home", "link", "select", "checkbox", "radio",
+    "toggle", "switch", "plus", "minus", "left", "right", "up", "down",
+    "first", "last", "year", "month", "day", "date", "ok", "confirm",
+    "cancel", "submit", "reset", "clear", "filter", "sort", "share", "copy",
+    "save",
+)
+
+# Action words inside a hyphenated class token. When present, the token is
+# trimmed from the first action word onward (``phoenix-calendar-prev-year-btn``
+# → ``prev-year-btn``), which is the part that actually names the control.
+_ACTION_HINTS = {
+    "prev", "previous", "next", "back", "forward", "close", "open", "add",
+    "new", "create", "delete", "remove", "edit", "save", "submit", "cancel",
+    "search", "upload", "download", "refresh", "reload", "play", "pause",
+    "expand", "collapse", "toggle", "clear", "filter", "sort", "share",
+    "copy", "home", "menu", "more", "help", "info", "settings", "select",
+}
 
 BBox = tuple[float, float, float, float]
 
@@ -745,28 +777,107 @@ class DOMSerializer:
 
     def _interactive_label(self, node: EnhancedNode, category: str) -> str:
         if category == "input":
-            value = self._input_value(node)
-            return value if value else node.attributes.get("placeholder", "")
-        label = self._label(node)
-        # An unlabeled control icon (radio / checkbox circle) pairs with a text
-        # label; name it after that text but keep it distinguishable from the
-        # label's own clickable entry (which expands / navigates): “选择：重庆市”.
-        # A native checkbox / radio input is the same "control + text" shape
-        # without an icon, so it gets the same treatment instead of an empty tag.
-        if not label and category == "click" and (
-            is_control_icon(node) or self._is_choice_input(node)
-        ):
-            paired = self._pointer_sibling_label(node)
-            if paired:
-                label = f"选择：{paired}"
-        # A composite control (e.g. a select box) often shows only its value or
-        # placeholder (“请选择”). Prefix the associated field label so the LLM
-        # can tell which field it is: “政治面貌：请选择”.
-        if category == "click" and self._has_field_input_descendant(node):
-            prefix = self._associated_field_label(node)
-            if prefix and prefix not in label:
-                label = f"{prefix}：{label}" if label else prefix
+            label = self._input_value(node) or node.attributes.get("placeholder", "")
+        else:
+            label = self._label(node)
+            # An unlabeled control icon (radio / checkbox circle) pairs with a text
+            # label; name it after that text but keep it distinguishable from the
+            # label's own clickable entry (which expands / navigates): “选择：重庆市”.
+            # A native checkbox / radio input is the same "control + text" shape
+            # without an icon, so it gets the same treatment instead of an empty tag.
+            if not label and category == "click" and (
+                is_control_icon(node) or self._is_choice_input(node)
+            ):
+                paired = self._pointer_sibling_label(node) or self._nearby_text_label(node)
+                if paired:
+                    label = f"选择：{paired}"
+            # A composite control (e.g. a select box) often shows only its value or
+            # placeholder (“请选择”). Prefix the associated field label so the LLM
+            # can tell which field it is: “政治面貌：请选择”.
+            if category == "click" and self._has_field_input_descendant(node):
+                prefix = self._associated_field_label(node)
+                if prefix and prefix not in label:
+                    label = f"{prefix}：{label}" if label else prefix
+        # Never emit an empty interactive tag: an unnamed control is useless to the
+        # LLM. Fall back to nearby text / a semantic attribute token / a generic word.
+        if not label:
+            label = self._fallback_label(node, category)
         return label
+
+    def _fallback_label(self, node: EnhancedNode, category: str) -> str:
+        """Guarantee a non-empty label for an otherwise unnamed interactive element.
+
+        Sources, in order: native choice/file inputs use nearby text or a generic
+        word; anything else uses a semantic ``data-*`` / ``class`` token (e.g.
+        ``phoenix-calendar-prev-year-btn``); failing that, a category-generic word.
+        """
+        if self._is_choice_input(node):
+            kind = node.attributes.get("type", "").lower()
+            return "单选框" if kind == "radio" else "复选框"
+        if node.tag == "input" and node.attributes.get("type", "").lower() == "file":
+            return "上传文件"
+        token = self._attribute_token(node)
+        if token:
+            return token
+        if category == "click":
+            if node.role == "button" or node.tag in ("button", "input"):
+                return "按钮"
+            if node.tag == "a":
+                return "链接"
+            return "可点击项"
+        if category == "input":
+            return "输入框"
+        if category == "drag":
+            return "可拖动"
+        if category == "scroll":
+            return "可滚动区域"
+        return "可交互元素"
+
+    def _attribute_token(self, node: EnhancedNode) -> str:
+        """A meaningful label token from ``data-*`` / ``class``, or ``""``.
+
+        Only human-authored-looking tokens (lowercase words joined by ``-``) are
+        accepted; obfuscated style hashes (``sc-gIDmLj``) and ids are ignored so
+        the caller falls back to a generic label instead of noise.
+        """
+        for attr in (
+            "data-testid",
+            "data-test",
+            "data-name",
+            "data-action",
+            "data-tooltip",
+            "data-title",
+            "data-label",
+        ):
+            value = node.attributes.get(attr)
+            if value:
+                return self._truncate(value, 40)
+        tokens = [
+            token
+            for token in node.attributes.get("class", "").split()
+            if self._is_semantic_token(token)
+        ]
+        if not tokens:
+            return ""
+        hinted = [
+            token
+            for token in tokens
+            if any(hint in token for hint in _SEMANTIC_TOKEN_HINTS)
+        ]
+        best = max(hinted or tokens, key=len)
+        parts = best.split("-")
+        for index, part in enumerate(parts):
+            if part in _ACTION_HINTS:
+                if index > 0:
+                    best = "-".join(parts[index:])
+                break
+        return self._truncate(best, 40)
+
+    @staticmethod
+    def _is_semantic_token(token: str) -> bool:
+        if len(token) < 3 or not token[0].isalpha() or not token[0].islower():
+            return False
+        return all(ch.islower() or ch.isdigit() or ch == "-" for ch in token)
 
     def _is_choice_input(self, node: EnhancedNode) -> bool:
         """True for a native ``<input type=checkbox|radio>``."""
@@ -790,6 +901,41 @@ class DOMSerializer:
             text = self._collect_text(sibling)
             if text:
                 return text
+        return ""
+
+    def _nearby_text_label(self, node: EnhancedNode, max_hops: int = 3) -> str:
+        """Nearest short label text on a sibling of ``node`` or of its ancestors.
+
+        Native controls often carry their visible label in a *wrapper's* sibling
+        (e.g. ``<div class="phoenix-checkbox"><span><input type=checkbox></span>
+        <span class="...text">至今</span></div>``): the text is not a sibling of
+        the control itself but of the wrapper around it. Walk up a few levels and
+        take the shortest non-empty sibling text found at the first level that has
+        any.
+        """
+        branch = node
+        ancestor = node.parent
+        hops = 0
+        while ancestor is not None and hops < max_hops:
+            siblings = list(ancestor.children)
+            index = siblings.index(branch) if branch in siblings else -1
+            ordered = (
+                siblings[index + 1 :] + siblings[:index] if index >= 0 else siblings
+            )
+            texts: list[str] = []
+            for sibling in ordered:
+                if sibling is branch or not sibling.is_element:
+                    continue
+                if sibling.hidden or not sibling.visible or not sibling.in_viewport:
+                    continue
+                text = self._collect_text(sibling)
+                if text:
+                    texts.append(text)
+            if texts:
+                return self._truncate(min(texts, key=len), 40)
+            branch = ancestor
+            ancestor = ancestor.parent
+            hops += 1
         return ""
 
     def _has_field_input_descendant(self, node: EnhancedNode) -> bool:
@@ -930,8 +1076,17 @@ class DOMSerializer:
         """
         if not node.is_element or node.hidden or not node.visible or not node.in_viewport:
             return False
-        if node.tag in ("a", "button", "select", "textarea", "summary"):
+        if node.tag in ("button", "select", "textarea", "summary"):
             return True
+        if node.tag == "a":
+            # A bare ``<a>`` with no link / click signal (no ``href``, inline
+            # ``on*`` handler, ARIA role, ``cursor:pointer`` or ``tabindex``) is
+            # a decorative wrapper, not a separate control. Counting it as one
+            # used to prune the genuinely clickable wrapper around it (e.g. a
+            # ``role="gridcell"`` month cell); the bare ``<a>`` then fell through
+            # to plain text, leaving the whole control unaddressable. Only a
+            # real anchor is a separate control.
+            return is_clickable(node)
         if node.tag == "input":
             itype = node.attributes.get("type", "text").lower()
             if itype in CLICKABLE_INPUT_TYPES:
