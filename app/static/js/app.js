@@ -135,6 +135,9 @@ const I18N_EN = {
   "发送键": "Send key",
   "发送，": "to send, ",
   "取消": "Cancel",
+  "本次Agent循环失败/被中断，是否将 原发送信息回填？": "This agent run failed or was interrupted. Restore the original sent message?",
+  "回填": "Restore",
+  "丢弃": "Discard",
   "可增删": "Can add/remove",
   "右键": "Right-click",
   "名称": "Name",
@@ -3055,6 +3058,13 @@ async function renderChatView() {
         <div class="input-actions"><button class="btn" id="dateInjectBtn" style="display:none;" title="${t("开启后，发送消息时会在用户消息前面拼接当前日期。")}"><span class="date-dot"></span>${t("注入当前日期")}</button><button class="btn" id="stopBtn" style="display:none;">${t("停止")}</button><button class="btn primary" id="sendBtn">${t("发送")}</button></div>
       </div>
       <div id="doneBubble" class="done-bubble done-bubble-float" style="display:none;"></div>
+      <div id="failBubble" class="fail-bubble fail-bubble-float" style="display:none;">
+        <div class="fail-bubble-text">${t("本次Agent循环失败/被中断，是否将 原发送信息回填？")}</div>
+        <div class="fail-bubble-actions">
+          <button type="button" class="fail-bubble-btn fail-bubble-cancel" id="failCancelBtn" title="${t("丢弃")}">✗</button>
+          <button type="button" class="fail-bubble-btn fail-bubble-restore" id="failRestoreBtn" title="${t("回填")}">✓</button>
+        </div>
+      </div>
     </div>`;
 
   const chatBody = $("#chatBody");
@@ -4064,6 +4074,22 @@ async function renderChatView() {
     getSettings().then(s => playSound(s.notification_sound)).catch(() => playSound("ber"));
   }
 
+  // 本轮流程失败/被中断时，暂存「原发送信息」，供气泡上的「回填」按钮使用
+  let pendingFailedMsg = null;
+  function showFailBubble(msg) {
+    const b = $("#failBubble");
+    if (!b) return;
+    pendingFailedMsg = msg || "";
+    const pane = $("#inputPane");
+    b.style.bottom = (pane ? pane.offsetHeight + 10 : 160) + "px";
+    b.style.display = "flex";
+  }
+  function hideFailBubble() {
+    const b = $("#failBubble");
+    if (b) b.style.display = "none";
+    pendingFailedMsg = null;
+  }
+
   async function send() {
     const raw = input.value;
     if (isRunning) return;
@@ -4077,6 +4103,11 @@ async function renderChatView() {
       : userText;
     // 浏览器接管提示：把当前聚焦标签页内容（已包裹）追加到用户消息之后
     if (injectTakeover) content = content ? content + "\n" + takeoverPreviewText : takeoverPreviewText;
+    // 发出后立即清空输入框与草稿：用户可在流式进行时输入下一条，两者互不影响
+    input.value = "";
+    if (draftTimer) { clearTimeout(draftTimer); draftTimer = null; }
+    saveDraft(S.agentId, "");
+    hideFailBubble();
     setRunning(true);
     currentReplyEl = null;
     appendReplyHeader();
@@ -4088,19 +4119,13 @@ async function renderChatView() {
     const ok = await openChatWs(content);
     setRunning(false);
     if (ok) {
-      if (input.value.replace(/\s+$/, "") === userText) {
-        input.value = "";
-        if (draftTimer) { clearTimeout(draftTimer); draftTimer = null; }
-        saveDraft(S.agentId, "");
-      }
       // 浏览器接管提示为「一次性状态」：发送成功后自动关闭
       if (takeoverHintOn && takeoverHintReset) takeoverHintReset();
       showDoneBubble();
     } else {
-      // 发送失败：输入框与缓存都保留
-      if (draftTimer) { clearTimeout(draftTimer); draftTimer = null; }
-      saveDraft(S.agentId, input.value);
-      toast(t("发送失败，消息已保留在输入框"), true);
+      // 失败/被中断（含点击「停止」）：气泡提示是否回填原发送信息。
+      // 输入框保持用户此间自己写的内容，与失败消息回填相互独立。
+      showFailBubble(userText);
     }
   }
 
@@ -4193,6 +4218,18 @@ async function renderChatView() {
     input.selectionStart = input.selectionEnd = start + 1;
   };
   stopBtn.onclick = () => { if (ws) ws.send(JSON.stringify({ type: "stop" })); };
+  const failRestoreBtn = $("#failRestoreBtn"), failCancelBtn = $("#failCancelBtn");
+  if (failRestoreBtn) failRestoreBtn.onclick = () => {
+    const msg = pendingFailedMsg;
+    hideFailBubble();
+    if (!msg) return;
+    const cur = input.value.replace(/\s+$/, "");
+    input.value = cur ? cur + "\n" + msg : msg;
+    if (draftTimer) { clearTimeout(draftTimer); draftTimer = null; }
+    saveDraft(S.agentId, input.value);
+    input.focus();
+  };
+  if (failCancelBtn) failCancelBtn.onclick = () => hideFailBubble();
   updateSendState();
 }
 

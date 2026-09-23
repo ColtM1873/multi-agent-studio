@@ -437,6 +437,28 @@ html[data-style-danger="solid"] .card-btn-danger:hover { filter: brightness(.92)
 /* ── 完成气泡浮层（输入框上方居中） ─────── */
 .done-bubble-float { position: absolute; left: 50%; transform: translateX(-50%); bottom: 14px; z-index: 60; }
 
+/* ── 失败/中断回填气泡（输入框上方居中） ── */
+.fail-bubble {
+  flex-direction: column; align-items: center; gap: 6px;
+  background: var(--surface); border: 1px solid var(--border);
+  color: var(--text); padding: 8px 14px; border-radius: 12px;
+  font-size: 13px; box-shadow: var(--shadow-lg); animation: fadein .3s;
+  max-width: min(420px, calc(100vw - 40px));
+}
+.fail-bubble-text { text-align: center; line-height: 1.5; }
+.fail-bubble-actions { display: flex; gap: 10px; }
+.fail-bubble-btn {
+  width: 28px; height: 28px; border-radius: 999px; cursor: pointer;
+  font-size: 15px; font-weight: 700; line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid transparent; background: var(--bg);
+}
+.fail-bubble-restore { color: #15803d; border-color: #86efac; background: #dcfce7; }
+.fail-bubble-restore:hover { background: #bbf7d0; }
+.fail-bubble-cancel { color: var(--danger); border-color: #fecaca; background: #fef2f2; }
+.fail-bubble-cancel:hover { background: #fee2e2; }
+.fail-bubble-float { position: absolute; left: 50%; transform: translateX(-50%); bottom: 14px; z-index: 61; }
+
 /* ── Pin Down 跟随按钮 ─────────────────── */
 .pin-btn {
   position: absolute; left: 0; top: 0;
