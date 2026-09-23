@@ -107,6 +107,24 @@ def is_scrollable(node: EnhancedNode) -> bool:
     return _has_overflowing_child(node)
 
 
+def _has_text(node: EnhancedNode) -> bool:
+    """True if ``node`` (or a descendant) carries non-empty text.
+
+    Element nodes keep their own ``text`` empty; visible text lives in ``#text``
+    child nodes. So a ``cursor:pointer`` ``<div>搜索职位</div>`` has a label only
+    through its descendants, not through ``node.text``.
+    """
+    if node.text:
+        return True
+    for child in node.children:
+        if child.is_text:
+            if child.text:
+                return True
+        elif child.is_element and _has_text(child):
+            return True
+    return False
+
+
 def is_clickable(node: EnhancedNode) -> bool:
     if not node.is_element or _is_disabled(node):
         return False
@@ -117,7 +135,7 @@ def is_clickable(node: EnhancedNode) -> bool:
     if node.role in CLICKABLE_ROLES:
         return True
     if node.styles.get("cursor") == "pointer":
-        has_label = bool(node.ax_name or node.text)
+        has_label = bool(node.ax_name or _has_text(node))
         if has_label and node.bbox:
             return True
     tabindex = node.attributes.get("tabindex")

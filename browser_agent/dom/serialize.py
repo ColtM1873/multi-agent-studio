@@ -284,7 +284,7 @@ class DOMSerializer:
         level = self._heading_level(child)
         if level:
             self._flush(depth)
-            self._group_or_scroll(child, depth, f"[{level}级标题]", clip)
+            self._group_or_interact(child, depth, f"[{level}级标题]", clip)
             return
 
         if self._is_image(child):
@@ -295,12 +295,12 @@ class DOMSerializer:
         landmark = self._landmark_for(child)
         if landmark:
             self._flush(depth)
-            self._group_or_scroll(child, depth, f"[{landmark}]", clip)
+            self._group_or_interact(child, depth, f"[{landmark}]", clip)
             return
 
         if child.tag == "figure":
             self._flush(depth)
-            self._group_or_scroll(child, depth, "[图]", clip)
+            self._group_or_interact(child, depth, "[图]", clip)
             return
 
         # An unnamed ``<section>`` is a generic block container. Only surface it
@@ -308,32 +308,32 @@ class DOMSerializer:
         # ``[文本]`` branch below is the better, less noisy fit).
         if child.tag == "section" and self._has_blockish_descendant(child):
             self._flush(depth)
-            self._group_or_scroll(child, depth, "[区块]", clip)
+            self._group_or_interact(child, depth, "[区块]", clip)
             return
 
         if child.tag == "dl":
             self._flush(depth)
-            self._group_or_scroll(child, depth, "[定义列表]", clip)
+            self._group_or_interact(child, depth, "[定义列表]", clip)
             return
 
         if child.tag == "dt":
             self._flush(depth)
-            self._group_or_scroll(child, depth, "[术语]", clip)
+            self._group_or_interact(child, depth, "[术语]", clip)
             return
 
         if child.tag == "dd":
             self._flush(depth)
-            self._group_or_scroll(child, depth, "[描述]", clip)
+            self._group_or_interact(child, depth, "[描述]", clip)
             return
 
         if child.tag in ("ul", "ol") or child.role == "list":
             self._flush(depth)
-            self._group_or_scroll(child, depth, "[列表]", clip)
+            self._group_or_interact(child, depth, "[列表]", clip)
             return
 
         if child.tag == "table" or child.role == "table":
             self._flush(depth)
-            self._group_or_scroll(child, depth, "[表格]", clip)
+            self._group_or_interact(child, depth, "[表格]", clip)
             return
 
         # ``<tr>``: keep the row on a single line but separate the cells with
@@ -363,7 +363,7 @@ class DOMSerializer:
             if (child.tag == "li" or child.role == "listitem") and self._has_blockish_descendant(child):
                 # A scrollable rich list item wraps the scroll element around its
                 # ``[列表项]`` boundary.
-                self._group_or_scroll(child, depth, "[列表项]", clip)
+                self._group_or_interact(child, depth, "[列表项]", clip)
             else:
                 self._group_scroll(child, depth, clip)
             return
@@ -432,18 +432,24 @@ class DOMSerializer:
         self._render_children(node, depth + 1, clip)
         self._stack.pop()
 
-    def _group_or_scroll(
+    def _group_or_interact(
         self, node: EnhancedNode, depth: int, header: str, clip: Optional[BBox]
     ) -> None:
-        """Render a structural group, wrapping it in the scroll element if needed.
+        """Render a structural group, wrapping it in the interactive element if needed.
 
-        A landmark/list/table/… can itself be a scroll container (e.g. an
-        ``<aside style="overflow-y:auto">`` job list). The scroll element is the
-        outer boundary the LLM interacts with; the structural header
-        (``[侧栏]`` / ``[列表]`` …) is rendered inside it.
+        A landmark/list/table/… can itself be interactive: a scrollable
+        ``<aside style="overflow-y:auto">`` job list, or a clickable
+        ``<header style="cursor:pointer">``. The interactive element is the outer
+        boundary the LLM interacts with; the structural header (``[侧栏]`` /
+        ``[页眉]`` …) is rendered inside it. A clickable container that merely
+        wraps other interactive elements is left as-is (naming it would be noise,
+        see the click branch in ``_render_child``).
         """
-        if classify(node) == "scroll":
+        category = classify(node)
+        if category == "scroll":
             self._group_scroll(node, depth, clip, inner_header=header)
+        elif category == "click" and not self._has_interactive_descendant(node):
+            self._group_click(node, depth, header, clip)
         else:
             self._group(node, depth, header, clip)
 
@@ -474,6 +480,18 @@ class DOMSerializer:
             self._render_children(node, depth + 1, node.bbox)
         if len(self._lines) == before:
             self._emit_content(depth + 1, "（可滚动区域）")
+        self._stack.pop()
+        self._emit_close(depth, closing)
+
+    def _group_click(
+        self, node: EnhancedNode, depth: int, header: str, clip: Optional[BBox]
+    ) -> None:
+        name = self.registry.get_or_create(node)
+        opening = f"<可点击元素 {name}>"
+        closing = f"</可点击元素 {name}>"
+        self._emit_header(depth, opening, (name,), closing)
+        self._stack.append((depth, opening, closing))
+        self._group(node, depth + 1, header, clip)
         self._stack.pop()
         self._emit_close(depth, closing)
 
