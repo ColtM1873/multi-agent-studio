@@ -34,6 +34,7 @@ class EnhancedNode:
     paint_order: int = 0
     styles: dict[str, str] = field(default_factory=dict)
     input_value: str = ""
+    selected: Optional[bool] = None
     doc_token: str = ""
     is_shadow: bool = False
     is_iframe_root: bool = False
@@ -139,8 +140,43 @@ def _parse_ax(ax_tree: dict) -> dict[int, dict]:
             continue
         role = (node.get("role") or {}).get("value", "")
         name = (node.get("name") or {}).get("value", "")
-        backend_to_ax[backend_id] = {"role": role, "name": name}
+        backend_to_ax[backend_id] = {
+            "role": role,
+            "name": name,
+            "selected": _ax_selection(node),
+        }
     return backend_to_ax
+
+
+def _ax_bool(value: object) -> Optional[bool]:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        if value.lower() == "true":
+            return True
+        if value.lower() == "false":
+            return False
+    return None
+
+
+def _ax_selection(node: dict) -> Optional[bool]:
+    """Read ``checked`` / ``selected`` / ``pressed`` from an AX node's properties.
+
+    Chrome's accessibility tree exposes the live selection state (unlike the DOM
+    snapshot, whose ``attributes`` only carry the *initial* content attributes).
+    Returning ``None`` means "not a choice control / unknown", ``True`` means
+    "selected/checked/pressed", ``False`` means "explicitly not selected".
+    """
+    found: Optional[bool] = None
+    for prop in node.get("properties", []) or []:
+        if prop.get("name") not in ("checked", "selected", "pressed"):
+            continue
+        value = _ax_bool((prop.get("value") or {}).get("value"))
+        if value is True:
+            return True
+        if value is False and found is None:
+            found = False
+    return found
 
 
 def build_enhanced_tree(raw: dict) -> EnhancedTree:
@@ -236,6 +272,7 @@ def _walk(
             paint_order=layout.get("paint_order", 0),
             styles=styles,
             input_value=backend_to_value.get(backend_id, ""),
+            selected=ax.get("selected"),
         )
         _apply_visibility(enhanced, viewport)
         enhanced.parent = parent

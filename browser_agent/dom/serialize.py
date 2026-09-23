@@ -802,6 +802,13 @@ class DOMSerializer:
         # LLM. Fall back to nearby text / a semantic attribute token / a generic word.
         if not label:
             label = self._fallback_label(node, category)
+        # Mark the selected option of a radio / checkbox / tab group. A click on
+        # one of these changes only the control's state (the page text is
+        # unchanged), so without this marker the diff would say “（页面无变化）” and
+        # the LLM could not confirm that its click was applied. Only the selected
+        # item is marked; unselected items carry no marker.
+        if self._selection_state(node) is True:
+            label = f"{label} [已选]"
         return label
 
     def _fallback_label(self, node: EnhancedNode, category: str) -> str:
@@ -885,6 +892,59 @@ class DOMSerializer:
             node.tag == "input"
             and node.attributes.get("type", "").lower() in ("checkbox", "radio")
         )
+
+    def _selection_state(self, node: EnhancedNode) -> Optional[bool]:
+        """Whether ``node`` is a *selected* choice control, else ``None``.
+
+        Needed because a click on a radio / checkbox / option usually changes
+        only the control's state, not the page text — without a state marker the
+        diff would report “（页面无变化）” and the LLM could not confirm its click.
+        Sources, most reliable first:
+
+        1. the accessibility tree's live ``checked`` / ``selected`` / ``pressed``
+           property (native inputs and ARIA widgets);
+        2. ``aria-checked`` / ``aria-selected`` / ``aria-pressed`` content
+           attributes, or a bare native ``checked`` / ``selected`` attribute;
+        3. selection state encoded as a CSS class on the control or on one of its
+           ancestors (custom components: ``phoenix-radio--checked``,
+           ``ant-radio-checked``, ``is-checked`` …).
+
+        Only ``True`` is ever rendered; ``None`` / ``False`` mean "no marker".
+        """
+        if node.selected is not None:
+            return node.selected
+        for attr in ("aria-checked", "aria-selected", "aria-pressed"):
+            value = node.attributes.get(attr)
+            if value is not None:
+                return value.lower() == "true"
+        if "checked" in node.attributes or "selected" in node.attributes:
+            return True
+        branch: Optional[EnhancedNode] = node
+        hops = 0
+        while branch is not None and hops < 4:
+            if self._class_has_selection_token(branch):
+                return True
+            branch = branch.parent
+            hops += 1
+        return None
+
+    @staticmethod
+    def _class_has_selection_token(node: EnhancedNode) -> bool:
+        """True if a class token encodes a selected/checked state.
+
+        Only ``checked`` / ``selected`` suffixes count (``phoenix-radio--checked``,
+        ``is-checked``, ``Mui-checked``), never lookalikes such as ``unselected``
+        (no hyphen boundary) or ``checkbox``.
+        """
+        classes = node.attributes.get("class", "").lower()
+        if not classes:
+            return False
+        for token in classes.split():
+            if token in ("checked", "selected"):
+                return True
+            if token.endswith(("-checked", "-selected")):
+                return True
+        return False
 
     def _pointer_sibling_label(self, node: EnhancedNode) -> str:
         """The text of the nearest ``cursor:pointer`` labeled sibling of ``node``."""
