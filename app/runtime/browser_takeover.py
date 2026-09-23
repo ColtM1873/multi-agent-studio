@@ -22,7 +22,7 @@ from pathlib import Path
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
-STOP_TEXT = "客户已暂停你的浏览器操作，请立即停止所有浏览器动作，等待客户的后续指示。"
+STOP_TEXT = "用户已暂停你的浏览器操作，请立即停止所有浏览器动作，等待用户的后续指示。"
 
 # debug 日志根目录：程序根目录（app/runtime/browser_takeover.py 上溯三层）。
 _ROOT_DIR = Path(__file__).resolve().parents[2]
@@ -32,7 +32,7 @@ _paused: bool = False
 
 
 def set_paused(value: bool) -> None:
-    """设置全局暂停标志（客户点「停止」为 True，点「继续」为 False）。"""
+    """设置全局暂停标志（用户点「停止」为 True，点「继续」为 False）。"""
     global _paused
     _paused = bool(value)
 
