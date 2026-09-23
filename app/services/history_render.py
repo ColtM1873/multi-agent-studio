@@ -197,24 +197,46 @@ def render_messages_to_markdown_string(
     return buf.getvalue()
 
 
-def _extract_user_summary(content: str) -> str:
-    """从（可能被记忆吸附包装过的）用户消息里提取真正的原文。"""
+def _split_user_content(content: str) -> tuple[str, str]:
+    """把（可能被记忆吸附包装过的）用户消息拆成 (真实原文, 记忆附着文本)。
+
+    未包装时返回 (原文, "")；graph_builder 只在检索到记忆时才包装，所以
+    返回的 memory 非空即代表这条用户消息确实发生了记忆附着。
+    """
     s = str(content)
-    if USER_MSG_PREFIX in s:
-        rest = s.split(USER_MSG_PREFIX, 1)[1]
-        if MEMORY_ATTACH_MARKER in rest:
-            rest = rest.split(MEMORY_ATTACH_MARKER, 1)[0]
-        return rest.strip()
-    return s.strip()
+    if USER_MSG_PREFIX not in s:
+        return s, ""
+    rest = s.split(USER_MSG_PREFIX, 1)[1]
+    if MEMORY_ATTACH_MARKER in rest:
+        real, memory = rest.split(MEMORY_ATTACH_MARKER, 1)
+        return real, memory
+    return rest, ""
+
+
+def _extract_user_summary(content: str) -> str:
+    """从（可能被记忆吸附包装过的）用户消息里提取真正的原文（压成单行用）。"""
+    return _split_user_content(content)[0].strip()
 
 
 def _render_human(msg, w, idx: int, msg_indice: int):
     content = str(msg.content)
-    escaped = _escape_html(content).replace("\n", "<br>")
-    summary = _escape_html(_extract_user_summary(content)).replace("\n", " ")
+    real_text, memory = _split_user_content(content)
+    escaped = _escape_html(real_text).replace("\n", "<br>")
+    summary = _escape_html(real_text).replace("\n", " ")
     w(f'<div id="user-msg-{idx}" class="user-msg-block" data-msg-indice="{msg_indice}" data-summary="{summary}">\n')
     w('<div class="user-msg-head">🧑 <strong>用户</strong></div>\n')
-    w(f'<blockquote class="user-msg-quote">{escaped}</blockquote>\n')
+    if memory.strip():
+        # 记忆附着默认不显示，只在用户消息框最右侧放一个按钮，点击才展开本次附着的记忆。
+        mem_html = _escape_html(memory.strip()).replace("\r\n", "\n").replace("\n", "<br>")
+        w(
+            f'<blockquote class="user-msg-quote has-mem">'
+            f'<button type="button" class="mem-attach-btn" title="查看本条消息自动附着的记忆">🔖 记忆附着</button>'
+            f'{escaped}'
+            f'</blockquote>\n'
+        )
+        w(f'<div class="mem-attach-panel" hidden>{mem_html}</div>\n')
+    else:
+        w(f'<blockquote class="user-msg-quote">{escaped}</blockquote>\n')
     w("</div>\n")
 
 

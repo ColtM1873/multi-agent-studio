@@ -351,6 +351,8 @@ const I18N_EN = {
   "自定义镜像地址": "Custom mirror URL",
   "表单已按默认配置预填，请修改差异项。创建后子 agent 不可增删改名。": "The form is pre-filled from the default configuration; modify the differences. Sub-agents cannot be added/removed/renamed after creation.",
   "记忆吸附": "Memory attachment",
+  "记忆附着": "Attached memory",
+  "查看本条消息自动附着的记忆": "View the memory attached to this message",
   "裸公式识别": "Auto-detect bare formulas",
   "模型偶尔不带 $ 或 \\( 分隔符直接输出公式（如 s_{t+1}=f(s_t,a_t)）。开启后自动识别并渲染，适合科研 / 数理场景；日常场景建议关闭，以免误判普通文本。": "Models sometimes output formulas without $ or \\( delimiters (e.g. s_{t+1}=f(s_t,a_t)). When enabled, they are detected and rendered automatically—useful for research/math scenarios. Keep it off in everyday use to avoid misinterpreting plain text.",
   "激进公式渲染": "Aggressive formula rendering",
@@ -522,6 +524,19 @@ function toast(msg, isError = false) {
 }
 
 function esc(s) { return String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+
+/* 记忆附着包装标记（与后端 app/runtime/prompts.py 保持一致）：流式回放的用户消息
+ * 可能带这些包装，前端拆出真实原文与附着记忆，给用户消息框加「记忆附着」按钮。 */
+const USER_MSG_PREFIX = "用户此次发送的信息如下：\n";
+const MEMORY_ATTACH_MARKER = "\n与用户此次发送信息相关联的记忆如下：";
+function splitUserMemory(raw) {
+  const s = String(raw ?? "");
+  if (!s.startsWith(USER_MSG_PREFIX)) return { text: s, memory: "" };
+  const rest = s.slice(USER_MSG_PREFIX.length);
+  const i = rest.indexOf(MEMORY_ATTACH_MARKER);
+  if (i < 0) return { text: rest, memory: "" };
+  return { text: rest.slice(0, i), memory: rest.slice(i + MEMORY_ATTACH_MARKER.length).trim() };
+}
 
 /* token 单位换算 */
 function tokToUnit(t) {
@@ -2129,6 +2144,15 @@ document.addEventListener("mouseover", (e) => {
 document.addEventListener("mouseout", (e) => {
   const icon = e.target.closest && e.target.closest(".info-icon");
   if (icon) icon.classList.remove("show");
+});
+
+// 记忆附着按钮：切换本条用户消息附着的记忆显示（事件委托，覆盖历史/流式动态创建的按钮）
+document.addEventListener("click", (e) => {
+  const btn = e.target && e.target.closest && e.target.closest(".mem-attach-btn");
+  if (!btn) return;
+  const block = btn.closest(".user-msg-block");
+  const panel = block && block.querySelector(".mem-attach-panel");
+  if (panel) panel.hidden = !panel.hidden;
 });
 
 function unitField(id, val, unit, extraLabel, tip) {
@@ -4378,7 +4402,10 @@ function openChatWs(content, proactive = false, subAgent = null, summaryPercent 
           currentReplyEl._userEl.className = "user-msg-block";
           currentReplyEl.insertBefore(currentReplyEl._userEl, currentReplyEl.firstChild);
         }
-        currentReplyEl._userEl.innerHTML = `<div class="user-msg-head">🧑 <strong>${t("用户")}</strong></div><blockquote class="user-msg-quote">${esc(buffers.main_user).replace(/\n/g, "<br>")}</blockquote>`;
+        const { text: userText, memory: userMem } = splitUserMemory(buffers.main_user);
+        const memBtn = userMem ? `<button type="button" class="mem-attach-btn" title="${t("查看本条消息自动附着的记忆")}">🔖 ${t("记忆附着")}</button>` : "";
+        const memPanel = userMem ? `<div class="mem-attach-panel" hidden>${esc(userMem).replace(/\n/g, "<br>")}</div>` : "";
+        currentReplyEl._userEl.innerHTML = `<div class="user-msg-head">🧑 <strong>${t("用户")}</strong></div><blockquote class="user-msg-quote${userMem ? " has-mem" : ""}">${memBtn}${esc(userText).replace(/\n/g, "<br>")}</blockquote>${memPanel}`;
       }
 
       for (const seg of buffers.segments) {
