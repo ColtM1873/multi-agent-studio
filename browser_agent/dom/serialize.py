@@ -1,8 +1,8 @@
 """Serialize an enhanced DOM tree into a hierarchy-preserving indented tree.
 
 The output is intentionally structured: every meaningful group gets a bracketed
-label header (``[内容]`` / ``[标题2]`` / ``[文本]`` / ``[图片]`` …), children are
-indented one level deeper, and top-level blocks are separated by a blank line.
+label header (``[主体内容]`` / ``[2级标题]`` / ``[文本]`` / ``[图片]`` …), children
+are indented one level deeper, and top-level blocks are separated by a blank line.
 This exposes the DOM's own tree structure instead of flattening it.
 
 Interactive nodes are wrapped in semantic tags, e.g.::
@@ -103,7 +103,7 @@ ROLE_LANDMARKS = {
 LANDMARK_LABELS = {
     "banner": "页眉",
     "navigation": "导航",
-    "main": "内容",
+    "main": "主体内容",
     "complementary": "侧栏",
     "contentinfo": "页脚",
     "search": "搜索",
@@ -223,7 +223,7 @@ class DOMSerializer:
         level = self._heading_level(child)
         if level:
             self._flush(depth)
-            self._group(child, depth, f"[标题{level}]", clip)
+            self._group(child, depth, f"[{level}级标题]", clip)
             return
 
         if self._is_image(child):
@@ -237,6 +237,34 @@ class DOMSerializer:
             self._group(child, depth, f"[{landmark}]", clip)
             return
 
+        if child.tag == "figure":
+            self._flush(depth)
+            self._group(child, depth, "[图]", clip)
+            return
+
+        # An unnamed ``<section>`` is a generic block container. Only surface it
+        # as a group when it actually holds blockish structure (otherwise the
+        # ``[文本]`` branch below is the better, less noisy fit).
+        if child.tag == "section" and self._has_blockish_descendant(child):
+            self._flush(depth)
+            self._group(child, depth, "[区块]", clip)
+            return
+
+        if child.tag == "dl":
+            self._flush(depth)
+            self._group(child, depth, "[定义列表]", clip)
+            return
+
+        if child.tag == "dt":
+            self._flush(depth)
+            self._group(child, depth, "[术语]", clip)
+            return
+
+        if child.tag == "dd":
+            self._flush(depth)
+            self._group(child, depth, "[描述]", clip)
+            return
+
         if child.tag in ("ul", "ol") or child.role == "list":
             self._flush(depth)
             self._group(child, depth, "[列表]", clip)
@@ -245,6 +273,27 @@ class DOMSerializer:
         if child.tag == "table" or child.role == "table":
             self._flush(depth)
             self._group(child, depth, "[表格]", clip)
+            return
+
+        # ``<tr>``: keep the row on a single line but separate the cells with
+        # ``|`` so column boundaries survive. A fully-``<th>`` row is marked.
+        if child.tag == "tr":
+            self._flush(depth)
+            if self._is_header_row(child):
+                self._buffer = "[表头] "
+            first_cell = True
+            for cell in child.children:
+                if cell.is_text:
+                    self._append_text(cell.text)
+                    continue
+                if cell.is_element and cell.tag in ("td", "th"):
+                    if not (cell.visible and cell.in_viewport and cell.tag not in SKIP_TAGS):
+                        continue
+                    if not first_cell:
+                        self._buffer += " | "
+                    first_cell = False
+                self._render_child(cell, depth, clip)
+            self._flush(depth)
             return
 
         category = classify(child)
@@ -268,6 +317,25 @@ class DOMSerializer:
                     [name],
                     [self._interactive_label(child, category)],
                 )
+            return
+
+        # Preserve the raw whitespace of code blocks instead of collapsing it
+        # into a single line.
+        if child.tag == "pre":
+            self._flush(depth)
+            self._group_code(child, depth)
+            return
+
+        # A list item is a "rich" item when it carries blockish structure
+        # (heading / image / nested list / block container …), e.g. a search
+        # result. Group those so each item's fields stay together; keep simple
+        # single-line items (e.g. nav links) inline to avoid noise.
+        if child.tag == "li" or child.role == "listitem":
+            self._flush(depth)
+            if self._has_blockish_descendant(child):
+                self._group(child, depth, "[列表项]", clip)
+            else:
+                self._render_children(child, depth, clip)
             return
 
         if self._is_text_block(child):
@@ -325,6 +393,37 @@ class DOMSerializer:
         alt = node.attributes.get("alt") or node.ax_name or "图片"
         self._emit_content(depth + 1, self._truncate(alt, 120))
         self._stack.pop()
+
+    def _group_code(self, node: EnhancedNode, depth: int) -> None:
+        self._emit_header(depth, "[代码]")
+        self._stack.append((depth, "[代码]", ""))
+        lines = self._raw_text(node).split("\n")
+        while lines and not lines[-1].strip():
+            lines.pop()
+        if not lines:
+            self._emit_content(depth + 1, "（空代码块）")
+        for raw in lines:
+            # Do NOT collapse whitespace here (``_truncate`` would); indentation
+            # is the whole point of a code block.
+            text = raw if len(raw) <= MAX_TEXT_LENGTH else raw[:MAX_TEXT_LENGTH] + "…"
+            self._emit_content(depth + 1, text)
+        self._stack.pop()
+
+    def _raw_text(self, node: EnhancedNode) -> str:
+        """Concatenate text without collapsing whitespace (for ``<pre>``)."""
+        parts: list[str] = []
+        for child in node.children:
+            if child.is_text:
+                parts.append(child.text)
+            elif child.is_element:
+                parts.append(self._raw_text(child))
+        return "".join(parts)
+
+    def _is_header_row(self, row: EnhancedNode) -> bool:
+        cells = [
+            c for c in row.children if c.is_element and c.tag in ("td", "th")
+        ]
+        return bool(cells) and all(c.tag == "th" for c in cells)
 
     def _emit_header(
         self,
