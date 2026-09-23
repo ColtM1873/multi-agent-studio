@@ -61,7 +61,7 @@ def _emit(out: list[str], cursor: list[tuple[int, str, str]], line: OutLine) -> 
         out.append("\t" * depth + opening)
     if line.depth == 0 and out:
         out.append("")
-    out.append("\t" * line.depth + line.text)
+    out.append(("\t" * line.depth + line.text) if line.text else "")
     if line.kind == "header":
         cursor[:] = path + [(line.depth, line.text, line.closing)]
     else:

@@ -135,7 +135,16 @@ CATEGORY_TAGS = {
     "scroll": ("可滚动元素", "滚动"),
 }
 
-MAX_TEXT_LENGTH = 200
+MAX_TEXT_LENGTH = 4000
+
+# Computed ``white-space`` values where a literal ``\n`` in the text really is a
+# line break in the rendered page. For every other value (``normal``/``nowrap``)
+# newlines collapse to a space, exactly like a browser does.
+_PRESERVE_NEWLINE_WHITE_SPACE = {"pre", "pre-wrap", "pre-line", "break-spaces"}
+
+_TRUNCATION_NOTE = (
+    f"…（本行原文超过 {MAX_TEXT_LENGTH} 字符，已按上限截断，后面还有内容）"
+)
 
 BBox = tuple[float, float, float, float]
 
@@ -216,7 +225,7 @@ class DOMSerializer:
                 if not first_block:
                     parts.append("")
                 first_block = False
-            parts.append("\t" * line.depth + line.text)
+            parts.append(("\t" * line.depth + line.text) if line.text else "")
         parts.append("")
         parts.append(self._page_info(tree))
         text = "\n".join(separate_scroll_blocks(parts))
@@ -248,13 +257,23 @@ class DOMSerializer:
         self, child: EnhancedNode, depth: int, clip: Optional[BBox]
     ) -> None:
         if child.is_text:
-            self._append_text(child.text)
+            self._append_text(child, depth)
             return
 
         if not child.is_element:
             # fragment / document containers: recurse transparently
             for grand in child.children:
                 self._render_child(grand, depth, clip)
+            return
+
+        # A ``<br>`` is a rendered line break; it is in ``SKIP_TAGS`` (it has no
+        # box of its own), so handle it here before the skip check.
+        if child.tag == "br":
+            if self._buffer.strip():
+                self._flush(depth)
+            elif self._lines and self._lines[-1].text and self._lines[-1].depth == depth:
+                # Two consecutive breaks (``<br><br>``) are a blank line.
+                self._emit_blank(depth)
             return
 
         if child.tag in SKIP_TAGS or not child.visible or not child.in_viewport:
@@ -326,7 +345,7 @@ class DOMSerializer:
             first_cell = True
             for cell in child.children:
                 if cell.is_text:
-                    self._append_text(cell.text)
+                    self._append_text(cell, depth)
                     continue
                 if cell.is_element and cell.tag in ("td", "th"):
                     if not (cell.visible and cell.in_viewport and cell.tag not in SKIP_TAGS):
@@ -476,7 +495,7 @@ class DOMSerializer:
         for raw in lines:
             # Do NOT collapse whitespace here (``_truncate`` would); indentation
             # is the whole point of a code block.
-            text = raw if len(raw) <= MAX_TEXT_LENGTH else raw[:MAX_TEXT_LENGTH] + "…"
+            text = raw if len(raw) <= MAX_TEXT_LENGTH else raw[:MAX_TEXT_LENGTH] + _TRUNCATION_NOTE
             self._emit_content(depth + 1, text)
         self._stack.pop()
 
@@ -519,6 +538,12 @@ class DOMSerializer:
             OutLine(depth, text, "close", tuple(self._stack), ())
         )
 
+    def _emit_blank(self, depth: int) -> None:
+        """Emit an intentionally empty line (a structural paragraph break)."""
+        self._lines.append(
+            OutLine(depth, "", "content", tuple(self._stack), ())
+        )
+
     def _flush(self, depth: int) -> None:
         text = self._buffer.strip()
         names = self._buffer_names
@@ -534,9 +559,33 @@ class DOMSerializer:
     # ------------------------------------------------------------------ #
     # buffer helpers
     # ------------------------------------------------------------------ #
-    def _append_text(self, text: str) -> None:
-        normalized = " ".join(text.split())
-        if not normalized:
+    def _append_text(self, node: EnhancedNode, depth: int) -> None:
+        """Append the text of ``node`` at ``depth``.
+
+        When the parent element renders with a whitespace-preserving
+        ``white-space`` (``pre``/``pre-wrap``/``pre-line``/``break-spaces``) the
+        literal newlines are meaningful and become real output lines, including
+        blank lines used as paragraph separators. Every other element collapses
+        newlines to a space, exactly like the browser.
+        """
+        text = node.text
+        white_space = self._parent_white_space(node)
+        if "\n" in text and white_space in _PRESERVE_NEWLINE_WHITE_SPACE:
+            # ``pre-line`` collapses runs of spaces but keeps newlines; the
+            # other modes keep the line's internal spacing verbatim.
+            collapse_spaces = white_space == "pre-line"
+            for index, line in enumerate(self._split_lines(text, collapse_spaces)):
+                if index:
+                    self._flush(depth)
+                if line:
+                    self._append_segment(line)
+                else:
+                    self._emit_blank(depth)
+            return
+        self._append_segment(" ".join(text.split()))
+
+    def _append_segment(self, text: str) -> None:
+        if not text:
             return
         # Skip a text node that just repeats the label of the interactive tag
         # immediately before it (e.g. a button rendered as
@@ -544,13 +593,37 @@ class DOMSerializer:
         # text ``全屏``). The tag's label already carries the meaning.
         if self._buffer.endswith(">") and self._buffer_labels:
             last = self._buffer_labels[-1]
-            if last and normalized in last:
+            if last and text in last:
                 return
-        if len(normalized) > MAX_TEXT_LENGTH:
-            normalized = normalized[:MAX_TEXT_LENGTH]
+        if len(text) > MAX_TEXT_LENGTH:
+            text = text[:MAX_TEXT_LENGTH] + _TRUNCATION_NOTE
         if self._buffer and not self._buffer.endswith((" ", ">")):
             self._buffer += " "
-        self._buffer += normalized
+        self._buffer += text
+
+    def _parent_white_space(self, node: EnhancedNode) -> str:
+        parent = node.parent
+        if parent is None:
+            return ""
+        return (parent.styles or {}).get("white-space", "")
+
+    def _split_lines(self, text: str, collapse_spaces: bool) -> list[str]:
+        """Split on newlines, collapse/dedupe blank lines, trim the ends."""
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+        if collapse_spaces:
+            parts = [" ".join(line.split()) for line in text.split("\n")]
+        else:
+            parts = text.split("\n")
+        cleaned: list[str] = []
+        for part in parts:
+            if part == "" and cleaned and cleaned[-1] == "":
+                continue
+            cleaned.append(part)
+        while cleaned and cleaned[0] == "":
+            cleaned.pop(0)
+        while cleaned and cleaned[-1] == "":
+            cleaned.pop()
+        return cleaned
 
     def _append_inline(
         self, piece: str, names: list[str], labels: Optional[list[str]] = None
