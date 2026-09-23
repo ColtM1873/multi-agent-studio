@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from .build import PAGE_SCROLL_TAG, EnhancedNode
 
-CLICKABLE_TAGS = {"a", "button", "summary", "label", "option"}
+CLICKABLE_TAGS = {"a", "button", "summary", "option"}
 CLICKABLE_INPUT_TYPES = {
     "submit",
     "button",

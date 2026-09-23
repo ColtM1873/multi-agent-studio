@@ -29,6 +29,7 @@ class EnhancedNode:
     ax_name: str = ""
     bbox: Optional[tuple[float, float, float, float]] = None
     visible: bool = True
+    hidden: bool = False
     in_viewport: bool = True
     paint_order: int = 0
     styles: dict[str, str] = field(default_factory=dict)
@@ -349,6 +350,7 @@ def _walk_container(
 def _apply_visibility(node: EnhancedNode, viewport: dict) -> None:
     styles = node.styles
     hidden = styles.get("display") == "none" or styles.get("visibility") in ("hidden", "collapse")
+    node.hidden = hidden
     if node.bbox:
         x, y, w, h = node.bbox
         has_area = w > 0 and h > 0

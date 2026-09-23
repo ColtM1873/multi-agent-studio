@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from .build import PAGE_SCROLL_TAG, EnhancedNode, EnhancedTree
-from .classify import classify
+from .classify import CLICKABLE_INPUT_TYPES, CLICKABLE_ROLES, classify
 from .registry import NameRegistry
 
 SKIP_TAGS = {
@@ -276,9 +276,22 @@ class DOMSerializer:
                 self._emit_blank(depth)
             return
 
-        if child.tag in SKIP_TAGS or not child.visible or not child.in_viewport:
+        if child.tag in SKIP_TAGS or child.hidden or not child.in_viewport:
             return
         if not self._in_clip(child, clip):
+            return
+
+        if not child.visible:
+            # The node itself has no visible box (typically zero-area), but its
+            # element descendants may still be laid out and visible. This is the
+            # classic portal/dropdown case: `<div style="position:absolute;
+            # width:100%">` wraps an absolutely positioned popup, so the wrapper
+            # collapses to height 0 while the popup is clearly visible. Recurse
+            # transparently instead of pruning the whole subtree; the node's own
+            # (invisible) text is skipped.
+            for grand in child.children:
+                if not grand.is_text:
+                    self._render_child(grand, depth, clip)
             return
 
         level = self._heading_level(child)
@@ -369,10 +382,16 @@ class DOMSerializer:
             return
 
         if category:
-            if category == "click" and self._has_interactive_descendant(child):
-                # A clickable wrapper around other interactive elements (e.g. a
-                # media-control bar) is noise: the model would never call the
-                # wrapper. Skip it (assign no name) and render its children.
+            if category == "click" and self._has_separate_interactive_descendant(child):
+                # A clickable wrapper around *separate* controls (e.g. a
+                # media-control bar, a clickable card holding links) is noise:
+                # the model would never call the wrapper. Skip it (assign no
+                # name) and render its children.
+                #
+                # Note: a composite form control (e.g. ``.phoenix-select``) is
+                # itself the entry; its placeholder / bare typeahead input are
+                # internal parts, not separate controls, so it is named instead
+                # of pruned (see ``_has_separate_interactive_descendant``).
                 self._flush(depth)
                 for grand in child.children:
                     self._render_child(grand, depth, clip)
@@ -722,7 +741,61 @@ class DOMSerializer:
         if category == "input":
             value = self._input_value(node)
             return value if value else node.attributes.get("placeholder", "")
-        return self._label(node)
+        label = self._label(node)
+        # A composite control (e.g. a select box) often shows only its value or
+        # placeholder (“请选择”). Prefix the associated field label so the LLM
+        # can tell which field it is: “政治面貌：请选择”.
+        if category == "click" and self._has_field_input_descendant(node):
+            prefix = self._associated_field_label(node)
+            if prefix and prefix not in label:
+                label = f"{prefix}：{label}" if label else prefix
+        return label
+
+    def _has_field_input_descendant(self, node: EnhancedNode) -> bool:
+        """True if ``node`` wraps a form field (input / textarea / select)."""
+        for child in node.children:
+            if child.is_text or not child.is_element:
+                continue
+            if child.tag in ("input", "textarea", "select"):
+                return True
+            if child.attributes.get("contenteditable") in ("", "true", "plaintext-only"):
+                return True
+            if self._has_field_input_descendant(child):
+                return True
+        return False
+
+    def _associated_field_label(self, node: EnhancedNode) -> str:
+        """Find the field label associated with a form control.
+
+        Component libraries usually wrap a control as
+        ``<div class="form-item"><div class="...title"><label>政治面貌</label>
+        </div><div class="...control">…control…</div></div>``. Walk up a few
+        ancestor levels and take the nearest sibling subtree's ``<label>`` text.
+        """
+        branch = node
+        ancestor = node.parent
+        hops = 0
+        while ancestor is not None and hops < 8:
+            for sibling in ancestor.children:
+                if sibling is branch or not sibling.is_element:
+                    continue
+                text = self._find_label_text(sibling)
+                if text:
+                    return self._truncate(text, 40)
+            branch = ancestor
+            ancestor = ancestor.parent
+            hops += 1
+        return ""
+
+    def _find_label_text(self, node: EnhancedNode) -> str:
+        if node.tag == "label":
+            return self._collect_text(node)
+        for child in node.children:
+            if child.is_element:
+                text = self._find_label_text(child)
+                if text:
+                    return text
+        return ""
 
     def _interactive_text(
         self, node: EnhancedNode, category: str, name: str
@@ -757,7 +830,15 @@ class DOMSerializer:
                 nested = self._collect_text(child)
                 if nested:
                     parts.append(nested)
-        joined = " ".join(" ".join(parts).split())
+        # Composite controls often repeat the same text in several sibling
+        # nodes (e.g. a select renders its value in a calc/placeholder/tip
+        # span). Collapse adjacent duplicates so the label stays readable.
+        deduped: list[str] = []
+        for part in parts:
+            if deduped and part == deduped[-1]:
+                continue
+            deduped.append(part)
+        joined = " ".join(" ".join(deduped).split())
         return self._truncate(joined)
 
     def _truncate(self, text: str, limit: int = 100) -> str:
@@ -786,6 +867,46 @@ class DOMSerializer:
             if child.is_element and classify(child):
                 return True
             if self._has_interactive_descendant(child):
+                return True
+        return False
+
+    def _is_separate_control(self, node: EnhancedNode) -> bool:
+        """True if ``node`` is an independent control, not a mere internal part.
+
+        Used to tell a clickable *wrapper* (whose children are the real,
+        separately-callable controls — prune it) from a composite control such
+        as ``.phoenix-select`` (the box itself is the entry; its placeholder and
+        bare typeahead input are internal parts, so name the box).
+
+        A descendant only counts as separate when it is interactive via a
+        *semantic* signal (``a``/``button``/``select``/``textarea``/``summary``,
+        an action ``input`` type, an ARIA control role, ``contenteditable``, or a
+        separate scroll/drag capability). Elements that are merely
+        ``cursor:pointer`` (e.g. a placeholder), and a plain text input with no
+        value / placeholder / accessible name (a typeahead field), do not count.
+        """
+        if not node.is_element or node.hidden or not node.visible or not node.in_viewport:
+            return False
+        if node.tag in ("a", "button", "select", "textarea", "summary"):
+            return True
+        if node.tag == "input":
+            itype = node.attributes.get("type", "text").lower()
+            if itype in CLICKABLE_INPUT_TYPES:
+                return True
+            return bool(node.input_value or node.attributes.get("placeholder"))
+        if node.role in CLICKABLE_ROLES:
+            return True
+        if node.attributes.get("contenteditable") in ("", "true", "plaintext-only"):
+            return True
+        return classify(node) in ("scroll", "drag")
+
+    def _has_separate_interactive_descendant(self, node: EnhancedNode) -> bool:
+        for child in node.children:
+            if child.is_text:
+                continue
+            if self._is_separate_control(child):
+                return True
+            if self._has_separate_interactive_descendant(child):
                 return True
         return False
 
