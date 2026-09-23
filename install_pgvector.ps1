@@ -11,11 +11,14 @@
 # 参数：
 #   -UsePrebuilt  跳过源码编译，直接使用预编译包
 #   -AssumeYes    回退到预编译包时不再询问确认（自动化用）
+#   -Status       仅检测模式：非交互、不下载、不提权，只判断 PostgreSQL 与 pgvector 状态后退出。
+#                 供 setup.ps1 决定「是否需要询问安装」。退出码：0=已装；1=有 PG 但未装；2=未找到 PG。
 
 [CmdletBinding()]
 param(
     [switch]$UsePrebuilt,
-    [switch]$AssumeYes
+    [switch]$AssumeYes,
+    [switch]$Status
 )
 
 $ErrorActionPreference = 'Stop'
@@ -339,6 +342,26 @@ function Show-InstallResult {
     Write-Info ("       share\extension\vector--*.sql  : " + $(if ($okSql) { '存在' } else { '缺失' }))
 
     return ($okControl -and $okDll -and $okSql)
+}
+
+# ---------- 仅检测模式（供 setup.ps1 判断是否需要询问安装）----------
+# 非交互、不下载、不提权：只判定「能否找到 PostgreSQL」「是否已装 pgvector」。
+# 退出码：0 = 已安装；1 = 找到 PostgreSQL 但未安装；2 = 未找到 PostgreSQL。
+if ($Status) {
+    $cands = @(Get-PgRootCandidates | Where-Object { Test-PgRoot $_ })
+    if (-not $cands) {
+        Write-Host '[检测] 未找到 PostgreSQL 安装目录。'
+        exit 2
+    }
+    $installedRoots = @($cands | Where-Object {
+        Test-Path (Join-Path $_ 'share\extension\vector.control')
+    })
+    if ($installedRoots.Count -gt 0) {
+        Write-Host "[检测] pgvector 已安装：$($installedRoots[0])"
+        exit 0
+    }
+    Write-Host "[检测] 已找到 PostgreSQL，但未检测到 pgvector：$($cands[0])"
+    exit 1
 }
 
 # ---------- 提权 ----------

@@ -101,24 +101,46 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host '             可在重装 Python 时勾选 "tcl/tk and IDLE" 修复该组件。'
 }
 
-# ---------- 5. 可选：一键安装 pgvector ----------
+# ---------- 5. 可选：一键安装 pgvector（已安装 / 无 PostgreSQL 则跳过询问）----------
 Write-Host ''
-Write-Host '[5/6] 是否顺便一键安装 PostgreSQL 的 pgvector 扩展？（程序的长期记忆需要它）'
-Write-Host '       说明：会自动识别 PostgreSQL 安装目录与 Visual Studio 编译环境；'
-Write-Host '             没有编译环境时会询问是否使用社区预编译包（会有风险提示）。'
-$pgvAns = Read-Host '       输入 Y 立即安装，直接回车跳过 [Y/N]'
-if ($pgvAns -match '^(y|yes)$') {
-    try {
-        & "$PSScriptRoot\install_pgvector.ps1"
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host '       [提示] pgvector 安装未成功完成，可稍后单独双击 install_pgvector.bat 重试。'
-        }
-    } catch {
-        Write-Host "       [提示] pgvector 安装过程出错：$($_.Exception.Message)"
-        Write-Host '             可稍后单独双击 install_pgvector.bat 重试。'
+Write-Host '[5/6] 检查 PostgreSQL 的 pgvector 扩展（程序的长期记忆需要它）...'
+$pgvState = 'unknown'   # installed | missing | nopg | unknown
+try {
+    & "$PSScriptRoot\install_pgvector.ps1" -Status
+    switch ($LASTEXITCODE) {
+        0 { $pgvState = 'installed' }
+        1 { $pgvState = 'missing' }
+        2 { $pgvState = 'nopg' }
+        default { $pgvState = 'unknown' }
     }
+} catch {
+    $pgvState = 'unknown'
+}
+
+if ($pgvState -eq 'installed') {
+    Write-Host '       已检测到 pgvector，无需重复安装，跳过。'
+} elseif ($pgvState -eq 'nopg') {
+    Write-Host '       未检测到 PostgreSQL 安装，跳过（安装 PostgreSQL 后可双击 install_pgvector.bat 单独安装）。'
 } else {
-    Write-Host '       已跳过。稍后可双击 install_pgvector.bat 单独安装。'
+    if ($pgvState -eq 'unknown') {
+        Write-Host '       未能自动确认 pgvector 状态；如已安装可直接回车跳过。'
+    }
+    Write-Host '       说明：会自动识别 PostgreSQL 安装目录与 Visual Studio 编译环境；'
+    Write-Host '             没有编译环境时会询问是否使用社区预编译包（会有风险提示）。'
+    $pgvAns = Read-Host '       输入 Y 立即安装，直接回车跳过 [Y/N]'
+    if ($pgvAns -match '^(y|yes)$') {
+        try {
+            & "$PSScriptRoot\install_pgvector.ps1"
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host '       [提示] pgvector 安装未成功完成，可稍后单独双击 install_pgvector.bat 重试。'
+            }
+        } catch {
+            Write-Host "       [提示] pgvector 安装过程出错：$($_.Exception.Message)"
+            Write-Host '             可稍后单独双击 install_pgvector.bat 重试。'
+        }
+    } else {
+        Write-Host '       已跳过。稍后可双击 install_pgvector.bat 单独安装。'
+    }
 }
 
 # ---------- 6. 打包 exe ----------
