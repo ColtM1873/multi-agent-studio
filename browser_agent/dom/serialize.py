@@ -400,10 +400,22 @@ class DOMSerializer:
             # Recurse transparently instead of pruning the whole subtree; the
             # node's own (invisible / off-screen) text is skipped, and each
             # descendant is still filtered by its own visibility/viewport box.
-            for grand in child.children:
-                if not grand.is_text:
-                    self._render_child(grand, depth, clip)
-            return
+            if child.visible or not self._effective_opacity_zero(child):
+                for grand in child.children:
+                    if not grand.is_text:
+                        self._render_child(grand, depth, clip)
+                return
+            # A zero-area node that is fully transparent (``opacity: 0`` on
+            # itself or an ancestor) is real content caught mid-enter-animation:
+            # component libraries mount a dropdown / menu / tooltip, then start
+            # its open animation on the next frame, so a capture taken during
+            # that frame sees a rendered-but-unlaid-out subtree. Pure viewport
+            # pruning then dropped it entirely, and the model saw
+            # “（页面无变化）” after clicking a select even though the option
+            # list was right there. Fall through and serialize it as if visible
+            # so the options get named (and stay clickable); a genuine collapsed
+            # element keeps ``opacity: 1`` and still recurses box-only below.
+            pass
 
         level = self._heading_level(child)
         if level:
@@ -838,6 +850,32 @@ class DOMSerializer:
         x, y, w, h = node.bbox
         cx, cy, cw, ch = clip
         return not (x + w < cx - 2 or x > cx + cw + 2 or y + h < cy - 2 or y > cy + ch + 2)
+
+    @staticmethod
+    def _effective_opacity_zero(node: EnhancedNode) -> bool:
+        """True if ``node`` or any ancestor is fully transparent (``opacity: 0``).
+
+        Used to tell a *not yet laid out* subtree from a genuinely collapsed one
+        (see ``_render_child``): an element being animated in by a component
+        library has its own computed ``opacity`` at 0 during the animation's
+        first frame, while its descendants keep ``opacity: 1`` (opacity does not
+        inherit as a computed value). A collapsed element (``height: 0`` behind
+        ``overflow: hidden``) keeps ``opacity: 1`` on every ancestor, so it is
+        never mistaken for transient content.
+        """
+        current: Optional[EnhancedNode] = node
+        hops = 0
+        while current is not None and hops < 12:
+            opacity = current.styles.get("opacity")
+            if opacity is not None:
+                try:
+                    if float(opacity) <= 0.01:
+                        return True
+                except (TypeError, ValueError):
+                    pass
+            current = current.parent
+            hops += 1
+        return False
 
     def _heading_level(self, node: EnhancedNode) -> int:
         if node.tag in HEADING_TAGS:

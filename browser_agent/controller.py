@@ -871,6 +871,7 @@ class BrowserController:
 
         # ---- up-front validation (nothing runs if this fails) ----
         plan: list[tuple[str, str, int]] = []  # (name, category, backendNodeId)
+        typeahead_names: list[str] = []
         for name in fill_names:
             node, err = self._resolve_interactive_node(registry, tree, name)
             if err:
@@ -883,6 +884,9 @@ class BrowserController:
                     f"互动元素 {name} 不是可填入元素",
                     include_tabs=False,
                 )
+            if node.role == "combobox" and "readonly" not in node.attributes:
+                # Searchable select's typeahead: typing only filters candidates.
+                typeahead_names.append(name)
             plan.append((name, "input", node.backend_node_id))
         click_may_nav = False
         if has_click:
@@ -981,6 +985,12 @@ class BrowserController:
         else:
             new_tree = self.capture_tree(target_id)
             notice = self._title_change_notice(target_id, old_name)
+            if typeahead_names:
+                notice += (
+                    "[提示] 以下元素是「可搜索下拉」："
+                    + "、".join(typeahead_names)
+                    + "。仅输入不会提交选择，请在随后出现的候选项里点击目标项才算填入。\n"
+                )
             content = self._incremental_content(
                 old_lines, new_tree, target_id, notice, old_url=tree.url
             )
@@ -1040,6 +1050,46 @@ class BrowserController:
             timeout=timeout,
             interval=cfg.nav.probe_interval,
         )
+        self._wait_pending_motion(session)
+
+    # A popup (dropdown / menu / date panel) is mounted first and its open
+    # animation starts on the *next* animation frame. In a backgrounded or
+    # otherwise throttled tab that frame can be delayed by hundreds of
+    # milliseconds, so the DOM looks quiet (its classes are stable at the
+    # ``*-prepare`` first frame) while the popup is still fully transparent and
+    # unlaid-out — a capture then drops its options entirely and the model is
+    # told “（页面无变化）” after clicking a select. Give such a pending motion a
+    # short, bounded chance to finish; if it never does, the serializer still
+    # surfaces the transparent subtree (``_effective_opacity_zero``).
+    _MOTION_SETTLE_SECONDS = 0.35
+    _PENDING_MOTION_PROBE = (
+        "(() => { try {"
+        "const cls = document.querySelectorAll("
+        "'[class*=\"-enter-prepare\"],[class*=\"-appear-prepare\"],"
+        "[class*=\"-enter-active\"],[class*=\"-appear-active\"]').length;"
+        "const anim = document.getAnimations().filter(a => {"
+        "const t = a.effect && a.effect.getComputedTiming && a.effect.getComputedTiming();"
+        "return a.playState === 'running' && t && isFinite(t.endTime) && t.endTime < 3000;"
+        "}).length; return cls + anim; } catch (e) { return 0; } })()"
+    )
+
+    def _wait_pending_motion(self, session: str) -> None:
+        assert self.client is not None
+        deadline = time.time() + self._MOTION_SETTLE_SECONDS
+        while time.time() < deadline:
+            try:
+                result = self.client.send(
+                    "Runtime.evaluate",
+                    {"expression": self._PENDING_MOTION_PROBE, "returnByValue": True},
+                    session_id=session,
+                    timeout=timing.get().cdp.probe_timeout,
+                )
+                pending = int((result.get("result") or {}).get("value") or 0)
+            except Exception:
+                return
+            if pending <= 0:
+                return
+            time.sleep(timing.get().nav.settle_poll_interval)
 
     def _stabilize(self, target_id: str) -> None:
         assert self.client is not None
