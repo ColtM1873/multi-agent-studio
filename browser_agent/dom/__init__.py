@@ -14,7 +14,7 @@ from .classify import (
     is_scrollable,
 )
 from .diff import changed_lines, compute_diff, compute_lost, format_lines, format_lost
-from .registry import NameRegistry
+from .registry import NameCounter, NameRegistry
 from .serialize import DOMSerializer, OutLine
 
 __all__ = [
@@ -40,6 +40,7 @@ __all__ = [
     "compute_lost",
     "format_lost",
     "NameRegistry",
+    "NameCounter",
     "DOMSerializer",
     "OutLine",
 ]

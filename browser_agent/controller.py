@@ -15,6 +15,7 @@ from .dom import (
     DOMSerializer,
     EnhancedNode,
     EnhancedTree,
+    NameCounter,
     NameRegistry,
     OutLine,
     build_enhanced_tree,
@@ -123,6 +124,10 @@ class BrowserController:
         self.client: Optional[CDPClient] = None
         self.focused_target_id: Optional[str] = None
         self._registries: dict[str, NameRegistry] = {}
+        # One counter for every tab: element numbers are globally unique, so the
+        # LLM can never confuse ``e17`` on one tab with a different element on
+        # another (each tab still owns its name maps / active set).
+        self._name_counter = NameCounter()
         self._prev_trees: dict[str, EnhancedTree] = {}
         self._tab_registry = TabRegistry()
         self._last_error: str = ""
@@ -257,7 +262,7 @@ class BrowserController:
     # ------------------------------------------------------------------ #
     def _registry_for(self, target_id: str) -> NameRegistry:
         if target_id not in self._registries:
-            self._registries[target_id] = NameRegistry()
+            self._registries[target_id] = NameRegistry(self._name_counter)
         return self._registries[target_id]
 
     def capture_tree(self, target_id: Optional[str] = None) -> EnhancedTree:
