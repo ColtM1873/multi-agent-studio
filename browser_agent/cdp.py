@@ -83,6 +83,27 @@ class CDPClient:
             raise CDPError(f"CDP 命令失败 {method}: {slot['error']}")
         return slot["result"] or {}
 
+    def send_nowait(
+        self, method: str, params: Optional[dict] = None, session_id: Optional[str] = None
+    ) -> None:
+        """Send a command without waiting for (or tracking) its response.
+
+        For "fire and forget" traffic such as intermediate mouse moves: the
+        effect happens in Chrome regardless of when the ACK returns, so a slow
+        ACK must not block the caller. We still allocate an id (JSON-RPC needs
+        one) but never register a pending slot — a late response finds no slot
+        and is harmlessly ignored. Command ordering is preserved because every
+        message goes over the same WebSocket under the send lock.
+        """
+        with self._id_lock:
+            self._next_id += 1
+            msg_id = self._next_id
+        message: dict[str, Any] = {"id": msg_id, "method": method, "params": params or {}}
+        if session_id:
+            message["sessionId"] = session_id
+        with self._send_lock:
+            self._ws.send(json.dumps(message))
+
     def on(self, method: str, callback: Callable[[dict], None]) -> None:
         self._event_handlers[method].append(callback)
 

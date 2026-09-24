@@ -258,6 +258,56 @@ def is_cursor_pointer_only(node: EnhancedNode) -> bool:
     return node.styles.get("cursor") == "pointer"
 
 
+def _inside_form(node: EnhancedNode) -> bool:
+    """True if ``node`` has a ``<form>`` ancestor (so submit controls navigate)."""
+    current = node.parent
+    while current is not None:
+        if current.is_element and current.tag == "form":
+            return True
+        current = current.parent
+    return False
+
+
+# ``href`` values that never cause a document navigation.
+_NON_NAV_HREF_PREFIXES = ("javascript:", "#", "mailto:", "tel:", "sms:", "blob:")
+
+
+def may_navigate(node: EnhancedNode) -> bool:
+    """Heuristic: could clicking ``node`` trigger a *document* navigation?
+
+    Used by the controller to decide how long to wait for a navigation to begin.
+    Elements that can navigate (links, form submit controls, ``role=link``) keep
+    the full grace window; everything else (plain buttons / icons / ``cursor``
+    divs) uses a short grace — they almost never navigate, and waiting the full
+    window is the single largest source of click latency. This is deliberately
+    conservative: when unsure it returns ``False`` only for genuinely inert
+    shapes, and same-document (``#``) navigations are still caught by the
+    ``navigatedWithinDocument`` event regardless of this result.
+    """
+    if node is None or not node.is_element or _is_disabled(node):
+        return False
+    attrs = node.attributes or {}
+    tag = (node.tag or "").lower()
+
+    if tag in ("a", "area"):
+        if attrs.get("download") is not None:
+            return False
+        href = (attrs.get("href") or "").strip().lower()
+        if href and not href.startswith(_NON_NAV_HREF_PREFIXES):
+            return True
+
+    if tag in ("button", "input") and _inside_form(node):
+        itype = (attrs.get("type") or ("submit" if tag == "button" else "")).lower()
+        if itype in ("submit", "image"):
+            return True
+
+    if attrs.get("formaction"):
+        return True
+    if (node.role or "") == "link":
+        return True
+    return False
+
+
 def classify(node: EnhancedNode) -> str:
     """Return the primary interactive category, or '' if none."""
     if is_input(node):

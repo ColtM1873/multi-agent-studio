@@ -21,10 +21,20 @@ from typing import Any
 class NavTiming:
     """导航与稳定化（对交互延迟影响最大）。"""
 
+    # 可能触发跳转的元素（a[href]/表单提交/role=link…）点击后，等导航“开始”的上限。
     grace_seconds: float = 4.0
+    # 不可能触发跳转的元素（普通按钮/图标等）点击后，等导航“开始”的短宽限。
+    # 这类元素几乎不会真正导航，等满 grace_seconds 纯属浪费；短宽限 + 判稳兜底即可。
+    short_grace_seconds: float = 0.6
+    # 导航已“开始”后，等待新文档提交（Page.frameNavigated）的上限（通常瞬时）。
+    commit_timeout: float = 2.0
+    # 新文档提交后，额外等待 loadEventFired 的上限；load 已触发则立即返回。
+    # 用于给异步内容一点时间，但不再像旧版那样为“load 迟迟不来”死等 15s。
+    load_grace_seconds: float = 1.5
+    # 新标签页首次就绪 / 空壳页面等待正文的超时（站点很慢时可调大）。
     load_timeout: float = 15.0
     quiet_seconds: float = 0.7
-    quiet_timeout: float = 6.0
+    quiet_timeout: float = 2.0
     probe_interval: float = 0.15
     settle_poll_interval: float = 0.05
 
@@ -47,6 +57,10 @@ class CdpTiming:
     command_timeout: float = 30.0
     probe_timeout: float = 3.0
     outer_html_timeout: float = 20.0
+    # 输入事件（鼠标移动/按下/松开）的等待上限。输入事件是“发了就算数”的
+    # 最佳努力操作：个别事件 ack 延迟（在部分机器上曾观察到单次卡 3~5s）
+    # 时不应把整个点击拖成几十秒，超时就跳过等待继续下一步。
+    input_timeout: float = 2.0
 
 
 @dataclass

@@ -28,6 +28,7 @@ from .dom import (
     format_lost,
     is_control_icon,
     is_cursor_pointer_only,
+    may_navigate,
     read_outer_html,
 )
 from .launcher import BrowserLauncher, BrowserLaunchError
@@ -69,6 +70,37 @@ _SHELL_TAGS = {
 # 所有时长（导航宽限、加载超时、判稳静默窗、轮询间隔、命令超时、拟人停顿…）
 # 统一由 ``browser_agent.timing`` 提供，app 层可在每次调用前按设置覆盖。
 # 见 ``timing.NavTiming`` 等；此处不再保留硬编码常量。
+
+
+def _href_targets_same_document(node: EnhancedNode, page_url: str) -> bool:
+    """True if ``node`` is a link whose target is the current document.
+
+    A same-path/query link (only the fragment may differ) is a *same-document*
+    navigation: clicking it either fires ``navigatedWithinDocument`` (caught by
+    the soft event) or does nothing at all (clicking the currently-active nav
+    item). Either way it must NOT pay the full navigation grace window. Without
+    this, an active nav link cost the whole ``grace_seconds`` on every click.
+    """
+    href = ((node.attributes or {}).get("href") or "").strip()
+    if not href or href.lower().startswith(
+        ("javascript:", "mailto:", "tel:", "sms:", "blob:")
+    ):
+        return False
+    try:
+        from urllib.parse import urljoin, urlsplit
+
+        base = urlsplit(page_url or "")
+        target = urlsplit(urljoin(page_url or "", href))
+    except Exception:  # noqa: BLE001
+        return False
+    if not base.scheme or not target.scheme:
+        return False
+    return (
+        target.scheme == base.scheme
+        and target.netloc == base.netloc
+        and target.path == base.path
+        and target.query == base.query
+    )
 
 
 class _ContainerScroller:
@@ -471,9 +503,15 @@ class BrowserController:
                 # from a no-op (a serialized diff would be polluted by the
                 # ``:hover`` the move induces, the raw markup is not).
                 before_sig = executor.dom_signature() if retry_id is not None else ""
+                # A same-document link (active nav item / in-page hash) must not
+                # pay the full navigation grace: it either fires a soft event or
+                # does nothing.
+                click_may_nav = may_navigate(node)
+                if click_may_nav and _href_targets_same_document(node, old_tree.url):
+                    click_may_nav = False
                 with self._watch_navigation(session) as nav_state:
                     executor.click(node.backend_node_id)
-                    self._settle_navigation(session, nav_state)
+                    self._settle_navigation(session, nav_state, click_may_nav)
                 if retry_id is not None and before_sig:
                     if executor.dom_signature() == before_sig:
                         # The (named) label did nothing; the real control is the
@@ -688,6 +726,7 @@ class BrowserController:
                     include_tabs=False,
                 )
             plan.append((name, "input", node.backend_node_id))
+        click_may_nav = False
         if has_click:
             node, err = self._resolve_interactive_node(registry, tree, click_name)
             if err:
@@ -700,6 +739,9 @@ class BrowserController:
                     f"互动元素 {click_name} 不是可点击元素",
                     include_tabs=False,
                 )
+            click_may_nav = may_navigate(node)
+            if click_may_nav and _href_targets_same_document(node, tree.url):
+                click_may_nav = False
             plan.append((click_name, "click", node.backend_node_id))
 
         # ---- serial execution ----
@@ -739,7 +781,7 @@ class BrowserController:
                     return self._base_result(
                         INCREMENTAL, FAIL, "无", error_msg, include_tabs=False
                     )
-                self._settle_navigation(session, nav_state)
+                self._settle_navigation(session, nav_state, click_may_nav)
         else:
             _run_plan()
             if error_msg and success_count == 0:
@@ -881,12 +923,14 @@ class BrowserController:
     def _watch_navigation(self, session: str):
         """Watch CDP navigation events for ``session`` while an action runs.
 
-        Yields a state dict with ``hard`` (real document navigation),
-        ``soft`` (same-document / SPA route change) and ``load`` events.
+        Yields a state dict with ``start`` (a real document navigation began),
+        ``commit`` (a real document navigation committed), ``soft``
+        (same-document / SPA route change) and ``load`` events.
         """
         assert self.client is not None
         state = {
-            "hard": threading.Event(),
+            "start": threading.Event(),
+            "commit": threading.Event(),
             "soft": threading.Event(),
             "load": threading.Event(),
         }
@@ -922,8 +966,8 @@ class BrowserController:
             return handle
 
         watchers = [
-            ("Page.frameStartedLoading", _handler(state["hard"], True)),
-            ("Page.frameNavigated", _handler(state["hard"], True)),
+            ("Page.frameStartedLoading", _handler(state["start"], True)),
+            ("Page.frameNavigated", _handler(state["commit"], True)),
             ("Page.navigatedWithinDocument", _handler(state["soft"], True)),
             ("Page.loadEventFired", _handler(state["load"], False)),
         ]
@@ -935,24 +979,58 @@ class BrowserController:
             for method, handler in watchers:
                 self.client.off(method, handler)
 
-    def _settle_navigation(self, session: str, state: dict) -> None:
+    def _settle_navigation(
+        self, session: str, state: dict, may_navigate: bool = True
+    ) -> None:
         """Settle the page after an action, tolerating an induced navigation.
 
-        Waits ``timing.get().nav.grace_seconds`` for a navigation to begin; if a
-        real navigation starts, waits for its load event first. Then always waits
+        Waits up to ``grace_seconds`` (or the shorter ``short_grace_seconds``
+        when the acted element cannot navigate) for a navigation to *begin*.
+        If a real navigation begins, waits for it to *commit*
+        (``Page.frameNavigated``) and then — only if ``load`` has not already
+        fired — a short additional ``load_grace_seconds``. It deliberately does
+        NOT wait the old 15 s ``load_timeout`` here: clicks on SPAs that never
+        fire ``load`` used to block for the whole 15 s. Finally it always waits
         for the DOM to go quiet (covers same-document route changes and async
         rendering as well).
         """
         cfg = timing.get().nav
-        deadline = time.time() + cfg.grace_seconds
+        grace = cfg.grace_seconds if may_navigate else cfg.short_grace_seconds
+        deadline = time.time() + grace
         while time.time() < deadline:
-            if state["hard"].is_set() or state["soft"].is_set() or state["load"].is_set():
+            if (
+                state["start"].is_set()
+                or state["commit"].is_set()
+                or state["soft"].is_set()
+                or state["load"].is_set()
+            ):
                 break
             time.sleep(cfg.settle_poll_interval)
 
-        if state["hard"].is_set():
-            state["load"].wait(cfg.load_timeout)
+        saw_nav = state["start"].is_set() or state["commit"].is_set()
+        # Only a *document* navigation (hard) needs a commit / load wait. A
+        # same-document route change ("soft") also emits ``frameStartedLoading``
+        # on some sites, yet has no commit or load to wait for — treating it as
+        # hard used to cost seconds on every SPA click.
+        hard = saw_nav and not state["soft"].is_set()
+        if hard:
+            if not state["commit"].is_set():
+                state["commit"].wait(cfg.commit_timeout)
+            if not state["load"].is_set():
+                state["load"].wait(cfg.load_grace_seconds)
         self._wait_for_content(session)
+
+        # Safety net for the short-grace path: if a *document* navigation only
+        # began during the quiet window (so the grace loop never saw it), wait
+        # for its commit and settle again. Costs nothing on the common path.
+        if (
+            not saw_nav
+            and (state["start"].is_set() or state["commit"].is_set())
+            and not state["commit"].is_set()
+            and not state["soft"].is_set()
+        ):
+            state["commit"].wait(cfg.commit_timeout)
+            self._quiet(session)
 
     # ------------------------------------------------------------------ #
     # result dicts

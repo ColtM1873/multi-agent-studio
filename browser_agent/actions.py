@@ -11,7 +11,7 @@ import random
 import time
 from typing import Optional
 
-from .cdp import CDPClient
+from .cdp import CDPClient, CDPError
 from . import timing
 
 
@@ -35,6 +35,37 @@ class ActionExecutor:
     def _send(self, method: str, params: dict) -> dict:
         return self.client.send(method, params, session_id=self.session)
 
+    def _send_input(self, method: str, params: dict) -> None:
+        """Send an input event best-effort with a short timeout.
+
+        Input events are "fire and forget": once handed to Chrome the effect
+        happens regardless of when/if the ACK arrives. On some machines the ACK
+        for a single ``Input.dispatchMouseEvent`` can be delayed by seconds;
+        waiting on it would turn a ~20-step human-like mouse move into tens of
+        seconds. We bound the wait (``timing.cdp.input_timeout``) and ignore a
+        timeout — the next step proceeds and a late ACK is matched to a slot
+        that no longer exists (harmlessly ignored).
+        """
+        try:
+            self.client.send(
+                method, params, session_id=self.session,
+                timeout=timing.get().cdp.input_timeout,
+            )
+        except CDPError:
+            pass
+
+    def _send_input_nowait(self, method: str, params: dict) -> None:
+        """Send an input event without waiting for its ACK at all.
+
+        Used for intermediate mouse moves: they are pure cosmetics, so a slow
+        ACK must never stall the action. Ordering is preserved by the shared
+        WebSocket, and the click itself is detected by the DOM diff afterwards.
+        """
+        try:
+            self.client.send_nowait(method, params, session_id=self.session)
+        except Exception:  # noqa: BLE001 - best effort
+            pass
+
     def _dispatch_mouse(
         self,
         event_type: str,
@@ -57,7 +88,14 @@ class ActionExecutor:
         if event_type == "mouseWheel":
             params["deltaX"] = delta_x
             params["deltaY"] = delta_y
-        self._send("Input.dispatchMouseEvent", params)
+            self._send_input("Input.dispatchMouseEvent", params)
+            return
+        if event_type == "mouseMoved":
+            # Intermediate move: fire-and-forget so a slow ACK cannot stall a
+            # multi-step human-like move (observed up to seconds per event).
+            self._send_input_nowait("Input.dispatchMouseEvent", params)
+            return
+        self._send_input("Input.dispatchMouseEvent", params)
 
     def _resolve(self, backend_node_id: int) -> Optional[str]:
         try:
@@ -404,15 +442,15 @@ class ActionExecutor:
     # keyboard helpers
     # ------------------------------------------------------------------ #
     def _type_char(self, char: str) -> None:
-        self._send(
+        self._send_input(
             "Input.dispatchKeyEvent",
             {"type": "keyDown", "text": char, "unmodifiedText": char, "key": char},
         )
-        self._send("Input.dispatchKeyEvent", {"type": "keyUp", "key": char})
+        self._send_input("Input.dispatchKeyEvent", {"type": "keyUp", "key": char})
 
     def _clear_field(self) -> None:
         for key, code, vk in (("a", "KeyA", 65), ("Delete", "Delete", 46)):
-            self._send(
+            self._send_input(
                 "Input.dispatchKeyEvent",
                 {
                     "type": "keyDown",
@@ -422,7 +460,7 @@ class ActionExecutor:
                     "modifiers": 2 if key == "a" else 0,
                 },
             )
-            self._send(
+            self._send_input(
                 "Input.dispatchKeyEvent",
                 {
                     "type": "keyUp",
