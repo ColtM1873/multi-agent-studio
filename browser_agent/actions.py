@@ -471,6 +471,10 @@ class ActionExecutor:
                 },
             )
 
+    def read_value(self, backend_node_id: int) -> Optional[str]:
+        """Public read of a node's current value (used to verify a fill landed)."""
+        return self._read_value(backend_node_id)
+
     def _read_value(self, backend_node_id: int) -> Optional[str]:
         object_id = self._resolve(backend_node_id)
         if not object_id:

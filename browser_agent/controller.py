@@ -103,6 +103,29 @@ def _href_targets_same_document(node: EnhancedNode, page_url: str) -> bool:
     )
 
 
+def _fills_same(requested: str, current: Optional[str]) -> bool:
+    """Heuristic: did a ``fill`` actually land in the field's current value?
+
+    Exact comparison is too strict — browsers / component libraries reformat a
+    typed date (``2027-06-01`` ⇄ ``2027/06/01``) or phone number — so compare the
+    alphanumeric skeleton. An empty request is never a check (``True``). A
+    ``None`` current value means the node could not be read: also ``True``, to
+    avoid a false failure.
+    """
+    if not requested:
+        return True
+    if current is None:
+        return True
+
+    def _norm(value: str) -> str:
+        return "".join(ch for ch in (value or "") if ch.isalnum())
+
+    wanted = _norm(requested)
+    if not wanted:
+        return True
+    return wanted in _norm(current)
+
+
 class _ContainerScroller:
     """Scrolls an element-level scroll container (``[可滚动元素 eN]``)."""
 
@@ -484,6 +507,7 @@ class BrowserController:
         old_focus = self.focused_target_id
         old_name = self._name_for_target(target_id)
         old_target_ids = {t["targetId"] for t in self._live_targets()}
+        fill_error = ""
 
         try:
             session = self.client.attach(target_id)
@@ -492,6 +516,20 @@ class BrowserController:
             if category == "input":
                 executor.input_text(node.backend_node_id, fill)
                 self._stabilize(target_id)
+                # A fill can be silently swallowed (a readonly input, or a date /
+                # time picker that only accepts calendar selection). Reporting
+                # success on an unchanged field sent the LLM into long, confused
+                # retries, so verify the value actually landed and fail loudly if
+                # it did not.
+                if fill:
+                    current = executor.read_value(node.backend_node_id)
+                    if not _fills_same(fill, current):
+                        fill_error = (
+                            f"元素 {name} 的填充未生效：填入了「{fill}」，"
+                            f"但控件当前值为「{current or '空'}」。"
+                            f"该控件可能是只读、或日期/时间选择器，无法用 fill 直接写入；"
+                            f"请点击它之后在弹出的选择器里选择，或改为对其它可输入元素填值。"
+                        )
             elif category == "drag":
                 executor.drag(node.backend_node_id, drag_pct)
                 self._stabilize(target_id)
@@ -552,7 +590,10 @@ class BrowserController:
             new_text = self.serialize_tree(new_tree, new_focus)
             if self._is_blank_shell(new_tree):
                 new_text = _BLANK_SHELL_NOTICE + new_text
-            return self._base_result(FULL, OK, new_text, include_tabs=True)
+            return self._base_result(
+                FULL, FAIL if fill_error else OK, new_text,
+                error=fill_error or "无", include_tabs=True,
+            )
 
         # The click may have opened a background tab without moving focus. The
         # focused page then looks unchanged and an incremental diff would read
@@ -561,14 +602,20 @@ class BrowserController:
         opened_names = self._opened_tab_names(old_target_ids)
         if opened_names:
             content = self._new_tab_notice(opened_names)
-            return self._base_result(INCREMENTAL, OK, content, include_tabs=True)
+            return self._base_result(
+                INCREMENTAL, FAIL if fill_error else OK, content,
+                error=fill_error or "无", include_tabs=True,
+            )
 
         new_tree = self.capture_tree(target_id)
         notice = self._title_change_notice(target_id, old_name)
         content = self._incremental_content(
             old_lines, new_tree, target_id, notice, old_url=old_tree.url
         )
-        return self._base_result(INCREMENTAL, OK, content, include_tabs=False)
+        return self._base_result(
+            INCREMENTAL, FAIL if fill_error else OK, content,
+            error=fill_error or "无", include_tabs=False,
+        )
 
     def _scroll_and_collect(
         self,
@@ -820,6 +867,19 @@ class BrowserController:
             else self._opened_tab_names(old_target_ids)
         )
 
+        # Verify the fills actually landed. Component-library pickers / readonly
+        # fields silently ignore a text fill; without this check the batch would
+        # be reported as fully successful while the fields stayed unchanged (the
+        # model then chases the mismatch for many turns).
+        failed_fills: list[tuple[str, Optional[str]]] = []
+        if not error_msg and not focus_changed and not opened_names:
+            for (fname, fcat, fbid), fval in zip(plan, fills):
+                if fcat != "input" or not fval:
+                    continue
+                current = executor.read_value(fbid)
+                if not _fills_same(fval, current):
+                    failed_fills.append((fname, current))
+
         if focus_changed:
             new_tree = self.capture_tree(new_focus)
             content = self.serialize_tree(new_tree, new_focus)
@@ -842,6 +902,16 @@ class BrowserController:
             action_ok = PARTIAL_FAIL if success_count > 0 else FAIL
             return self._base_result(
                 mode, action_ok, content, error=error_msg, include_tabs=include_tabs
+            )
+        if failed_fills:
+            msg = (
+                "以下元素的填充未生效："
+                + "、".join(f"{n}（当前值：{c or '空'}）" for n, c in failed_fills)
+                + "。它们可能是只读、或日期/时间选择器，无法用 fill 直接写入；"
+                "请点击它之后在弹出的选择器里选择，或改用其它可输入元素。"
+            )
+            return self._base_result(
+                mode, PARTIAL_FAIL, content, error=msg, include_tabs=include_tabs
             )
         return self._base_result(mode, OK, content, include_tabs=include_tabs)
 

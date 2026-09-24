@@ -31,6 +31,7 @@ from .classify import (
     has_svg_descendant,
     is_clickable,
     is_control_icon,
+    is_cursor_pointer_only,
 )
 from .registry import NameRegistry
 
@@ -208,6 +209,46 @@ _ACTION_HINTS = {
     "search", "upload", "download", "refresh", "reload", "play", "pause",
     "expand", "collapse", "toggle", "clear", "filter", "sort", "share",
     "copy", "home", "menu", "more", "help", "info", "settings", "select",
+}
+
+# Qualifiers that modify an action word and must be preserved when trimming a
+# class token from its first action word (``super-prev-btn`` ≠ ``prev-btn``).
+_QUALIFIER_HINTS = {
+    "super", "double", "half", "first", "last", "sub", "mini", "multi", "step",
+}
+
+# Common icon ``aria-label`` / ``alt`` names (Ant Design ``anticon``, Element UI,
+# Material icons …) mapped to a short, actionable Chinese label. Component
+# libraries label their icon-only controls with the *icon* name (`calendar`,
+# `close-circle`), which tells the LLM nothing about what the control does.
+_ICON_LABELS = {
+    "calendar": "打开日历",
+    "close-circle": "清除",
+    "close": "关闭",
+    "down": "展开",
+    "up": "收起",
+    "left": "向左",
+    "right": "向右",
+    "double-left": "最前",
+    "double-right": "最后",
+    "backward": "上一步",
+    "forward": "下一步",
+    "upload": "上传",
+    "download": "下载",
+    "search": "搜索",
+    "delete": "删除",
+    "plus": "新增",
+    "minus": "移除",
+    "check": "确认",
+    "eye": "查看",
+    "edit": "编辑",
+    "reload": "刷新",
+    "sync": "刷新",
+    "ellipsis": "更多",
+    "more": "更多",
+    "menu": "菜单",
+    "filter": "筛选",
+    "sort": "排序",
 }
 
 BBox = tuple[float, float, float, float]
@@ -469,6 +510,12 @@ class DOMSerializer:
                 self._flush(depth)
                 for grand in child.children:
                     self._render_child(grand, depth, clip)
+            elif category == "click" and self._is_redundant_choice_label(child):
+                # The text half of a native radio / checkbox option: it only looks
+                # clickable because it inherits ``cursor:pointer``; the sibling
+                # ``<input>`` already carries this exact label. Skip it so the
+                # option is not named twice.
+                return
             elif category == "click" and self._is_textual_click_only(child):
                 # A ``cursor:pointer`` element with no strong control descendant,
                 # no icon and only a long descriptive text run (e.g. Ant Design's
@@ -935,11 +982,23 @@ class DOMSerializer:
             value = node.attributes.get(attr)
             if value:
                 return self._truncate(value, 40)
-        tokens = [
-            token
-            for token in node.attributes.get("class", "").split()
-            if self._is_semantic_token(token)
-        ]
+        tokens = []
+        for token in node.attributes.get("class", "").split():
+            if self._is_semantic_token(token):
+                tokens.append(token)
+                continue
+            stripped = self._strip_framework_namespace(token)
+            if (
+                stripped != token
+                and self._is_semantic_token(stripped)
+                and any(hint in stripped for hint in _ACTION_HINTS)
+            ):
+                # A framework-namespaced but semantically named control class
+                # (``ant-picker-header-prev-btn``): strip the namespace so it can
+                # name the control instead of the useless generic "按钮". Pure
+                # state / utility classes (``ng-untouched``) are still rejected
+                # because their remainder carries no action word.
+                tokens.append(stripped)
         if not tokens:
             return ""
         hinted = [
@@ -951,8 +1010,13 @@ class DOMSerializer:
         parts = best.split("-")
         for index, part in enumerate(parts):
             if part in _ACTION_HINTS:
-                if index > 0:
-                    best = "-".join(parts[index:])
+                start = index
+                if index > 0 and parts[index - 1] in _QUALIFIER_HINTS:
+                    # Keep a meaningful qualifier so ``super-prev`` and ``prev``
+                    # (previous year vs previous month) stay distinguishable.
+                    start = index - 1
+                if start > 0:
+                    best = "-".join(parts[start:])
                 break
         return self._truncate(best, 40)
 
@@ -965,12 +1029,58 @@ class DOMSerializer:
             return False
         return all(ch.islower() or ch.isdigit() or ch == "-" for ch in token)
 
+    @staticmethod
+    def _strip_framework_namespace(token: str) -> str:
+        """Return ``token`` without a leading framework/CSS-in-JS namespace."""
+        for prefix in _FRAMEWORK_CLASS_PREFIXES:
+            if token.startswith(prefix):
+                return token[len(prefix) :]
+        return token
+
     def _is_choice_input(self, node: EnhancedNode) -> bool:
         """True for a native ``<input type=checkbox|radio>``."""
         return (
             node.tag == "input"
             and node.attributes.get("type", "").lower() in ("checkbox", "radio")
         )
+
+    def _is_redundant_choice_label(self, node: EnhancedNode) -> bool:
+        """True when ``node`` is merely the text half of an adjacent choice control.
+
+        Component libraries render a radio / checkbox option as
+        ``<label class="…"><span class="…"><input type=radio></span><span>男</span></label>``.
+        The trailing ``<span>男</span>`` is clickable only because it inherits the
+        row's ``cursor:pointer``; the real control is the ``<input>``, which
+        already drew its own label from that same text. Naming both produced
+        duplicate entries (``<可点击元素 e7>男</可点击元素 e7>`` next to
+        ``<可点击元素 e8>男</可点击元素 e8>``). Drop the text half in that case.
+        """
+        if not node.is_element or node.tag == "input":
+            return False
+        if not is_cursor_pointer_only(node):
+            return False
+        text = self._collect_text(node)
+        if not text:
+            return False
+        parent = node.parent
+        if parent is None:
+            return False
+        for sibling in parent.children:
+            if sibling is node or not sibling.is_element:
+                continue
+            for choice in self._iter_choice_inputs(sibling):
+                paired = self._pointer_sibling_label(choice) or self._nearby_text_label(choice)
+                if paired and paired == text:
+                    return True
+        return False
+
+    def _iter_choice_inputs(self, node: EnhancedNode):
+        """Yield every native checkbox / radio input in ``node``'s subtree."""
+        if self._is_choice_input(node):
+            yield node
+        for child in node.children:
+            if child.is_element:
+                yield from self._iter_choice_inputs(child)
 
     def _selection_state(self, node: EnhancedNode) -> Optional[bool]:
         """Whether ``node`` is a *selected* choice control, else ``None``.
@@ -1139,7 +1249,42 @@ class DOMSerializer:
             return False
         if has_svg_descendant(node):
             return False
-        return len(self._collect_text(node)) >= 60
+        if self._has_image_descendant(node):
+            # A file/attachment row (icon + name) inside a dropzone is a real
+            # (preview/remove) control, not descriptive copy.
+            return False
+        if len(self._collect_text(node)) >= 60:
+            return True
+        # A short ``cursor:pointer`` text node that sits inside a clickable
+        # container which already owns a real control (an upload dropzone's
+        # "支持…格式…" hint next to its button) is descriptive copy, not a
+        # control: naming it produced a no-op ``<可点击元素>``.
+        return is_cursor_pointer_only(node) and self._ancestor_owns_control(node)
+
+    def _has_image_descendant(self, node: EnhancedNode) -> bool:
+        for child in node.children:
+            if child.is_text:
+                continue
+            if self._is_image(child):
+                return True
+            if child.is_element and self._has_image_descendant(child):
+                return True
+        return False
+
+    def _ancestor_owns_control(self, node: EnhancedNode, max_hops: int = 6) -> bool:
+        """True if a clickable ancestor of ``node`` already contains a real control."""
+        current = node.parent
+        hops = 0
+        while current is not None and hops < max_hops:
+            if (
+                current.is_element
+                and classify(current) == "click"
+                and self._has_separate_interactive_descendant(current)
+            ):
+                return True
+            current = current.parent
+            hops += 1
+        return False
 
     def _has_strong_descendant(self, node: EnhancedNode) -> bool:
         """True if ``node`` wraps a descendant with an intrinsic control signal.
@@ -1210,15 +1355,24 @@ class DOMSerializer:
 
     def _label(self, node: EnhancedNode) -> str:
         if node.ax_name:
-            return self._truncate(node.ax_name)
+            return self._icon_label(node.ax_name) or self._truncate(node.ax_name)
         text = self._collect_text(node)
         if text:
             return text
         for attr in ("placeholder", "title", "aria-label", "alt", "name"):
             value = node.attributes.get(attr)
             if value:
-                return self._truncate(value)
+                return self._icon_label(value) or self._truncate(value)
         return ""
+
+    @staticmethod
+    def _icon_label(value: str) -> str:
+        """Map a bare icon name (``calendar`` / ``close-circle``) to Chinese.
+
+        Icon-only controls expose their *icon* name as the accessible name; the
+        mapping turns it into something the LLM can act on.
+        """
+        return _ICON_LABELS.get((value or "").strip().lower(), "")
 
     def _collect_text(self, node: EnhancedNode) -> str:
         parts: list[str] = []

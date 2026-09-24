@@ -311,12 +311,13 @@ def _walk(
                 viewport,
             )
         for shadow in node.get("shadowRoots", []) or []:
-            if enhanced.tag in _MEDIA_TAGS:
+            if enhanced.tag in _MEDIA_TAGS or enhanced.tag == "input":
                 # ``<video>``/``<audio>`` only expose browser-generated player
                 # chrome through their user-agent shadow root (dozens of
-                # duplicated "选项/全屏/静音/画中画" controls). Serializing it
-                # floods the LLM with noise and no page-authored content lives
-                # there, so skip the shadow subtree entirely.
+                # duplicated "选项/全屏/静音/画中画" controls), and ``<input>``
+                # (file inputs in particular) only expose UA shadow text such as
+                # "选择文件". Serializing it floods the LLM with noise and no
+                # page-authored content lives there, so skip the shadow subtree.
                 continue
             shadow_node = _walk_container(
                 shadow,
@@ -349,6 +350,11 @@ def _walk(
     elif node_type == 3:
         text = (node.get("nodeValue") or "").strip()
         if not text:
+            return
+        if parent.is_element and parent.tag == "input":
+            # ``<input>`` cannot have authored children; any text under it is
+            # browser user-agent shadow chrome (e.g. the file input's
+            # "选择文件 / No file chosen") leaking into the output.
             return
         text_node = EnhancedNode(
             node_id=node.get("nodeId", 0),
