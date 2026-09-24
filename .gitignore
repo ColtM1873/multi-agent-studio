@@ -39,3 +39,6 @@ INNER_DOCS_GUIDE.md
 /config.json
 /.chrome-profile/
 /browser_takeover_debug_logs/
+
+# 浏览器工具 debug 产物（含网页原始数据 / 用户 PII，本地保留，不入库）
+/debug_folder/
