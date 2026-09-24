@@ -167,6 +167,26 @@ _SEMANTIC_TOKEN_HINTS = (
     "save",
 )
 
+# Class-token prefixes emitted by framework/runtime/CSS-in-JS tooling. These are
+# never authored names: Angular state classes (``ng-untouched``/``ng-pristine``),
+# Vue scoped ids (``v-…``), Svelte/JSX hashes (``svelte-…``/``jsx-…``) and
+# generated style classes (``css-…``/``sc-…``). Treating them as semantic tokens
+# used to leak garbage labels such as ``ng-untouched`` onto empty form fields.
+_FRAMEWORK_CLASS_PREFIXES = (
+    "ng-",
+    "ngcontent",
+    "nghost",
+    "_ngcontent",
+    "_nghost",
+    "v-",
+    "vue-",
+    "svelte-",
+    "ember-",
+    "jsx-",
+    "css-",
+    "sc-",
+)
+
 # Action words inside a hyphenated class token. When present, the token is
 # trimmed from the first action word onward (``phoenix-calendar-prev-year-btn``
 # → ``prev-year-btn``), which is the part that actually names the control.
@@ -546,11 +566,22 @@ class DOMSerializer:
         name = self.registry.get_or_create(node)
         opening = f"<可点击元素 {name}>"
         closing = f"</可点击元素 {name}>"
+        before = len(self._lines)
         self._emit_header(depth, opening, (name,), closing)
         self._stack.append((depth, opening, closing))
         self._group(node, depth + 1, header, clip)
         self._stack.pop()
         self._emit_close(depth, closing)
+        # An interactive *structural* container that renders no content at all
+        # (``<可点击元素 eN>\n[列表]\n</可点击元素 eN>``) is pure noise: the LLM
+        # cannot tell what it does, and clicking it is a guess. Such wrappers come
+        # from empty chrome (a not-yet-populated autocomplete listbox carrying a
+        # ``tabindex``). Drop it entirely; if it later gains content it is named
+        # then.
+        if not any(
+            line.kind == "content" and line.text for line in self._lines[before + 1 : -1]
+        ):
+            del self._lines[before:]
 
     def _group_image(self, node: EnhancedNode, depth: int) -> None:
         self._emit_header(depth, "[图片]")
@@ -827,6 +858,10 @@ class DOMSerializer:
         if token:
             return token
         if category == "click":
+            if node.role == "combobox" or node.tag == "select":
+                return "下拉框"
+            if node.role == "option":
+                return "选项"
             if node.role == "button" or node.tag in ("button", "input"):
                 return "按钮"
             if node.tag == "a":
@@ -883,6 +918,9 @@ class DOMSerializer:
     @staticmethod
     def _is_semantic_token(token: str) -> bool:
         if len(token) < 3 or not token[0].isalpha() or not token[0].islower():
+            return False
+        # Framework/runtime state & generated-style classes are not names.
+        if token.startswith(_FRAMEWORK_CLASS_PREFIXES):
             return False
         return all(ch.islower() or ch.isdigit() or ch == "-" for ch in token)
 

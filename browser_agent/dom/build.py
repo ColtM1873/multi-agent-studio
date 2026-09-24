@@ -258,6 +258,14 @@ def _walk(
         ax = backend_to_ax.get(backend_id, {})
         styles = layout.get("styles", {})
         bbox = layout.get("bbox")
+        attributes = _flat_attrs(node.get("attributes"))
+        # Prefer the accessibility tree's computed role, but fall back to the
+        # explicit ``role`` attribute: ``getFullAXTree`` marks some nodes as
+        # ignored (empty role) even when they carry a real ARIA role. Without the
+        # fallback, ARIA-only controls (e.g. a jQuery-UI ``<li role="option">``
+        # autocomplete item with no ``<a>/<button>``) were never classified as
+        # interactive and degraded to plain text.
+        role = ax.get("role") or (attributes.get("role") or "").strip()
 
         enhanced = EnhancedNode(
             node_id=node.get("nodeId", 0),
@@ -265,8 +273,8 @@ def _walk(
             frame_id=node_frame,
             node_type=1,
             tag=(node.get("localName") or node.get("nodeName") or "").lower(),
-            attributes=_flat_attrs(node.get("attributes")),
-            role=ax.get("role", ""),
+            attributes=attributes,
+            role=role,
             ax_name=ax.get("name", ""),
             bbox=bbox,
             paint_order=layout.get("paint_order", 0),

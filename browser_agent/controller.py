@@ -40,6 +40,31 @@ FAIL = "失败"
 PARTIAL_FAIL = "部分失败"
 NOT_CALLED = "未进行互动元素调用"
 
+# Prepended to a full-DOM result when the document is still a bare skeleton
+# (``<html><head>…</head></html>``, no rendered body). Without it the LLM sees a
+# normal-looking page with "可互动元素 0 个" and wastes calls guessing.
+_BLANK_SHELL_NOTICE = (
+    "[页面可能仍在加载] 当前页面几乎为空（尚未渲染出正文）。"
+    "请稍等片刻后重试 tool_3_get_viewport_dom，或使用 tool_7_refresh 刷新。\n\n"
+)
+
+# Structural/document nodes that never count as "rendered body content".
+_SHELL_TAGS = {
+    "html",
+    "body",
+    "head",
+    "#document",
+    "#fragment",
+    "meta",
+    "link",
+    "title",
+    "script",
+    "style",
+    "base",
+    "noscript",
+    "template",
+}
+
 # 所有时长（导航宽限、加载超时、判稳静默窗、轮询间隔、命令超时、拟人停顿…）
 # 统一由 ``browser_agent.timing`` 提供，app 层可在每次调用前按设置覆盖。
 # 见 ``timing.NavTiming`` 等；此处不再保留硬编码常量。
@@ -353,11 +378,11 @@ class BrowserController:
         registry = self._registry_for(target_id)
         if registry.lookup(name) is None:
             return self._base_result(
-                INCREMENTAL, FAIL, "无", f"未知的互动元素名称 {name}", include_tabs=False
+                INCREMENTAL, FAIL, "无", self._unknown_name_message(name), include_tabs=False
             )
         if not registry.is_active(name):
             return self._base_result(
-                INCREMENTAL, FAIL, "无", "该互动元素已经不存在于viewport中了", include_tabs=False
+                INCREMENTAL, FAIL, "无", self._stale_name_message(name), include_tabs=False
             )
 
         old_tree = self._prev_trees.get(target_id) or self.capture_tree(target_id)
@@ -365,7 +390,7 @@ class BrowserController:
         node = next((n for n in old_tree.nodes if n.key == key), None)
         if node is None:
             return self._base_result(
-                INCREMENTAL, FAIL, "无", "该互动元素已经不存在于viewport中了", include_tabs=False
+                INCREMENTAL, FAIL, "无", self._stale_name_message(name), include_tabs=False
             )
 
         category = classify(node)
@@ -433,6 +458,8 @@ class BrowserController:
         if new_focus and new_focus != old_focus:
             new_tree = self.capture_tree(new_focus)
             new_text = self.serialize_tree(new_tree, new_focus)
+            if self._is_blank_shell(new_tree):
+                new_text = _BLANK_SHELL_NOTICE + new_text
             return self._base_result(FULL, OK, new_text, include_tabs=True)
 
         # The click may have opened a background tab without moving focus. The
@@ -518,14 +545,51 @@ class BrowserController:
     ) -> tuple[Optional[object], str]:
         """Return (node, "") or (None, error_message) for an interactive name."""
         if registry.lookup(name) is None:
-            return None, f"未知的互动元素名称 {name}"
+            return None, self._unknown_name_message(name)
         if not registry.is_active(name):
-            return None, "该互动元素已经不存在于viewport中了"
+            return None, self._stale_name_message(name)
         key = registry.lookup(name)
         node = next((n for n in tree.nodes if n.key == key), None)
         if node is None:
-            return None, "该互动元素已经不存在于viewport中了"
+            return None, self._stale_name_message(name)
         return node, ""
+
+    def _foreign_tab_for_name(self, name: str, current_target_id: str) -> str:
+        """Tab label of another tab whose (live) registry knows ``name``, else "".
+
+        Element names are scoped per tab, but the LLM only ever sees the current
+        page. After a focus change a name the LLM learned on one tab can silently
+        resolve to a *different* element on another tab. When the name is unknown
+        on the focused tab we point the LLM at the tab that actually owns it.
+        """
+        for target_id, registry in self._registries.items():
+            if target_id == current_target_id:
+                continue
+            if registry.lookup(name) is not None and registry.is_active(name):
+                label = self._name_for_target(target_id)
+                if label:
+                    return label
+        return ""
+
+    def _unknown_name_message(self, name: str) -> str:
+        focus = self.focused_tab_label()
+        other = self._foreign_tab_for_name(name, self.focused_target_id or "")
+        if other:
+            return (
+                f"互动元素 {name} 不属于当前聚焦标签页（{focus or '未知'}），"
+                f"而属于「{other}」；请先用 tool_5_switch_tab 切换到该标签页再互动。"
+            )
+        return f"未知的互动元素名称 {name}"
+
+    def _stale_name_message(self, name: str) -> str:
+        focus = self.focused_tab_label()
+        other = self._foreign_tab_for_name(name, self.focused_target_id or "")
+        if other:
+            return (
+                f"互动元素 {name} 在当前聚焦标签页（{focus or '未知'}）中已不存在，"
+                f"它属于「{other}」；如需继续，请先用 tool_5_switch_tab 切换。"
+            )
+        return "该互动元素已经不存在于viewport中了"
 
     # ------------------------------------------------------------------ #
     # batch interaction (tool-11)
@@ -730,6 +794,57 @@ class BrowserController:
             return
         self._quiet(session)
 
+    def _body_child_count(self, session: str) -> int:
+        """Number of element children of ``<body>`` (``-1`` on any error)."""
+        assert self.client is not None
+        try:
+            result = self.client.send(
+                "Runtime.evaluate",
+                {
+                    "expression": "document.body ? document.body.childElementCount : 0",
+                    "returnByValue": True,
+                },
+                session_id=session,
+                timeout=timing.get().cdp.probe_timeout,
+            )
+            return int((result.get("result") or {}).get("value") or 0)
+        except Exception:
+            return -1
+
+    def _wait_for_content(self, session: str, quiet: bool = True) -> None:
+        """Wait out a not-yet-rendered SPA shell.
+
+        After a click that triggers an async render (no document navigation), the
+        DOM can be perfectly quiet yet still empty: ``readyState == "complete"``
+        and a stable ``<html><head>…</head></html>`` skeleton. The normal quiet
+        check then settles immediately and the tool returns a seemingly empty
+        page. When ``<body>`` has no element children we keep polling up to
+        ``nav.load_timeout`` for the first content to appear, then re-check
+        quietness. Non-empty pages are unaffected.
+        """
+        assert self.client is not None
+        cfg = timing.get()
+        empty = self._body_child_count(session) == 0
+        if empty:
+            deadline = time.time() + cfg.nav.load_timeout
+            while time.time() < deadline:
+                time.sleep(cfg.nav.settle_poll_interval)
+                if self._body_child_count(session) > 0:
+                    break
+        if quiet or empty:
+            self._quiet(session)
+
+    @staticmethod
+    def _is_blank_shell(tree: EnhancedTree) -> bool:
+        """True if the tree has no rendered body content (a bare SPA skeleton)."""
+        for node in tree.nodes:
+            if not node.is_element or not node.visible or not node.in_viewport:
+                continue
+            if node.tag in _SHELL_TAGS:
+                continue
+            return False
+        return True
+
     @contextlib.contextmanager
     def _watch_navigation(self, session: str):
         """Watch CDP navigation events for ``session`` while an action runs.
@@ -805,7 +920,7 @@ class BrowserController:
 
         if state["hard"].is_set():
             state["load"].wait(cfg.load_timeout)
-        self._quiet(session)
+        self._wait_for_content(session)
 
     # ------------------------------------------------------------------ #
     # result dicts
@@ -835,8 +950,13 @@ class BrowserController:
             target_id = self._resolve_focused_target()
             if target_id is None:
                 return self._base_result(FULL, FAIL, "无", "没有可用的标签页")
+            session = self.client.attach(target_id)
+            self.client.enable_page_domains(session)
+            self._wait_for_content(session, quiet=False)
             tree = self.capture_tree(target_id)
             content = self.serialize_tree(tree, target_id)
+            if self._is_blank_shell(tree):
+                content = _BLANK_SHELL_NOTICE + content
             return self._base_result(FULL, action_ok, content)
         except (BrowserLaunchError, CDPError, RuntimeError) as exc:
             return self._base_result(FULL, FAIL, "无", str(exc))
@@ -893,7 +1013,7 @@ class BrowserController:
             except Exception:
                 pass
             time.sleep(cfg.ready.poll_interval)
-        self._stabilize(target_id)
+        self._wait_for_content(session)
 
     def _wait_ready_new_tab(
         self, target_id: str, expected_url: str = "", timeout: Optional[float] = None
@@ -933,11 +1053,13 @@ class BrowserController:
             if committed and ready_state == "complete":
                 break
             time.sleep(cfg.ready.new_tab_poll_interval)
-        self._quiet(session)
+        self._wait_for_content(session)
 
     def _full_result_for(self, target_id: str, action_ok: str = NOT_CALLED) -> dict:
         tree = self.capture_tree(target_id)
         content = self.serialize_tree(tree, target_id)
+        if self._is_blank_shell(tree):
+            content = _BLANK_SHELL_NOTICE + content
         return self._base_result(FULL, action_ok, content)
 
     def switch_tab(self, tab_id: str) -> dict:
