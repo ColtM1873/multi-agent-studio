@@ -449,6 +449,21 @@ html[data-style-danger="solid"] .card-btn-danger:hover { filter: brightness(.92)
 .modal.content-view-modal { display: flex; flex-direction: column; width: min(760px, calc(100vw - 32px)); }
 .content-view-modal .content-view-body { overflow: auto; flex: 1 1 auto; max-height: 68vh; word-break: break-word; }
 
+/* 记忆库弹窗（查看 / 编辑） */
+.modal.memory-modal { display: flex; flex-direction: column; width: min(760px, calc(100vw - 32px)); }
+.memory-modal .memory-list { white-space: normal; overflow: auto; max-height: 64vh; }
+.memory-items { display: flex; flex-direction: column; gap: 10px; }
+.memory-item { display: flex; align-items: flex-start; gap: 12px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); }
+.memory-item-main { flex: 1 1 auto; min-width: 0; }
+.memory-subject { font-weight: 600; color: var(--primary); margin-bottom: 4px; word-break: break-word; }
+.memory-content { font-size: 13px; line-height: 1.6; color: var(--text); white-space: pre-wrap; word-break: break-word; }
+.memory-meta { margin-top: 6px; font-size: 11px; color: var(--text-muted); }
+.memory-item-actions { display: flex; flex-direction: column; gap: 6px; flex: 0 0 auto; }
+.modal.memory-edit-modal { width: min(560px, calc(100vw - 32px)); }
+.memory-field-label { display: block; margin: 10px 0 4px; font-size: 13px; color: var(--text-muted); }
+.modal.memory-edit-modal input, .modal.memory-edit-modal textarea { width: 100%; box-sizing: border-box; border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 14px; font-family: inherit; color: var(--text); background: var(--surface); }
+.modal.memory-edit-modal textarea { resize: vertical; line-height: 1.6; }
+
 /* ── 缩放按钮 ───────────────────────────── */
 .zoom-controls { display: inline-flex; align-items: center; gap: 3px; position: relative; }
 .zoom-btn { width: 26px; height: 26px; border: 1px solid var(--border); background: var(--surface); border-radius: 8px; cursor: pointer; font-size: 15px; line-height: 1; display: inline-flex; align-items: center; justify-content: center; }

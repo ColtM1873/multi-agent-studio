@@ -138,16 +138,26 @@ async def build_embeddings(cfg: EmbeddingConfig) -> HuggingFaceEmbeddings:
     return await asyncio.to_thread(_load_embeddings, cfg)
 
 
+# store 的向量索引字段：必须与「运行时写入记忆」完全一致，否则检索/编辑会算错向量。
+# `$` 表示整个 value 的 JSON（不含 store 的 key）；langgraph 的默认值也是 `$`。
+STORE_INDEX_FIELDS: list[str] = ["$"]
+
+
+def make_store_index_config(cfg: EmbeddingConfig, embeddings) -> IndexConfig:
+    """构造 store 的 IndexConfig（运行时与记忆库编辑共用，保证字段/dims 不会分叉）。"""
+    return IndexConfig(
+        embed=embeddings,
+        dims=cfg.dims,
+        fields=list(STORE_INDEX_FIELDS),
+    )
+
+
 async def build_persistence(config: MultiAgentConfig) -> tuple[AsyncPostgresSaver, AsyncPostgresStore]:
     """返回 (checkpointer, store)，需用 `async with` 包裹后调用 setup()。"""
     embeddings = await build_embeddings(config.main_agent.embedding)
     saver = AsyncPostgresSaver.from_conn_string(config.checkpoint_conn_string)
     store = AsyncPostgresStore.from_conn_string(
         config.store_conn_string,
-        index=IndexConfig(
-            embed=embeddings,
-            dims=config.main_agent.embedding.dims,
-            fields=["$"],
-        ),
+        index=make_store_index_config(config.main_agent.embedding, embeddings),
     )
     return saver, store

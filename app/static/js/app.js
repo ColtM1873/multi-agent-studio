@@ -572,6 +572,15 @@ const I18N_EN = {
   "关闭": "Close",
   "未知错误": "Unknown error",
   "当前处于编辑模式，请先退出编辑模式后再离开。是否退出编辑模式？": "You are in edit mode. Exit edit mode before leaving?",
+  "查看/编辑记忆库": "View / Edit Memory Store",
+  "刷新": "Refresh",
+  "暂无记忆": "No memories yet",
+  "更新于": "Updated at",
+  "编辑记忆": "Edit Memory",
+  "主题": "Subject",
+  "内容": "Content",
+  "主题不能为空": "Subject cannot be empty",
+  "确定删除该条记忆？此操作不可撤销。": "Delete this memory? This cannot be undone.",
 };
 const t = (s) => (lang === "zh" || !I18N_EN[s]) ? s : I18N_EN[s];
 function setLang(l) {
@@ -628,6 +637,126 @@ function showContentModal(title, bodyHtml, onClose) {
   mask.addEventListener("click", (e) => { if (e.target === mask) close(); });
   return mask;
 }
+
+/* ================= 记忆库（查看 / 编辑） ================= */
+
+function fmtMemoryTime(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return String(iso);
+  const p = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+async function openMemoryStoreModal() {
+  if (!S.agentId) return;
+  const mask = document.createElement("div");
+  mask.className = "modal-mask";
+  mask.innerHTML = `<div class="modal memory-modal">
+    <h3>🧠 ${t("查看/编辑记忆库")}</h3>
+    <div class="modal-body memory-list" id="memoryList"><div class="muted">${t("加载中…")}</div></div>
+    <div class="modal-actions">
+      <button class="btn" id="memoryRefresh">${t("刷新")}</button>
+      <button class="btn primary" data-close>${t("关闭")}</button>
+    </div>
+  </div>`;
+  document.body.appendChild(mask);
+  const close = () => mask.remove();
+  mask.querySelector("[data-close]").onclick = close;
+  mask.addEventListener("click", (e) => { if (e.target === mask) close(); });
+
+  const listEl = mask.querySelector("#memoryList");
+  const load = async () => {
+    listEl.innerHTML = `<div class="muted">${t("加载中…")}</div>`;
+    try {
+      const items = await api(`/api/agents/${encodeURIComponent(S.agentId)}/memories`);
+      renderMemoryList(items, listEl, load);
+    } catch (e) {
+      listEl.innerHTML = `<div class="muted">${esc(e.message)}</div>`;
+    }
+  };
+  mask.querySelector("#memoryRefresh").onclick = load;
+  await load();
+}
+
+function renderMemoryList(items, root, reload) {
+  root.innerHTML = "";
+  if (!items || !items.length) {
+    root.innerHTML = `<div class="muted">${t("暂无记忆")}</div>`;
+    return;
+  }
+  const list = document.createElement("div");
+  list.className = "memory-items";
+  items.forEach((it) => {
+    const entries = Object.entries(it.value || {});
+    const subject = entries.length ? entries[0][0] : "";
+    const content = entries.length ? String(entries[0][1]) : "";
+    const row = document.createElement("div");
+    row.className = "memory-item";
+    row.innerHTML = `
+      <div class="memory-item-main">
+        <div class="memory-subject">${esc(subject)}</div>
+        <div class="memory-content">${esc(content)}</div>
+        <div class="memory-meta">${t("更新于")} ${esc(fmtMemoryTime(it.updated_at))}</div>
+      </div>
+      <div class="memory-item-actions">
+        <button class="btn small" data-act="edit">${t("编辑")}</button>
+        <button class="btn small danger" data-act="del">${t("删除")}</button>
+      </div>`;
+    row.querySelector('[data-act="del"]').onclick = async () => {
+      const ans = await askConfirm(t("确定删除该条记忆？此操作不可撤销。"));
+      if (ans !== "yes") return;
+      try {
+        await api(`/api/agents/${encodeURIComponent(S.agentId)}/memories/${encodeURIComponent(it.key)}`, { method: "DELETE" });
+        toast(t("已删除"));
+        await reload();
+      } catch (e) { toast(e.message, true); }
+    };
+    row.querySelector('[data-act="edit"]').onclick = () => {
+      openMemoryEditModal(subject, content, async (newSubject, newContent) => {
+        try {
+          await api(`/api/agents/${encodeURIComponent(S.agentId)}/memories/${encodeURIComponent(it.key)}`, {
+            method: "PUT",
+            body: JSON.stringify({ value: { [newSubject]: newContent } }),
+          });
+          toast(t("已保存"));
+          await reload();
+        } catch (e) { toast(e.message, true); }
+      });
+    };
+    list.appendChild(row);
+  });
+  root.appendChild(list);
+}
+
+function openMemoryEditModal(subject, content, onSave) {
+  const mask = document.createElement("div");
+  mask.className = "modal-mask";
+  mask.innerHTML = `<div class="modal memory-edit-modal">
+    <h3>${t("编辑记忆")}</h3>
+    <label class="memory-field-label">${t("主题")}</label>
+    <input class="memory-edit-subject" type="text" value="${esc(subject)}">
+    <label class="memory-field-label">${t("内容")}</label>
+    <textarea class="memory-edit-content" rows="7">${esc(content)}</textarea>
+    <div class="modal-actions">
+      <button class="btn" data-cancel>${t("取消")}</button>
+      <button class="btn primary" data-save>${t("保存")}</button>
+    </div>
+  </div>`;
+  document.body.appendChild(mask);
+  let closed = false;
+  const close = () => { if (!closed) { closed = true; mask.remove(); } };
+  mask.querySelector("[data-cancel]").onclick = close;
+  mask.addEventListener("click", (e) => { if (e.target === mask) close(); });
+  mask.querySelector("[data-save]").onclick = async () => {
+    const newSubject = mask.querySelector(".memory-edit-subject").value.trim();
+    const newContent = mask.querySelector(".memory-edit-content").value;
+    if (!newSubject) { toast(t("主题不能为空"), true); return; }
+    await onSave(newSubject, newContent);
+    close();
+  };
+}
+
 
 /* 记忆附着包装标记（与后端 app/runtime/prompts.py 保持一致）：流式回放的用户消息
  * 可能带这些包装，前端拆出真实原文与附着记忆，给用户消息框加「记忆附着」按钮。 */
@@ -3297,6 +3426,7 @@ async function renderChatView() {
       <div class="spacer" style="flex:1;"></div>
       <span class="status-indicator" id="statusInd"></span>
       <span class="edit-mode-badge" id="editModeBadge" style="display:none;">✏️ ${t("编辑模式")}</span>
+      <button class="btn small" id="memoryStoreBtn" title="${t("查看/编辑记忆库")}">🧠 ${t("查看/编辑记忆库")}</button>
       <button class="btn small" id="editModeBtn">✏️ ${t("进入编辑模式")}</button>
       <button class="btn small" id="proactiveSummaryBtn" title="${t("主动全量总结")}">📝 ${t("主动全量总结")}</button>
       <div class="zoom-controls">
@@ -4364,6 +4494,8 @@ async function renderChatView() {
 
   editModeBtn.onclick = () => { if (editModeOn) exitEditMode(); else enterEditMode(); };
   bindEditLineEvents();
+  const memoryBtn = $("#memoryStoreBtn");
+  if (memoryBtn) memoryBtn.onclick = () => openMemoryStoreModal();
 
   function updateSendState() {
     sendBtn.disabled = isRunning || !!sel.value;
