@@ -28,6 +28,7 @@ from .classify import (
     CLICKABLE_INPUT_TYPES,
     CLICKABLE_ROLES,
     classify,
+    has_svg_descendant,
     is_clickable,
     is_control_icon,
 )
@@ -451,7 +452,36 @@ class DOMSerializer:
             return
 
         if category:
-            if category == "click" and self._has_separate_interactive_descendant(child):
+            if category == "click" and (
+                self._has_label_element_descendant(child)
+                and self._has_interactive_descendant(child)
+            ):
+                # A clickable *form row* must NOT be named: it wraps a field
+                # ``<label>`` plus its own control(s). Naming the row swallowed
+                # the editable ``<input>`` (the model saw
+                # ``<可点击元素 eN>手机：姓名</可点击元素 eN>`` and no way to fill) or
+                # merged the label into a composite control's text with the wrong
+                # prefix. Render its children so the real field / control is
+                # exposed. A native ``<label>`` that merely wraps a hidden
+                # checkbox/radio is not affected: it has no *interactive*
+                # descendant once the hidden input is pruned, so it keeps naming
+                # the control as before.
+                self._flush(depth)
+                for grand in child.children:
+                    self._render_child(grand, depth, clip)
+            elif category == "click" and self._is_textual_click_only(child):
+                # A ``cursor:pointer`` element with no strong control descendant,
+                # no icon and only a long descriptive text run (e.g. Ant Design's
+                # ``.ant-form-item-extra`` helper note) is *not* a control: the
+                # page merely inherited a pointer cursor from a form row. Emit its
+                # text as one plain line instead of recursing (which would expose
+                # each inner ``<span>`` as a bogus clickable). Short
+                # ``cursor:pointer`` labels (real text buttons) stay clickable.
+                self._flush(depth)
+                text = self._collect_text(child)
+                if text:
+                    self._emit_content(depth, text)
+            elif category == "click" and self._has_separate_interactive_descendant(child):
                 # A clickable wrapper around *separate* controls (e.g. a
                 # media-control bar, a clickable card holding links) is noise:
                 # the model would never call the wrapper. Skip it (assign no
@@ -1060,6 +1090,79 @@ class DOMSerializer:
                 return True
         return False
 
+    @staticmethod
+    def _input_is_widget_helper(node: EnhancedNode) -> bool:
+        """True for a text ``<input>`` that is a *widget's own* typeahead/search part.
+
+        Such an input (a select box's search field, a date picker's text part, a
+        ``role=combobox`` filter) is never something the model should address
+        directly — the surrounding control owns the interaction. It is
+        recognisable by intrinsic signals: ``readonly``, ``type=search``,
+        ``role=combobox`` or ``aria-autocomplete``. A genuine editable field
+        (``<input type=text>`` the user types into) is not a helper.
+        """
+        itype = node.attributes.get("type", "text").lower()
+        if "readonly" in node.attributes:
+            return True
+        if itype in ("search", "hidden"):
+            return True
+        if node.role == "combobox":
+            return True
+        if node.attributes.get("aria-autocomplete"):
+            return True
+        return False
+
+    def _has_label_element_descendant(self, node: EnhancedNode) -> bool:
+        """True if ``node`` is, or wraps, a ``<label>`` element.
+
+        A clickable node that contains a field ``<label>`` is a form row (or a
+        native ``<label>`` control wrapper), never the field control itself.
+        """
+        if node.is_element and node.tag == "label":
+            return True
+        for child in node.children:
+            if child.is_element and self._has_label_element_descendant(child):
+                return True
+        return False
+
+    def _is_textual_click_only(self, node: EnhancedNode) -> bool:
+        """True for a pointer-cursor element that is really a descriptive text run.
+
+        Heuristic for form-row helper notes (``.ant-form-item-extra``): the page
+        set ``cursor:pointer`` on a container, every descendant inherits it, and
+        a plain note ends up looking clickable. Such a node has no *strong*
+        control descendant, no icon, and only a long text run — it is not a
+        control. Short ``cursor:pointer`` labels (real text buttons such as
+        ``搜索职位``) stay clickable.
+        """
+        if self._has_strong_descendant(node):
+            return False
+        if has_svg_descendant(node):
+            return False
+        return len(self._collect_text(node)) >= 60
+
+    def _has_strong_descendant(self, node: EnhancedNode) -> bool:
+        """True if ``node`` wraps a descendant with an intrinsic control signal.
+
+        Unlike a mere inherited ``cursor:pointer``, these signals (tag, ARIA
+        role, ``tabindex``, ``contenteditable``) make a descendant a real,
+        separately-addressable control.
+        """
+        for child in node.children:
+            if child.is_text or not child.is_element:
+                continue
+            if child.tag in ("a", "button", "select", "textarea", "input", "summary", "option"):
+                return True
+            if child.role in CLICKABLE_ROLES or child.role in ("textbox", "searchbox", "spinbutton"):
+                return True
+            if child.attributes.get("tabindex") is not None:
+                return True
+            if child.attributes.get("contenteditable") in ("", "true", "plaintext-only"):
+                return True
+            if self._has_strong_descendant(child):
+                return True
+        return False
+
     def _associated_field_label(self, node: EnhancedNode) -> str:
         """Find the field label associated with a form control.
 
@@ -1206,6 +1309,17 @@ class DOMSerializer:
             itype = node.attributes.get("type", "text").lower()
             if itype in CLICKABLE_INPUT_TYPES:
                 return True
+            if self._input_is_widget_helper(node):
+                # A readonly / search / combobox input is a widget's internal
+                # typeahead, never a field the model addresses directly.
+                return False
+            if self._is_labelled_field(node):
+                # An editable input that is the target of a field ``<label>``
+                # (or nested in one) is a *real* field, even when a clickable
+                # form row / wrapper surrounds it (Ant Design turns the whole
+                # row ``cursor:pointer``). It must count as a separate control so
+                # the wrappers are pruned and the field is exposed.
+                return True
             if self._has_clickable_ancestor(node, root):
                 # A text input wrapped by a clickable composite control (the
                 # select box itself) is that control's internal typeahead, not a
@@ -1217,6 +1331,39 @@ class DOMSerializer:
         if node.attributes.get("contenteditable") in ("", "true", "plaintext-only"):
             return True
         return classify(node) in ("scroll", "drag")
+
+    def _is_labelled_field(self, node: EnhancedNode) -> bool:
+        """True if ``node`` is an input associated with a field ``<label>``.
+
+        Association is either a wrapping ``<label>`` (``<label><input></label>``)
+        or a ``<label for="<id>">`` anywhere in a nearby ancestor's subtree. This
+        is the semantic signal that separates a *real* form field from a widget's
+        internal typeahead (which has no label pointing at it).
+        """
+        ancestor = node.parent
+        while ancestor is not None:
+            if ancestor.is_element and ancestor.tag == "label":
+                return True
+            ancestor = ancestor.parent
+        nid = node.attributes.get("id", "")
+        if not nid:
+            return False
+        ancestor = node.parent
+        hops = 0
+        while ancestor is not None and hops < 8:
+            if self._find_label_for(ancestor, nid):
+                return True
+            ancestor = ancestor.parent
+            hops += 1
+        return False
+
+    def _find_label_for(self, node: EnhancedNode, target_id: str) -> bool:
+        if node.is_element and node.tag == "label":
+            return node.attributes.get("for") == target_id
+        for child in node.children:
+            if child.is_element and self._find_label_for(child, target_id):
+                return True
+        return False
 
     def _has_clickable_ancestor(
         self, node: EnhancedNode, root: Optional[EnhancedNode] = None

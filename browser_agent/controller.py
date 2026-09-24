@@ -383,6 +383,15 @@ class BrowserController:
     # interaction (tool-2)
     # ------------------------------------------------------------------ #
     @staticmethod
+    def _category_label(category: str) -> str:
+        return {
+            "input": "可输入",
+            "click": "可点击",
+            "drag": "可拖动",
+            "scroll": "可滚动",
+        }.get(category, "不可互动")
+
+    @staticmethod
     def _scroll_plan(scroll_delta: int) -> tuple[int, int]:
         """Map ``scroll_delta`` to ``(direction, steps)``.
 
@@ -458,6 +467,19 @@ class BrowserController:
             )
 
         category = classify(node)
+        if fill and category != "input":
+            # ``fill`` only means anything on an input. On a click-only element
+            # the old code silently dropped the text and still reported success,
+            # so the model believed it had filled a field that never changed.
+            # Fail loudly with actionable guidance instead.
+            return self._base_result(
+                INCREMENTAL,
+                FAIL,
+                "无",
+                f"互动元素 {name} 不是可填入元素（它是「{self._category_label(category)}」类），"
+                f"fill 参数未执行；请改为对可输入元素填值，或先点击该元素。",
+                include_tabs=False,
+            )
         old_lines = self.serialize_lines_tree(old_tree, target_id)
         old_focus = self.focused_target_id
         old_name = self._name_for_target(target_id)

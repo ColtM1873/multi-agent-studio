@@ -217,12 +217,46 @@ def is_clickable(node: EnhancedNode) -> bool:
     if node.styles.get("cursor") == "pointer":
         has_label = bool(node.ax_name or _has_text(node))
         if has_label and node.bbox:
+            # A clickable element whose only content is a field ``<label>`` (and
+            # which wraps no interactive control) is a *field description*, not a
+            # control: naming it produces a bogus "clickable" duplicate of the
+            # field name (Ant Design marks a whole form row ``cursor:pointer``,
+            # which every descendant inherits, so labels/``.ant-col`` columns
+            # would otherwise all be named). A ``<label>`` that *does* wrap the
+            # real control (hidden checkbox / radio) keeps its descendant, which
+            # is what gets named, so excluding it here is safe.
+            if _has_label_element(node) and not _has_interactive_descendant(node):
+                return False
             return True
     tabindex = node.attributes.get("tabindex")
     if tabindex is not None and tabindex.isdigit() and int(tabindex) >= 0:
         return True
     if is_control_icon(node):
         return True
+    return False
+
+
+def _has_label_element(node: EnhancedNode) -> bool:
+    """True if ``node`` is, or contains, a ``<label>`` element."""
+    if node.is_element and node.tag == "label":
+        return True
+    for child in node.children:
+        if child.is_element and _has_label_element(child):
+            return True
+    return False
+
+
+def _has_interactive_descendant(node: EnhancedNode) -> bool:
+    """True if any visible descendant of ``node`` is itself interactive."""
+    for child in node.children:
+        if child.is_text or not child.is_element:
+            continue
+        if child.hidden or not child.visible:
+            continue
+        if classify(child):
+            return True
+        if _has_interactive_descendant(child):
+            return True
     return False
 
 
