@@ -216,9 +216,59 @@ class ActionExecutor:
         object_id = self._resolve(backend_node_id)
         if object_id:
             try:
-                self._call_on_node(object_id, "function(){this.click();}")
+                # Focus first: ``HTMLElement.click()`` does *not* move focus, so a
+                # following ``Input.insertText`` would land in whatever element is
+                # still focused (see ``input_text``). For non-focusable elements
+                # ``focus()`` is a harmless no-op.
+                self._call_on_node(
+                    object_id,
+                    "function(){try{this.focus({preventScroll:true});}catch(e){}"
+                    "this.click();}",
+                )
             except Exception:
                 pass
+
+    def focus(self, backend_node_id: int) -> None:
+        """Move keyboard focus to ``node`` (best effort).
+
+        Used before clearing / typing: the target can be visually occluded by an
+        open portal (dropdown / calendar) that overlaps it, in which case the
+        real click falls back to a JS ``click()`` and focus stays on the
+        previously edited field. Any subsequent ``Input.insertText`` would then
+        be typed into *that* field, duplicating the value across two inputs.
+        Focusing the intended node first makes typing deterministic.
+        """
+        object_id = self._resolve(backend_node_id)
+        if not object_id:
+            return
+        try:
+            self._call_on_node(
+                object_id,
+                "function(){try{this.focus({preventScroll:true});"
+                "if(typeof this.setSelectionRange==='function'){"
+                "try{this.setSelectionRange(this.value.length,this.value.length);}catch(e){}}"
+                "}catch(e){}}",
+            )
+        except Exception:
+            pass
+
+    def blur(self, backend_node_id: int) -> None:
+        """Remove focus from ``node`` (best effort), firing the blur handlers.
+
+        A controlled date/time picker commonly keeps typed text in the input
+        without committing it; blurring makes the component re-render, so a
+        re-read afterwards tells the caller whether the value really stuck.
+        """
+        object_id = self._resolve(backend_node_id)
+        if not object_id:
+            return
+        try:
+            self._call_on_node(
+                object_id,
+                "function(){try{if(this.blur){this.blur();}}catch(e){}}",
+            )
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------ #
     # actions
@@ -252,9 +302,19 @@ class ActionExecutor:
 
     def input_text(self, backend_node_id: int, text: str) -> dict:
         click_result = self.click(backend_node_id)
+        # A click on an element covered by an open portal (a dropdown / calendar
+        # overlapping the field) falls back to ``click()`` and does not focus it,
+        # so force focus before touching the value. Without this the Ctrl+A /
+        # insertText below would operate on the *previously* focused field and
+        # write the text into both elements.
+        self.focus(backend_node_id)
         _sleep(*timing.get().actions.input_focus)
-        self._clear_field()
-        _sleep(*timing.get().actions.input_clear)
+        if text:
+            # Only clear when there is something to replace: an empty ``fill``
+            # means "just click / focus this element", so a bare interaction must
+            # not wipe a field the caller never meant to touch.
+            self._clear_field()
+            _sleep(*timing.get().actions.input_clear)
 
         if len(text) > self.PASTE_THRESHOLD:
             self._insert_text(text)

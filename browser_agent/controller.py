@@ -127,6 +127,54 @@ def _fills_same(requested: str, current: Optional[str]) -> bool:
     return wanted in _norm(current)
 
 
+# Native input ``type`` values that are rendered by a date/time picker widget.
+_DATE_INPUT_TYPES = {"date", "datetime-local", "month", "week", "time"}
+# Placeholder words that reliably mark a date/time field (``开始日期`` /
+# ``结束日期`` / ``出生日期`` …). We deliberately keep this narrow so ordinary
+# free-text fields are never mistaken for pickers.
+_DATE_PLACEHOLDER_HINTS = ("日期", "时间")
+# Ancestor class tokens emitted by date-picker component libraries.
+_DATE_CLASS_HINTS = ("picker", "calendar", "datepicker", "date-picker")
+
+
+def _is_date_like_input(node: EnhancedNode) -> bool:
+    """Heuristic: is ``node`` an input rendered by a date/time picker?
+
+    Date / time widgets display typed text in the ``<input>`` but only *commit*
+    a value when the text parses and the field blurs; a controlled picker then
+    reverts the text. So a fill that merely appears in the DOM can still be a
+    silent no-op (and ``_fills_same`` cannot tell). Recognizing these fields
+    lets the caller reject nonsense text and verify the commit.
+    """
+    if node is None or not node.is_element:
+        return False
+    if node.tag == "input":
+        if (node.attributes.get("type") or "").lower() in _DATE_INPUT_TYPES:
+            return True
+    placeholder = node.attributes.get("placeholder") or ""
+    if any(hint in placeholder for hint in _DATE_PLACEHOLDER_HINTS):
+        return True
+    current: Optional[EnhancedNode] = node
+    hops = 0
+    while current is not None and hops < 5:
+        classes = (current.attributes.get("class") or "").lower()
+        if any(hint in classes for hint in _DATE_CLASS_HINTS):
+            return True
+        current = current.parent
+        hops += 1
+    return False
+
+
+def _looks_like_date(text: str) -> bool:
+    """A date/time value must contain at least one digit.
+
+    ``至今`` / ``present`` / ``now`` are not dates and a date picker cannot store
+    them. Requiring a digit is intentionally permissive (it does not validate the
+    calendar) — the caller additionally blur-verifies that the picker committed.
+    """
+    return any(ch.isdigit() for ch in (text or ""))
+
+
 # One interactive element tag: ``<可点击元素 e12>…</可点击元素 e12>``. Used by the
 # scroll accumulator to drop the fragments that overlap between consecutive
 # (deliberately overlapping) scroll windows.
@@ -482,6 +530,17 @@ class BrowserController:
             return 1, 6
         return (1 if delta > 0 else -1), max(1, min(abs(delta), 6))
 
+    @staticmethod
+    def _date_fill_error(name: str, fill: str, current: Optional[str] = None) -> str:
+        """Human, actionable error for a fill that a date picker did not commit."""
+        got = f"，控件当前值为「{current or '空'}」" if current is not None else ""
+        return (
+            f"元素 {name} 是日期/时间选择控件，无法用 fill 写入「{fill}」这类非日期文本{got}。"
+            f"该控件只接受具体日期，页面上通常也没有『至今』这种选项；"
+            f"请改为点击它并在弹出的日历里选择具体日期，"
+            f"或先与用户确认该字段如何处理（例如选当天日期、或留空）。"
+        )
+
     def _alternative_click_target(self, node: EnhancedNode) -> Optional[int]:
         """The unlabeled control icon that may be the real action behind a label.
 
@@ -578,13 +637,30 @@ class BrowserController:
                 # it did not.
                 if fill:
                     current = executor.read_value(node.backend_node_id)
-                    if not _fills_same(fill, current):
+                    date_like = _is_date_like_input(node)
+                    if date_like and not _looks_like_date(fill):
+                        # ``至今`` / ``present`` typed into a picker: the input
+                        # echoes the text but no date is committed (the form keeps
+                        # showing its "请选择…" error). Fail with actionable
+                        # guidance instead of letting the model move on.
+                        fill_error = self._date_fill_error(name, fill)
+                    elif not _fills_same(fill, current):
                         fill_error = (
                             f"元素 {name} 的填充未生效：填入了「{fill}」，"
                             f"但控件当前值为「{current or '空'}」。"
                             f"该控件可能是只读、或日期/时间选择器，无法用 fill 直接写入；"
                             f"请点击它之后在弹出的选择器里选择，或改为对其它可输入元素填值。"
                         )
+                    elif date_like:
+                        # The picker may display typed text without committing it;
+                        # blur to force a re-render, then re-read: a committed
+                        # value survives, an uncommitted one reverts (typically to
+                        # empty / the old value).
+                        executor.blur(node.backend_node_id)
+                        self._stabilize(target_id)
+                        current = executor.read_value(node.backend_node_id)
+                        if not _fills_same(fill, current):
+                            fill_error = self._date_fill_error(name, fill, current)
                     elif (
                         node.tag == "input"
                         and node.role == "combobox"
@@ -871,6 +947,7 @@ class BrowserController:
 
         # ---- up-front validation (nothing runs if this fails) ----
         plan: list[tuple[str, str, int]] = []  # (name, category, backendNodeId)
+        fill_nodes: dict[str, EnhancedNode] = {}
         typeahead_names: list[str] = []
         for name in fill_names:
             node, err = self._resolve_interactive_node(registry, tree, name)
@@ -887,6 +964,7 @@ class BrowserController:
             if node.role == "combobox" and "readonly" not in node.attributes:
                 # Searchable select's typeahead: typing only filters candidates.
                 typeahead_names.append(name)
+            fill_nodes[name] = node
             plan.append((name, "input", node.backend_node_id))
         click_may_nav = False
         if has_click:
@@ -966,10 +1044,27 @@ class BrowserController:
         # model then chases the mismatch for many turns).
         failed_fills: list[tuple[str, Optional[str]]] = []
         if not error_msg and not focus_changed and not opened_names:
+            # Date/time pickers display typed text without necessarily committing
+            # it; blur them (forcing the component to re-render) before reading,
+            # so a reverted value is detected below.
+            date_like_ids = [
+                fbid
+                for (_n, fcat, fbid), fval in zip(plan, fills)
+                if fcat == "input" and fval and _is_date_like_input(fill_nodes.get(_n))
+            ]
+            for fbid in date_like_ids:
+                executor.blur(fbid)
+            if date_like_ids:
+                self._stabilize(target_id)
             for (fname, fcat, fbid), fval in zip(plan, fills):
                 if fcat != "input" or not fval:
                     continue
+                node = fill_nodes.get(fname)
                 current = executor.read_value(fbid)
+                if _is_date_like_input(node) and not _looks_like_date(fval):
+                    # Nonsense text on a picker (``至今``): never committed.
+                    failed_fills.append((fname, current))
+                    continue
                 if _fills_same(fval, current):
                     continue
                 # A controlled field can end up holding a *different* value when
@@ -1016,8 +1111,10 @@ class BrowserController:
             msg = (
                 "以下元素的填充未生效："
                 + "、".join(f"{n}（当前值：{c or '空'}）" for n, c in failed_fills)
-                + "。它们可能是只读、或日期/时间选择器，无法用 fill 直接写入；"
-                "请点击它之后在弹出的选择器里选择，或改用其它可输入元素。"
+                + "。它们可能是只读、或日期/时间选择器，无法用 fill 直接写入"
+                "（日期选择器通常也不接受『至今』这类非日期文本）；"
+                "请点击它之后在弹出的日历里选择具体日期，"
+                "或先与用户确认该字段如何处理，或改用其它可输入元素。"
             )
             return self._base_result(
                 mode, PARTIAL_FAIL, content, error=msg, include_tabs=include_tabs

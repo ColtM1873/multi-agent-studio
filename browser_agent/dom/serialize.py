@@ -935,7 +935,20 @@ class DOMSerializer:
                 if self._has_blockish_descendant(child):
                     return True
                 continue
-            if child.tag in SKIP_TAGS or not child.visible or not child.in_viewport:
+            if child.tag in SKIP_TAGS or child.hidden:
+                continue
+            if not child.visible and not (
+                child.rendered and self._effective_opacity_zero(child)
+            ):
+                # A genuinely collapsed / boxless child is not structure. But a
+                # zero-area child that is fully transparent is real content caught
+                # on the enter-animation first frame (ID90): ``_render_child``
+                # serializes it via the opacity fallback, so the parent must see
+                # it as structure too. Otherwise a visible wrapper whose only
+                # "blockish" descendant is mid-animation degrades to ``[文本]``,
+                # producing 6~8 nested anonymous ``[文本]`` shells around a popup.
+                continue
+            if not child.in_viewport:
                 continue
             if self._is_block_level(child):
                 return True
@@ -951,8 +964,10 @@ class DOMSerializer:
 
     def _interactive_label(self, node: EnhancedNode, category: str) -> str:
         if category == "input":
-            label = self._input_value(node) or node.attributes.get("placeholder", "")
-            if not label and self._is_searchable_typeahead(node):
+            value = self._input_value(node)
+            if value:
+                label = value
+            elif self._is_searchable_typeahead(node):
                 # A searchable select's typeahead has neither a value nor a
                 # placeholder of its own (the chosen value lives in a sibling
                 # ``.ant-select-selection-item``). Name it after the field and
@@ -968,7 +983,13 @@ class DOMSerializer:
                     else:
                         label = f"{prefix}：{current}"
                 else:
-                    label = prefix or current
+                    label = prefix or current or self._empty_input_label(node)
+            else:
+                # Never render the placeholder as if it were the current value:
+                # an empty field used to read ``<可输入元素 e53>结束日期</…>`` and
+                # the model believed it already held "结束日期". Mark emptiness
+                # explicitly and keep the placeholder only as a hint.
+                label = self._empty_input_label(node)
         else:
             label = self._label(node)
             # An unlabeled control icon (radio / checkbox circle) pairs with a text
@@ -1459,6 +1480,19 @@ class DOMSerializer:
         # A ``<textarea>`` can hold a long document; keep the inline label short
         # while still proving the fill landed.
         return self._truncate(value, 120) if value else ""
+
+    def _empty_input_label(self, node: EnhancedNode) -> str:
+        """A label for an empty field that cannot be mistaken for a value.
+
+        The placeholder is *hint* text the page shows while empty; rendering it
+        bare (``<可输入元素 e53>结束日期</…>``) made the model think the field held
+        that text. Prefix an explicit emptiness marker and keep the placeholder
+        only as a clearly-labelled hint.
+        """
+        placeholder = " ".join((node.attributes.get("placeholder") or "").split())
+        if placeholder:
+            return f"（空，占位提示：{self._truncate(placeholder, 40)}）"
+        return "（空）"
 
     def _label(self, node: EnhancedNode) -> str:
         if node.ax_name:
