@@ -204,42 +204,64 @@ html[data-style-danger="solid"] .card-btn-danger:hover { filter: brightness(.92)
 .input-pane {
   flex: 0 0 auto; height: 160px; border-top: 1px solid var(--border);
   display: flex; flex-direction: column; background: var(--surface);
+  position: relative;
 }
 .input-pane .input-toolbar { display: flex; align-items: center; gap: 8px; padding: 8px 14px 4px; }
 .input-pane textarea {
   flex: 1; border: none; outline: none; resize: none; padding: 8px 16px;
   font-family: inherit; font-size: 14px; color: var(--text);
+  scrollbar-gutter: stable;
 }
-/* 输入区主行：左侧文本框占满，右侧给浏览器接管按钮留出独立一列 */
+/* 输入区主行：三列 —— 左＝输入框；中＝日期/停止/发送；右＝浏览器工具四按键 */
 .input-pane .input-main { flex: 1; display: flex; min-height: 0; }
 .input-pane .input-main textarea { flex: 1; min-width: 0; }
-/* 输入框下方：浏览器接管「实时预览」灰色只读块（可选中/复制，不可编辑） */
+/* 左列：工具提示 / 日期提示 / 文本框 / 注入块自上而下排列，独占剩余宽度 */
 .input-pane .input-main-left { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .input-pane .input-main-left textarea { min-height: 0; }
-.input-pane .takeover-dom-preview {
-  flex: 0 0 auto; max-height: 72px; overflow: auto; margin: 0 14px 6px;
-  padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px;
-  background: var(--bg); color: var(--text-muted); font-size: 12px; line-height: 1.45;
-  white-space: pre-wrap; word-break: break-word;
-  user-select: text; -webkit-user-select: text;
+/* 消息注入块：短标签，多个可并排，尽量少占竖向空间 */
+.input-pane .inject-blocks { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 14px; margin-bottom: 6px; }
+.input-pane .inject-block {
+  flex: 0 1 auto; padding: 4px 8px;
+  border: 1px dashed var(--border); border-radius: 8px;
+  background: var(--bg); color: var(--text-muted);
+  font-size: 12px; line-height: 1.45; cursor: pointer;
+  user-select: none; -webkit-user-select: none; white-space: nowrap;
 }
-.input-pane .input-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 6px 14px 10px; }
+.input-pane .inject-block:hover { border-color: var(--primary); color: var(--primary); }
+/* 中列：日期 / 停止 / 发送。发送固定在底部且不滚动，始终可见；
+   其余按钮在上方，空间不足时只让它们所在的区域滚动。 */
+.input-actions-col {
+  flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px;
+  justify-content: flex-end; align-items: stretch; min-height: 0;
+  padding: 8px 10px 6px; border-left: 1px solid var(--border);
+}
+/* 中列上方的日期/停止：用 column-reverse 贴住底界，收缩时从上方折叠（最上面的先消失） */
+.input-actions-top {
+  flex: 0 1 auto; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column-reverse; gap: 6px;
+  scrollbar-gutter: stable;
+}
+#sendBtn { flex: 0 0 auto; }
+/* 右列：浏览器工具四按键，同样贴住底界；column-reverse 让收缩时从上方折叠 */
+.browser-takeover-actions {
+  display: none; flex: 0 0 auto; flex-direction: column-reverse; gap: 6px;
+  justify-content: flex-start; align-items: stretch; min-height: 0;
+  padding: 8px 14px 6px 8px; overflow-y: auto;
+  border-left: 1px solid var(--border);
+  scrollbar-gutter: stable;
+}
 .input-pane .date-inject-hint {
   padding: 0 14px 2px; font-size: 12px; color: #9ca3af;
   user-select: text; -webkit-user-select: text; white-space: pre-wrap;
 }
-.input-actions .date-dot {
+.input-actions-col .date-dot {
   display: inline-block; width: 8px; height: 8px; border-radius: 50%;
   background: #9ca3af; margin-right: 6px; vertical-align: middle;
 }
 #dateInjectBtn.on .date-dot { background: #22c55e; }
 
 /* ── 浏览器接管 ─────────────────────────── */
-/* 右侧独立一列，三个按钮竖排（位于「注入当前日期 / 发送」按钮上方） */
-.browser-takeover-actions {
-  display: flex; flex-direction: column; gap: 6px; justify-content: flex-start;
-  padding: 8px 14px 6px 8px; overflow-y: auto;
-}
+/* 四个浏览器开关按钮成组放在右侧按钮列顶部（显示/隐藏由 JS 控制） */
 .browser-takeover-actions .btn { white-space: nowrap; }
 /* 「提示Agent开始接管浏览器」开关：开启后长亮绿灯（发送后自动关闭） */
 .browser-takeover-actions .tk-dot {
@@ -251,6 +273,13 @@ html[data-style-danger="solid"] .card-btn-danger:hover { filter: brightness(.92)
 /* 「隐私遮蔽模式」开关：开启后长亮绿灯（全局持久化，不随发送关闭） */
 #privacyMaskBtn.on { border-color: #22c55e; color: #15803d; }
 #privacyMaskBtn.on .tk-dot { background: #22c55e; box-shadow: 0 0 4px #22c55e; }
+/* 「注入 敏感信息替换列表」开关：开启后长亮绿灯（发送后自动关闭） */
+#sensitiveInjectBtn.on { border-color: #22c55e; color: #15803d; }
+#sensitiveInjectBtn.on .tk-dot { background: #22c55e; box-shadow: 0 0 4px #22c55e; }
+/* 「打开浏览器」：已连接时显示绿灯，并置灰不可再点（只能通过关闭浏览器切换） */
+#openBrowserBtn.on { border-color: #22c55e; color: #15803d; }
+#openBrowserBtn.on .tk-dot { background: #22c55e; box-shadow: 0 0 4px #22c55e; }
+#openBrowserBtn.is-disabled { opacity: 1; cursor: not-allowed; }
 .btn.is-disabled { opacity: .5; cursor: not-allowed; }
 .takeover-switch-field { background: #eef2ff; border: 1px solid #c7d2fe; border-radius: 10px; padding: 10px 12px; }
 .takeover-switch-field label { font-weight: 600; }
@@ -411,8 +440,14 @@ html[data-style-danger="solid"] .card-btn-danger:hover { filter: brightness(.92)
 /* 记忆附着：按钮贴在用户消息框（蓝色底）最右侧，点击展开本条消息附着的记忆 */
 .mem-attach-btn { float: right; margin: 0 0 4px 10px; font-size: 12px; line-height: 1.4; padding: 2px 8px; border: 1px solid #93c5fd; border-radius: 6px; background: #dbeafe; color: #1d4ed8; cursor: pointer; font-family: inherit; }
 .mem-attach-btn:hover { background: #bfdbfe; }
+.mem-attach-btn:active { background: #93c5fd; border-color: #60a5fa; color: #1e3a8a; }
+.mem-attach-btn.on { background: #93c5fd; border-color: #60a5fa; color: #1e3a8a; box-shadow: inset 0 1px 3px rgba(0,0,0,.18); }
 .mem-attach-panel { margin: 6px 0 0; padding: 8px 14px; border-left: 3px solid #c7d2fe; background: #eef2ff; border-radius: 0 8px 8px 0; font-size: 13px; color: var(--text); line-height: 1.6; white-space: pre-wrap; }
 .mem-attach-panel[hidden] { display: none; }
+
+/* 通用只读内容查看弹窗（记忆附着 / 消息注入块点击后） */
+.modal.content-view-modal { display: flex; flex-direction: column; width: min(760px, calc(100vw - 32px)); }
+.content-view-modal .content-view-body { overflow: auto; flex: 1 1 auto; max-height: 68vh; word-break: break-word; }
 
 /* ── 缩放按钮 ───────────────────────────── */
 .zoom-controls { display: inline-flex; align-items: center; gap: 3px; position: relative; }

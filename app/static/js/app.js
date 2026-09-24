@@ -211,6 +211,8 @@ const I18N_EN = {
   "本对话已注入过接管提示（每个对话仅注入一次）": "This conversation already has the takeover hint (only once per conversation).",
   "已开启：发送时会把当前聚焦标签页内容追加到消息之后（发送后自动关闭）": "On: the focused tab's content will be appended after your message when sending (turns off automatically after sending).",
   "正在获取当前页面内容…": "Fetching the current page content…",
+  "📋 当前页面内容 注入块": "📋 Current page content injection block",
+  "（发送时会自动附加到消息）": "(automatically appended to the message when sending)",
   "编辑敏感信息表单": "Edit sensitive info form",
   "用于浏览器接管：Agent 遇到表单类「可填入元素」时填 <名称>，后台会替换成右侧的真实内容；左侧填「名称」，右侧填「真实内容」。表单里没有的名称会按 Agent 原文原样填入。": "For browser takeover: when the agent fills a form-like \"fillable element\", it writes <name>; the backend replaces it with the real content on the right. Put the name on the left and the real content on the right. Names not in the form are filled exactly as the agent wrote them.",
   "信息名称（表项）": "Info name (field)",
@@ -221,6 +223,9 @@ const I18N_EN = {
   "在下方新增一行": "Add a new row below",
   "注入 敏感信息替换列表": "Inject sensitive-info replacement list",
   "敏感信息替换列表：": "Sensitive-info replacement list:",
+  "📋 敏感信息替换列表 注入块": "📋 Sensitive-info replacement list injection block",
+  "已开启：发送时会把敏感信息替换列表附加到消息之后（发送后自动关闭）": "On: the sensitive-info replacement list will be appended after your message when sending (turns off automatically after sending).",
+  "点击开启：发送时把敏感信息替换列表附加到消息之后，供后台把 <名称> 替换为真实值": "Click to enable: append the sensitive-info replacement list after your message when sending, so the backend can replace <name> with real values.",
   "请遇到如下需要填写的内容时，直接将下述列表中的名称原文加上<>包裹后填入。比如，若下述列表中有「姓名」，那么在遇到「请输入你姓名」之后的可填入元素时，直接填写为<姓名>即可。CDP 在后台实现时，会将下列列表中的名称原文（带<>包裹）替换为真实值；若列表中没有对应名称，则按原文原样填入。": "When you encounter a field to fill, write the name from the list below wrapped in <> and fill that in. For example, if the list contains \"Name\", then for a fillable element after \"Please enter your name\", fill it with <Name>. The CDP backend will replace the wrapped name with the real value; if a name is not in the list, fill it exactly as written.",
   "敏感信息表单为空，请先在主界面「编辑敏感信息表单」中添加": "The sensitive-info form is empty. Please add entries via \"Edit sensitive info form\" on the main screen first.",
   "暂无会话": "No conversations yet",
@@ -600,6 +605,29 @@ function toast(msg, isError = false) {
 }
 
 function esc(s) { return String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
+
+/* 通用只读内容查看弹窗：在当前视窗内弹出，展示消息注入块 / 记忆附着等全文。
+   bodyHtml 需为已转义好的 HTML；onClose 用于复位触发按钮的高亮态。 */
+function showContentModal(title, bodyHtml, onClose) {
+  const mask = document.createElement("div");
+  mask.className = "modal-mask";
+  mask.innerHTML = `<div class="modal content-view-modal">
+    <h3>${title || ""}</h3>
+    <div class="modal-body content-view-body">${bodyHtml || ""}</div>
+    <div class="modal-actions"><button class="btn primary" data-close>${t("关闭")}</button></div>
+  </div>`;
+  document.body.appendChild(mask);
+  let closed = false;
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    mask.remove();
+    if (onClose) onClose();
+  };
+  mask.querySelector("[data-close]").onclick = close;
+  mask.addEventListener("click", (e) => { if (e.target === mask) close(); });
+  return mask;
+}
 
 /* 记忆附着包装标记（与后端 app/runtime/prompts.py 保持一致）：流式回放的用户消息
  * 可能带这些包装，前端拆出真实原文与附着记忆，给用户消息框加「记忆附着」按钮。 */
@@ -2396,13 +2424,15 @@ document.addEventListener("mouseout", (e) => {
   if (icon) icon.classList.remove("show");
 });
 
-// 记忆附着按钮：切换本条用户消息附着的记忆显示（事件委托，覆盖历史/流式动态创建的按钮）
+// 记忆附着按钮：点击在当前视窗内弹出本条用户消息附着的记忆（事件委托，覆盖历史/流式动态创建的按钮）
 document.addEventListener("click", (e) => {
   const btn = e.target && e.target.closest && e.target.closest(".mem-attach-btn");
   if (!btn) return;
   const block = btn.closest(".user-msg-block");
   const panel = block && block.querySelector(".mem-attach-panel");
-  if (panel) panel.hidden = !panel.hidden;
+  if (!panel) return;
+  btn.classList.add("on");
+  showContentModal(`🔖 ${t("记忆附着")}`, panel.innerHTML, () => btn.classList.remove("on"));
 });
 
 function unitField(id, val, unit, extraLabel, tip) {
@@ -3288,21 +3318,30 @@ async function renderChatView() {
       <div class="history-pane" id="historyPane"><div class="md-body markdown-body" id="historyMd"><div class="muted">${t("加载历史中…")}</div></div></div>
       <button id="pinBtn" class="pin-btn" title="${t("跟随最新输出 · 按住可拖动")}">📌</button>
       <div class="input-pane" id="inputPane">
-        <div class="input-toolbar"><span class="muted" id="inputHint">${t("输入消息（Enter 发送，Shift+Enter 换行）")}</span><div class="spacer" style="flex:1;"></div></div>
-        <div class="date-inject-hint" id="dateInjectHint" style="display:none;"></div>
         <div class="input-main">
           <div class="input-main-left">
+            <div class="input-toolbar"><span class="muted" id="inputHint">${t("输入消息（Enter 发送，Shift+Enter 换行）")}</span><div class="spacer" style="flex:1;"></div></div>
+            <div class="date-inject-hint" id="dateInjectHint" style="display:none;"></div>
             <textarea id="msgInput" placeholder="${t("输入消息…")}"></textarea>
-            <div class="takeover-dom-preview" id="takeoverDomPreview" style="display:none;"></div>
+            <div class="inject-blocks">
+              <div class="inject-block" id="sensitiveInjectBlock" style="display:none;"></div>
+              <div class="inject-block" id="takeoverInjectBlock" style="display:none;"></div>
+            </div>
+          </div>
+          <div class="input-actions-col">
+            <div class="input-actions-top">
+              <button class="btn small" id="stopBtn" style="display:none;">${t("停止")}</button>
+              <button class="btn small" id="dateInjectBtn" style="display:none;" title="${t("开启后，发送消息时会在用户消息前面拼接当前日期。")}"><span class="date-dot"></span>${t("注入当前日期")}</button>
+            </div>
+            <button class="btn small primary" id="sendBtn">${t("发送")}</button>
           </div>
           <div class="browser-takeover-actions" id="browserTakeoverActions" style="display:none;">
-            <button class="btn small" id="sensitiveInjectBtn">${t("注入 敏感信息替换列表")}</button>
-            <button class="btn small" id="privacyMaskBtn"><span class="tk-dot"></span>${t("隐私遮蔽模式")}</button>
+            <button class="btn small" id="openBrowserBtn"><span class="tk-dot"></span>${t("打开浏览器")}</button>
             <button class="btn small" id="browserHintBtn"><span class="tk-dot"></span>${t("提示Agent开始接管浏览器")}</button>
-            <button class="btn small" id="openBrowserBtn">${t("打开浏览器")}</button>
+            <button class="btn small" id="privacyMaskBtn"><span class="tk-dot"></span>${t("隐私遮蔽模式")}</button>
+            <button class="btn small" id="sensitiveInjectBtn"><span class="tk-dot"></span>${t("注入 敏感信息替换列表")}</button>
           </div>
         </div>
-        <div class="input-actions"><button class="btn" id="dateInjectBtn" style="display:none;" title="${t("开启后，发送消息时会在用户消息前面拼接当前日期。")}"><span class="date-dot"></span>${t("注入当前日期")}</button><button class="btn" id="stopBtn" style="display:none;">${t("停止")}</button><button class="btn primary" id="sendBtn">${t("发送")}</button></div>
       </div>
       <div id="doneBubble" class="done-bubble done-bubble-float" style="display:none;"></div>
       <div id="failBubble" class="fail-bubble fail-bubble-float" style="display:none;">
@@ -3391,11 +3430,15 @@ async function renderChatView() {
   refreshDateInjectUI();
 
   /* ============ 浏览器接管：提示注入开关状态（供 send() 读取） ============ */
-  // 「提示Agent开始接管浏览器」= 开关式状态：开启后实时预览当前聚焦标签页内容，
-  // 发送时把该内容追加到用户消息之后；发送成功后自动关闭。不再有「每个对话仅注入一次」限制。
+  // 「提示Agent开始接管浏览器」/「注入 敏感信息替换列表」= 开关式状态：
+  // 开启后发送时把对应内容拼到用户消息之后（不写进 textarea）；发送成功后自动关闭。
+  // 输入框里只显示一个灰色只读「注入块」，点击可在当前视窗弹窗查看全文。
   let takeoverHintOn = false;
   let takeoverPreviewText = "";
   let takeoverHintReset = null;
+  let sensitiveInjectOn = false;
+  let sensitiveInjectText = "";
+  let sensitiveInjectReset = null;
 
   /* ================= 浏览器接管 ================= */
   (async () => {
@@ -3404,8 +3447,9 @@ async function renderChatView() {
     const hintBtn = $("#browserHintBtn");
     const sensitiveBtn = $("#sensitiveInjectBtn");
     const privacyBtn = $("#privacyMaskBtn");
-    const previewEl = $("#takeoverDomPreview");
-    if (!actionsEl || !openBtn || !hintBtn || !sensitiveBtn || !privacyBtn || !previewEl) return;
+    const sensitiveBlockEl = $("#sensitiveInjectBlock");
+    const takeoverBlockEl = $("#takeoverInjectBlock");
+    if (!actionsEl || !openBtn || !hintBtn || !sensitiveBtn || !privacyBtn || !sensitiveBlockEl || !takeoverBlockEl) return;
 
     let takeoverOn = false;
     try {
@@ -3456,13 +3500,38 @@ async function renderChatView() {
         ? t("已开启：发送时会把当前聚焦标签页内容追加到消息之后（发送后自动关闭）")
         : "";
       if (takeoverHintOn) {
-        previewEl.textContent = takeoverPreviewText || t("正在获取当前页面内容…");
-        previewEl.style.display = "";
+        takeoverBlockEl.textContent = takeoverPreviewText
+          ? t("📋 当前页面内容 注入块")
+          : t("正在获取当前页面内容…");
+        takeoverBlockEl.style.display = "";
       } else {
-        previewEl.textContent = "";
-        previewEl.style.display = "none";
+        takeoverBlockEl.textContent = "";
+        takeoverBlockEl.style.display = "none";
       }
     }
+
+    // 敏感信息替换列表：开关式状态（绿灯），发送时附加到消息之后，发送成功后自动关闭。
+    // 输入框里只显示一个灰色只读块，点击弹窗看完整 JSON。
+    function updateSensitiveUI() {
+      sensitiveBtn.classList.toggle("on", sensitiveInjectOn);
+      sensitiveBtn.title = sensitiveInjectOn
+        ? t("已开启：发送时会把敏感信息替换列表附加到消息之后（发送后自动关闭）")
+        : t("点击开启：发送时把敏感信息替换列表附加到消息之后，供后台把 <名称> 替换为真实值");
+      if (sensitiveInjectOn) {
+        sensitiveBlockEl.textContent = t("📋 敏感信息替换列表 注入块");
+        sensitiveBlockEl.style.display = "";
+      } else {
+        sensitiveBlockEl.textContent = "";
+        sensitiveBlockEl.style.display = "none";
+      }
+    }
+
+    // 供 send() 在发送成功后自动关闭开关
+    sensitiveInjectReset = () => {
+      sensitiveInjectOn = false;
+      sensitiveInjectText = "";
+      updateSensitiveUI();
+    };
 
     async function fetchPreview(allowOpen) {
       if (domFetching) return null;
@@ -3555,9 +3624,11 @@ async function renderChatView() {
       lastConnected = !!st.connected;
       paused = !!st.paused;
       if (st.connected) {
+        openBtn.classList.add("on");
         openBtn.classList.add("is-disabled");
         openBtn.title = t("浏览器已打开（当前只支持接管一个浏览器）");
       } else {
+        openBtn.classList.remove("on");
         openBtn.classList.remove("is-disabled");
         openBtn.title = "";
       }
@@ -3565,31 +3636,38 @@ async function renderChatView() {
       return { connected: !!st.connected, wasConnected };
     }
 
-    function appendSensitiveList(names) {
-      const input = $("#msgInput");
-      if (!input) return;
+    function buildSensitiveText(names) {
       const usage = t("请遇到如下需要填写的内容时，直接将下述列表中的名称原文加上<>包裹后填入。比如，若下述列表中有「姓名」，那么在遇到「请输入你姓名」之后的可填入元素时，直接填写为<姓名>即可。CDP 在后台实现时，会将下列列表中的名称原文（带<>包裹）替换为真实值；若列表中没有对应名称，则按原文原样填入。");
       const jsonText = JSON.stringify({
         "使用方式": usage,
         "直接填名称原文列表": names,
       }, null, 2);
-      const block = `${t("敏感信息替换列表：")}\n${jsonText}`;
-      const cur = input.value.replace(/\s+$/, "");
-      input.value = cur ? cur + "\n" + block : block;
-      input.dispatchEvent(new Event("input"));
-      input.scrollTop = input.scrollHeight;
+      return `${t("敏感信息替换列表：")}\n${jsonText}`;
     }
 
     sensitiveBtn.onclick = async () => {
+      if (sensitiveInjectOn) { sensitiveInjectReset(); return; }
       let names = [];
       try {
         const st = await api("/api/settings");
         names = (st.sensitive_info || []).map(e => (e.name || "").trim()).filter(Boolean);
       } catch (e) {}
       if (!names.length) { toast(t("敏感信息表单为空，请先在主界面「编辑敏感信息表单」中添加"), true); return; }
-      appendSensitiveList(names);
+      sensitiveInjectOn = true;
+      sensitiveInjectText = buildSensitiveText(names);
+      updateSensitiveUI();
       // 注入后提示用户开启隐私遮蔽模式（未开启时才弹）
       if (!privacyOn) showPrivacyPrompt();
+    };
+
+    // 灰色只读注入块：点击在当前视窗弹窗查看全文，避免在输入框里挤一个窄滚动块
+    sensitiveBlockEl.onclick = () => {
+      if (!sensitiveInjectText) return;
+      showContentModal(t("敏感信息替换列表：") + t("（发送时会自动附加到消息）"), esc(sensitiveInjectText).replace(/\n/g, "<br>"));
+    };
+    takeoverBlockEl.onclick = () => {
+      if (!takeoverPreviewText) return;
+      showContentModal(t("提示Agent开始接管浏览器") + t("（发送时会自动附加到消息）"), esc(takeoverPreviewText).replace(/\n/g, "<br>"));
     };
 
     openBtn.onclick = async () => {
@@ -3625,6 +3703,7 @@ async function renderChatView() {
     };
 
     updateHintState();
+    updateSensitiveUI();
     updatePrivacyUI();
     await refreshBrowserUI();
     if (lastConnected) await showFloating();
@@ -4343,11 +4422,14 @@ async function renderChatView() {
     const userText = raw.replace(/\s+$/, "");
     const injectDate = dateInjectAvailable && dateInjectOn;
     const injectTakeover = takeoverHintOn && !!takeoverPreviewText;
-    // 开启日期注入 / 浏览器接管提示后，允许「空输入」发送
-    if (!userText && !injectDate && !injectTakeover) return;
+    const injectSensitive = sensitiveInjectOn && !!sensitiveInjectText;
+    // 开启日期注入 / 浏览器接管提示 / 敏感信息注入后，允许「空输入」发送
+    if (!userText && !injectDate && !injectTakeover && !injectSensitive) return;
     let content = injectDate
       ? (userText ? datePromptText() + "\n" + userText : datePromptText())
       : userText;
+    // 敏感信息替换列表：追加到用户消息之后（发送成功后自动关闭）
+    if (injectSensitive) content = content ? content + "\n" + sensitiveInjectText : sensitiveInjectText;
     // 浏览器接管提示：把当前聚焦标签页内容（已包裹）追加到用户消息之后
     if (injectTakeover) content = content ? content + "\n" + takeoverPreviewText : takeoverPreviewText;
     // 发出后立即清空输入框与草稿：用户可在流式进行时输入下一条，两者互不影响
@@ -4366,8 +4448,9 @@ async function renderChatView() {
     const ok = await openChatWs(content);
     setRunning(false);
     if (ok) {
-      // 浏览器接管提示为「一次性状态」：发送成功后自动关闭
+      // 浏览器接管提示 / 敏感信息替换列表为「一次性状态」：发送成功后自动关闭
       if (takeoverHintOn && takeoverHintReset) takeoverHintReset();
+      if (sensitiveInjectOn && sensitiveInjectReset) sensitiveInjectReset();
       showDoneBubble();
     } else {
       // 失败/被中断（含点击「停止」）：气泡提示是否回填原发送信息。
