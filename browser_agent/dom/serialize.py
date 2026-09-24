@@ -484,7 +484,7 @@ class DOMSerializer:
                     self._append_text(cell, depth)
                     continue
                 if cell.is_element and cell.tag in ("td", "th"):
-                    if not (cell.visible and cell.in_viewport and cell.tag not in SKIP_TAGS):
+                    if not self._table_cell_renderable(cell):
                         continue
                     if not first_cell:
                         self._buffer += " | "
@@ -850,6 +850,23 @@ class DOMSerializer:
         x, y, w, h = node.bbox
         cx, cy, cw, ch = clip
         return not (x + w < cx - 2 or x > cx + cw + 2 or y + h < cy - 2 or y > cy + ch + 2)
+
+    def _table_cell_renderable(self, cell: EnhancedNode) -> bool:
+        """Whether a ``<td>`` / ``<th>`` should appear on its row line.
+
+        Normally only visible, in-viewport cells are rendered (an off-screen cell
+        must not inject separators or text). The one exception mirrors the
+        visibility rescue in ``_render_child``: a *zero-area* cell that is fully
+        transparent (its popup/table was captured on the enter-animation first
+        frame, e.g. an Ant Design range-picker calendar) is real content and must
+        be serialized, otherwise the whole day grid silently disappears and the
+        LLM can never pick a date.
+        """
+        if cell.tag in SKIP_TAGS or cell.hidden:
+            return False
+        if cell.visible and cell.in_viewport:
+            return True
+        return (not cell.visible) and self._effective_opacity_zero(cell)
 
     @staticmethod
     def _effective_opacity_zero(node: EnhancedNode) -> bool:
@@ -1438,7 +1455,10 @@ class DOMSerializer:
     def _input_value(self, node: EnhancedNode) -> str:
         if node.attributes.get("type", "").lower() == "password":
             return ""
-        return node.input_value or node.attributes.get("value", "")
+        value = node.input_value or node.attributes.get("value", "")
+        # A ``<textarea>`` can hold a long document; keep the inline label short
+        # while still proving the fill landed.
+        return self._truncate(value, 120) if value else ""
 
     def _label(self, node: EnhancedNode) -> str:
         if node.ax_name:

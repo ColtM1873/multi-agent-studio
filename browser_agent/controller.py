@@ -970,6 +970,16 @@ class BrowserController:
                 if fcat != "input" or not fval:
                     continue
                 current = executor.read_value(fbid)
+                if _fills_same(fval, current):
+                    continue
+                # A controlled field can end up holding a *different* value when
+                # a re-render desynced the fill target (a long description can
+                # land in the neighbouring textarea). Correct once with a direct
+                # value set, then re-verify; only report failure when the field
+                # genuinely resists (readonly / date picker) so the LLM is not
+                # sent chasing a phantom mismatch.
+                executor.set_value(fbid, fval)
+                current = executor.read_value(fbid)
                 if not _fills_same(fval, current):
                     failed_fills.append((fname, current))
 

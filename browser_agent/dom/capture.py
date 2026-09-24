@@ -61,7 +61,15 @@ def capture_raw(client: CDPClient, session_id: str) -> dict[str, Any]:
                 "title: document.title, rs: document.readyState, "
                 "to: performance.timeOrigin, sh: se ? se.scrollHeight : 0, "
                 "ch: se ? se.clientHeight : 0, st: se ? se.scrollTop : 0, "
-                "dpr: window.devicePixelRatio || 1};})()",
+                "dpr: window.devicePixelRatio || 1, "
+                # ``DOMSnapshot`` omits ``inputValue`` for ``<textarea>`` (and
+                # ``outerHTML`` keeps the *initial* text), so a filled textarea
+                # looked empty/unfilled in the serialized DOM and the model kept
+                # re-filling it. Read the live values here (main frame, document
+                # order) so ``build`` can restore them onto the textarea nodes.
+                "tas: (() => {try {return Array.from("
+                "document.querySelectorAll('textarea')).map(t => t.value);}"
+                "catch (e) {return [];}})()};})()",
                 "returnByValue": True,
             },
             session_id=session_id,
@@ -75,6 +83,9 @@ def capture_raw(client: CDPClient, session_id: str) -> dict[str, Any]:
         page["client_height"] = float(value.get("ch") or 0)
         page["scroll_top"] = float(value.get("st") or 0)
         page["device_scale"] = float(value.get("dpr") or 1.0) or 1.0
+        tas = value.get("tas")
+        if isinstance(tas, list):
+            page["textarea_values"] = [v if isinstance(v, str) else "" for v in tas]
     except Exception:
         pass
 

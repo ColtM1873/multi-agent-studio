@@ -241,15 +241,27 @@ class ActionExecutor:
         self._dispatch_mouse("mouseReleased", x, y, button="left", buttons=0, click_count=1)
         return {"degraded": False}
 
+    # A single ``Input.insertText`` call is the CDP primitive behind IME /
+    # clipboard insertion: the page receives one ``beforeinput``/``input`` event
+    # carrying the whole string, exactly as if the user pasted it. Typing a long
+    # string char-by-char, by contrast, takes tens of seconds (each character
+    # waits ``type_char``) and — worse — a controlled framework (React/Ant
+    # Design) re-renders on every keystroke, so state can be reverted or written
+    # to the wrong field mid-fill. Above this length we paste in one shot.
+    PASTE_THRESHOLD = 10
+
     def input_text(self, backend_node_id: int, text: str) -> dict:
         click_result = self.click(backend_node_id)
         _sleep(*timing.get().actions.input_focus)
         self._clear_field()
         _sleep(*timing.get().actions.input_clear)
 
-        for char in text:
-            self._type_char(char)
-            _sleep(*timing.get().actions.type_char)
+        if len(text) > self.PASTE_THRESHOLD:
+            self._insert_text(text)
+        else:
+            for char in text:
+                self._type_char(char)
+                _sleep(*timing.get().actions.type_char)
 
         current = self._read_value(backend_node_id)
         if current is not None and text not in (current or ""):
@@ -448,6 +460,22 @@ class ActionExecutor:
         )
         self._send_input("Input.dispatchKeyEvent", {"type": "keyUp", "key": char})
 
+    def _insert_text(self, text: str) -> None:
+        """Insert ``text`` in one shot, like a paste (``Input.insertText``).
+
+        This is the browser's own "text arrived from outside a key press"
+        channel (IME / clipboard). It fires a real ``beforeinput`` + ``input``
+        event, which frameworks with controlled inputs (React / Vue / Ant
+        Design) handle exactly like human input — unlike a raw ``.value``
+        assignment, which their value tracker ignores. A rejected call is
+        swallowed; the caller re-reads the value and falls back to the native
+        setter if the text did not land.
+        """
+        try:
+            self._send("Input.insertText", {"text": text})
+        except Exception:  # noqa: BLE001 - best effort; caller re-reads the value
+            pass
+
     def _clear_field(self) -> None:
         for key, code, vk in (("a", "KeyA", 65), ("Delete", "Delete", 46)):
             self._send_input(
@@ -474,6 +502,15 @@ class ActionExecutor:
     def read_value(self, backend_node_id: int) -> Optional[str]:
         """Public read of a node's current value (used to verify a fill landed)."""
         return self._read_value(backend_node_id)
+
+    def set_value(self, backend_node_id: int, text: str) -> None:
+        """Public native value setter (used to correct a fill that did not land).
+
+        Dispatches ``input`` + ``change`` so a framework's controlled value can
+        still update; genuinely readonly / masked widgets ignore it, which the
+        caller detects by re-reading.
+        """
+        self._native_set(backend_node_id, text)
 
     def _read_value(self, backend_node_id: int) -> Optional[str]:
         object_id = self._resolve(backend_node_id)

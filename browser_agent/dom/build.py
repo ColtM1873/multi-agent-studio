@@ -232,6 +232,7 @@ def build_enhanced_tree(raw: dict) -> EnhancedTree:
                 title = doc.get("title", "")
     for node in nodes:
         node.doc_token = doc_token
+    _apply_textarea_values(nodes, page.get("textarea_values"))
 
     if float(page.get("scroll_height") or 0) > float(page.get("client_height") or 0) + 4:
         page_node = EnhancedNode(
@@ -247,6 +248,42 @@ def build_enhanced_tree(raw: dict) -> EnhancedTree:
         nodes.insert(0, page_node)
 
     return EnhancedTree(root=synthetic_root, nodes=nodes, viewport=viewport, url=url, title=title)
+
+
+def _apply_textarea_values(nodes: list[EnhancedNode], values: object) -> None:
+    """Restore live ``<textarea>`` values captured via the page ``Runtime.evaluate``.
+
+    ``DOMSnapshot`` does not expose ``inputValue`` for ``<textarea>``, and its
+    ``outerHTML`` keeps the *initial* text, so without this a filled textarea
+    serialized as its placeholder ("请输入项目描述") even though it held text —
+    the model read that as "my fill did not land" and re-filled endlessly. The
+    capture pass returns every main-frame textarea's live value in document
+    order; the tree's textareas are in the same order, so they zip 1:1. If the
+    counts differ (a textarea inside an iframe / shadow root, which the
+    document-level query does not see), we skip rather than mis-assign.
+    """
+    if not isinstance(values, list) or not values:
+        return
+    textareas: list[EnhancedNode] = []
+    for node in nodes:
+        if not (node.is_element and node.tag == "textarea"):
+            continue
+        # ``frame_id`` is populated for the top document too, so it cannot tell
+        # main frame from iframe; the shadow / iframe *marker* ancestors can.
+        ancestor = node.parent
+        nested = False
+        while ancestor is not None:
+            if ancestor.is_shadow or ancestor.is_iframe_root:
+                nested = True
+                break
+            ancestor = ancestor.parent
+        if not nested:
+            textareas.append(node)
+    if len(textareas) != len(values):
+        return
+    for node, value in zip(textareas, values):
+        if isinstance(value, str):
+            node.input_value = value
 
 
 def _walk(
