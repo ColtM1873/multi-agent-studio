@@ -897,6 +897,23 @@ class DOMSerializer:
     def _interactive_label(self, node: EnhancedNode, category: str) -> str:
         if category == "input":
             label = self._input_value(node) or node.attributes.get("placeholder", "")
+            if not label and self._is_searchable_typeahead(node):
+                # A searchable select's typeahead has neither a value nor a
+                # placeholder of its own (the chosen value lives in a sibling
+                # ``.ant-select-selection-item``). Name it after the field and
+                # the current selection so the model knows what it is editing:
+                # ``最高学历专业：金融学``.
+                prefix = self._associated_field_label(node)
+                current = self._nearby_text_label(node)
+                if prefix and current:
+                    if prefix in current:
+                        label = current
+                    elif current in prefix:
+                        label = prefix
+                    else:
+                        label = f"{prefix}：{current}"
+                else:
+                    label = prefix or current
         else:
             label = self._label(node)
             # An unlabeled control icon (radio / checkbox circle) pairs with a text
@@ -1202,25 +1219,45 @@ class DOMSerializer:
 
     @staticmethod
     def _input_is_widget_helper(node: EnhancedNode) -> bool:
-        """True for a text ``<input>`` that is a *widget's own* typeahead/search part.
+        """True for a text ``<input>`` that is a *widget's own* passive part.
 
-        Such an input (a select box's search field, a date picker's text part, a
-        ``role=combobox`` filter) is never something the model should address
-        directly — the surrounding control owns the interaction. It is
-        recognisable by intrinsic signals: ``readonly``, ``type=search``,
-        ``role=combobox`` or ``aria-autocomplete``. A genuine editable field
-        (``<input type=text>`` the user types into) is not a helper.
+        A ``readonly`` / ``hidden`` input is never something the model should
+        address directly (a date picker's text part, a non-searchable select's
+        hidden typeahead) — the surrounding control owns the interaction.
+
+        Note the deliberate contrast with ``_is_searchable_typeahead``: an
+        *editable* ``role=combobox`` / ``aria-autocomplete`` input is the
+        opposite — it is a real search box the user types into to filter
+        candidates (Ant Design's ``show-search`` select, a native autocomplete),
+        so it must be exposed, not hidden. Only ``readonly`` distinguishes the
+        two (verified on the live page: non-searchable selects carry
+        ``readonly``; searchable ones do not).
         """
         itype = node.attributes.get("type", "text").lower()
         if "readonly" in node.attributes:
             return True
-        if itype in ("search", "hidden"):
-            return True
-        if node.role == "combobox":
-            return True
-        if node.attributes.get("aria-autocomplete"):
+        if itype == "hidden":
             return True
         return False
+
+    @staticmethod
+    def _is_searchable_typeahead(node: EnhancedNode) -> bool:
+        """True for an *editable* combobox / autocomplete input.
+
+        This is the typeahead of a searchable select (``show-search``): the user
+        types here and the candidate list filters live. Unlike a passive widget
+        part it is addressable by the model, so the serializer exposes it as a
+        normal ``<可输入元素>`` and ``interact(fill=…)`` must target it.
+        """
+        if node.tag != "input":
+            return False
+        if "readonly" in node.attributes:
+            return False
+        if node.attributes.get("type", "text").lower() == "hidden":
+            return False
+        if node.role == "combobox":
+            return True
+        return bool(node.attributes.get("aria-autocomplete"))
 
     def _has_label_element_descendant(self, node: EnhancedNode) -> bool:
         """True if ``node`` is, or wraps, a ``<label>`` element.
@@ -1331,12 +1368,24 @@ class DOMSerializer:
             hops += 1
         return ""
 
-    def _find_label_text(self, node: EnhancedNode) -> str:
+    def _find_label_text(self, node: EnhancedNode, max_depth: int = 3) -> str:
+        """The first ``<label>`` text within ``max_depth`` levels of ``node``.
+
+        The depth cap matters: a field label always sits in a shallow "label
+        column" (``<div class="...label"><label>姓名</label></div>``). Without it,
+        walking up to a large shared ancestor makes the search dive into an
+        unrelated sibling section and steal its label — a partially scrolled
+        upload container was named ``姓名：请上传您的简历…`` because the search
+        reached the deep ``<label>姓名</label>`` inside the sibling basic-info
+        form.
+        """
         if node.tag == "label":
             return self._collect_text(node)
+        if max_depth <= 0:
+            return ""
         for child in node.children:
             if child.is_element:
-                text = self._find_label_text(child)
+                text = self._find_label_text(child, max_depth - 1)
                 if text:
                     return text
         return ""
@@ -1363,6 +1412,33 @@ class DOMSerializer:
             value = node.attributes.get(attr)
             if value:
                 return self._icon_label(value) or self._truncate(value)
+        # A label-less wrapper around a single icon (Ant Design's
+        # ``.ant-picker-suffix`` holding ``<span aria-label="calendar">``): take
+        # the *descendant* icon's name so the entry reads ``打开日历`` instead of
+        # the empty fallback word ``可点击项``.
+        icon = self._descendant_icon_label(node)
+        if icon:
+            return icon
+        return ""
+
+    def _descendant_icon_label(self, node: EnhancedNode, max_depth: int = 3) -> str:
+        if max_depth <= 0:
+            return ""
+        for child in node.children:
+            if child.is_text or not child.is_element:
+                continue
+            mapped = self._icon_label(child.ax_name or "")
+            if mapped:
+                return mapped
+            for attr in ("aria-label", "title"):
+                value = child.attributes.get(attr)
+                if value:
+                    mapped = self._icon_label(value)
+                    if mapped:
+                        return mapped
+            deeper = self._descendant_icon_label(child, max_depth - 1)
+            if deeper:
+                return deeper
         return ""
 
     @staticmethod
@@ -1446,7 +1522,13 @@ class DOMSerializer:
         input lives *inside* the box (``root``) and carries the selected value,
         so it must be treated as a part, not a separate control.
         """
-        if not node.is_element or node.hidden or not node.visible or not node.in_viewport:
+        if not node.is_element or node.hidden or not node.visible:
+            # NOTE: ``in_viewport`` is deliberately *not* consulted here. A real
+            # control is still a real control when it is momentarily scrolled
+            # just out of the viewport margin; judging by viewport made a
+            # clickable container (whose inner button was outside the margin)
+            # look like a leaf composite control, swallowing the button and
+            # flattening the whole area into one named blob.
             return False
         if node.tag in ("button", "select", "textarea", "summary"):
             return True
@@ -1464,9 +1546,14 @@ class DOMSerializer:
             if itype in CLICKABLE_INPUT_TYPES:
                 return True
             if self._input_is_widget_helper(node):
-                # A readonly / search / combobox input is a widget's internal
-                # typeahead, never a field the model addresses directly.
+                # A readonly / hidden input is a widget's passive part, never a
+                # field the model addresses directly.
                 return False
+            if self._is_searchable_typeahead(node):
+                # An *editable* combobox / autocomplete is a real search box even
+                # when it sits inside the clickable composite select; the model
+                # must be able to type into it to filter candidates.
+                return True
             if self._is_labelled_field(node):
                 # An editable input that is the target of a field ``<label>``
                 # (or nested in one) is a *real* field, even when a clickable

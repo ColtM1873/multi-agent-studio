@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import re
 import threading
 import time
 from typing import Optional
@@ -124,6 +125,57 @@ def _fills_same(requested: str, current: Optional[str]) -> bool:
     if not wanted:
         return True
     return wanted in _norm(current)
+
+
+# One interactive element tag: ``<可点击元素 e12>…</可点击元素 e12>``. Used by the
+# scroll accumulator to drop the fragments that overlap between consecutive
+# (deliberately overlapping) scroll windows.
+_INTERACTIVE_FRAGMENT_RE = re.compile(
+    r"<(?P<tag>可点击元素|可输入元素|可滚动元素|可拖动元素) (?P<name>e\d+)>"
+    r".*?</(?P=tag) (?P=name)>"
+)
+
+
+def _dedupe_scroll_fragments(lines: list[OutLine]) -> list[OutLine]:
+    """Drop interactive fragments already emitted in an earlier scroll step.
+
+    A scrollable list renders *many* interactive siblings into a **single**
+    ``OutLine`` (one long line). Each overlapping scroll step shifts that whole
+    line, so ``changed_lines`` treats it as a replace and the per-line dedup key
+    ``(depth, text)`` never matches — the shared candidates were repeated in the
+    output (``上海旅游高等专科学校`` etc. shown two or three times). Dedup at the
+    fragment (element) level instead, which is exactly the grain the LLM cares
+    about.
+    """
+    seen: set[str] = set()
+    out: list[OutLine] = []
+    for line in lines:
+        if not line.text:
+            out.append(line)
+            continue
+
+        def _repl(match: "re.Match[str]") -> str:
+            name = match.group("name")
+            if name in seen:
+                return ""
+            seen.add(name)
+            return match.group(0)
+
+        text = _INTERACTIVE_FRAGMENT_RE.sub(_repl, line.text)
+        if not text.strip():
+            continue
+        kept = tuple(name for name in line.interactive if name in text)
+        out.append(
+            OutLine(
+                depth=line.depth,
+                text=text,
+                kind=line.kind,
+                ancestors=line.ancestors,
+                interactive=kept,
+                closing=line.closing,
+            )
+        )
+    return out
 
 
 class _ContainerScroller:
@@ -508,6 +560,9 @@ class BrowserController:
         old_name = self._name_for_target(target_id)
         old_target_ids = {t["targetId"] for t in self._live_targets()}
         fill_error = ""
+        fill_notice = ""
+        dialog = {"type": "", "message": ""}
+        before_sig = ""
 
         try:
             session = self.client.attach(target_id)
@@ -529,6 +584,17 @@ class BrowserController:
                             f"但控件当前值为「{current or '空'}」。"
                             f"该控件可能是只读、或日期/时间选择器，无法用 fill 直接写入；"
                             f"请点击它之后在弹出的选择器里选择，或改为对其它可输入元素填值。"
+                        )
+                    elif (
+                        node.tag == "input"
+                        and node.role == "combobox"
+                        and "readonly" not in node.attributes
+                    ):
+                        # A searchable select's typeahead: typing only *filters*
+                        # the candidate list, it does not commit a choice.
+                        fill_notice = (
+                            f"[提示] 已把「{fill}」输入到搜索框用于筛选；"
+                            f"**仅输入不会提交选择**，请在随后出现的候选项里点击目标项才算填入。"
                         )
             elif category == "drag":
                 executor.drag(node.backend_node_id, drag_pct)
@@ -562,23 +628,24 @@ class BrowserController:
                 # Snapshot the DOM before acting so we can tell a real change
                 # from a no-op (a serialized diff would be polluted by the
                 # ``:hover`` the move induces, the raw markup is not).
-                before_sig = executor.dom_signature() if retry_id is not None else ""
+                before_sig = executor.dom_signature()
                 # A same-document link (active nav item / in-page hash) must not
                 # pay the full navigation grace: it either fires a soft event or
                 # does nothing.
                 click_may_nav = may_navigate(node)
                 if click_may_nav and _href_targets_same_document(node, old_tree.url):
                     click_may_nav = False
-                with self._watch_navigation(session) as nav_state:
-                    executor.click(node.backend_node_id)
-                    self._settle_navigation(session, nav_state, click_may_nav)
-                if retry_id is not None and before_sig:
-                    if executor.dom_signature() == before_sig:
-                        # The (named) label did nothing; the real control is the
-                        # unlabeled icon sibling (radio/checkbox rows).
-                        with self._watch_navigation(session) as nav_state:
-                            executor.click(retry_id)
-                            self._settle_navigation(session, nav_state)
+                with self._handle_dialogs(session) as dialog:
+                    with self._watch_navigation(session) as nav_state:
+                        executor.click(node.backend_node_id)
+                        self._settle_navigation(session, nav_state, click_may_nav)
+                    if retry_id is not None and before_sig:
+                        if executor.dom_signature() == before_sig:
+                            # The (named) label did nothing; the real control is the
+                            # unlabeled icon sibling (radio/checkbox rows).
+                            with self._watch_navigation(session) as nav_state:
+                                executor.click(retry_id)
+                                self._settle_navigation(session, nav_state)
         except ActionError as exc:
             return self._base_result(INCREMENTAL, FAIL, "无", str(exc), include_tabs=False)
         except CDPError as exc:
@@ -591,8 +658,11 @@ class BrowserController:
             if self._is_blank_shell(new_tree):
                 new_text = _BLANK_SHELL_NOTICE + new_text
             return self._base_result(
-                FULL, FAIL if fill_error else OK, new_text,
-                error=fill_error or "无", include_tabs=True,
+                FULL,
+                FAIL if fill_error else OK,
+                self._dialog_notice(dialog) + (fill_notice + "\n\n" if fill_notice else "") + new_text,
+                error=fill_error or "无",
+                include_tabs=True,
             )
 
         # The click may have opened a background tab without moving focus. The
@@ -608,10 +678,28 @@ class BrowserController:
             )
 
         new_tree = self.capture_tree(target_id)
-        notice = self._title_change_notice(target_id, old_name)
+        notice = (
+            self._dialog_notice(dialog)
+            + (fill_notice + "\n\n" if fill_notice else "")
+            + self._title_change_notice(target_id, old_name)
+        )
         content = self._incremental_content(
             old_lines, new_tree, target_id, notice, old_url=old_tree.url
         )
+        # A click that closes a popup / clears a selection removes content; the
+        # diff only reports additions, so it would read "（页面无变化）" and the LLM
+        # would mistake a real toggle for a dead click. If the raw markup did
+        # change, say so explicitly.
+        if before_sig and "（页面无变化）" in content:
+            try:
+                after_sig = executor.dom_signature()
+            except Exception:
+                after_sig = before_sig
+            if after_sig and after_sig != before_sig:
+                content += (
+                    "\n\n[提示] 页面结构确实发生了变化，但没有新增的可见文本/互动元素"
+                    "（常见于：关闭了浮层/下拉、取消选中，或仅状态/样式变化）。"
+                )
         return self._base_result(
             INCREMENTAL, FAIL if fill_error else OK, content,
             error=fill_error or "无", include_tabs=False,
@@ -671,6 +759,7 @@ class BrowserController:
             if (scroller.at_bottom() if down else scroller.at_top()):
                 break
 
+        added = _dedupe_scroll_fragments(added)
         if not added:
             return "（页面无变化）"
         content = format_lines(added)
@@ -1071,6 +1160,79 @@ class BrowserController:
             for method, handler in watchers:
                 self.client.off(method, handler)
 
+    @contextlib.contextmanager
+    def _handle_dialogs(self, session: str):
+        """Auto-handle native JS dialogs so an action can never hang on one.
+
+        A ``beforeunload`` confirmation ("重新加载此网站？系统可能不会保留您所做
+        的更改") is a **native** dialog: it is invisible to the tool, blocks the
+        renderer, and makes ``Page.reload`` / navigation wait forever. CDP surfaces
+        it as ``Page.javascriptDialogOpening`` and only ``Page.handleJavaScriptDialog``
+        dismisses it.
+
+        ``beforeunload`` / ``alert`` are accepted (a deliberate tool navigation must
+        be allowed to proceed; an alert has nothing to decide). ``confirm`` /
+        ``prompt`` are also accepted — the user's click was the intent — but the
+        dialog text is recorded and returned so the model can see what happened.
+
+        The event handler runs on the CDP **reader thread**; sending from there can
+        deadlock the websocket client, so it only records the dialog and wakes a
+        dedicated worker thread that issues ``Page.handleJavaScriptDialog``.
+        """
+        assert self.client is not None
+        seen = {"type": "", "message": ""}
+        wake = threading.Event()
+        stop = threading.Event()
+
+        def handle(params: dict) -> None:
+            if params.get("__sessionId") != session:
+                return
+            dtype = params.get("type", "")
+            seen["type"] = dtype
+            seen["message"] = params.get("message", "") or params.get("defaultPrompt", "") or ""
+            wake.set()
+
+        def worker() -> None:
+            while not stop.is_set():
+                if not wake.wait(0.2):
+                    continue
+                wake.clear()
+                try:
+                    self.client.send(
+                        "Page.handleJavaScriptDialog",
+                        {"accept": seen["type"] != "prompt", "promptText": ""},
+                        session_id=session,
+                        timeout=timing.get().cdp.input_timeout,
+                    )
+                except Exception:
+                    pass
+
+        self.client.on("Page.javascriptDialogOpening", handle)
+        thread = threading.Thread(target=worker, name="cdp-dialog", daemon=True)
+        thread.start()
+        try:
+            yield seen
+        finally:
+            self.client.off("Page.javascriptDialogOpening", handle)
+            stop.set()
+            wake.set()
+            thread.join(timeout=1.0)
+
+    @staticmethod
+    def _dialog_notice(seen: dict) -> str:
+        dtype = (seen or {}).get("type") or ""
+        if not dtype:
+            return ""
+        if dtype == "beforeunload":
+            return ""
+        message = (seen.get("message") or "").strip()
+        labels = {"alert": "警告", "confirm": "确认", "prompt": "输入"}
+        return (
+            f"[原生对话框] 页面弹出了{labels.get(dtype, dtype)}框"
+            + (f"：「{message}」" if message else "")
+            + "（已自动处理）。\n\n"
+        )
+
     def _settle_navigation(
         self, session: str, state: dict, may_navigate: bool = True
     ) -> None:
@@ -1313,17 +1475,18 @@ class BrowserController:
         if index <= 0 or index >= len(entries):
             return self._base_result(FULL, FAIL, "无", "无法返回：没有可回退的历史记录")
         try:
-            with self._watch_navigation(session) as nav_state:
-                self.client.send(
-                    "Page.navigateToHistoryEntry",
-                    {"entryId": entries[index - 1]["id"]},
-                    session_id=session,
-                )
-                self._settle_navigation(session, nav_state)
+            with self._handle_dialogs(session) as dialog:
+                with self._watch_navigation(session) as nav_state:
+                    self.client.send(
+                        "Page.navigateToHistoryEntry",
+                        {"entryId": entries[index - 1]["id"]},
+                        session_id=session,
+                    )
+                    self._settle_navigation(session, nav_state)
         except CDPError as exc:
             return self._base_result(FULL, FAIL, "无", str(exc))
         result = self._full_result_for(target_id)
-        result["content"] = self._title_change_notice(target_id, old_name) + result["content"]
+        result["content"] = self._dialog_notice(dialog) + self._title_change_notice(target_id, old_name) + result["content"]
         return result
 
     def refresh(self) -> dict:
@@ -1342,13 +1505,14 @@ class BrowserController:
         session = self.client.attach(target_id)
         self.client.enable_page_domains(session)
         try:
-            with self._watch_navigation(session) as nav_state:
-                self.client.send("Page.reload", {"ignoreCache": False}, session_id=session)
-                self._settle_navigation(session, nav_state)
+            with self._handle_dialogs(session) as dialog:
+                with self._watch_navigation(session) as nav_state:
+                    self.client.send("Page.reload", {"ignoreCache": False}, session_id=session)
+                    self._settle_navigation(session, nav_state)
         except CDPError as exc:
             return self._base_result(INCREMENTAL, FAIL, "无", str(exc), include_tabs=False)
         new_tree = self.capture_tree(target_id)
-        notice = self._title_change_notice(target_id, old_name)
+        notice = self._dialog_notice(dialog) + self._title_change_notice(target_id, old_name)
         content = self._incremental_content(
             old_lines, new_tree, target_id, notice, old_url=old_tree.url
         )
