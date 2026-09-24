@@ -15,6 +15,9 @@ _VIEWPORT_MARGIN = 1000.0
 # re-exposes it as a normal interactive scroll element.
 PAGE_SCROLL_TAG = "#page"
 
+# Media hosts whose user-agent shadow root is pure browser chrome (see ``_walk``).
+_MEDIA_TAGS = {"video", "audio"}
+
 
 @dataclass
 class EnhancedNode:
@@ -31,6 +34,13 @@ class EnhancedNode:
     visible: bool = True
     hidden: bool = False
     in_viewport: bool = True
+    # ``False`` when the CDP snapshot has no layout row for this node at all
+    # (``display:none`` is omitted from ``DOMSnapshot``, so its computed styles
+    # are unavailable and ``hidden`` cannot be derived; also covers
+    # ``display:contents`` and detached subtrees). Such nodes have no box of
+    # their own; the serializer recurses into their element descendants but
+    # drops their own text.
+    rendered: bool = True
     paint_order: int = 0
     styles: dict[str, str] = field(default_factory=dict)
     input_value: str = ""
@@ -254,7 +264,9 @@ def _walk(
 
     if node_type == 1:
         backend_id = node.get("backendNodeId", 0)
-        layout = backend_to_layout.get(backend_id, {})
+        layout = backend_to_layout.get(backend_id)
+        has_layout = layout is not None
+        layout = layout or {}
         ax = backend_to_ax.get(backend_id, {})
         styles = layout.get("styles", {})
         bbox = layout.get("bbox")
@@ -282,7 +294,7 @@ def _walk(
             input_value=backend_to_value.get(backend_id, ""),
             selected=ax.get("selected"),
         )
-        _apply_visibility(enhanced, viewport)
+        _apply_visibility(enhanced, viewport, has_layout)
         enhanced.parent = parent
         parent.children.append(enhanced)
         out_nodes.append(enhanced)
@@ -299,6 +311,13 @@ def _walk(
                 viewport,
             )
         for shadow in node.get("shadowRoots", []) or []:
+            if enhanced.tag in _MEDIA_TAGS:
+                # ``<video>``/``<audio>`` only expose browser-generated player
+                # chrome through their user-agent shadow root (dozens of
+                # duplicated "选项/全屏/静音/画中画" controls). Serializing it
+                # floods the LLM with noise and no page-authored content lives
+                # there, so skip the shadow subtree entirely.
+                continue
             shadow_node = _walk_container(
                 shadow,
                 enhanced,
@@ -392,10 +411,23 @@ def _walk_container(
     return marker
 
 
-def _apply_visibility(node: EnhancedNode, viewport: dict) -> None:
+def _apply_visibility(
+    node: EnhancedNode, viewport: dict, has_layout: bool = True
+) -> None:
     styles = node.styles
     hidden = styles.get("display") == "none" or styles.get("visibility") in ("hidden", "collapse")
     node.hidden = hidden
+    if not has_layout:
+        # No layout row at all: ``display:none`` (whose computed styles are
+        # omitted from the snapshot, so ``hidden`` stays ``False``),
+        # ``display:contents`` or a detached subtree. Mark it box-less so the
+        # serializer recurses into element descendants but drops this node's own
+        # text. Before this, hidden SEO/helper text and the options of closed
+        # dropdowns leaked into the output.
+        node.rendered = False
+        node.visible = False
+        node.in_viewport = False
+        return
     if node.bbox:
         x, y, w, h = node.bbox
         has_area = w > 0 and h > 0

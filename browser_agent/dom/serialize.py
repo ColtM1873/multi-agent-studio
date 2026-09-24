@@ -185,6 +185,17 @@ _FRAMEWORK_CLASS_PREFIXES = (
     "jsx-",
     "css-",
     "sc-",
+    # Component-library / utility-CSS namespaces (Element UI ``el-checkbox``,
+    # Tailwind ``tw-cursor-pointer``, Ant Design ``ant-…`` …). These are emitted
+    # by tooling and never name a control; left alone they leaked as labels.
+    "el-",
+    "tw-",
+    "ant-",
+    "antd-",
+    "arco-",
+    "van-",
+    "nut-",
+    "chakra-",
 )
 
 # Action words inside a hyphenated class token. When present, the token is
@@ -1112,6 +1123,12 @@ class DOMSerializer:
             if child.is_text:
                 parts.append(child.text)
             elif child.is_element and not self._is_image(child):
+                # Never aggregate text from hidden / box-less subtrees: a
+                # closed dropdown's option text, hidden SEO copy, etc. otherwise
+                # leaked into the label of the *visible* control that wraps them
+                # (e.g. a country ``<select>`` named "中国 +86 美国 +1 …").
+                if child.hidden or not child.rendered:
+                    continue
                 nested = self._collect_text(child)
                 if nested:
                     parts.append(nested)

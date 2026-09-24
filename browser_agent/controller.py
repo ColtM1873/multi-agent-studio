@@ -219,6 +219,33 @@ class BrowserController:
                 opened.append(self._tab_registry.name(target))
         return opened
 
+    def _bring_to_front(self, session: str) -> None:
+        """Best-effort activation of a tab's page.
+
+        ``Target.activateTarget`` alone does not always bring a windowed tab to
+        the foreground: ``document.hasFocus()`` can keep reporting the old tab,
+        so ``tool_5_switch_tab`` returned the requested DOM while ``tool_2``
+        then rejected its elements as "belonging to another tab". The
+        page-scoped ``Page.bringToFront`` performs the actual activation.
+        Never raises (the caller already has a working session).
+        """
+        assert self.client is not None
+        self.client.enable_page_domains(session)
+        try:
+            self.client.send("Page.bringToFront", {}, session_id=session)
+        except CDPError:
+            pass
+
+    def _focus_mismatch_notice(self, requested_id: str, actual_id: str) -> str:
+        """Explain that a requested tab could not be brought to the foreground."""
+        requested = self._name_for_target(requested_id) or requested_id
+        actual = self._name_for_target(actual_id) or actual_id
+        return (
+            f"[无法切换标签页] 未能把「{requested}」切到前台，浏览器当前仍聚焦"
+            f"「{actual}」。请尝试用 tool_8_close_tab 关闭「{actual}」，"
+            f"或用 tool_9_navigate 打开目标页面后再继续操作。\n\n"
+        )
+
     def _new_tab_notice(self, opened_names: list) -> str:
         """Hint for "a click opened a background tab, focus did not move"."""
         opened = "、".join(opened_names)
@@ -1079,11 +1106,20 @@ class BrowserController:
             return self._base_result(FULL, FAIL, "无", f"未找到标签页 {tab_id}")
         try:
             self.client.send("Target.activateTarget", {"targetId": target_id})
+            self._bring_to_front(self.client.attach(target_id))
             self.focused_target_id = target_id
             self._wait_ready(target_id)
         except (CDPError, RuntimeError) as exc:
             return self._base_result(FULL, FAIL, "无", str(exc))
-        return self._full_result_for(target_id)
+        result = self._full_result_for(target_id)
+        # If the browser refused to foreground the requested tab, do not pretend
+        # the switch succeeded (that trapped the LLM in a switch/interact loop):
+        # return the tab that is *actually* focused, with an explicit notice.
+        actual = self._resolve_focused_target()
+        if actual is not None and actual != target_id:
+            result = self._full_result_for(actual)
+            result["content"] = self._focus_mismatch_notice(target_id, actual) + result["content"]
+        return result
 
     def go_back(self) -> dict:
         """tool-6: browser back button, return full DOM."""
@@ -1201,5 +1237,14 @@ class BrowserController:
             self.client.send("Target.activateTarget", {"targetId": target_id})
         except CDPError:
             pass
+        try:
+            self._bring_to_front(self.client.attach(target_id))
+        except CDPError:
+            pass
         self._wait_ready_new_tab(target_id, target_url)
-        return self._full_result_for(target_id)
+        result = self._full_result_for(target_id)
+        actual = self._resolve_focused_target()
+        if actual is not None and actual != target_id:
+            result = self._full_result_for(actual)
+            result["content"] = self._focus_mismatch_notice(target_id, actual) + result["content"]
+        return result
