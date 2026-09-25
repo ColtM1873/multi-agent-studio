@@ -51,6 +51,17 @@ _BLANK_SHELL_NOTICE = (
     "请稍等片刻后重试 tool_2_get_viewport_dom，或使用 tool_6_refresh 刷新。\n\n"
 )
 
+# Prepended when the page is not merely "not rendered yet" but has actually been
+# reset to ``about:blank``. Sites do this deliberately after detecting automation
+# (a whole new tab can otherwise appear to "flash the page, then go blank"), so a
+# "still loading" hint would mislead the LLM into retrying the same dead page.
+_ABOUT_BLANK_NOTICE = (
+    "[页面为空] 当前聚焦标签页停在 about:blank，没有正文。"
+    "常见原因：①该网址未能加载或被重定向到空白页；"
+    "②网站脚本/反爬在加载后把页面重置成了空白页。"
+    "请稍候重试 tool_2_get_viewport_dom，或用 tool_8_navigate 重新打开目标网址。\n\n"
+)
+
 # Structural/document nodes that never count as "rendered body content".
 _SHELL_TAGS = {
     "html",
@@ -397,7 +408,8 @@ class BrowserController:
         actual = self._name_for_target(actual_id) or actual_id
         return (
             f"[无法切换标签页] 未能把「{requested}」切到前台，浏览器当前仍聚焦"
-            f"「{actual}」。请尝试用 tool_7_close_tab 关闭「{actual}」，"
+            f"「{actual}」。可稍后重试 tool_4_switch_tab 切换到「{requested}」，"
+            f"或用 tool_7_close_tab 关闭「{actual}」，"
             f"或用 tool_8_navigate 打开目标页面后再继续操作。\n\n"
         )
 
@@ -471,6 +483,8 @@ class BrowserController:
                 self.client.send("Target.activateTarget", {"targetId": target_id})
             except CDPError:
                 pass
+            # Attach and ``Page.bringToFront`` are best-effort and independent:
+            # a transient attach failure must not skip the activation attempt.
             try:
                 self._bring_to_front(self.client.attach(target_id))
             except CDPError:
@@ -785,7 +799,7 @@ class BrowserController:
             new_tree = self.capture_tree(new_focus)
             new_text = self.serialize_tree(new_tree, new_focus)
             if self._is_blank_shell(new_tree):
-                new_text = _BLANK_SHELL_NOTICE + new_text
+                new_text = self._blank_notice(new_tree) + new_text
             return self._base_result(
                 FULL,
                 FAIL if fill_error else OK,
@@ -1310,6 +1324,14 @@ class BrowserController:
             return False
         return True
 
+    @staticmethod
+    def _blank_notice(tree: EnhancedTree) -> str:
+        """Notice for an empty tree: distinguish a reset about:blank from loading."""
+        url = (getattr(tree, "url", "") or "").strip()
+        if not url or url == "about:blank":
+            return _ABOUT_BLANK_NOTICE
+        return _BLANK_SHELL_NOTICE
+
     @contextlib.contextmanager
     def _watch_navigation(self, session: str):
         """Watch CDP navigation events for ``session`` while an action runs.
@@ -1530,7 +1552,7 @@ class BrowserController:
             tree = self.capture_tree(target_id)
             content = self.serialize_tree(tree, target_id)
             if self._is_blank_shell(tree):
-                content = _BLANK_SHELL_NOTICE + content
+                content = self._blank_notice(tree) + content
             return self._base_result(FULL, action_ok, content)
         except (BrowserLaunchError, CDPError, RuntimeError) as exc:
             return self._base_result(FULL, FAIL, "无", str(exc))
@@ -1633,7 +1655,7 @@ class BrowserController:
         tree = self.capture_tree(target_id)
         content = self.serialize_tree(tree, target_id)
         if self._is_blank_shell(tree):
-            content = _BLANK_SHELL_NOTICE + content
+            content = self._blank_notice(tree) + content
         return self._base_result(FULL, action_ok, content)
 
     def switch_tab(self, tab_id: str) -> dict:
@@ -1775,9 +1797,18 @@ class BrowserController:
         except CDPError as exc:
             return self._base_result(FULL, FAIL, "无", str(exc))
         self.focused_target_id = target_id
-        self._activate_target(target_id)
-        self._wait_ready_new_tab(target_id, target_url)
-        result = self._full_result_for(target_id)
+        try:
+            self._activate_target(target_id)
+            self._wait_ready_new_tab(target_id, target_url)
+            result = self._full_result_for(target_id)
+        except CDPError as exc:
+            # A freshly created target can briefly be un-attachable. Return a
+            # clear, recoverable message (with the tab list) instead of leaking a
+            # raw CDP error, so the LLM can retry rather than treat the browser
+            # as broken.
+            return self._base_result(
+                FULL, FAIL, "无", f"新标签页已创建但暂时无法连接：{exc}", include_tabs=True
+            )
         actual = self._resolve_focused_target()
         if actual is not None and actual != target_id:
             result = self._full_result_for(actual)

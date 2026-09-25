@@ -145,7 +145,15 @@ class CDPClient:
             for session_id, tid in self._session_targets.items():
                 if tid == target_id:
                     return session_id
-        result = self.send("Target.attachToTarget", {"targetId": target_id, "flatten": True})
+        try:
+            result = self.send("Target.attachToTarget", {"targetId": target_id, "flatten": True})
+        except CDPError:
+            # A freshly created target can race target discovery: the browser has
+            # accepted ``Target.createTarget`` but ``attachToTarget`` briefly says
+            # "No target with given id found". Refresh the target list once and
+            # retry so a transient race is not surfaced as a hard tool failure.
+            self.refresh_targets()
+            result = self.send("Target.attachToTarget", {"targetId": target_id, "flatten": True})
         session_id = result["sessionId"]
         self._session_targets[session_id] = target_id
         return session_id
@@ -159,8 +167,24 @@ class CDPClient:
     def target_for_session(self, session_id: str) -> Optional[str]:
         return self._session_targets.get(session_id)
 
+    # Only ``Page.enable`` is genuinely required: navigation / dialog events
+    # (``_watch_navigation`` / ``_handle_dialogs``) need it, and it is not a known
+    # automation-detection vector. The other three are deliberately NOT enabled:
+    #   * ``Runtime.enable`` — some anti-bot scripts detect it and *reset the page*.
+    #     Observed in production: after ``Runtime.enable``, liepin's JS navigated
+    #     the top frame to ``about:blank`` ~2.6 s after load, so the tool returned
+    #     an empty page; the new tab appeared to "flash the page then go blank".
+    #     ``Runtime.evaluate`` / ``Runtime.callFunctionOn`` work without enabling
+    #     the domain, which is all this project uses.
+    #   * ``Network.enable`` — never used here and another well-known detection
+    #     vector.
+    #   * ``DOM.enable`` — only needed for DOM *events*, which we never subscribe
+    #     to; ``DOM.getDocument`` / ``DOM.getContentQuads`` / ``DOM.getBoxModel``
+    #     all work without it.
+    _ENABLE_DOMAINS = ("Page.enable",)
+
     def enable_page_domains(self, session_id: str) -> None:
-        for domain in ("Page.enable", "Runtime.enable", "DOM.enable", "Network.enable"):
+        for domain in self._ENABLE_DOMAINS:
             try:
                 self.send(domain, {}, session_id=session_id)
             except CDPError:

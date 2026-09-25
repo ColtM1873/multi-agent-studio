@@ -219,6 +219,24 @@ _QUALIFIER_HINTS = {
     "super", "double", "half", "first", "last", "sub", "mini", "multi", "step",
 }
 
+# Structural / container words name *where* something sits, not *what it does*.
+# A class token composed only of these (``header-logo-link`` / ``footer-wrapper``)
+# is machine markup: leaking it as a label ("header-logo-link") tells the LLM
+# nothing and reads like a bug. Such tokens are rejected so the caller can fall
+# back to a semantic generic word; a token that also carries an action word
+# (``header-search-submit-icon``) is kept and trimmed to that action.
+_GENERIC_STRUCTURE_WORDS = {
+    "header", "footer", "nav", "navbar", "navigation", "logo", "brand", "banner",
+    "wrapper", "wrap", "container", "layout", "section", "sect", "block", "box",
+    "area", "panel", "pane", "mask", "overlay", "popup", "modal", "dialog",
+    "page", "site", "web", "main", "content", "inner", "outer", "left", "right",
+    "top", "bottom", "middle", "center", "mid", "item", "list", "row", "col",
+    "cell", "grid", "title", "text", "txt", "label", "img", "image", "pic",
+    "photo", "avatar", "thumb", "icon", "iconfont", "font", "link", "btn",
+    "button", "input", "form", "field", "group", "menu", "bar", "tool", "tools",
+    "ctrl", "control", "widget", "component",
+}
+
 # Common icon ``aria-label`` / ``alt`` names (Ant Design ``anticon``, Element UI,
 # Material icons …) mapped to a short, actionable Chinese label. Component
 # libraries label their icon-only controls with the *icon* name (`calendar`,
@@ -227,6 +245,11 @@ _ICON_LABELS = {
     "calendar": "打开日历",
     "close-circle": "清除",
     "close": "关闭",
+    "x": "关闭",
+    "×": "关闭",
+    "✕": "关闭",
+    "✖": "关闭",
+    "logo": "网站标志",
     "down": "展开",
     "up": "收起",
     "left": "向左",
@@ -1152,6 +1175,7 @@ class DOMSerializer:
         ]
         best = max(hinted or tokens, key=len)
         parts = best.split("-")
+        start = 0
         for index, part in enumerate(parts):
             if part in _ACTION_HINTS:
                 start = index
@@ -1159,10 +1183,22 @@ class DOMSerializer:
                     # Keep a meaningful qualifier so ``super-prev`` and ``prev``
                     # (previous year vs previous month) stay distinguishable.
                     start = index - 1
-                if start > 0:
-                    best = "-".join(parts[start:])
                 break
-        return self._truncate(best, 40)
+        trimmed = "-".join(parts[start:])
+        # If one of the (remaining) words is a known icon/action name, prefer its
+        # short Chinese label: ``search-submit-icon`` -> ``搜索`` instead of the
+        # raw machine token. This runs before the structural rejection so a real
+        # action word always wins.
+        for part in parts[start:]:
+            mapped = _ICON_LABELS.get(part)
+            if mapped:
+                return mapped
+        # A token made only of structural/container words names a place on the
+        # page, not a control (``header-logo-link``). Reject it so the caller
+        # falls back to a semantic generic word rather than leaking markup.
+        if all(part in _GENERIC_STRUCTURE_WORDS for part in trimmed.split("-")):
+            return ""
+        return self._truncate(trimmed, 40)
 
     @staticmethod
     def _is_semantic_token(token: str) -> bool:
@@ -1578,7 +1614,10 @@ class DOMSerializer:
             return self._icon_label(node.ax_name) or self._truncate(node.ax_name)
         text = self._collect_text(node)
         if text:
-            return text
+            # A visible glyph-only label (``X`` / ``×`` / ``Close``) is an icon in
+            # disguise: map it to an actionable word so the entry is not read as a
+            # meaningless "X" button.
+            return self._icon_label(text) or text
         for attr in ("placeholder", "title", "aria-label", "alt", "name"):
             value = node.attributes.get(attr)
             if value:
