@@ -609,6 +609,7 @@ class BrowserController:
     def _category_label(category: str) -> str:
         return {
             "input": "可输入",
+            "select": "可选择",
             "click": "可点击",
             "drag": "可拖动",
             "scroll": "可滚动",
@@ -639,6 +640,51 @@ class BrowserController:
             f"该控件只接受具体日期，页面上通常也没有『至今』这种选项；"
             f"请改为点击它并在弹出的日历里选择具体日期，"
             f"或先与用户确认该字段如何处理（例如选当天日期、或留空）。"
+        )
+
+    @staticmethod
+    def _select_option_texts(node: EnhancedNode, limit: int = 30) -> list:
+        """Visible texts of a native ``<select>``'s selectable options.
+
+        Used to give the LLM actionable feedback when a ``fill`` does not match
+        any option (``可选值：深圳、北京、杭州``). The placeholder option (empty
+        ``value``) is excluded; duplicates keep their first occurrence.
+        """
+        out: list[str] = []
+        for child in node.children:
+            if not child.is_element or child.tag != "option":
+                continue
+            value = (child.attributes.get("value") or "").strip()
+            if not value:
+                continue
+            text = (child.attributes.get("title") or "").strip()
+            if not text:
+                text = " ".join(
+                    (part.text or "") for part in child.children if part.is_text
+                ).strip()
+            if text and text not in out:
+                out.append(text)
+            if len(out) >= limit:
+                break
+        return out
+
+    def _select_fill_error(
+        self, name: str, fill: str, current: Optional[str], options: list
+    ) -> str:
+        opts = "、".join(options) if options else "（无可选项）"
+        return (
+            f"元素 {name} 是下拉选择控件，未能选中「{fill}」"
+            f"（控件当前值为「{current or '未选择'}」）。"
+            f"该控件只能从已有选项中选一个：请用 fill 传入下方某一项的文字。"
+            f"当前可选值：{opts}。若目标值不在其中，请先与用户确认该字段如何填写。"
+        )
+
+    def _select_click_notice(self, name: str, options: list) -> str:
+        opts = "、".join(options) if options else "（无可选项）"
+        return (
+            f"[提示] 元素 {name} 是原生下拉选择控件：点击它只会展开浏览器/系统原生下拉层，"
+            f"该弹层不在 DOM 中、工具无法捕获，因此不会产生任何可见变化。"
+            f"请直接用 fill 参数指定要选择的选项文字。当前可选值：{opts}。"
         )
 
     def _alternative_click_target(self, node: EnhancedNode) -> Optional[int]:
@@ -702,17 +748,17 @@ class BrowserController:
             )
 
         category = classify(node)
-        if fill and category != "input":
-            # ``fill`` only means anything on an input. On a click-only element
-            # the old code silently dropped the text and still reported success,
-            # so the model believed it had filled a field that never changed.
-            # Fail loudly with actionable guidance instead.
+        if fill and category not in ("input", "select"):
+            # ``fill`` only means anything on an input or a native select. On a
+            # click-only element the old code silently dropped the text and still
+            # reported success, so the model believed it had filled a field that
+            # never changed. Fail loudly with actionable guidance instead.
             return self._base_result(
                 INCREMENTAL,
                 FAIL,
                 "无",
                 f"互动元素 {name} 不是可填入元素（它是「{self._category_label(category)}」类），"
-                f"fill 参数未执行；请改为对可输入元素填值，或先点击该元素。",
+                f"fill 参数未执行；请改为对可输入/可选择元素填值，或先点击该元素。",
                 include_tabs=False,
             )
         old_lines = self.serialize_lines_tree(old_tree, target_id)
@@ -781,6 +827,22 @@ class BrowserController:
                     with self._watch_navigation(session) as nav_state:
                         executor.press_enter()
                         self._settle_navigation(session, nav_state, True)
+            elif category == "select":
+                # A native ``<select>``: its popup is drawn by the browser/OS and
+                # is not part of the DOM, so a click produces no diff and options
+                # cannot be clicked. The only reliable operation is to select the
+                # option whose text (or value) matches ``fill``.
+                options = self._select_option_texts(node)
+                if fill:
+                    executor.select_option(node.backend_node_id, fill)
+                    self._stabilize(target_id)
+                    current = executor.read_select_text(node.backend_node_id)
+                    if not _fills_same(fill, current):
+                        fill_error = self._select_fill_error(name, fill, current, options)
+                else:
+                    # Do not click: it would open an uncapturable native popup
+                    # and still report "（页面无变化）". Explain the operation.
+                    fill_notice = self._select_click_notice(name, options)
             elif category == "drag":
                 executor.drag(node.backend_node_id, drag_pct)
                 self._stabilize(target_id)
@@ -1070,19 +1132,24 @@ class BrowserController:
             node, err = self._resolve_interactive_node(registry, tree, name)
             if err:
                 return self._base_result(INCREMENTAL, FAIL, "无", err, include_tabs=False)
-            if classify(node) != "input":
+            cat = classify(node)
+            if cat not in ("input", "select"):
                 return self._base_result(
                     INCREMENTAL,
                     FAIL,
                     "无",
-                    f"互动元素 {name} 不是可填入元素",
+                    f"互动元素 {name} 不是可填入元素（它是「{self._category_label(cat)}」类）",
                     include_tabs=False,
                 )
-            if node.role == "combobox" and "readonly" not in node.attributes:
+            if (
+                cat == "input"
+                and node.role == "combobox"
+                and "readonly" not in node.attributes
+            ):
                 # Searchable select's typeahead: typing only filters candidates.
                 typeahead_names.append(name)
             fill_nodes[name] = node
-            plan.append((name, "input", node.backend_node_id))
+            plan.append((name, cat, node.backend_node_id))
         click_may_nav = False
         if has_click:
             node, err = self._resolve_interactive_node(registry, tree, click_name)
@@ -1123,6 +1190,8 @@ class BrowserController:
                 try:
                     if category == "input":
                         executor.input_text(backend_node_id, fills[index])
+                    elif category == "select":
+                        executor.select_option(backend_node_id, fills[index])
                     else:
                         executor.click(backend_node_id)
                 except (ActionError, CDPError) as exc:
@@ -1160,6 +1229,7 @@ class BrowserController:
         # be reported as fully successful while the fields stayed unchanged (the
         # model then chases the mismatch for many turns).
         failed_fills: list[tuple[str, Optional[str]]] = []
+        failed_selects: list[tuple[str, str, Optional[str], list]] = []
         if not error_msg and not focus_changed and not opened_names:
             # Date/time pickers display typed text without necessarily committing
             # it; blur them (forcing the component to re-render) before reading,
@@ -1174,6 +1244,14 @@ class BrowserController:
             if date_like_ids:
                 self._stabilize(target_id)
             for (fname, fcat, fbid), fval in zip(plan, fills):
+                if fcat == "select":
+                    current = executor.read_select_text(fbid)
+                    if not _fills_same(fval, current):
+                        node = fill_nodes.get(fname)
+                        failed_selects.append(
+                            (fname, fval, current, self._select_option_texts(node))
+                        )
+                    continue
                 if fcat != "input" or not fval:
                     continue
                 node = fill_nodes.get(fname)
@@ -1240,17 +1318,27 @@ class BrowserController:
             return self._base_result(
                 mode, action_ok, content, error=error_msg, include_tabs=include_tabs
             )
-        if failed_fills:
-            msg = (
-                "以下元素的填充未生效："
-                + "、".join(f"{n}（当前值：{c or '空'}）" for n, c in failed_fills)
-                + "。它们可能是只读、或日期/时间选择器，无法用 fill 直接写入"
-                "（日期选择器通常也不接受『至今』这类非日期文本）；"
-                "请点击它之后在弹出的日历里选择具体日期，"
-                "或先与用户确认该字段如何处理，或改用其它可输入元素。"
-            )
+        if failed_fills or failed_selects:
+            chunks: list[str] = []
+            if failed_fills:
+                chunks.append(
+                    "以下元素的填充未生效："
+                    + "、".join(f"{n}（当前值：{c or '空'}）" for n, c in failed_fills)
+                    + "。它们可能是只读、或日期/时间选择器，无法用 fill 直接写入"
+                    "（日期选择器通常也不接受『至今』这类非日期文本）；"
+                    "请点击它之后在弹出的日历里选择具体日期，"
+                    "或先与用户确认该字段如何处理，或改用其它可输入元素。"
+                )
+            if failed_selects:
+                chunks.append(
+                    "以下下拉选择未能选中："
+                    + "；".join(
+                        self._select_fill_error(n, fval, c, opts)
+                        for n, fval, c, opts in failed_selects
+                    )
+                )
             return self._base_result(
-                mode, PARTIAL_FAIL, content, error=msg, include_tabs=include_tabs
+                mode, PARTIAL_FAIL, content, error=" ".join(chunks), include_tabs=include_tabs
             )
         return self._base_result(mode, OK, content, include_tabs=include_tabs)
 

@@ -603,6 +603,65 @@ class ActionExecutor:
         """
         self._native_set(backend_node_id, text)
 
+    def select_option(self, backend_node_id: int, text: str) -> Optional[str]:
+        """Select the ``<option>`` of a native ``<select>`` whose text matches.
+
+        Returns the chosen option's visible text, or ``None`` when nothing
+        matched. Matching is whitespace/case-insensitive and tries, in order:
+        exact visible text, exact ``value``, then substring (both directions).
+        Disabled options are skipped. The native select is set by JS and both
+        ``input`` and ``change`` are dispatched so controlled frameworks update.
+        """
+        object_id = self._resolve(backend_node_id)
+        if not object_id:
+            return None
+        try:
+            result = self._call_on_node(
+                object_id,
+                "function(want){"
+                "if(!this||this.tagName!=='SELECT')return null;"
+                "var norm=function(s){return String(s==null?'':s).replace(/\\s+/g,' ').trim().toLowerCase();};"
+                "var target=norm(want);"
+                "var opts=Array.prototype.slice.call(this.options||[]).filter(function(o){return !o.disabled;});"
+                "var otxt=function(o){return norm(o.textContent||o.text||'');};"
+                "var match=null;"
+                "if(target){match=opts.filter(function(o){return otxt(o)===target;})[0];}"
+                "if(!match&&target){match=opts.filter(function(o){return norm(o.value)===target;})[0];}"
+                "if(!match&&target){match=opts.filter(function(o){return otxt(o).indexOf(target)>=0;})[0];}"
+                "if(!match&&target){match=opts.filter(function(o){var t=otxt(o);return t&&target.indexOf(t)>=0;})[0];}"
+                "if(!match)return null;"
+                "match.selected=true;"
+                "try{this.value=match.value;}catch(e){}"
+                "this.dispatchEvent(new Event('input',{bubbles:true}));"
+                "this.dispatchEvent(new Event('change',{bubbles:true}));"
+                "return (match.textContent||match.text||'').replace(/\\s+/g,' ').trim();"
+                "}",
+                [{"value": text}],
+            )
+            return result if isinstance(result, str) else None
+        except Exception:
+            return None
+
+    def read_select_text(self, backend_node_id: int) -> Optional[str]:
+        """Visible text of a native ``<select>``'s current selection.
+
+        Reading ``.value`` would yield the option's internal value
+        (``0/194/32520``); verification needs the *text* (``共青团员``).
+        """
+        object_id = self._resolve(backend_node_id)
+        if not object_id:
+            return None
+        try:
+            result = self._call_on_node(
+                object_id,
+                "function(){if(!this||this.tagName!=='SELECT')return null;"
+                "var i=this.selectedIndex;var o=(i>=0&&this.options)?this.options[i]:null;"
+                "return o?String(o.textContent||o.text||'').replace(/\\s+/g,' ').trim():'';}",
+            )
+            return result if isinstance(result, str) else None
+        except Exception:
+            return None
+
     def _read_value(self, backend_node_id: int) -> Optional[str]:
         object_id = self._resolve(backend_node_id)
         if not object_id:

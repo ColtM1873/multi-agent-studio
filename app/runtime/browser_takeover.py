@@ -245,7 +245,13 @@ class NoArgs(BaseModel):
 
 class InteractArgs(BaseModel):
     name: str = Field(..., description="互动元素名称，如 'e4'（来自序列化标签）。")
-    fill: str = Field("", description="仅用于『可输入』元素的填充内容；其他情况传空串 ''。")
+    fill: str = Field(
+        "",
+        description=(
+            "仅用于『可输入』或『可选择』元素：前者是填入文本，"
+            "后者是选择该下拉中文字匹配的选项；其他情况传空串 ''。"
+        ),
+    )
     drag_pct: int = Field(
         0, ge=0, le=100,
         description="仅用于『可拖动』元素的目标位置百分比(0-100)；其他情况传 0。",
@@ -283,7 +289,7 @@ class InteractManyArgs(BaseModel):
     )
     fill_list: list[str] = Field(
         ...,
-        description="填入内容列表，在name_list相对应的位置填入对应的值；与 name_list 等长，或比它少一个（少一个时末位为收尾点击）。",
+        description="填入内容列表，在name_list相对应的位置填入对应的值（『可选择元素』填要选中的选项文字）；与 name_list 等长，或比它少一个（少一个时末位为收尾点击）。",
     )
 
 

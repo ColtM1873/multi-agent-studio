@@ -141,6 +141,7 @@ _BLOCK_DISPLAY_PREFIXES = (
 CATEGORY_TAGS = {
     "click": ("可点击元素", "点击"),
     "input": ("可输入元素", "输入"),
+    "select": ("可选择元素", "选择"),
     "drag": ("可拖动元素", "拖动"),
     "scroll": ("可滚动元素", "滚动"),
 }
@@ -235,6 +236,10 @@ _GENERIC_STRUCTURE_WORDS = {
     "photo", "avatar", "thumb", "icon", "iconfont", "font", "link", "btn",
     "button", "input", "form", "field", "group", "menu", "bar", "tool", "tools",
     "ctrl", "control", "widget", "component",
+    # A native ``<select class="select1">`` used to leak its own class as a label
+    # (``<可点击元素 e42>select1</可点击元素 e42>``); ``select`` is a structural
+    # word, never a human name.
+    "select", "selection", "dropdown", "combobox", "listbox",
 }
 
 # Common icon ``aria-label`` / ``alt`` names (Ant Design ``anticon``, Element UI,
@@ -1037,6 +1042,12 @@ class DOMSerializer:
         return False
 
     def _interactive_label(self, node: EnhancedNode, category: str) -> str:
+        if category == "select":
+            # A native dropdown whose value is selected rather than typed: label
+            # it with the field name and the current / placeholder value so the
+            # LLM knows *what* it is and *whether* a choice was made. (``fill`` on
+            # this element selects the option whose text matches.)
+            return self._select_label(node)
         if category == "input":
             value = self._input_value(node)
             if value:
@@ -1209,10 +1220,21 @@ class DOMSerializer:
                 return mapped
         # A token made only of structural/container words names a place on the
         # page, not a control (``header-logo-link``). Reject it so the caller
-        # falls back to a semantic generic word rather than leaking markup.
-        if all(part in _GENERIC_STRUCTURE_WORDS for part in trimmed.split("-")):
+        # falls back to a semantic generic word rather than leaking markup. The
+        # comparison strips a trailing digit run so framework counters like
+        # ``select1`` / ``input1`` are rejected too.
+        if self._is_generic_structure_token(trimmed):
             return ""
         return self._truncate(trimmed, 40)
+
+    @staticmethod
+    def _is_generic_structure_token(token: str) -> bool:
+        """True if ``token`` is only structural words (optionally + a counter)."""
+        parts = [part for part in token.split("-") if part]
+        if not parts:
+            return True
+        cleaned = [re.sub(r"\d+$", "", part) or part for part in parts]
+        return all(part in _GENERIC_STRUCTURE_WORDS for part in cleaned)
 
     @staticmethod
     def _is_semantic_token(token: str) -> bool:
@@ -1461,6 +1483,85 @@ class DOMSerializer:
             return ""
         text = self._collect_text(chosen) or chosen.attributes.get("title", "")
         return self._truncate(text, 40)
+
+    def _select_label(self, node: EnhancedNode) -> str:
+        """A native ``<select>``'s label: ``字段名：当前值（或占位/未选择）``.
+
+        A native select often has no AX name and no visible text of its own
+        (the non-selected ``<option>``s have no box), so the old chain fell
+        through to the CSS class (``select1``). Recover the *field* name from a
+        nearby label / preceding sibling cell and pair it with the current
+        selection (or the placeholder when nothing is chosen yet), so the model
+        can both identify the field and see whether it still needs filling.
+        """
+        field = ""
+        if node.ax_name and not self._is_machine_token(node.ax_name):
+            field = self._truncate(node.ax_name)
+        if not field:
+            field = self._associated_field_label(node)
+        if not field:
+            field = self._preceding_field_label(node)
+        selected = self._selected_option_label(node)
+        if selected:
+            if field and field not in selected:
+                return f"{field}：{selected}"
+            return selected
+        marker = self._select_placeholder(node) or "未选择"
+        if field:
+            return f"{field}：{marker}"
+        return marker
+
+    def _select_placeholder(self, node: EnhancedNode) -> str:
+        """Text of a native ``<select>``'s empty-value placeholder option, or ``""``."""
+        for child in node.children:
+            if not child.is_element or child.tag != "option":
+                continue
+            if (child.attributes.get("value") or "").strip():
+                # The first option with a value is the browser's default
+                # selection, so there is no separate placeholder.
+                return ""
+            text = self._collect_text(child) or child.attributes.get("title", "")
+            return self._truncate(text, 40) if text else ""
+        return ""
+
+    def _preceding_field_label(self, node: EnhancedNode) -> str:
+        """Field name from the nearest preceding element sibling of any ancestor.
+
+        Table / row based forms place the label in the cell *before* the
+        control's cell (``<tr><td title="政治面貌">政治面貌*</td>
+        <td><select>…</select></td></tr>``). The control's own siblings are the
+        (empty) value cell, so the search walks up to a few ancestors and takes
+        the nearest *preceding* element that is not itself a control. This is a
+        last resort, only reached by native selects that have no AX name and no
+        associated ``<label>``; the ancestor depth is capped so it cannot steal
+        an unrelated section's text.
+        """
+        branch = node
+        ancestor = node.parent
+        hops = 0
+        while ancestor is not None and ancestor.is_element and hops < 4:
+            try:
+                branch_index = ancestor.children.index(branch)
+            except ValueError:
+                return ""
+            for sibling in reversed(ancestor.children[:branch_index]):
+                if not sibling.is_element:
+                    continue
+                if sibling.hidden or not sibling.visible:
+                    continue
+                if classify(sibling):
+                    continue
+                for attr in ("title", "aria-label"):
+                    value = sibling.attributes.get(attr)
+                    if value and not self._is_machine_token(value):
+                        return self._truncate(value, 40)
+                text = self._collect_text(sibling)
+                if text:
+                    return self._truncate(text, 40)
+            branch = ancestor
+            ancestor = ancestor.parent
+            hops += 1
+        return ""
 
     def _has_field_input_descendant(self, node: EnhancedNode) -> bool:
         """True if ``node`` wraps a form field (input / textarea / select)."""

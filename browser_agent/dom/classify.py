@@ -78,6 +78,20 @@ def is_input(node: EnhancedNode) -> bool:
     return False
 
 
+def is_select(node: EnhancedNode) -> bool:
+    """True for a native ``<select>`` dropdown.
+
+    A native select is *not* a plain clickable: clicking it only opens a
+    browser/OS-level popup that is not part of the DOM (so no diff is produced),
+    and its real operation is "choose one of N options". Giving it its own
+    category lets the serializer label it and the controller route ``fill`` to a
+    real option-selection primitive instead of a dead click.
+    """
+    if not node.is_element or _is_disabled(node):
+        return False
+    return node.tag == "select"
+
+
 def is_draggable(node: EnhancedNode) -> bool:
     if not node.is_element or _is_disabled(node):
         return False
@@ -346,6 +360,8 @@ def classify(node: EnhancedNode) -> str:
     """Return the primary interactive category, or '' if none."""
     if is_input(node):
         return "input"
+    if is_select(node):
+        return "select"
     if is_draggable(node):
         return "drag"
     if is_scrollable(node):

@@ -12,6 +12,7 @@ from .classify import (
     is_draggable,
     is_input,
     is_scrollable,
+    is_select,
     may_navigate,
 )
 from .diff import changed_lines, compute_diff, compute_lost, format_lines, format_lost
@@ -35,6 +36,7 @@ __all__ = [
     "is_draggable",
     "is_input",
     "is_scrollable",
+    "is_select",
     "may_navigate",
     "compute_diff",
     "changed_lines",
