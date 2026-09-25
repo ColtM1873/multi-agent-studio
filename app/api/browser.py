@@ -20,6 +20,7 @@ from app.runtime.browser_takeover import (
     is_paused,
     make_sensitive_masker,
     set_paused,
+    warmup_browser,
 )
 from app.runtime.floating_stop import FloatingStop
 
@@ -76,10 +77,12 @@ def get_status():
 def open_browser(body: AgentBody | None = None):
     """打开（或复用）浏览器，并显示系统级浮动按钮。返回是否就绪与实际端口。"""
     try:
-        from browser_agent import tool_1_open_browser
+        from browser_agent import tool_0_open_browser
 
         _apply_browser_timing()
-        tool_1_open_browser()  # ensure_connected：复用或启动
+        tool_0_open_browser()  # ensure_connected：复用或启动
+        # 提前完成首次互动所需的一次性加载/准备（预导入、attach、轻量 evaluate）。
+        warmup_browser()
         connected, port = browser_status()
         if connected:
             _show_floating(body.agent_id if body else None)
@@ -111,7 +114,7 @@ def floating(body: FloatingBody):
 
 @router.post("/viewport-dom")
 def viewport_dom(body: AgentBody | None = None):
-    """调用 tool-3：返回当前聚焦标签页 viewport 的全量 DOM（前端拼进输入框）。"""
+    """调用 tool-2：返回当前聚焦标签页 viewport 的全量 DOM（前端拼进输入框）。"""
     if is_paused():
         return {"ok": False, "content": "", "error": STOP_TEXT}
     allow_open = True if body is None else body.allow_open
@@ -120,10 +123,10 @@ def viewport_dom(body: AgentBody | None = None):
         if not connected:
             return {"ok": False, "content": "", "error": "浏览器未打开", "port": port}
     try:
-        from browser_agent import tool_3_get_viewport_dom
+        from browser_agent import tool_2_get_viewport_dom
 
         _apply_browser_timing()
-        result = tool_3_get_viewport_dom()
+        result = tool_2_get_viewport_dom()
         if browser_status()[0]:
             _show_floating(body.agent_id if body else None)
         content = result.get("content") or ""

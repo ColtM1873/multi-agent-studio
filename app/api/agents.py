@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import time
 from typing import Any
 
@@ -21,6 +23,8 @@ from app.runtime.state_factory import (
 from app.services import threads as threads_service
 
 router = APIRouter(prefix="/api", tags=["agents"])
+
+logger = logging.getLogger(__name__)
 
 
 class CheckDbBody(BaseModel):
@@ -132,6 +136,30 @@ async def delete_agent(agent_id: str):
     await chat_manager.invalidate(agent_id)
     config_store.delete(agent_id)
     return {"ok": True}
+
+
+async def _warm_runtime(agent_id: str) -> None:
+    """后台预热运行时（加载 embedding、建图）；失败静默，不影响前端。"""
+    try:
+        await chat_manager.get_runtime(agent_id)
+    except Exception:  # noqa: BLE001
+        logger.exception("预热运行时失败 (agent_id=%s)", agent_id)
+
+
+@router.post("/agents/{agent_id}/warmup")
+async def warmup_agent(agent_id: str):
+    """在用户进入会话时提前构建运行时，避免发送消息时才等待 embedding 加载。
+
+    立即返回；真正的构建在后台任务里进行，与聊天 WebSocket 的首次构建共用同一把锁。
+    """
+    try:
+        config_store.load(agent_id)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="配置不存在")
+    if chat_manager.has_runtime(agent_id):
+        return {"ok": True, "state": "ready"}
+    asyncio.create_task(_warm_runtime(agent_id))
+    return {"ok": True, "state": "warming"}
 
 
 @router.get("/default")

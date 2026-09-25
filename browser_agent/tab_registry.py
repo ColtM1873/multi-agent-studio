@@ -69,7 +69,7 @@ class TabRegistry:
         self._seq.pop(target_id, None)
 
     # ------------------------------------------------------------------ #
-    # reverse lookup (tool-5 / tool-8)
+    # reverse lookup (tool-4 / tool-7)
     # ------------------------------------------------------------------ #
     def target_for_name(self, raw: str, targets: list[dict]) -> Optional[str]:
         text = (raw or "").strip()
@@ -78,4 +78,11 @@ class TabRegistry:
         for target in targets:
             if self.name(target) == text:
                 return target["targetId"]
+        # 静默兼容「只填数字序列号」：LLM 现在只需给名称末尾的三位序号
+        # （如 "001" 或 "1"），这里把它解析回对应的标签页；完整名称仍照常匹配。
+        if text.isdigit():
+            seq = int(text)
+            for target in targets:
+                if self._seq.get(target["targetId"]) == seq:
+                    return target["targetId"]
         return None

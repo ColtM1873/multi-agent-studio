@@ -92,6 +92,16 @@ class Settings(BaseModel):
     # 浏览器交互延迟（导航宽限、加载超时、判稳静默窗、轮询间隔、CDP 命令超时、拟人停顿等）。
     # 结构见 browser_agent/timing.py，工具调用时实时读取并覆盖，故改完即生效、无需 invalidate_all。
     browser_timing: dict = Field(default_factory=dict)
+    # 工具调用结果显示设置（流式输出）：
+    # full=True 展示完整结果；full=False 时按 max_lines / max_chars 截断（0 表示不限，
+    # 两个上限都填则触发任意一个就截断）。单行 JSON 会先结构化再按上限截断。
+    tool_result_stream_full: bool = True
+    tool_result_stream_max_lines: int = 0
+    tool_result_stream_max_chars: int = 0
+    # 工具调用结果显示设置（查看历史消息），默认按 50 行截断。
+    tool_result_history_full: bool = False
+    tool_result_history_max_lines: int = 50
+    tool_result_history_max_chars: int = 0
 
 
 def settings_path(config_dir: Path | str) -> Path:

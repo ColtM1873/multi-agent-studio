@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import base64
 import io
+import json
+import re
 from datetime import datetime
 
 from langgraph.checkpoint.base import CheckpointTuple
@@ -24,7 +26,9 @@ def render_checkpoint_to_markdown_string(
     *,
     show_reasoning: bool = True,
     show_tool_calls: bool = True,
-    max_tool_result_lines: int = 50,
+    tool_result_full: bool = True,
+    tool_result_max_lines: int = 0,
+    tool_result_max_chars: int = 0,
     messages_key=None,
     title: str = "Checkpoint",
     reasoning_expanded: bool = True,
@@ -38,7 +42,9 @@ def render_checkpoint_to_markdown_string(
         buf,
         show_reasoning=show_reasoning,
         show_tool_calls=show_tool_calls,
-        max_tool_result_lines=max_tool_result_lines,
+        tool_result_full=tool_result_full,
+        tool_result_max_lines=tool_result_max_lines,
+        tool_result_max_chars=tool_result_max_chars,
         messages_key=messages_key,
         title=title,
         reasoning_expanded=reasoning_expanded,
@@ -55,7 +61,9 @@ def render_checkpoint_to_markdown(
     *,
     show_reasoning: bool = True,
     show_tool_calls: bool = True,
-    max_tool_result_lines: int = 50,
+    tool_result_full: bool = True,
+    tool_result_max_lines: int = 0,
+    tool_result_max_chars: int = 0,
     messages_key=None,
     title: str = "Checkpoint",
     reasoning_expanded: bool = True,
@@ -106,7 +114,9 @@ def render_checkpoint_to_markdown(
         md_file,
         show_reasoning=show_reasoning,
         show_tool_calls=show_tool_calls,
-        max_tool_result_lines=max_tool_result_lines,
+        tool_result_full=tool_result_full,
+        tool_result_max_lines=tool_result_max_lines,
+        tool_result_max_chars=tool_result_max_chars,
         reasoning_expanded=reasoning_expanded,
         tool_call_expanded=tool_call_expanded,
         tool_result_expanded=tool_result_expanded,
@@ -121,7 +131,9 @@ def render_messages(
     title: str | None = None,
     show_reasoning: bool = True,
     show_tool_calls: bool = True,
-    max_tool_result_lines: int = 50,
+    tool_result_full: bool = True,
+    tool_result_max_lines: int = 0,
+    tool_result_max_chars: int = 0,
     reasoning_expanded: bool = True,
     tool_call_expanded: bool = False,
     tool_result_expanded: bool = False,
@@ -143,7 +155,15 @@ def render_messages(
         elif msg_type == "AIMessage":
             _render_ai(msg, w, show_reasoning, show_tool_calls, reasoning_expanded, tool_call_expanded, export_html, msg_indice)
         elif msg_type == "ToolMessage":
-            _render_tool(msg, w, max_tool_result_lines, tool_result_expanded, msg_indice)
+            _render_tool(
+                msg,
+                w,
+                tool_result_expanded,
+                msg_indice,
+                full=tool_result_full,
+                max_lines=tool_result_max_lines,
+                max_chars=tool_result_max_chars,
+            )
         elif msg_type == "SystemMessage":
             w('<details class="system-msg-block" data-msg-indice="%d"><summary>📌 SystemMessage</summary>\n\n' % msg_indice)
             w(f"{_escape_md(str(msg.content))}\n\n")
@@ -175,7 +195,9 @@ def render_messages_to_markdown_string(
     title: str | None = None,
     show_reasoning: bool = True,
     show_tool_calls: bool = True,
-    max_tool_result_lines: int = 50,
+    tool_result_full: bool = True,
+    tool_result_max_lines: int = 0,
+    tool_result_max_chars: int = 0,
     reasoning_expanded: bool = True,
     tool_call_expanded: bool = False,
     tool_result_expanded: bool = False,
@@ -188,7 +210,9 @@ def render_messages_to_markdown_string(
         title=title,
         show_reasoning=show_reasoning,
         show_tool_calls=show_tool_calls,
-        max_tool_result_lines=max_tool_result_lines,
+        tool_result_full=tool_result_full,
+        tool_result_max_lines=tool_result_max_lines,
+        tool_result_max_chars=tool_result_max_chars,
         reasoning_expanded=reasoning_expanded,
         tool_call_expanded=tool_call_expanded,
         tool_result_expanded=tool_result_expanded,
@@ -322,7 +346,49 @@ def _render_ai(msg, w, show_reasoning, show_tool_calls, reasoning_expanded=True,
     w("</div>\n\n")
 
 
-def _render_tool(msg, w, max_lines, tool_result_expanded=False, msg_indice=0):
+# 浏览器工具名（重编号后为 tool_0..tool_10）用于判断是否附「查看 content」按钮：
+# 只有浏览器工具的返回里才有 content 字段，其他工具（记忆/文件等）不会命中。
+_BROWSER_TOOL_NAME_RE = re.compile(r"^tool_\d+_")
+
+
+def _try_format_json(content: str):
+    """若 content 是单行 JSON，返回 (格式化文本, 解析后的对象)；否则 (原文本, None)。"""
+    s = content.strip()
+    if not s or "\n" in s:
+        return content, None
+    if not (s.startswith("{") or s.startswith("[")):
+        return content, None
+    try:
+        obj = json.loads(s)
+    except Exception:  # noqa: BLE001
+        return content, None
+    return json.dumps(obj, ensure_ascii=False, indent="\t"), obj
+
+
+def _apply_tool_result_limits(text: str, max_lines: int, max_chars: int) -> tuple[str, bool]:
+    """按「最多行数 / 最多字数」截断（0 表示不限；两个都填则触发任意一个即截断）。"""
+    truncated = False
+    if max_chars and max_chars > 0 and len(text) > max_chars:
+        text = text[:max_chars]
+        truncated = True
+    if max_lines and max_lines > 0:
+        lines = text.split("\n")
+        if len(lines) > max_lines:
+            text = "\n".join(lines[:max_lines])
+            truncated = True
+    return text, truncated
+
+
+def _render_tool(
+    msg,
+    w,
+    tool_result_expanded=False,
+    msg_indice=0,
+    *,
+    full: bool = True,
+    max_lines: int = 0,
+    max_chars: int = 0,
+):
     name = getattr(msg, "name", "") or "unknown_tool"
     content = msg.content
     if isinstance(content, list):
@@ -336,21 +402,48 @@ def _render_tool(msg, w, max_lines, tool_result_expanded=False, msg_indice=0):
         content = "\n\n".join(text_parts)
 
     content_str = str(content)
-    lines = content_str.split("\n")
-    line_count = len(lines)
+    # 单行 JSON → 结构化后再展示；否则原样。
+    pretty, parsed = _try_format_json(content_str)
+    display = pretty
+    truncated = False
+    if not full:
+        display, truncated = _apply_tool_result_limits(display, max_lines, max_chars)
+
+    line_count = len(pretty.split("\n"))
     open_attr = " open" if tool_result_expanded else ""
-    body = (content_str if line_count <= max_lines else "\n".join(lines[:max_lines]))
-    # 关键：把换行转成 <br>，避免内容里的空行让 markdown-it 提前终止 <div class="tool-result-body">
-    # 这个 html_block，导致 <div> 未闭合而破坏其后所有 tool_call/details 的 DOM 结构（工具结果丢失）。
-    body_html = _escape_html(body).replace("\r\n", "\n").replace("\n", "<br>")
+
+    # 浏览器工具（且返回里含 content 字段）：附「查看 content」按钮（内容以 base64 放在
+    # data 属性里，点击时在前端弹窗展示，避免把大段 DOM 再内联进 markdown）。
+    btn_html = ""
+    if parsed is not None and _BROWSER_TOOL_NAME_RE.match(str(name)):
+        content_value = parsed.get("content") if isinstance(parsed, dict) else None
+        if isinstance(content_value, str):
+            # 去掉引号后把 \n / \t 还原成真实换行与 tab 再展示。
+            human = (
+                content_value.replace("\\r\\n", "\n")
+                .replace("\\n", "\n")
+                .replace("\\t", "\t")
+            )
+            b64 = base64.b64encode(human.encode("utf-8")).decode("ascii")
+            btn_html = (
+                '<button type="button" class="tool-content-btn" '
+                f'data-tool-content-b64="{b64}" '
+                'title="查看本条工具结果 content 字段的完整内容">📄 查看 content</button>'
+            )
+
+    # 换行转 <br>，避免内容里的空行让 markdown-it 提前终止 HTML block（见 ID22/ID27）。
+    body_html = _escape_html(display).replace("\r\n", "\n").replace("\n", "<br>")
     summary_line = f"{line_count} 行"
-    if line_count > max_lines:
-        summary_line += " — 点击展开"
-    w(f"<details{open_attr} data-msg-indice=\"{msg_indice}\">\n<summary>✅ Tool 结果: `{name}` ({summary_line})</summary>\n\n")
-    w(f'<div class="tool-result-body">{body_html}</div>\n\n')
-    if line_count > max_lines:
-        w(f"...（共 {line_count} 行，仅显示前 {max_lines} 行）\n\n")
-    w("</details>\n\n")
+    if truncated:
+        summary_line += " — 已截断"
+
+    w(f"<details{open_attr} data-msg-indice=\"{msg_indice}\">\n")
+    w(f"<summary>✅ Tool 结果: `{name}` ({summary_line})</summary>\n\n")
+    w(f'<div class="tool-result-wrap"><div class="tool-result-body">{btn_html}')
+    w(f'<div class="tool-result-text">{body_html}</div>')
+    if truncated:
+        w('<div class="tool-result-trunc">…（已按设置截断显示）</div>')
+    w("</div></div>\n\n</details>\n\n")
 
 
 def _format_args(args: dict, max_str_len: int = 500) -> str:

@@ -10,7 +10,7 @@
 
 用 ``contextvars`` 保存「当前采集器」，因此 ``asyncio.to_thread`` 并发执行的
 多次调用互不干扰。直接调用 ``browser_agent`` 工具（例如前端「提示接管」走的
-``tool_3``）不会 ``begin_capture()``，因此不会产生日志。
+``tool_2``）不会 ``begin_capture()``，因此不会产生日志。
 """
 
 from __future__ import annotations

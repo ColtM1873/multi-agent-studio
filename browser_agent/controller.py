@@ -48,7 +48,7 @@ NOT_CALLED = "未进行互动元素调用"
 # normal-looking page with "可互动元素 0 个" and wastes calls guessing.
 _BLANK_SHELL_NOTICE = (
     "[页面可能仍在加载] 当前页面几乎为空（尚未渲染出正文）。"
-    "请稍等片刻后重试 tool_3_get_viewport_dom，或使用 tool_7_refresh 刷新。\n\n"
+    "请稍等片刻后重试 tool_2_get_viewport_dom，或使用 tool_6_refresh 刷新。\n\n"
 )
 
 # Structural/document nodes that never count as "rendered body content".
@@ -379,7 +379,7 @@ class BrowserController:
 
         ``Target.activateTarget`` alone does not always bring a windowed tab to
         the foreground: ``document.hasFocus()`` can keep reporting the old tab,
-        so ``tool_5_switch_tab`` returned the requested DOM while ``tool_2``
+        so ``tool_4_switch_tab`` returned the requested DOM while ``tool_1_interact``
         then rejected its elements as "belonging to another tab". The
         page-scoped ``Page.bringToFront`` performs the actual activation.
         Never raises (the caller already has a working session).
@@ -397,8 +397,8 @@ class BrowserController:
         actual = self._name_for_target(actual_id) or actual_id
         return (
             f"[无法切换标签页] 未能把「{requested}」切到前台，浏览器当前仍聚焦"
-            f"「{actual}」。请尝试用 tool_8_close_tab 关闭「{actual}」，"
-            f"或用 tool_9_navigate 打开目标页面后再继续操作。\n\n"
+            f"「{actual}」。请尝试用 tool_7_close_tab 关闭「{actual}」，"
+            f"或用 tool_8_navigate 打开目标页面后再继续操作。\n\n"
         )
 
     def _new_tab_notice(self, opened_names: list) -> str:
@@ -408,7 +408,7 @@ class BrowserController:
         return (
             f"[新标签页] 本次互动在当前聚焦标签页之外新打开了标签页（{opened}），"
             f"但当前聚焦标签页并未改变（仍为 {focus}），因此当前聚焦页没有内容变化或只有少量内容变化。"
-            f"如需查看或操作新标签页，使用 tool_5_switch_tab 切换到目标标签页。"
+            f"如需查看或操作新标签页，使用 tool_4_switch_tab 切换到目标标签页。"
         )
 
     def _resolve_focused_target(self) -> Optional[str]:
@@ -503,7 +503,7 @@ class BrowserController:
         return "\n\n".join(p for p in parts if p)
 
     # ------------------------------------------------------------------ #
-    # interaction (tool-2)
+    # interaction (tool-1)
     # ------------------------------------------------------------------ #
     @staticmethod
     def _category_label(category: str) -> str:
@@ -881,7 +881,7 @@ class BrowserController:
         if other:
             return (
                 f"互动元素 {name} 不属于当前聚焦标签页（{focus or '未知'}），"
-                f"而属于「{other}」；请先用 tool_5_switch_tab 切换到该标签页再互动。"
+                f"而属于「{other}」；请先用 tool_4_switch_tab 切换到该标签页再互动。"
             )
         return f"未知的互动元素名称 {name}"
 
@@ -891,12 +891,12 @@ class BrowserController:
         if other:
             return (
                 f"互动元素 {name} 在当前聚焦标签页（{focus or '未知'}）中已不存在，"
-                f"它属于「{other}」；如需继续，请先用 tool_5_switch_tab 切换。"
+                f"它属于「{other}」；如需继续，请先用 tool_4_switch_tab 切换。"
             )
         return "该互动元素已经不存在于viewport中了"
 
     # ------------------------------------------------------------------ #
-    # batch interaction (tool-11)
+    # batch interaction (tool-10)
     # ------------------------------------------------------------------ #
     def interact_many(self, name_list: list, fill_list: list) -> dict:
         """A sequence of fills plus an optional trailing click, run serially.
@@ -1490,7 +1490,7 @@ class BrowserController:
             return {"tabs": [], "error": str(exc)}
 
     # ------------------------------------------------------------------ #
-    # navigation / tab tools (P2: tool-5 .. tool-9)
+    # navigation / tab tools (P2: tool-4 .. tool-8)
     # ------------------------------------------------------------------ #
     @staticmethod
     def _parse_tab_id(raw: str) -> str:
@@ -1584,7 +1584,7 @@ class BrowserController:
         return self._base_result(FULL, action_ok, content)
 
     def switch_tab(self, tab_id: str) -> dict:
-        """tool-5: focus an existing tab and return its full DOM."""
+        """tool-4: focus an existing tab and return its full DOM."""
         try:
             self.ensure_connected()
         except (BrowserLaunchError, CDPError) as exc:
@@ -1611,7 +1611,7 @@ class BrowserController:
         return result
 
     def go_back(self) -> dict:
-        """tool-6: browser back button, return full DOM."""
+        """tool-5: browser back button, return full DOM."""
         try:
             self.ensure_connected()
         except (BrowserLaunchError, CDPError) as exc:
@@ -1647,7 +1647,7 @@ class BrowserController:
         return result
 
     def refresh(self) -> dict:
-        """tool-7: reload current tab, return incremental diff."""
+        """tool-6: reload current tab, return incremental diff."""
         try:
             self.ensure_connected()
         except (BrowserLaunchError, CDPError) as exc:
@@ -1676,7 +1676,7 @@ class BrowserController:
         return self._base_result(INCREMENTAL, OK, content, include_tabs=False)
 
     def close_tab(self, tab_id: str) -> dict:
-        """tool-8: close a tab, return the remaining tab list."""
+        """tool-7: close a tab, return the remaining tab list."""
         try:
             self.ensure_connected()
         except (BrowserLaunchError, CDPError) as exc:
@@ -1703,7 +1703,7 @@ class BrowserController:
         return {"tabs": self.tab_labels()}
 
     def navigate(self, url: str) -> dict:
-        """tool-9: open a new tab at the given URL, return its full DOM."""
+        """tool-8: open a new tab at the given URL, return its full DOM."""
         try:
             self.ensure_connected()
         except (BrowserLaunchError, CDPError) as exc:

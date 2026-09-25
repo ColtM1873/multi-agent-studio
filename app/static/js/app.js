@@ -470,6 +470,20 @@ const I18N_EN = {
   "代码·常量": "Code constant",
   "代码·变量": "Code variable",
   "浏览器交互延迟设置": "Browser interaction delay settings",
+  "工具调用结果显示设置": "Tool result display settings",
+  "展示完整工具调用结果": "Show full tool result",
+  "流式输出": "Streaming output",
+  "查看历史消息": "Viewing history messages",
+  "最多展示多少行": "Maximum lines to show",
+  "最多展示多少字": "Maximum characters to show",
+  "超过该行数即截断显示；填 0 表示不限。": "Truncate when the line count exceeds this; 0 means unlimited.",
+  "超过该字数即截断显示；填 0 表示不限。与行数上限同时填写时，触发任意一个就截断。": "Truncate when the character count exceeds this; 0 means unlimited. When both limits are set, hitting either one truncates.",
+  "设置工具调用结果在「流式输出」和「查看历史消息」中的展示方式：可展示完整结果，或按「最多行数 / 最多字数」截断（0 表示不限；两个上限都填时，触发任意一个就截断）。工具结果若是单行 JSON，会先结构化再展示。": "Configure how tool results are shown in streaming output and when viewing history: show the full result, or truncate by maximum lines / characters (0 means unlimited; when both limits are set, hitting either one truncates). A single-line JSON tool result is pretty-printed before display.",
+  "查看 content": "View content",
+  "查看本条工具结果 content 字段的完整内容": "View the full content of this tool result's content field",
+  "工具结果 content": "Tool result content",
+  "…（已按设置截断显示）": "… (truncated by settings)",
+  "正在获取当前页面内容，请稍候…": "Fetching the current page content, please wait…",
   "调整 LLM 操作浏览器时各环节的等待时长，单位为秒。数值越小响应越快，但过小可能抓不到刚加载 / 刚跳转的页面；数值越大越稳妥但更慢。修改保存后，下一次浏览器工具调用即生效。": "Tune the wait times (in seconds) at each step of browser interaction. Smaller values respond faster but may miss pages that just loaded or navigated; larger values are safer but slower. Changes take effect on the next browser tool call.",
   "导航与稳定化（对延迟影响最大）": "Navigation & stabilization (biggest latency impact)",
   "页面就绪与标签页": "Page ready & tabs",
@@ -485,7 +499,7 @@ const I18N_EN = {
   "导航提交后内容等待": "Content wait after commit",
   "新文档提交后，额外等待 load 事件的上限（若 load 已触发则立即结束）。用于给异步内容一点时间，但不再为『load 迟迟不来』死等。默认 1.5 秒。": "After the new document commits, the extra cap for waiting on the load event (ends immediately if load already fired). Gives async content a little time without blocking forever when load never arrives. Default 1.5 s.",
   "新标签页/空壳加载超时": "New-tab/blank-shell load timeout",
-  "新标签页首次就绪（tool_9）以及页面为空壳时等待正文出现的最长时间。不再用于普通点击后的导航等待。默认 15.0 秒。": "The max time to wait for a new tab's first ready (tool_9) and for content to appear when a page is a bare shell. No longer used for navigation waits after ordinary clicks. Default 15.0 s.",
+  "新标签页首次就绪（tool_8）以及页面为空壳时等待正文出现的最长时间。不再用于普通点击后的导航等待。默认 15.0 秒。": "The max time to wait for a new tab's first ready (tool_9) and for content to appear when a page is a bare shell. No longer used for navigation waits after ordinary clicks. Default 15.0 s.",
   "DOM 判稳静默窗": "DOM quiet window",
   "页面的 DOM 指纹（readyState + outerHTML 长度）连续保持不变达到这个时长，才认为页面渲染完成。异步渲染（SPA）常需要它兜底；太小会抓到中间态。默认 0.7 秒。": "The page is considered settled only once its DOM fingerprint (readyState + outerHTML length) stays unchanged for this long. Async rendering (SPAs) often needs it; too small may capture an intermediate state. Default 0.7 s.",
   "判稳总超时": "Max settle timeout",
@@ -495,11 +509,11 @@ const I18N_EN = {
   "导航宽限轮询间隔": "Navigation grace poll interval",
   "在「导航宽限窗口」内，每隔多久检查一次导航是否已经开始。默认 0.05 秒。": "How often to check whether a navigation has started, within the navigation grace window. Default 0.05 s.",
   "标签页就绪等待超时": "Tab-ready timeout",
-  "切换标签页（tool_5）时，等待该页 readyState 变为 complete 的最长时间。默认 15.0 秒。": "When switching tabs (tool_5), the max time to wait for the tab's readyState to become complete. Default 15.0 s.",
+  "切换标签页（tool_4）时，等待该页 readyState 变为 complete 的最长时间。默认 15.0 秒。": "When switching tabs (tool_5), the max time to wait for the tab's readyState to become complete. Default 15.0 s.",
   "标签页就绪轮询间隔": "Tab-ready poll interval",
   "切换标签页时轮询 readyState 的间隔。默认 0.15 秒。": "The readyState polling interval when switching tabs. Default 0.15 s.",
   "新标签页轮询间隔": "New-tab poll interval",
-  "打开新标签页（tool_9）时，轮询 readyState 与 location.href 的间隔。默认 0.1 秒。": "When opening a new tab (tool_9), the polling interval for readyState and location.href. Default 0.1 s.",
+  "打开新标签页（tool_8）时，轮询 readyState 与 location.href 的间隔。默认 0.1 秒。": "When opening a new tab (tool_9), the polling interval for readyState and location.href. Default 0.1 s.",
   "关闭标签页等待超时": "Close-tab timeout",
   "关闭标签页后，等待该标签页真正从目标列表消失的最长时间。默认 3.0 秒。": "After closing a tab, the max time to wait for it to actually disappear from the target list. Default 3.0 s.",
   "关闭标签页轮询间隔": "Close-tab poll interval",
@@ -769,6 +783,60 @@ function splitUserMemory(raw) {
   const i = rest.indexOf(MEMORY_ATTACH_MARKER);
   if (i < 0) return { text: rest, memory: "" };
   return { text: rest.slice(0, i), memory: rest.slice(i + MEMORY_ATTACH_MARKER.length).trim() };
+}
+
+/* 工具调用结果显示（与后端 app/services/history_render.py 的行为保持一致）：
+ * - 单行 JSON → 先结构化（tab 缩进）再展示；
+ * - 按「工具调用结果显示设置」截断（full / 最多行数 / 最多字数）；
+ * - 浏览器工具结果若含 content 字段，附「查看 content」按钮（base64 携带，点击弹窗）。 */
+const BROWSER_TOOL_NAME_RE = /^tool_\d+_/;
+function toolResultDisplayCfg(kind) {
+  const s = settingsCache || {};
+  if (kind === "stream") {
+    return {
+      full: s.tool_result_stream_full !== false,
+      maxLines: (+s.tool_result_stream_max_lines) || 0,
+      maxChars: (+s.tool_result_stream_max_chars) || 0,
+    };
+  }
+  return {
+    full: s.tool_result_history_full === true,
+    maxLines: (+s.tool_result_history_max_lines) || 0,
+    maxChars: (+s.tool_result_history_max_chars) || 0,
+  };
+}
+function tryParseSingleLineJson(text) {
+  const s = String(text ?? "").trim();
+  if (!s || s.indexOf("\n") >= 0) return null;
+  if (!(s.startsWith("{") || s.startsWith("["))) return null;
+  try { return JSON.parse(s); } catch (e) { return null; }
+}
+function formatToolResultText(raw, cfg) {
+  let display = String(raw ?? "");
+  const obj = tryParseSingleLineJson(display);
+  if (obj !== null) { try { display = JSON.stringify(obj, null, "\t"); } catch (e) {} }
+  let truncated = false;
+  if (!cfg.full) {
+    if (cfg.maxChars > 0 && display.length > cfg.maxChars) { display = display.slice(0, cfg.maxChars); truncated = true; }
+    if (cfg.maxLines > 0) {
+      const lines = display.split("\n");
+      if (lines.length > cfg.maxLines) { display = lines.slice(0, cfg.maxLines).join("\n"); truncated = true; }
+    }
+  }
+  return { display, truncated, obj };
+}
+function buildToolResultHtml(name, raw) {
+  const cfg = toolResultDisplayCfg("stream");
+  const { display, truncated, obj } = formatToolResultText(raw, cfg);
+  let btn = "";
+  if (obj && typeof obj === "object" && BROWSER_TOOL_NAME_RE.test(String(name)) && typeof obj.content === "string") {
+    const human = obj.content.replace(/\\r\\n/g, "\n").replace(/\\n/g, "\n").replace(/\\t/g, "\t");
+    btn = `<button type="button" class="tool-content-btn" data-tool-content-b64="${utf8ToB64(human)}" title="${t("查看本条工具结果 content 字段的完整内容")}">📄 ${t("查看 content")}</button>`;
+  }
+  const body = esc(display).replace(/\r\n/g, "\n").replace(/\n/g, "<br>");
+  const truncNote = truncated ? `<div class="tool-result-trunc">${t("…（已按设置截断显示）")}</div>` : "";
+  const head = `✅ ${t("工具结果")} (<code>${esc(name)}</code>)`;
+  return `<div class="tool-result-wrap"><div class="tool-result-body">${btn}<div class="tool-result-head">${head}</div><div class="tool-result-text">${body}</div>${truncNote}</div></div>`;
 }
 
 /* token 单位换算 */
@@ -1135,7 +1203,7 @@ const BROWSER_DELAY_SCHEMA = [
     { p: ["nav", "load_grace_seconds"], label: "导航提交后内容等待", def: 1.5, step: 0.5,
       desc: "新文档提交后，额外等待 load 事件的上限（若 load 已触发则立即结束）。用于给异步内容一点时间，但不再为『load 迟迟不来』死等。默认 1.5 秒。" },
     { p: ["nav", "load_timeout"], label: "新标签页/空壳加载超时", def: 15.0, step: 0.5,
-      desc: "新标签页首次就绪（tool_9）以及页面为空壳时等待正文出现的最长时间。不再用于普通点击后的导航等待。默认 15.0 秒。" },
+      desc: "新标签页首次就绪（tool_8）以及页面为空壳时等待正文出现的最长时间。不再用于普通点击后的导航等待。默认 15.0 秒。" },
     { p: ["nav", "quiet_seconds"], label: "DOM 判稳静默窗", def: 0.7, step: 0.1,
       desc: "页面的 DOM 指纹（readyState + outerHTML 长度）连续保持不变达到这个时长，才认为页面渲染完成。异步渲染（SPA）常需要它兜底；太小会抓到中间态。默认 0.7 秒。" },
     { p: ["nav", "quiet_timeout"], label: "判稳总超时", def: 2.0, step: 0.5,
@@ -1147,11 +1215,11 @@ const BROWSER_DELAY_SCHEMA = [
   ]},
   { section: "页面就绪与标签页", items: [
     { p: ["ready", "timeout"], label: "标签页就绪等待超时", def: 15.0, step: 0.5,
-      desc: "切换标签页（tool_5）时，等待该页 readyState 变为 complete 的最长时间。默认 15.0 秒。" },
+      desc: "切换标签页（tool_4）时，等待该页 readyState 变为 complete 的最长时间。默认 15.0 秒。" },
     { p: ["ready", "poll_interval"], label: "标签页就绪轮询间隔", def: 0.15, step: 0.01,
       desc: "切换标签页时轮询 readyState 的间隔。默认 0.15 秒。" },
     { p: ["ready", "new_tab_poll_interval"], label: "新标签页轮询间隔", def: 0.1, step: 0.01,
-      desc: "打开新标签页（tool_9）时，轮询 readyState 与 location.href 的间隔。默认 0.1 秒。" },
+      desc: "打开新标签页（tool_8）时，轮询 readyState 与 location.href 的间隔。默认 0.1 秒。" },
     { p: ["ready", "close_timeout"], label: "关闭标签页等待超时", def: 3.0, step: 0.5,
       desc: "关闭标签页后，等待该标签页真正从目标列表消失的最长时间。默认 3.0 秒。" },
     { p: ["ready", "close_poll_interval"], label: "关闭标签页轮询间隔", def: 0.1, step: 0.01,
@@ -1978,6 +2046,7 @@ async function openSettings() {
         <button class="btn small" id="setCard">${t("Multi-Agent配置卡片 设置")}</button>
         <button class="btn small" id="setHtmlConfig" style="${s.export_html ? "" : "display:none;"}">${t("HTML 转换配置表")}</button>
         <button class="btn small" id="setBrowserDelay">${t("浏览器交互延迟设置")}</button>
+        <button class="btn small" id="setToolResultDisplay">${t("工具调用结果显示设置")}</button>
       </div>
       <div class="modal-actions" style="margin-top:10px;">
         <div class="spacer" style="flex:1;"></div>
@@ -2018,6 +2087,7 @@ async function openSettings() {
   mask.querySelector("#setCard").onclick = () => { mask.remove(); openCardSettings(); };
   mask.querySelector("#setHtmlConfig").onclick = () => { mask.remove(); openHtmlConfigSettings(); };
   mask.querySelector("#setBrowserDelay").onclick = () => { mask.remove(); openBrowserDelaySettings(); };
+  mask.querySelector("#setToolResultDisplay").onclick = () => { mask.remove(); openToolResultDisplaySettings(); };
   mask.querySelector("#setSave").onclick = async () => {
     try {
       await saveSettings({
@@ -2469,6 +2539,81 @@ async function openBrowserDelaySettings() {
   };
 }
 
+async function openToolResultDisplaySettings() {
+  let s;
+  try { s = await getSettings(); } catch (e) { toast(e.message, true); return; }
+  const mask = document.createElement("div");
+  mask.className = "modal-mask";
+
+  const section = (title, fullKey, linesKey, charsKey, defFull, defLines, defChars) => {
+    const full = (s[fullKey] === undefined) ? defFull : !!s[fullKey];
+    const lines = (s[linesKey] === undefined) ? defLines : s[linesKey];
+    const chars = (s[charsKey] === undefined) ? defChars : s[charsKey];
+    return `
+      <div class="delay-section-title">${t(title)}</div>
+      <div class="switch-row">
+        <span class="sw-label">${t("展示完整工具调用结果")}</span>
+        <label class="toggle"><input type="checkbox" id="${fullKey}" ${full ? "checked" : ""}><span class="track"></span></label>
+      </div>
+      <div id="${fullKey}_fields" style="${full ? "display:none;" : ""}">
+        <div class="switch-row">
+          <span class="sw-label">${t("最多展示多少行")} <i class="info-icon">!<span class="tip">${t("超过该行数即截断显示；填 0 表示不限。")}</span></i></span>
+          <input type="number" min="0" step="1" id="${linesKey}" value="${esc(String(lines))}">
+        </div>
+        <div class="switch-row">
+          <span class="sw-label">${t("最多展示多少字")} <i class="info-icon">!<span class="tip">${t("超过该字数即截断显示；填 0 表示不限。与行数上限同时填写时，触发任意一个就截断。")}</span></i></span>
+          <input type="number" min="0" step="1" id="${charsKey}" value="${esc(String(chars))}">
+        </div>
+      </div>`;
+  };
+
+  mask.innerHTML = `
+    <div class="modal" style="width:540px;">
+      <h3>📄 ${t("工具调用结果显示设置")}</h3>
+      <div class="muted" style="margin-bottom:6px;">${t("设置工具调用结果在「流式输出」和「查看历史消息」中的展示方式：可展示完整结果，或按「最多行数 / 最多字数」截断（0 表示不限；两个上限都填时，触发任意一个就截断）。工具结果若是单行 JSON，会先结构化再展示。")}</div>
+      ${section("流式输出", "tool_result_stream_full", "tool_result_stream_max_lines", "tool_result_stream_max_chars", true, 0, 0)}
+      ${section("查看历史消息", "tool_result_history_full", "tool_result_history_max_lines", "tool_result_history_max_chars", false, 50, 0)}
+      <div class="modal-actions">
+        <button class="btn" id="trCancel">${t("取消")}</button>
+        <button class="btn primary" id="trSave">${t("保存")}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(mask);
+
+  const bindToggle = (fullKey) => {
+    const cb = mask.querySelector("#" + fullKey);
+    const fields = mask.querySelector("#" + fullKey + "_fields");
+    if (!cb || !fields) return;
+    const upd = () => { fields.style.display = cb.checked ? "none" : ""; };
+    cb.addEventListener("change", upd);
+    upd();
+  };
+  bindToggle("tool_result_stream_full");
+  bindToggle("tool_result_history_full");
+
+  const readInt = (id) => {
+    const n = parseInt(mask.querySelector("#" + id).value, 10);
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  };
+
+  mask.querySelector("#trCancel").onclick = () => mask.remove();
+  mask.querySelector("#trSave").onclick = async () => {
+    try {
+      await saveSettings({
+        ...s,
+        tool_result_stream_full: mask.querySelector("#tool_result_stream_full").checked,
+        tool_result_stream_max_lines: readInt("tool_result_stream_max_lines"),
+        tool_result_stream_max_chars: readInt("tool_result_stream_max_chars"),
+        tool_result_history_full: mask.querySelector("#tool_result_history_full").checked,
+        tool_result_history_max_lines: readInt("tool_result_history_max_lines"),
+        tool_result_history_max_chars: readInt("tool_result_history_max_chars"),
+      });
+      mask.remove();
+      toast(t("设置已保存"));
+    } catch (e) { toast(e.message, true); }
+  };
+}
+
 async function setDefault(id) {
   try { const cfg = await api("/api/agents/" + encodeURIComponent(id)); await api("/api/default", { method: "PUT", body: JSON.stringify(cfg) }); toast(t("已设为默认配置")); }
   catch (e) { toast(e.message, true); }
@@ -2562,6 +2707,15 @@ document.addEventListener("click", (e) => {
   if (!panel) return;
   btn.classList.add("on");
   showContentModal(`🔖 ${t("记忆附着")}`, panel.innerHTML, () => btn.classList.remove("on"));
+});
+
+// 浏览器工具结果的「查看 content」按钮：点击弹窗展示去掉引号、\n/\t 已还原为真实换行/tab 的 content。
+document.addEventListener("click", (e) => {
+  const btn = e.target && e.target.closest && e.target.closest(".tool-content-btn");
+  if (!btn) return;
+  let text = "";
+  try { text = b64ToUtf8(btn.getAttribute("data-tool-content-b64") || ""); } catch (err) { text = ""; }
+  showContentModal(`📄 ${t("工具结果 content")}`, `<pre class="tool-content-pre">${esc(text)}</pre>`);
 });
 
 function unitField(id, val, unit, extraLabel, tip) {
@@ -3528,6 +3682,10 @@ async function renderChatView() {
     if (editBtn) editBtn.style.display = (settings.edit_mode_enabled !== false) ? "" : "none";
   }
 
+  // 需求4：进入/切换会话即后台预热该 agent 的运行时（加载 embedding、建图），
+  // 避免用户真正发送消息时才开始加载而白白等待。失败静默（发送时仍会走既有加载提示）。
+  api(`/api/agents/${encodeURIComponent(S.agentId)}/warmup`, { method: "POST" }).catch(() => {});
+
   /* ================= 注入当前日期 ================= */
   const dateInjectAvailable = !(settings && settings.show_date_inject_button === false);
   let dateInjectOn = localStorage.getItem("date-inject-on") === "1";
@@ -3624,11 +3782,17 @@ async function renderChatView() {
     const wrapDom = dom => `<当前聚焦标签页的可见内容>\n${dom}\n</当前聚焦标签页的可见内容>`;
 
     function updateHintState() {
-      hintBtn.classList.toggle("on", takeoverHintOn);
+      // 正在获取页面内容（已开启但预览为空）时：橙灯提示 + 发送按钮置灰不可点，
+      // 避免用户在内容就绪前发送出不含页面内容的消息。
+      const fetching = takeoverHintOn && !takeoverPreviewText;
+      hintBtn.classList.toggle("on", takeoverHintOn && !fetching);
+      hintBtn.classList.toggle("fetching", fetching);
       hintBtn.classList.toggle("is-disabled", paused && !takeoverHintOn);
-      hintBtn.title = takeoverHintOn
-        ? t("已开启：发送时会把当前聚焦标签页内容追加到消息之后（发送后自动关闭）")
-        : "";
+      hintBtn.title = fetching
+        ? t("正在获取当前页面内容…")
+        : takeoverHintOn
+          ? t("已开启：发送时会把当前聚焦标签页内容追加到消息之后（发送后自动关闭）")
+          : "";
       if (takeoverHintOn) {
         takeoverBlockEl.textContent = takeoverPreviewText
           ? t("📋 当前页面内容 注入块")
@@ -3638,6 +3802,8 @@ async function renderChatView() {
         takeoverBlockEl.textContent = "";
         takeoverBlockEl.style.display = "none";
       }
+      // 同步发送按钮可用状态（函数在 renderChatView 作用域内声明，可安全调用）
+      try { updateSendState(); } catch (e) {}
     }
 
     // 敏感信息替换列表：开关式状态（绿灯），发送时附加到消息之后，发送成功后自动关闭。
@@ -3823,7 +3989,7 @@ async function renderChatView() {
         const { connected, wasConnected } = await refreshBrowserUI();
         if (connected) await showFloating();
         if (connected && !wasConnected) showIntroPopup();  // 仅当本次提示自动打开了浏览器才弹
-        if (!r || !r.ok) {
+        if (!r || !r.ok || !takeoverPreviewText) {
           takeoverHintReset();
           toast((r && r.error) || t("获取当前页面内容失败"), true);
           return;
@@ -4498,7 +4664,9 @@ async function renderChatView() {
   if (memoryBtn) memoryBtn.onclick = () => openMemoryStoreModal();
 
   function updateSendState() {
-    sendBtn.disabled = isRunning || !!sel.value;
+    // 浏览器接管提示正在获取页面内容时，禁止发送（否则消息会缺少页面内容）。
+    const takeoverFetching = takeoverHintOn && !takeoverPreviewText;
+    sendBtn.disabled = isRunning || !!sel.value || takeoverFetching;
   }
 
   sel.onchange = async () => {
@@ -4551,6 +4719,9 @@ async function renderChatView() {
   async function send() {
     const raw = input.value;
     if (isRunning) return;
+    // 浏览器接管提示已开启但页面内容仍在获取：暂不允许发送（按钮此时也是置灰的，
+    // 这里兜底 Enter 键路径），避免发出不含页面内容的消息让 LLM 摸不着头脑。
+    if (takeoverHintOn && !takeoverPreviewText) { toast(t("正在获取当前页面内容，请稍候…")); return; }
     const userText = raw.replace(/\s+$/, "");
     const injectDate = dateInjectAvailable && dateInjectOn;
     const injectTakeover = takeoverHintOn && !!takeoverPreviewText;
@@ -4838,7 +5009,7 @@ function openChatWs(content, proactive = false, subAgent = null, summaryPercent 
       b.type === "reasoning"
         ? reasoningBlock(b.content)
         : b.type === "tool_result"
-          ? `<div class="tool-result-body">${renderMd(b.content)}</div>`
+          ? b.content
           : `<div class="ai-msg-block">${renderMd(b.content)}</div>`;
     const renderBlocks = (blocks) => (blocks || []).map(renderBlock).join("");
 
@@ -5003,7 +5174,7 @@ function openChatWs(content, proactive = false, subAgent = null, summaryPercent 
           const isSub = typeof msg.source === "string" && msg.source.startsWith("sub:");
           if (isSub && !showSubTools) break;
           leaveLoading("thinking", msg.source || "main");
-          const rHtml = `\n✅ **${t("工具结果")}** (\`${esc(msg.name)}\`):\n\n${esc(msg.content)}\n\n`;
+          const rHtml = buildToolResultHtml(msg.name, msg.content);
           if (isSub) pushSub(msg.source.replace(/^sub:/, ""), "tool_result", rHtml);
           else pushMain("tool_result", rHtml);
           schedule();

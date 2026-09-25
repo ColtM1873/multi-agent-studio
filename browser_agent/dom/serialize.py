@@ -335,7 +335,7 @@ class DOMSerializer:
         parts.append(self._page_info(tree))
         text = "\n".join(separate_scroll_blocks(parts))
         if len(text) > self.max_chars:
-            text = text[: self.max_chars] + "\n…（内容已截断，可用 tool-3 获取全量）"
+            text = text[: self.max_chars] + "\n…（内容已截断，可用 tool_2 获取全量）"
         return text
 
     def serialize_lines(self, tree: EnhancedTree) -> list[OutLine]:

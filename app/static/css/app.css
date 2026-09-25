@@ -242,6 +242,7 @@ html[data-style-danger="solid"] .card-btn-danger:hover { filter: brightness(.92)
   scrollbar-gutter: stable;
 }
 #sendBtn { flex: 0 0 auto; }
+#sendBtn:disabled { opacity: .5; cursor: not-allowed; }
 /* 右列：浏览器工具四按键，同样贴住底界；column-reverse 让收缩时从上方折叠 */
 .browser-takeover-actions {
   display: none; flex: 0 0 auto; flex-direction: column-reverse; gap: 6px;
@@ -270,6 +271,9 @@ html[data-style-danger="solid"] .card-btn-danger:hover { filter: brightness(.92)
 }
 #browserHintBtn.on { border-color: #22c55e; color: #15803d; }
 #browserHintBtn.on .tk-dot { background: #22c55e; box-shadow: 0 0 4px #22c55e; }
+/* 「提示Agent开始接管浏览器」正在获取页面内容：橙灯；此时发送按钮也会被置灰 */
+#browserHintBtn.fetching { border-color: #f59e0b; color: #b45309; }
+#browserHintBtn.fetching .tk-dot { background: #f59e0b; box-shadow: 0 0 4px #f59e0b; }
 /* 「隐私遮蔽模式」开关：开启后长亮绿灯（全局持久化，不随发送关闭） */
 #privacyMaskBtn.on { border-color: #22c55e; color: #15803d; }
 #privacyMaskBtn.on .tk-dot { background: #22c55e; box-shadow: 0 0 4px #22c55e; }
@@ -334,6 +338,15 @@ html[data-style-danger="solid"] .card-btn-danger:hover { filter: brightness(.92)
 
 /* 工具结果正文着色 */
 .tool-result-body { color: var(--tool-result-color, #475569); }
+/* 工具结果：单行 JSON 结构化后按 tab 缩进展示，需要保留空白 */
+.tool-result-text { white-space: pre-wrap; word-break: break-word; }
+.tool-result-head { font-weight: 600; margin-bottom: 2px; }
+.tool-result-trunc { margin-top: 4px; font-size: 12px; color: var(--text-muted); }
+/* 工具结果右侧「查看 content」按钮（吸附方式参考 .mem-attach-btn：float 需放在文本之前） */
+.tool-content-btn { float: right; margin: 0 0 4px 10px; font-size: 12px; line-height: 1.4; padding: 2px 8px; border: 1px solid #93c5fd; border-radius: 6px; background: #dbeafe; color: #1d4ed8; cursor: pointer; font-family: inherit; }
+.tool-content-btn:hover { background: #bfdbfe; }
+.tool-content-btn:active { background: #93c5fd; border-color: #60a5fa; color: #1e3a8a; }
+.tool-content-pre { margin: 0; white-space: pre-wrap; word-break: break-word; font-family: Consolas, "Courier New", monospace; font-size: 13px; }
 
 /* HTML / MD 导出按钮（每条助手消息底部右下角） */
 .export-html-row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }

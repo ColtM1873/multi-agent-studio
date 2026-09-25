@@ -257,7 +257,9 @@ async def _consume_values(
                     "type": "tool_result",
                     "source": source,
                     "name": getattr(last, "name", "unknown"),
-                    "content": str(content)[:2000],
+                    # 不再在此截断：展示长度交由前端「工具调用结果显示设置」控制
+                    # （流式默认展示完整结果）。
+                    "content": str(content),
                 }
             )
             # 工具结果回流后，主 agent 即将再次 call_main_llm；显式回到「思考中」，

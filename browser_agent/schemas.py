@@ -1,27 +1,21 @@
-"""JSON schemas / descriptions for the LLM tool surface."""
+"""JSON schemas / descriptions for the LLM tool surface.
+
+Numbering is 0-based: ``tool_1_interact`` .. ``tool_10_interact_many``.
+``tool_0_open_browser`` is intentionally absent — it is a control-plane tool for
+the Studio UI and is never exposed to the LLM.
+"""
 
 from __future__ import annotations
 
 TOOLS = [
     {
-        "name": "tool_1_open_browser",
-        "description": (
-            "打开（或复用）用户的 Chrome/Edge 浏览器，返回当前聚焦标签页的完整 DOM 基线。"
-            "这是会话的第一个调用。返回 dict 字段：tabs、focused_tab、mode(全量模式)、"
-            "action_ok(未进行互动元素调用)、error(无)、content(序列化 DOM)。"
-            "tabs 为标签页名称列表，每个名称形如『标题001』（标题+三位全局递增序号）；"
-            "focused_tab 为当前聚焦标签页名称。名称到 url 的映射用 tool_10 获取。"
-        ),
-        "parameters": {"type": "object", "properties": {}, "required": []},
-    },
-    {
-        "name": "tool_2_interact",
+        "name": "tool_1_interact",
         "description": (
             "对 DOM 中标记出的单个互动元素执行互动，并返回相对上一步的增量 DOM(diff)。"
             "元素类别由序列化标签给出：<可点击元素 eN> / <可输入元素 eN> / "
             "<可拖动元素 eN> / <可滚动元素 eN>。"
             "若某处出现『整页滚动条』的 <可滚动元素 eN>，表示它是文档级整页滚动，"
-            "调用 tool_2 传入该名称并用 scroll_delta 指定方向即可滚动整个页面。"
+            "调用 tool_1 传入该名称并用 scroll_delta 指定方向即可滚动整个页面。"
             "对『可滚动元素 eN』用 scroll_delta 指定滚动：正数向下、负数向上，单位为『步』"
             "（每步约 0.7 个可见高度，相邻视窗重叠、不会跳过内容），绝对值上限 6；"
             "传 0（默认）等同向下 6 步。"
@@ -71,48 +65,49 @@ TOOLS = [
         },
     },
     {
-        "name": "tool_3_get_viewport_dom",
+        "name": "tool_2_get_viewport_dom",
         "description": (
             "重新返回当前 viewport 的完整 DOM（当多次互动元素引用失效时使用）。"
-            "返回 dict 与 tool_1 一致，mode=全量模式。"
+            "返回 dict 与打开浏览器后的全量返回一致，mode=全量模式。"
         ),
         "parameters": {"type": "object", "properties": {}, "required": []},
     },
     {
-        "name": "tool_4_list_tabs",
+        "name": "tool_3_list_tabs",
         "description": (
             "返回当前所有已打开标签页的名称列表。返回 dict：{tabs: ['标题001', '标题002', ...]}。"
-            "名称 = 标题 + 三位全局递增序号；序号永不复用。名称对应的 url 用 tool_10 查询。"
+            "名称 = 标题 + 三位全局递增序号；序号永不复用。名称对应的 url 用 tool_9 查询。"
         ),
         "parameters": {"type": "object", "properties": {}, "required": []},
     },
     {
-        "name": "tool_5_switch_tab",
+        "name": "tool_4_switch_tab",
         "description": (
-            "切换到指定标签页，返回该标签页的完整 DOM。tab_id 传 tool_4/tool_10 返回的标签页名称"
-            "（如 '百度001'）。返回 dict 与 tool_3 一致，mode=全量模式。"
+            "切换到指定标签页，返回该标签页的完整 DOM。"
+            "tab_id 只填标签页名称末尾的三位数字序号（例如标签页名为 '百度001' 时只填 '001'）。"
+            "返回 dict 与 tool_2 一致，mode=全量模式。"
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "tab_id": {
                     "type": "string",
-                    "description": "目标标签页名称，如 '百度001'（来自 tool_4/tool_10）。",
+                    "description": "标签页的数字序号，如 '001'（取自 tool_3/tool_9 返回名称末尾的数字）。",
                 }
             },
             "required": ["tab_id"],
         },
     },
     {
-        "name": "tool_6_go_back",
+        "name": "tool_5_go_back",
         "description": (
             "浏览器内置『返回』：回到当前标签页的上一个历史记录，返回完整 DOM。"
-            "无历史可回退时 action_ok=失败。返回 dict 与 tool_3 一致，mode=全量模式。"
+            "无历史可回退时 action_ok=失败。返回 dict 与 tool_2 一致，mode=全量模式。"
         ),
         "parameters": {"type": "object", "properties": {}, "required": []},
     },
     {
-        "name": "tool_7_refresh",
+        "name": "tool_6_refresh",
         "description": (
             "刷新当前标签页，返回相对刷新前的增量 DOM(diff)。"
             "成功时 mode=增量模式，content 只包含新增/变化的内容（带祖先层级，无 +/- 前缀），"
@@ -121,27 +116,27 @@ TOOLS = [
         "parameters": {"type": "object", "properties": {}, "required": []},
     },
     {
-        "name": "tool_8_close_tab",
+        "name": "tool_7_close_tab",
         "description": (
             "关闭指定标签页，返回剩余标签页名称列表。返回 dict：{tabs: ['标题001', ...]}。"
-            "tab_id 传标签页名称（如 '百度001'）。"
+            "tab_id 只填标签页名称末尾的三位数字序号（例如 '001'）。"
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "tab_id": {
                     "type": "string",
-                    "description": "要关闭的标签页名称，如 '百度001'（来自 tool_4/tool_10）。",
+                    "description": "要关闭的标签页数字序号，如 '001'（取自 tool_3/tool_9 返回名称末尾的数字）。",
                 }
             },
             "required": ["tab_id"],
         },
     },
     {
-        "name": "tool_9_navigate",
+        "name": "tool_8_navigate",
         "description": (
             "新开一个标签页并访问给定地址（相当于在地址栏输入并回车）。"
-            "返回新标签页的完整 DOM，dict 与 tool_3 一致，mode=全量模式。"
+            "返回新标签页的完整 DOM，dict 与 tool_2 一致，mode=全量模式。"
             "未带协议时自动补 https://。"
         ),
         "parameters": {
@@ -153,7 +148,7 @@ TOOLS = [
         },
     },
     {
-        "name": "tool_10_tab_url_map",
+        "name": "tool_9_tab_url_map",
         "description": (
             "返回当前所有已打开标签页的名称到实际 url 的映射。返回 dict，如 "
             "{'百度001': 'https://www.baidu.com/', '百度002': 'https://www.baidu.com/'}。"
@@ -162,7 +157,7 @@ TOOLS = [
         "parameters": {"type": "object", "properties": {}, "required": []},
     },
     {
-        "name": "tool_11_interact_many",
+        "name": "tool_10_interact_many",
         "description": (
             "一次调用按顺序完成『一系列填入 + 可选的最后一个点击』（拟人化串行执行，不并行）。"
             "name_list 为互动元素名称列表，fill_list 为对应的填入内容列表。"

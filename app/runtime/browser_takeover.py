@@ -80,14 +80,14 @@ def apply_sensitive_replacement(text: str) -> str:
 
 
 def _preprocess_interact(kwargs: dict) -> dict:
-    """tool-2：只替换可填入元素的 fill。"""
+    """tool-1：只替换可填入元素的 fill。"""
     if "fill" in kwargs:
         kwargs["fill"] = apply_sensitive_replacement(kwargs.get("fill") or "")
     return kwargs
 
 
 def _preprocess_interact_many(kwargs: dict) -> dict:
-    """tool-11：只替换可填入元素的 fill_list。"""
+    """tool-10：只替换可填入元素的 fill_list。"""
     fills = kwargs.get("fill_list")
     if isinstance(fills, list):
         kwargs["fill_list"] = [apply_sensitive_replacement(str(f) if f is not None else "") for f in fills]
@@ -259,11 +259,11 @@ class InteractArgs(BaseModel):
 
 
 class SwitchTabArgs(BaseModel):
-    tab_id: str = Field(..., description="目标标签页名称，如 '百度001'（来自 tool_4/tool_10）。")
+    tab_id: str = Field(..., description="目标标签页的数字序号，如 '001'（取自返回名称末尾的数字）。")
 
 
 class CloseTabArgs(BaseModel):
-    tab_id: str = Field(..., description="要关闭的标签页名称，如 '百度001'。")
+    tab_id: str = Field(..., description="要关闭的标签页数字序号，如 '001'。")
 
 
 class NavigateArgs(BaseModel):
@@ -475,7 +475,11 @@ def _wrap(fn, description: str, args_schema=None, preprocess=None) -> Structured
 
 
 def build_browser_tools() -> list[StructuredTool]:
-    """构建 11 个浏览器接管工具（惰性 import browser_agent）。"""
+    """构建暴露给 LLM 的 10 个浏览器接管工具（惰性 import browser_agent）。
+
+    ``tool_0_open_browser`` 是控制面工具（仅供 Studio UI 的「打开浏览器」按钮调用），
+    **不暴露给 LLM**。
+    """
     import browser_agent as ba
 
     descriptions = {t["name"]: t["description"] for t in ba.TOOLS}
@@ -484,18 +488,51 @@ def build_browser_tools() -> list[StructuredTool]:
         return descriptions.get(name, "")
 
     return [
-        _wrap(ba.tool_1_open_browser, desc("tool_1_open_browser"), NoArgs),
-        _wrap(ba.tool_2_interact, desc("tool_2_interact"), InteractArgs, _preprocess_interact),
-        _wrap(ba.tool_3_get_viewport_dom, desc("tool_3_get_viewport_dom"), NoArgs),
-        _wrap(ba.tool_4_list_tabs, desc("tool_4_list_tabs"), NoArgs),
-        _wrap(ba.tool_5_switch_tab, desc("tool_5_switch_tab"), SwitchTabArgs),
-        _wrap(ba.tool_6_go_back, desc("tool_6_go_back"), NoArgs),
-        _wrap(ba.tool_7_refresh, desc("tool_7_refresh"), NoArgs),
-        _wrap(ba.tool_8_close_tab, desc("tool_8_close_tab"), CloseTabArgs),
-        _wrap(ba.tool_9_navigate, desc("tool_9_navigate"), NavigateArgs),
-        _wrap(ba.tool_10_tab_url_map, desc("tool_10_tab_url_map"), NoArgs),
-        _wrap(ba.tool_11_interact_many, desc("tool_11_interact_many"), InteractManyArgs, _preprocess_interact_many),
+        _wrap(ba.tool_1_interact, desc("tool_1_interact"), InteractArgs, _preprocess_interact),
+        _wrap(ba.tool_2_get_viewport_dom, desc("tool_2_get_viewport_dom"), NoArgs),
+        _wrap(ba.tool_3_list_tabs, desc("tool_3_list_tabs"), NoArgs),
+        _wrap(ba.tool_4_switch_tab, desc("tool_4_switch_tab"), SwitchTabArgs),
+        _wrap(ba.tool_5_go_back, desc("tool_5_go_back"), NoArgs),
+        _wrap(ba.tool_6_refresh, desc("tool_6_refresh"), NoArgs),
+        _wrap(ba.tool_7_close_tab, desc("tool_7_close_tab"), CloseTabArgs),
+        _wrap(ba.tool_8_navigate, desc("tool_8_navigate"), NavigateArgs),
+        _wrap(ba.tool_9_tab_url_map, desc("tool_9_tab_url_map"), NoArgs),
+        _wrap(ba.tool_10_interact_many, desc("tool_10_interact_many"), InteractManyArgs, _preprocess_interact_many),
     ]
+
+
+def warmup_browser() -> None:
+    """提前完成「首次浏览器工具调用」所需的加载与准备工作。
+
+    在用户点击「打开浏览器」后调用：预导入 ``browser_agent`` 全部子模块、应用
+    全局延迟配置、确保已连接、attach 当前聚焦标签页并跑一次轻量 ``Runtime.evaluate``。
+    这样真正由 LLM 发起第一次互动时，不再额外支付这些一次性开销。
+    """
+    import browser_agent  # noqa: F401
+    import browser_agent.actions  # noqa: F401
+    import browser_agent.cdp  # noqa: F401
+    import browser_agent.dom  # noqa: F401
+    import browser_agent.launcher  # noqa: F401
+    import browser_agent.timing as ba_timing
+    from browser_agent.controller import BrowserController
+
+    try:
+        _apply_browser_timing()
+        ctrl = BrowserController.instance()
+        ctrl.ensure_connected()
+        target_id = ctrl._resolve_focused_target()
+        if not target_id or ctrl.client is None:
+            return
+        session = ctrl.client.attach(target_id)
+        ctrl.client.enable_page_domains(session)
+        ctrl.client.send(
+            "Runtime.evaluate",
+            {"expression": "document.readyState", "returnByValue": True},
+            session_id=session,
+            timeout=ba_timing.get().cdp.probe_timeout,
+        )
+    except Exception:  # noqa: BLE001 — 预热失败绝不影响「打开浏览器」本身
+        pass
 
 
 def browser_status() -> tuple[bool, int | None]:
