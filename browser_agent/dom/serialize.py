@@ -731,12 +731,14 @@ class DOMSerializer:
     def _group_image(self, node: EnhancedNode, depth: int) -> None:
         self._emit_header(depth, "[图片]")
         self._stack.append((depth, "[图片]", ""))
-        alt = (
-            _clean_alt_text(node.attributes.get("alt", ""))
-            or _clean_alt_text(node.ax_name)
-            or "图片"
+        alt = _clean_alt_text(node.attributes.get("alt", "")) or _clean_alt_text(
+            node.ax_name
         )
-        self._emit_content(depth + 1, self._truncate(alt, 120))
+        # An image with no alt/name (very common for logo/icon/decorative images)
+        # used to emit ``[图片]\n\t图片``: the fallback word merely repeated the
+        # header and added no information. Emit the header alone in that case.
+        if alt:
+            self._emit_content(depth + 1, self._truncate(alt, 120))
         self._stack.pop()
 
     def _group_code(self, node: EnhancedNode, depth: int) -> None:
@@ -1189,13 +1191,26 @@ class DOMSerializer:
     def _is_redundant_choice_label(self, node: EnhancedNode) -> bool:
         """True when ``node`` is merely the text half of an adjacent choice control.
 
-        Component libraries render a radio / checkbox option as
-        ``<label class="…"><span class="…"><input type=radio></span><span>男</span></label>``.
-        The trailing ``<span>男</span>`` is clickable only because it inherits the
-        row's ``cursor:pointer``; the real control is the ``<input>``, which
-        already drew its own label from that same text. Naming both produced
+        Component libraries render a radio / checkbox option in one of two shapes:
+
+        * native — ``<label class="…"><span class="…"><input type=radio></span>
+          <span>男</span></label>``;
+        * SVG icon — ``<div class="list-item-container"><span class="icon-container">
+          <svg class="RadioUnchecked"></span><span class="item-text-label">汉族</span>
+          </div>`` (a Beisen ``phoenix-select`` transfer list, observed on the PICC
+          recruitment form).
+
+        In both the trailing text span is clickable only because it inherits the
+        row's ``cursor:pointer``; the real control is the ``<input>`` / the icon,
+        which already drew its own label from that same text. Naming both produced
         duplicate entries (``<可点击元素 e7>男</可点击元素 e7>`` next to
-        ``<可点击元素 e8>男</可点击元素 e8>``). Drop the text half in that case.
+        ``<可点击元素 e8>男</可点击元素 e8>``; ``选择：汉族`` next to ``汉族``),
+        which made the LLM click the no-op text half and lose several turns.
+        Drop the text half in that case.
+
+        The guard ``is_cursor_pointer_only(node)`` means a real anchor / ARIA
+        button / tabindex label is never dropped — only a purely decorative
+        ``cursor:pointer`` text span, exactly the shape inherited from the row.
         """
         if not node.is_element or node.tag == "input":
             return False
@@ -1212,6 +1227,13 @@ class DOMSerializer:
                 continue
             for choice in self._iter_choice_inputs(sibling):
                 paired = self._pointer_sibling_label(choice) or self._nearby_text_label(choice)
+                if paired and paired == text:
+                    return True
+            # SVG icon half of the same option row: the icon is the real,
+            # separately-callable control (``_interactive_label`` names it
+            # ``选择：<text>``); drop the redundant text half too.
+            if is_control_icon(sibling):
+                paired = self._pointer_sibling_label(sibling) or self._nearby_text_label(sibling)
                 if paired and paired == text:
                     return True
         return False
