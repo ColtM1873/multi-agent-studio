@@ -22,7 +22,7 @@ from pathlib import Path
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
-STOP_TEXT = "用户已暂停你的浏览器操作，请立即停止所有浏览器动作，等待用户的后续指示。"
+STOP_TEXT = "用户已中止你的浏览器操作。请立即中止任何形式的工具调用，迅速结束。"
 
 # debug 日志根目录：程序根目录（app/runtime/browser_takeover.py 上溯三层）。
 _ROOT_DIR = Path(__file__).resolve().parents[2]
@@ -253,9 +253,7 @@ class InteractArgs(BaseModel):
     scroll_delta: int = Field(
         0, ge=-6, le=6,
         description=(
-            "仅用于『可滚动』元素：正数向下滚、负数向上滚，单位为步"
-            "（每步约 0.7 个可见高度），绝对值上限 6；其他情况传 0"
-            "（对可滚动元素传 0 等同向下 6 步）。"
+            "仅用于『可滚动』元素：正数向下滚、负数向上滚，单位为步，一次最多滚动6步；其他情况传 0"
         ),
     )
 
@@ -278,7 +276,7 @@ class InteractManyArgs(BaseModel):
     )
     fill_list: list[str] = Field(
         ...,
-        description="填入内容列表；与 name_list 等长，或比它少一个（少一个时末位为收尾点击）。",
+        description="填入内容列表，在name_list相对应的位置填入对应的值；与 name_list 等长，或比它少一个（少一个时末位为收尾点击）。",
     )
 
 
