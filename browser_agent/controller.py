@@ -426,12 +426,21 @@ class BrowserController:
     def _probe_focused_target(self) -> Optional[str]:
         """The tab whose document currently reports OS focus, or ``None``.
 
-        ``None`` means *no* tab has focus (the browser window is in the
-        background); the probe then carries no signal and callers fall back to the
-        explicitly selected tab. Kept separate from ``_resolve_focused_target``
-        so activation retries can ask "did it take effect?" without mutating state.
+        ``document.hasFocus()`` is the primary truth (it is what the prior
+        iterations validated). ``document.visibilityState`` is only a **fallback**
+        for environments where no tab reports OS focus at all (e.g. the browser
+        window is backgrounded, or a page opened by the site's own
+        ``window.open`` does not expose focus): when exactly one tab is visibly
+        the foreground one, accept it. Focus is never overridden by visibility —
+        in this deployment the previously visible tab can keep reporting
+        ``visible`` for a while after ``Target.activateTarget`` moved focus.
+
+        ``None`` means *no* signal at all; callers then fall back to the
+        explicitly selected tab.
         """
         assert self.client is not None
+        visible: list[str] = []
+        focused: list[str] = []
         for target in self._page_targets():
             target_id = target["targetId"]
             try:
@@ -439,15 +448,48 @@ class BrowserController:
                 self.client.enable_page_domains(session)
                 result = self.client.send(
                     "Runtime.evaluate",
-                    {"expression": "document.hasFocus()", "returnByValue": True},
+                    {
+                        "expression": "document.visibilityState + '|' + document.hasFocus()",
+                        "returnByValue": True,
+                    },
                     session_id=session,
                     timeout=timing.get().cdp.probe_timeout,
                 )
-                if (result.get("result") or {}).get("value") is True:
-                    return target_id
+                value = str((result.get("result") or {}).get("value") or "")
             except Exception:
                 continue
+            state, _, focus = value.partition("|")
+            if state == "visible":
+                visible.append(target_id)
+            if focus == "true":
+                focused.append(target_id)
+        if focused:
+            return focused[0]
+        if len(visible) == 1:
+            return visible[0]
+        if visible:
+            if self.focused_target_id in visible:
+                return self.focused_target_id
+            return visible[0]
         return None
+
+    def _await_opened_tabs(self, old_target_ids: set, timeout: Optional[float] = None) -> list:
+        """Poll briefly for page tabs opened since ``old_target_ids``.
+
+        A page's ``window.open`` (``target=_blank`` / JS popup) can create its tab
+        a moment *after* the click has settled, so an immediate check misses it and
+        the tool reports “（页面无变化）” while two tabs quietly appeared — the LLM
+        then wastes many turns discovering them via ``tool_3_list_tabs``. Only the
+        no-change path pays this bounded wait.
+        """
+        if timeout is None:
+            timeout = timing.get().ready.new_tab_wait
+        deadline = time.time() + timeout
+        while True:
+            opened = self._opened_tab_names(old_target_ids)
+            if opened or time.time() >= deadline:
+                return opened
+            time.sleep(timing.get().ready.new_tab_poll_interval)
 
     def _resolve_focused_target(self) -> Optional[str]:
         targets = self._page_targets()
@@ -811,15 +853,10 @@ class BrowserController:
         # The click may have opened a background tab without moving focus. The
         # focused page then looks unchanged and an incremental diff would read
         # "（页面无变化）", which falsely implies nothing happened; tell the LLM
-        # explicitly and hand it the full tab list instead.
-        opened_names = self._opened_tab_names(old_target_ids)
-        if opened_names:
-            content = self._new_tab_notice(opened_names)
-            return self._base_result(
-                INCREMENTAL, FAIL if fill_error else OK, content,
-                error=fill_error or "无", include_tabs=True,
-            )
-
+        # explicitly and hand it the full tab list instead. A page-driven
+        # ``window.open`` can register its target *after* the click settled, so
+        # this check runs after the (time-consuming) DOM capture, and the no-change
+        # path additionally polls briefly (see ``_await_opened_tabs``).
         new_tree = self.capture_tree(target_id)
         notice = (
             self._dialog_notice(dialog)
@@ -829,11 +866,12 @@ class BrowserController:
         content = self._incremental_content(
             old_lines, new_tree, target_id, notice, old_url=old_tree.url
         )
+        opened_names = self._opened_tab_names(old_target_ids)
         # A click that closes a popup / clears a selection removes content; the
         # diff only reports additions, so it would read "（页面无变化）" and the LLM
         # would mistake a real toggle for a dead click. If the raw markup did
         # change, say so explicitly.
-        if before_sig and "（页面无变化）" in content:
+        if not opened_names and before_sig and "（页面无变化）" in content:
             try:
                 after_sig = executor.dom_signature()
             except Exception:
@@ -843,6 +881,18 @@ class BrowserController:
                     "\n\n[提示] 页面结构确实发生了变化，但没有新增的可见文本/互动元素"
                     "（常见于：关闭了浮层/下拉、取消选中，或仅状态/样式变化）。"
                 )
+            else:
+                opened_names = self._await_opened_tabs(old_target_ids)
+        if opened_names:
+            extra = self._new_tab_notice(opened_names)
+            # When the focused page did change, keep it and append the hint;
+            # when it did not, the new tab *is* the outcome — replace the
+            # misleading "（页面无变化）".
+            content = extra if "（页面无变化）" in content else content + "\n\n" + extra
+            return self._base_result(
+                INCREMENTAL, FAIL if fill_error else OK, content,
+                error=fill_error or "无", include_tabs=True,
+            )
         return self._base_result(
             INCREMENTAL, FAIL if fill_error else OK, content,
             error=fill_error or "无", include_tabs=False,
@@ -1166,6 +1216,22 @@ class BrowserController:
             content = self._incremental_content(
                 old_lines, new_tree, target_id, notice, old_url=tree.url
             )
+            # A trailing click may have opened a background tab whose target is
+            # registered a beat late (see ``_await_opened_tabs``). Re-check now
+            # (the capture above already spent some time), then poll if the
+            # focused page shows no change at all.
+            if has_click:
+                late = self._opened_tab_names(old_target_ids)
+                if late and not opened_names:
+                    opened_names = late
+                    extra = self._new_tab_notice(late)
+                    content = (
+                        extra if "（页面无变化）" in content else content + "\n\n" + extra
+                    )
+                if not opened_names and "（页面无变化）" in content:
+                    opened_names = self._await_opened_tabs(old_target_ids)
+                    if opened_names:
+                        content = self._new_tab_notice(opened_names)
             mode = INCREMENTAL
 
         include_tabs = focus_changed or bool(opened_names)
@@ -1671,13 +1737,20 @@ class BrowserController:
         try:
             self._activate_target(target_id)
             self._wait_ready(target_id)
+            actual = self._resolve_focused_target()
+            if actual is not None and actual != target_id:
+                # The tab's document may have finished loading only now (a page
+                # opened by the site's own ``window.open`` is frequently not
+                # activatable until then). Give activation a second bounded
+                # chance before declaring failure.
+                self._activate_target(target_id)
+                actual = self._resolve_focused_target()
         except (CDPError, RuntimeError) as exc:
             return self._base_result(FULL, FAIL, "无", str(exc))
         result = self._full_result_for(target_id)
         # If the browser refused to foreground the requested tab, do not pretend
         # the switch succeeded (that trapped the LLM in a switch/interact loop):
         # return the tab that is *actually* focused, with an explicit notice.
-        actual = self._resolve_focused_target()
         if actual is not None and actual != target_id:
             result = self._full_result_for(actual)
             result["content"] = self._focus_mismatch_notice(target_id, actual) + result["content"]

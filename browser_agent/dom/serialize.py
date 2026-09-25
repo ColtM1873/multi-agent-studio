@@ -1071,11 +1071,18 @@ class DOMSerializer:
             # label's own clickable entry (which expands / navigates): “选择：重庆市”.
             # A native checkbox / radio input is the same "control + text" shape
             # without an icon, so it gets the same treatment instead of an empty tag.
-            if not label and category == "click" and (
+            if category == "click" and (
                 is_control_icon(node) or self._is_choice_input(node)
             ):
-                paired = self._pointer_sibling_label(node) or self._nearby_text_label(node)
-                if paired:
+                paired = (
+                    self._adjacent_text_label(node)
+                    or self._pointer_sibling_label(node)
+                    or self._nearby_text_label(node)
+                )
+                # Prefer the visible option text over the control's ``name`` (an
+                # internal id such as ``11_20_1``): the text is what the user (and
+                # the LLM) reads. A real accessible name is left untouched.
+                if paired and (not label or self._is_machine_token(label)):
                     label = f"选择：{paired}"
             # A composite control (e.g. a select box) often shows only its value or
             # placeholder (“请选择”). Prefix the associated field label so the LLM
@@ -1120,7 +1127,14 @@ class DOMSerializer:
             if node.role == "button" or node.tag in ("button", "input"):
                 return "按钮"
             if node.tag == "a":
-                return "链接"
+                # An animation logo / icon link often has no text. Give the LLM a
+                # clue instead of the content-less word "链接": the visible image
+                # alt, else the link's host / last path segment.
+                image = self._image_alt_label(node)
+                if image:
+                    return image
+                hint = self._href_hint(node)
+                return f"链接（{hint}）" if hint else "链接"
             return "可点击项"
         if category == "input":
             return "输入框"
@@ -1387,6 +1401,67 @@ class DOMSerializer:
             hops += 1
         return ""
 
+    def _adjacent_text_label(self, node: EnhancedNode) -> str:
+        """Visible text of the text node immediately before/after ``node``.
+
+        Native radio / checkbox rows are frequently authored as
+        ``<input type=radio>男<input type=radio>女`` — the option text is a bare
+        ``#text`` sibling, not an element, so ``_pointer_sibling_label`` /
+        ``_nearby_text_label`` (which only look at *element* siblings) miss it and
+        the control was named after its internal ``name`` id instead. Look at the
+        nearest sibling text node, first after then before.
+        """
+        parent = node.parent
+        if parent is None:
+            return ""
+        try:
+            index = parent.children.index(node)
+        except ValueError:
+            return ""
+        for sibling in parent.children[index + 1 :]:
+            if sibling.is_text:
+                text = " ".join((sibling.text or "").split())
+                if text:
+                    return self._truncate(text, 40)
+                continue
+            break
+        for sibling in reversed(parent.children[:index]):
+            if sibling.is_text:
+                text = " ".join((sibling.text or "").split())
+                if text:
+                    return self._truncate(text, 40)
+                continue
+            break
+        return ""
+
+    def _selected_option_label(self, node: EnhancedNode) -> str:
+        """Text of a native ``<select>``'s currently selected option, else ``""``.
+
+        A closed ``<select>`` only renders the selected option; its other options
+        have no box and are not serialized. Name the control after that value so
+        the LLM can tell the field's current state (and avoid re-selecting it).
+        A placeholder option (empty ``value``) means no real choice yet, so it is
+        ignored and the caller falls back to the field label.
+        """
+        options = [
+            child
+            for child in node.children
+            if child.is_element and child.tag == "option"
+        ]
+        if not options:
+            return ""
+        chosen = None
+        for option in options:
+            if option.selected is True or "selected" in option.attributes:
+                chosen = option
+                break
+        if chosen is None:
+            chosen = options[0]
+        if not (chosen.attributes.get("value") or "").strip():
+            return ""
+        text = self._collect_text(chosen) or chosen.attributes.get("title", "")
+        return self._truncate(text, 40)
+
     def _has_field_input_descendant(self, node: EnhancedNode) -> bool:
         """True if ``node`` wraps a form field (input / textarea / select)."""
         for child in node.children:
@@ -1610,6 +1685,16 @@ class DOMSerializer:
         return "（空）"
 
     def _label(self, node: EnhancedNode) -> str:
+        # A native ``<select>`` shows its *selected option*, not its internal id.
+        # Rendering the id (``11_150051_1``) told the LLM nothing about the current
+        # value (and made it unable to tell whether a choice was already made).
+        if node.tag == "select":
+            selected = self._selected_option_label(node)
+            if selected:
+                field = self._truncate(node.ax_name) if node.ax_name else ""
+                if field and field not in selected and not self._is_machine_token(field):
+                    return f"{field}：{selected}"
+                return selected
         if node.ax_name:
             return self._icon_label(node.ax_name) or self._truncate(node.ax_name)
         text = self._collect_text(node)
@@ -1625,7 +1710,12 @@ class DOMSerializer:
                     value = _clean_alt_text(value)
                     if not value:
                         continue
-                return self._icon_label(value) or self._truncate(value)
+                label = self._icon_label(value) or self._truncate(value)
+                if attr == "name" and self._is_machine_token(label):
+                    # ``name`` is the page's internal field id (``11_150051_1``),
+                    # never a human label. Leaking it produced meaningless tags.
+                    continue
+                return label
         # A label-less wrapper around a single icon (Ant Design's
         # ``.ant-picker-suffix`` holding ``<span aria-label="calendar">``): take
         # the *descendant* icon's name so the entry reads ``打开日历`` instead of
@@ -1654,6 +1744,41 @@ class DOMSerializer:
             if deeper:
                 return deeper
         return ""
+
+    def _image_alt_label(self, node: EnhancedNode, max_depth: int = 3) -> str:
+        """A cleaned ``alt``/AX name of an image descendant, else ``""``.
+
+        Used to name an otherwise anonymous image link (``<a><img alt="首页"></a>``)
+        instead of the content-less fallback word "链接".
+        """
+        if max_depth <= 0:
+            return ""
+        for child in node.children:
+            if child.is_text or not child.is_element:
+                continue
+            if self._is_image(child):
+                alt = _clean_alt_text(child.attributes.get("alt") or child.ax_name or "")
+                if alt:
+                    return self._truncate(alt, 40)
+            deeper = self._image_alt_label(child, max_depth - 1)
+            if deeper:
+                return deeper
+        return ""
+
+    @staticmethod
+    def _href_hint(node: EnhancedNode) -> str:
+        """A short human hint from an ``<a>``'s ``href`` (host or last path part)."""
+        href = (node.attributes.get("href") or "").strip()
+        if not href or href.lower().startswith(
+            ("javascript:", "#", "mailto:", "tel:", "sms:", "blob:")
+        ):
+            return ""
+        if "://" in href:
+            rest = href.split("://", 1)[1]
+            host = rest.split("/", 1)[0].split("?", 1)[0]
+            return host[4:] if host.lower().startswith("www.") else host
+        parts = [p for p in href.split("?")[0].split("/") if p]
+        return parts[-1][:40] if parts else ""
 
     @staticmethod
     def _icon_label(value: str) -> str:
@@ -1693,6 +1818,33 @@ class DOMSerializer:
     def _truncate(self, text: str, limit: int = 100) -> str:
         text = " ".join(text.split())
         return text if len(text) <= limit else text[:limit] + "…"
+
+    @staticmethod
+    def _is_machine_token(value: str) -> bool:
+        """True for an internal identifier masquerading as a label.
+
+        Page frameworks name/ID controls with generated tokens
+        (``11_20_1`` / ``firstLevl11_245_1`` / ``14_66011_1``) that are meaningful
+        to the page but tell the LLM nothing. They are **bugs** to surface as
+        control labels. Only clearly machine-shaped strings are matched so human
+        field names (``email`` / ``field1`` / ``q``) survive.
+        """
+        text = (value or "").strip()
+        if not text:
+            return False
+        digits = sum(ch.isdigit() for ch in text)
+        if digits == 0:
+            return False
+        if text.isdigit():
+            return True
+        core = text.replace("_", "").replace("-", "").replace(" ", "")
+        if core.isdigit():
+            return True
+        # Internal ids are digit groups joined by separators
+        # (``11_20_1`` / ``firstLevl11_245_1``); a digit-heavy token is also an id.
+        if "_" in text and digits > 0:
+            return True
+        return digits >= max(2, len(text) * 0.4)
 
     def _is_image(self, node: EnhancedNode) -> bool:
         if node.tag == "img" or node.role == "img":

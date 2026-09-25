@@ -46,6 +46,10 @@ class ReadyTiming:
     timeout: float = 15.0
     poll_interval: float = 0.15
     new_tab_poll_interval: float = 0.1
+    # 点击后，聚焦页无变化时，为「页面异步 window.open 出来的后台标签页」额外
+    # 轮询等待的上限。新建 target 偶发比判稳慢半拍，不等待会把「新开了标签页」
+    # 误报成「（页面无变化）」，把 LLM 带进死循环。
+    new_tab_wait: float = 1.2
     close_timeout: float = 3.0
     close_poll_interval: float = 0.1
 
