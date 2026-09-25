@@ -256,6 +256,13 @@ class InteractArgs(BaseModel):
             "仅用于『可滚动』元素：正数向下滚、负数向上滚，单位为步，一次最多滚动6步；其他情况传 0"
         ),
     )
+    press_enter: bool = Field(
+        False,
+        description=(
+            "仅用于『可输入』元素：填完值后是否按一次回车提交搜索/表单"
+            "（当搜索框没有可点击的提交按钮时设为 true）；其他情况传 false。"
+        ),
+    )
 
 
 class SwitchTabArgs(BaseModel):
@@ -441,10 +448,12 @@ def _wrap(fn, description: str, args_schema=None, preprocess=None) -> Structured
                 return_text = json.dumps(result, ensure_ascii=False)
             except (TypeError, ValueError):
                 return_text = str(result)
-            if isinstance(result, dict):
-                raw_content = result.get("content")
-                log_content = "" if raw_content is None else str(raw_content)
+            if isinstance(result, dict) and result.get("content") is not None:
+                log_content = str(result["content"])
             else:
+                # Tools whose payload is not under ``content`` (tab list / url
+                # map / close-tab) used to log “（无）”, hiding the actual return
+                # value from the debug log. Record the full result instead.
                 log_content = return_text
 
         # 隐私遮蔽模式：返回给 LLM 之前，把真实敏感值反向替换为 <名称>。
@@ -460,7 +469,7 @@ def _wrap(fn, description: str, args_schema=None, preprocess=None) -> Structured
                 except (TypeError, ValueError):
                     return_text = mask(str(result))
                 raw_content = masked.get("content") if isinstance(masked, dict) else None
-                log_content = "" if raw_content is None else str(raw_content)
+                log_content = return_text if raw_content is None else str(raw_content)
 
         if debug_on:
             _write_debug_log(fn.__name__, llm_input, log_content, capture)

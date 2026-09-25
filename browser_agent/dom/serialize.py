@@ -20,6 +20,8 @@ ancestor header path and the interactive names appearing on the line).
 
 from __future__ import annotations
 
+import html
+import re
 from dataclasses import dataclass
 from typing import Optional
 
@@ -255,6 +257,33 @@ BBox = tuple[float, float, float, float]
 
 _SCROLL_OPEN = "<可滚动元素 "
 _SCROLL_CLOSE = "</可滚动元素 "
+
+# A real tag (``<p …>`` / ``</p>``), not a comparison like ``1 < 2``. Used to
+# strip markup that page authors accidentally pasted into an image ``alt`` /
+# ``title`` before it is shown to the LLM.
+_HTML_TAG_RE = re.compile(r"<[A-Za-z/!][^>]*>")
+
+
+def _clean_alt_text(raw: str) -> str:
+    """Turn an ``alt``/``title`` value into plain, readable text.
+
+    Some sites embed a whole HTML fragment (already entity-encoded, sometimes
+    double-encoded) in an image's ``alt``: the home page rendered six identical
+    ``[图片]`` groups whose "alt" was ``&amp;lt;p style=…&amp;gt;简历投递…`` — pure
+    noise that buried the real step names. Unescape (tolerating double-encoding),
+    drop any markup, and collapse whitespace.
+    """
+    if not raw:
+        return ""
+    text = raw
+    for _ in range(3):
+        decoded = html.unescape(text)
+        if decoded == text:
+            break
+        text = decoded
+    if "<" in text:
+        text = _HTML_TAG_RE.sub(" ", text)
+    return " ".join(text.split())
 
 
 def _is_scroll_open(text: str) -> bool:
@@ -555,11 +584,18 @@ class DOMSerializer:
                     self._render_child(grand, depth, clip)
             else:
                 name = self.registry.get_or_create(child)
-                self._append_inline(
-                    self._interactive_text(child, category, name),
-                    [name],
-                    [self._interactive_label(child, category)],
-                )
+                label = self._interactive_label(child, category)
+                tag, _ = CATEGORY_TAGS[category]
+                piece = f"<{tag} {name}>{label}</{tag} {name}>"
+                if self._is_block_level(child):
+                    # A block-level clickable (a card / list row) gets its own
+                    # line. Appending it inline glued every consecutive job card
+                    # of a `<div>`-based list into one unreadable line, defeating
+                    # the whole point of returning a structured DOM.
+                    self._flush(depth)
+                    self._emit_content(depth, piece, (name,))
+                else:
+                    self._append_inline(piece, [name], [label])
             return
 
         # Preserve the raw whitespace of code blocks instead of collapsing it
@@ -628,7 +664,16 @@ class DOMSerializer:
         elif category == "click" and not self._has_interactive_descendant(node):
             self._group_click(node, depth, header, clip)
         else:
+            before = len(self._lines)
             self._group(node, depth, header, clip)
+            # A non-interactive group that rendered no real content (an empty
+            # `[列表]` / `[文本]` / `[区块]`) carries no information and only
+            # wastes attention. `[图片]`/interactive groups have their own paths.
+            if not any(
+                line.kind == "content" and line.text
+                for line in self._lines[before + 1 :]
+            ):
+                del self._lines[before:]
 
     def _group_scroll(
         self,
@@ -686,7 +731,11 @@ class DOMSerializer:
     def _group_image(self, node: EnhancedNode, depth: int) -> None:
         self._emit_header(depth, "[图片]")
         self._stack.append((depth, "[图片]", ""))
-        alt = node.attributes.get("alt") or node.ax_name or "图片"
+        alt = (
+            _clean_alt_text(node.attributes.get("alt", ""))
+            or _clean_alt_text(node.ax_name)
+            or "图片"
+        )
         self._emit_content(depth + 1, self._truncate(alt, 120))
         self._stack.pop()
 
@@ -1366,6 +1415,14 @@ class DOMSerializer:
             # A file/attachment row (icon + name) inside a dropzone is a real
             # (preview/remove) control, not descriptive copy.
             return False
+        if self._has_blockish_descendant(node):
+            # A node with real block-level structure (e.g. a job card made of a
+            # title row + a label row) is a *structured container*, not a plain
+            # text run. The old length-only test demoted any long card whose
+            # label happened to exceed 60 chars (multi-city job rows) to plain
+            # text, so structurally identical rows became inconsistently
+            # un-clickable. Structure always wins over the length heuristic.
+            return False
         if len(self._collect_text(node)) >= 60:
             return True
         # A short ``cursor:pointer`` text node that sits inside a clickable
@@ -1503,6 +1560,10 @@ class DOMSerializer:
         for attr in ("placeholder", "title", "aria-label", "alt", "name"):
             value = node.attributes.get(attr)
             if value:
+                if attr == "alt":
+                    value = _clean_alt_text(value)
+                    if not value:
+                        continue
                 return self._icon_label(value) or self._truncate(value)
         # A label-less wrapper around a single icon (Ant Design's
         # ``.ant-picker-suffix`` holding ``<span aria-label="calendar">``): take

@@ -17,10 +17,16 @@ def tool_0_open_browser() -> dict:
 
 
 def tool_1_interact(
-    name: str, fill: str = "", drag_pct: int = 0, scroll_delta: int = 0
+    name: str,
+    fill: str = "",
+    drag_pct: int = 0,
+    scroll_delta: int = 0,
+    press_enter: bool = False,
 ) -> dict:
     """与单个互动元素互动（点击/输入/拖动/滚动），返回增量 DOM。"""
-    return BrowserController.instance().interact(name, fill, drag_pct, scroll_delta)
+    return BrowserController.instance().interact(
+        name, fill, drag_pct, scroll_delta, press_enter
+    )
 
 
 def tool_2_get_viewport_dom() -> dict:

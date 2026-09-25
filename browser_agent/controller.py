@@ -411,12 +411,16 @@ class BrowserController:
             f"如需查看或操作新标签页，使用 tool_4_switch_tab 切换到目标标签页。"
         )
 
-    def _resolve_focused_target(self) -> Optional[str]:
-        targets = self._page_targets()
-        if not targets:
-            return None
+    def _probe_focused_target(self) -> Optional[str]:
+        """The tab whose document currently reports OS focus, or ``None``.
+
+        ``None`` means *no* tab has focus (the browser window is in the
+        background); the probe then carries no signal and callers fall back to the
+        explicitly selected tab. Kept separate from ``_resolve_focused_target``
+        so activation retries can ask "did it take effect?" without mutating state.
+        """
         assert self.client is not None
-        for target in targets:
+        for target in self._page_targets():
             target_id = target["targetId"]
             try:
                 session = self.client.attach(target_id)
@@ -428,16 +432,56 @@ class BrowserController:
                     timeout=timing.get().cdp.probe_timeout,
                 )
                 if (result.get("result") or {}).get("value") is True:
-                    self.focused_target_id = target_id
                     return target_id
             except Exception:
                 continue
+        return None
+
+    def _resolve_focused_target(self) -> Optional[str]:
+        targets = self._page_targets()
+        if not targets:
+            return None
+        probed = self._probe_focused_target()
+        if probed is not None:
+            self.focused_target_id = probed
+            return probed
+        # No tab reports focus (background browser): trust the explicit selection
+        # made by switch/navigate rather than an arbitrary first target.
         if self.focused_target_id and any(
             t["targetId"] == self.focused_target_id for t in targets
         ):
             return self.focused_target_id
         self.focused_target_id = targets[0]["targetId"]
         return self.focused_target_id
+
+    def _activate_target(self, target_id: str, attempts: int = 3) -> bool:
+        """Bring ``target_id`` to the foreground, retrying briefly.
+
+        ``Page.bringToFront`` is occasionally slow to take effect (more often
+        when the new tab was opened by the page rather than by CDP), so a probe
+        immediately afterwards can still see the old tab and the tool would
+        (correctly but uselessly) report "无法切换标签页" — which trapped the LLM
+        into closing the old tab to recover. Retry a few times with a short pause;
+        the visible-page truth is preserved because the probe still decides.
+        Returns ``True`` if the probe now agrees (or reports no focused tab).
+        """
+        assert self.client is not None
+        for attempt in range(max(1, attempts)):
+            try:
+                self.client.send("Target.activateTarget", {"targetId": target_id})
+            except CDPError:
+                pass
+            try:
+                self._bring_to_front(self.client.attach(target_id))
+            except CDPError:
+                pass
+            self.focused_target_id = target_id
+            probed = self._probe_focused_target()
+            if probed is None or probed == target_id:
+                return True
+            if attempt + 1 < max(1, attempts):
+                time.sleep(timing.get().ready.poll_interval)
+        return False
 
     # ------------------------------------------------------------------ #
     # DOM
@@ -571,6 +615,7 @@ class BrowserController:
         fill: str = "",
         drag_pct: int = 0,
         scroll_delta: int = 0,
+        press_enter: bool = False,
     ) -> dict:
         try:
             self.ensure_connected()
@@ -672,6 +717,14 @@ class BrowserController:
                             f"[提示] 已把「{fill}」输入到搜索框用于筛选；"
                             f"**仅输入不会提交选择**，请在随后出现的候选项里点击目标项才算填入。"
                         )
+                if press_enter and not fill_error:
+                    # A bare search box may have no submit button at all: only
+                    # pressing Enter submits it. Treat it like a click (wait for a
+                    # possible navigation / async result) instead of just tapping
+                    # the key and returning a stale diff.
+                    with self._watch_navigation(session) as nav_state:
+                        executor.press_enter()
+                        self._settle_navigation(session, nav_state, True)
             elif category == "drag":
                 executor.drag(node.backend_node_id, drag_pct)
                 self._stabilize(target_id)
@@ -1594,9 +1647,7 @@ class BrowserController:
         if target_id is None:
             return self._base_result(FULL, FAIL, "无", f"未找到标签页 {tab_id}")
         try:
-            self.client.send("Target.activateTarget", {"targetId": target_id})
-            self._bring_to_front(self.client.attach(target_id))
-            self.focused_target_id = target_id
+            self._activate_target(target_id)
             self._wait_ready(target_id)
         except (CDPError, RuntimeError) as exc:
             return self._base_result(FULL, FAIL, "无", str(exc))
@@ -1724,14 +1775,7 @@ class BrowserController:
         except CDPError as exc:
             return self._base_result(FULL, FAIL, "无", str(exc))
         self.focused_target_id = target_id
-        try:
-            self.client.send("Target.activateTarget", {"targetId": target_id})
-        except CDPError:
-            pass
-        try:
-            self._bring_to_front(self.client.attach(target_id))
-        except CDPError:
-            pass
+        self._activate_target(target_id)
         self._wait_ready_new_tab(target_id, target_url)
         result = self._full_result_for(target_id)
         actual = self._resolve_focused_target()

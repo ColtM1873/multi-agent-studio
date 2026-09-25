@@ -329,6 +329,37 @@ class ActionExecutor:
             return {"degraded": True, "reason": "native setter fallback"}
         return {"degraded": click_result.get("degraded", False)}
 
+    def press_enter(self) -> None:
+        """Dispatch a real Enter key press (search / form submit).
+
+        Some search boxes have no visible submit control — the only way to submit
+        is the Enter key. Sent as a real key event pair (with ``text="\\r"`` on
+        keyDown) so page ``keydown``/``keypress`` and form-submit handlers fire,
+        exactly as if the user pressed it.
+        """
+        self._send_input(
+            "Input.dispatchKeyEvent",
+            {
+                "type": "keyDown",
+                "key": "Enter",
+                "code": "Enter",
+                "text": "\r",
+                "windowsVirtualKeyCode": 13,
+                "nativeVirtualKeyCode": 13,
+            },
+        )
+        self._send_input(
+            "Input.dispatchKeyEvent",
+            {
+                "type": "keyUp",
+                "key": "Enter",
+                "code": "Enter",
+                "windowsVirtualKeyCode": 13,
+                "nativeVirtualKeyCode": 13,
+            },
+        )
+        _sleep(*timing.get().actions.type_char)
+
     def drag(self, backend_node_id: int, pct: int) -> dict:
         pct = max(0, min(100, int(pct)))
         box = self._node_box(backend_node_id)
