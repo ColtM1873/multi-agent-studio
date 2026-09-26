@@ -687,6 +687,21 @@ class BrowserController:
             f"请直接用 fill 参数指定要选择的选项文字。当前可选值：{opts}。"
         )
 
+    @staticmethod
+    def _click_noop_notice(node: EnhancedNode) -> str:
+        """Honest, actionable message for a click that changed nothing.
+
+        Shown when the hover-neutral DOM signature is byte-identical before and
+        after the action (plus its retry). Without it the model reads a renumbered
+        diff as "something happened" and loops on a dead element.
+        """
+        return (
+            "[提示] 本次点击没有产生任何页面变化（前后 DOM 完全一致）。"
+            "常见原因：①该元素只是文字/装饰，真正的控件是它紧邻的图标（单选/复选圈），"
+            "请改点相邻的图标控件；②该控件处于只读/禁用状态；③操作需要先满足某个前置条件。"
+            "请勿据此认为操作已生效；可换一个元素重试，或改用其它方式。"
+        )
+
     def _alternative_click_target(self, node: EnhancedNode) -> Optional[int]:
         """The unlabeled control icon that may be the real action behind a label.
 
@@ -769,6 +784,8 @@ class BrowserController:
         fill_notice = ""
         dialog = {"type": "", "message": ""}
         before_sig = ""
+        after_sig = ""
+        click_noop = False
 
         try:
             session = self.client.attach(target_id)
@@ -873,8 +890,10 @@ class BrowserController:
                     else None
                 )
                 # Snapshot the DOM before acting so we can tell a real change
-                # from a no-op (a serialized diff would be polluted by the
-                # ``:hover`` the move induces, the raw markup is not).
+                # from a no-op. Park the mouse first: our own hover move can toggle
+                # classes / trigger re-renders, changing ``outerHTML`` with no
+                # functional change, which used to defeat the no-op check entirely.
+                executor.park_mouse()
                 before_sig = executor.dom_signature()
                 # A same-document link (active nav item / in-page hash) must not
                 # pay the full navigation grace: it either fires a soft event or
@@ -886,13 +905,30 @@ class BrowserController:
                     with self._watch_navigation(session) as nav_state:
                         executor.click(node.backend_node_id)
                         self._settle_navigation(session, nav_state, click_may_nav)
-                    if retry_id is not None and before_sig:
-                        if executor.dom_signature() == before_sig:
-                            # The (named) label did nothing; the real control is the
-                            # unlabeled icon sibling (radio/checkbox rows).
-                            with self._watch_navigation(session) as nav_state:
-                                executor.click(retry_id)
-                                self._settle_navigation(session, nav_state)
+                    executor.park_mouse()
+                    if before_sig:
+                        after_sig = executor.dom_signature()
+                        if after_sig and after_sig == before_sig:
+                            # The click changed nothing. Retry on the real control:
+                            # a preceding sibling icon (radio/checkbox rows whose
+                            # label is a no-op), else the actionable descendant of a
+                            # wrapper (handler bound to an inner icon that a wrapper
+                            # click cannot reach). Only the brittle component shapes
+                            # (plain ``cursor:pointer`` spans / icon controls) are
+                            # retried, so a real disabled button is not re-fired.
+                            if retry_id is not None:
+                                with self._watch_navigation(session) as nav_state:
+                                    executor.click(retry_id)
+                                    self._settle_navigation(session, nav_state)
+                            elif is_cursor_pointer_only(node) or is_control_icon(node):
+                                executor.js_click(node.backend_node_id)
+                                self._stabilize(target_id)
+                            else:
+                                click_noop = True
+                            if not click_noop:
+                                executor.park_mouse()
+                                after_sig = executor.dom_signature()
+                                click_noop = not (after_sig and after_sig != before_sig)
         except ActionError as exc:
             return self._base_result(INCREMENTAL, FAIL, "无", str(exc), include_tabs=False)
         except CDPError as exc:
@@ -933,11 +969,13 @@ class BrowserController:
         # diff only reports additions, so it would read "（页面无变化）" and the LLM
         # would mistake a real toggle for a dead click. If the raw markup did
         # change, say so explicitly.
-        if not opened_names and before_sig and "（页面无变化）" in content:
-            try:
-                after_sig = executor.dom_signature()
-            except Exception:
-                after_sig = before_sig
+        if not opened_names and click_noop:
+            # The (hover-neutral) markup is byte-identical before/after: the click
+            # truly did nothing. Never let the model believe a dead click landed.
+            opened_names = self._await_opened_tabs(old_target_ids)
+            if not opened_names:
+                content = self._click_noop_notice(node) + "\n\n" + content
+        elif not opened_names and before_sig and "（页面无变化）" in content:
             if after_sig and after_sig != before_sig:
                 content += (
                     "\n\n[提示] 页面结构确实发生了变化，但没有新增的可见文本/互动元素"

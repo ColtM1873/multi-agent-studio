@@ -220,13 +220,79 @@ class ActionExecutor:
                 # following ``Input.insertText`` would land in whatever element is
                 # still focused (see ``input_text``). For non-focusable elements
                 # ``focus()`` is a harmless no-op.
+                #
+                # Then fire the click on the element that actually owns the handler.
+                # A JS ``this.click()`` on a *wrapper* does not reach a handler
+                # bound to an inner icon (radio / checkbox rows name the wrapper's
+                # icon as the control): the handler sits on the descendant, and
+                # ``click()`` never walks down. Dispatch on the deepest
+                # ``cursor:pointer`` descendant instead, which hits the real control
+                # and bubbles exactly like a real mouse click.
                 self._call_on_node(
                     object_id,
                     "function(){try{this.focus({preventScroll:true});}catch(e){}"
-                    "this.click();}",
+                    "var tag=this.tagName;"
+                    "var semantic=(tag==='A'||tag==='BUTTON'||tag==='INPUT'||"
+                    "tag==='SELECT'||tag==='TEXTAREA'||tag==='OPTION'||tag==='SUMMARY');"
+                    "var t=this;"
+                    "if(!semantic){try{"
+                    "var q=this.querySelectorAll('*');"
+                    "var cap=q.length<500?q.length:500;"
+                    "for(var i=0;i<cap;i++){var cs;"
+                    "try{cs=getComputedStyle(q[i]);}catch(e){continue;}"
+                    "if(cs&&cs.cursor==='pointer'){t=q[i];break;}}}catch(e){}}"
+                    "if(t&&t!==this&&t.dispatchEvent){"
+                    "t.dispatchEvent(new MouseEvent('click',"
+                    "{bubbles:true,cancelable:true,view:window}));}"
+                    "else{try{this.click();}catch(e){}}"
+                    "}",
                 )
             except Exception:
                 pass
+
+    def js_click(self, backend_node_id: int) -> None:
+        """Public JS-click (used as a no-op fallback by the controller)."""
+        self._js_click(backend_node_id)
+
+    def _quiet_point(self) -> Optional[tuple[float, float]]:
+        """Find a point over a non-interactive area, to "park" the mouse.
+
+        The tool's own mouse move induces ``:hover``; component libraries respond
+        to hover by toggling classes (e.g. a search box's clear button) or even
+        re-rendering, which changes ``outerHTML`` without any functional change.
+        Parking the mouse over plain ``<html>``/``<body>`` before/after an action
+        removes that noise so ``dom_signature`` can tell a real change from a no-op.
+        """
+        try:
+            value = self._eval(
+                "(function(){var w=window.innerWidth,h=window.innerHeight;"
+                "for(var y=1;y<h;y+=29){for(var x=1;x<w;x+=29){"
+                "var el=document.elementFromPoint(x,y);"
+                "if(!el)continue;"
+                "var cs;try{cs=getComputedStyle(el);}catch(e){continue;}"
+                "var tag=el.tagName;"
+                "if((tag==='HTML'||tag==='BODY')&&cs.cursor!=='pointer')"
+                "{return x+':'+y;}}}"
+                "return '';})()"
+            )
+        except Exception:
+            return None
+        if not value:
+            return None
+        try:
+            xs, ys = str(value).split(":", 1)
+            return float(xs), float(ys)
+        except (ValueError, TypeError):
+            return None
+
+    def park_mouse(self) -> None:
+        """Move the mouse to an inert point without clicking (see ``_quiet_point``)."""
+        point = self._quiet_point()
+        if point is None or self._mouse == point:
+            return
+        self._dispatch_mouse("mouseMoved", point[0], point[1])
+        self._mouse = point
+        _sleep(*timing.get().actions.move_step)
 
     def focus(self, backend_node_id: int) -> None:
         """Move keyboard focus to ``node`` (best effort).

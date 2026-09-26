@@ -1891,10 +1891,10 @@ class DOMSerializer:
         return _ICON_LABELS.get((value or "").strip().lower(), "")
 
     def _collect_text(self, node: EnhancedNode) -> str:
-        parts: list[str] = []
+        parts: list[tuple[str, bool]] = []
         for child in node.children:
             if child.is_text:
-                parts.append(child.text)
+                parts.append((child.text or "", False))
             elif child.is_element and not self._is_image(child):
                 # Never aggregate text from hidden / box-less subtrees: a
                 # closed dropdown's option text, hidden SEO copy, etc. otherwise
@@ -1904,16 +1904,31 @@ class DOMSerializer:
                     continue
                 nested = self._collect_text(child)
                 if nested:
-                    parts.append(nested)
+                    parts.append((nested, self._is_block_level(child)))
         # Composite controls often repeat the same text in several sibling
         # nodes (e.g. a select renders its value in a calc/placeholder/tip
         # span). Collapse adjacent duplicates so the label stays readable.
-        deduped: list[str] = []
-        for part in parts:
-            if deduped and part == deduped[-1]:
+        deduped: list[tuple[str, bool]] = []
+        for text, is_block in parts:
+            if not text:
                 continue
-            deduped.append(part)
-        joined = " ".join(" ".join(deduped).split())
+            if deduped and text == deduped[-1][0]:
+                continue
+            deduped.append((text, is_block))
+        # Join the way a browser lays text out, *not* with an unconditional
+        # space: adjacent inline runs (``<mark>计算机</mark><span>科学与技术</span>``)
+        # render as one glued word, so a space there corrupts the value
+        # ("计算机 科学与技术"). Only a block-level child (``<div>``/``<p>`` …)
+        # or an existing whitespace boundary introduces a separator.
+        out = ""
+        prev_block = False
+        for text, is_block in deduped:
+            if out and not out.endswith((" ", "\n")) and not text.startswith((" ", "\n")):
+                if prev_block or is_block:
+                    out += " "
+            out += text
+            prev_block = is_block
+        joined = " ".join(out.split())
         return self._truncate(joined)
 
     def _truncate(self, text: str, limit: int = 100) -> str:
