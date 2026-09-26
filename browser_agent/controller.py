@@ -426,22 +426,28 @@ class BrowserController:
     def _probe_focused_target(self) -> Optional[str]:
         """The tab whose document currently reports OS focus, or ``None``.
 
-        ``document.hasFocus()`` is the primary truth (it is what the prior
-        iterations validated). ``document.visibilityState`` is only a **fallback**
-        for environments where no tab reports OS focus at all (e.g. the browser
-        window is backgrounded, or a page opened by the site's own
-        ``window.open`` does not expose focus): when exactly one tab is visibly
-        the foreground one, accept it. Focus is never overridden by visibility —
-        in this deployment the previously visible tab can keep reporting
-        ``visible`` for a while after ``Target.activateTarget`` moved focus.
+        ``document.hasFocus()`` is the primary truth. ``document.visibilityState``
+        is deliberately **not** trusted to refine it: measured on real Chrome,
+        after ``Target.activateTarget``/``Page.bringToFront`` the activated tab
+        reports ``hasFocus=true`` while its ``visibilityState`` is still
+        ``hidden`` and the previously-visible tab keeps reporting
+        ``visible`` — so when the browser window is not the OS-foreground window
+        (no tab reports OS focus at all) visibility points at the *old* tab.
+        Falling back to it made ``switch_tab``/``navigate`` declare failure and
+        hand the LLM the wrong page, trapping it into closing tabs to recover.
+        In that state the only reliable truth is the tool's own explicit
+        selection, so return ``None`` (callers then keep ``focused_target_id``)
+        instead of guessing from visibility.
 
         ``None`` means *no* signal at all; callers then fall back to the
-        explicitly selected tab.
+        explicitly selected tab (or, when there is none, to visibility / the
+        first target).
         """
         assert self.client is not None
+        targets = self._page_targets()
         visible: list[str] = []
         focused: list[str] = []
-        for target in self._page_targets():
+        for target in targets:
             target_id = target["targetId"]
             try:
                 session = self.client.attach(target_id)
@@ -465,11 +471,16 @@ class BrowserController:
                 focused.append(target_id)
         if focused:
             return focused[0]
+        # No tab reports OS focus: trust the explicitly selected tab (returning
+        # ``None`` makes the caller keep it). ``visibilityState`` is stale here
+        # and would point at the previously-visible tab.
+        if self.focused_target_id in {t["targetId"] for t in targets}:
+            return None
+        # No explicit selection yet (e.g. the very first call): only now may the
+        # visibility signal be used, as a last resort.
         if len(visible) == 1:
             return visible[0]
         if visible:
-            if self.focused_target_id in visible:
-                return self.focused_target_id
             return visible[0]
         return None
 

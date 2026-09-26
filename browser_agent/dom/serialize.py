@@ -374,6 +374,10 @@ class DOMSerializer:
         self._buffer = ""
         self._buffer_names: list[str] = []
         self._buffer_labels: list[str] = []
+        # Nodes whose text was already folded into an interactive control's label
+        # (the placeholder of a searchable select): skip them so the text is not
+        # emitted a second time as a bare line.
+        self._consumed: set[int] = set()
 
     # ------------------------------------------------------------------ #
     # public API
@@ -401,6 +405,7 @@ class DOMSerializer:
         self._buffer = ""
         self._buffer_names = []
         self._buffer_labels = []
+        self._consumed = set()
         self._render_children(tree.root, 0, None)
         self._flush(0)
         return list(self._lines)
@@ -439,6 +444,16 @@ class DOMSerializer:
             return
 
         if child.tag in SKIP_TAGS or child.hidden:
+            return
+        if child.tag == "label" and self._is_redundant_option_label(child):
+            # The text half of a native radio/checkbox option, already carried
+            # by the named ``<input>``; emitting it again produced a duplicated
+            # bare text line (``<可点击元素 eN>国内本硕 [已选]</可点击元素 eN>``
+            # followed by ``国内本硕``).
+            return
+        if child.is_element and child.node_id in self._consumed:
+            # Text already folded into a control's label (a searchable select's
+            # placeholder); emit it only once.
             return
         if not self._in_clip(child, clip):
             return
@@ -1069,6 +1084,10 @@ class DOMSerializer:
                         label = f"{prefix}：{current}"
                 else:
                     label = prefix or current or self._empty_input_label(node)
+                if current and current in label:
+                    # The placeholder / current value was folded into the label;
+                    # do not emit the element that shows it a second time.
+                    self._consume_nearby_label_source(node, current)
             else:
                 # Never render the placeholder as if it were the current value:
                 # an empty field used to read ``<可输入元素 e53>结束日期</…>`` and
@@ -1309,6 +1328,91 @@ class DOMSerializer:
                 if paired and paired == text:
                     return True
         return False
+
+    def _is_redundant_option_label(self, node: EnhancedNode) -> bool:
+        """True for a ``<label for=X>`` that merely repeats control ``X``'s label.
+
+        A native radio / checkbox option is authored as
+        ``<input type=radio id=X checked><label for=X>国内本硕</label>``. The
+        ``<input>`` is named from the option text (its AX name), but the label is
+        not itself clickable in that shape, so it was serialized a second time as
+        a bare text line — every filter option appeared twice
+        (``<可点击元素 e649>国内本硕 [已选]</可点击元素 e649>`` then ``国内本硕``).
+        Drop the label; the control already carries the same text.
+
+        Only an **explicit** ``for=<input id>`` association qualifies (a group
+        field label such as ``<label for=sex>性别</label>`` is never tied to one
+        option), the referenced control must be a rendered native choice control
+        or control icon, and the control's own label must actually contain this
+        text — so a label that is the only representation of an *unrendered*
+        input (or a machine-named input that did not absorb the option text) is
+        never dropped.
+        """
+        if not node.is_element or node.tag != "label":
+            return False
+        target_id = node.attributes.get("for")
+        if not target_id:
+            return False
+        parent = node.parent
+        if parent is None:
+            return False
+        text = self._collect_text(node)
+        if not text:
+            return False
+        for sibling in parent.children:
+            if sibling is node or not sibling.is_element:
+                continue
+            if sibling.attributes.get("id") != target_id:
+                continue
+            if not (self._is_choice_input(sibling) or is_control_icon(sibling)):
+                continue
+            if not sibling.rendered or not sibling.visible:
+                continue
+            control_label = self._interactive_label(sibling, "click")
+            if control_label and text in control_label:
+                return True
+        return False
+
+    def _consume_nearby_label_source(self, node: EnhancedNode, text: str) -> None:
+        """Mark the nearby element showing ``text`` as already rendered.
+
+        A searchable select renders its placeholder / current value in a sibling
+        of its typeahead input; ``_nearby_text_label`` folds that text into the
+        control's label, and the element would otherwise be serialized again as a
+        bare text line (``<可输入元素 eN>研发类：更多</可输入元素 eN>`` followed by
+        ``[文本] 更多``). Consume the most specific non-interactive element that
+        shows exactly ``text`` within the same bounded ancestor walk the label
+        lookup uses, so the text is emitted only once. Interactive siblings are
+        never consumed.
+        """
+        if not text:
+            return
+        branch = node
+        ancestor = node.parent
+        hops = 0
+        while ancestor is not None and hops < 3:
+            best: Optional[EnhancedNode] = None
+            for sibling in ancestor.children:
+                if sibling is branch or not sibling.is_element:
+                    continue
+                if (
+                    sibling.node_id in self._consumed
+                    or sibling.hidden
+                    or not sibling.rendered
+                ):
+                    continue
+                if classify(sibling) or self._has_interactive_descendant(sibling):
+                    continue
+                if self._collect_text(sibling) != text:
+                    continue
+                if best is None or len(sibling.children) < len(best.children):
+                    best = sibling
+            if best is not None:
+                self._consumed.add(best.node_id)
+                return
+            branch = ancestor
+            ancestor = ancestor.parent
+            hops += 1
 
     def _iter_choice_inputs(self, node: EnhancedNode):
         """Yield every native checkbox / radio input in ``node``'s subtree."""
