@@ -424,30 +424,19 @@ class BrowserController:
         )
 
     def _probe_focused_target(self) -> Optional[str]:
-        """The tab whose document currently reports OS focus, or ``None``.
+        """The tab the human is looking at, for the **initial** pick only.
 
-        ``document.hasFocus()`` is the primary truth. ``document.visibilityState``
-        is deliberately **not** trusted to refine it: measured on real Chrome,
-        after ``Target.activateTarget``/``Page.bringToFront`` the activated tab
-        reports ``hasFocus=true`` while its ``visibilityState`` is still
-        ``hidden`` and the previously-visible tab keeps reporting
-        ``visible`` — so when the browser window is not the OS-foreground window
-        (no tab reports OS focus at all) visibility points at the *old* tab.
-        Falling back to it made ``switch_tab``/``navigate`` declare failure and
-        hand the LLM the wrong page, trapping it into closing tabs to recover.
-        In that state the only reliable truth is the tool's own explicit
-        selection, so return ``None`` (callers then keep ``focused_target_id``)
-        instead of guessing from visibility.
-
-        ``None`` means *no* signal at all; callers then fall back to the
-        explicitly selected tab (or, when there is none, to visibility / the
-        first target).
+        Consulted only when the tool has no explicit selection yet (see
+        :meth:`_resolve_focused_target`). ``document.hasFocus()`` on the human's
+        active tab is preferred; ``document.visibilityState`` is a weaker
+        fallback (measured on real Chrome it can lag behind
+        ``Target.activateTarget``). Once the tool has selected a tab, that
+        selection is authoritative and this probe is never used to override it.
         """
         assert self.client is not None
-        targets = self._page_targets()
         visible: list[str] = []
         focused: list[str] = []
-        for target in targets:
+        for target in self._page_targets():
             target_id = target["targetId"]
             try:
                 session = self.client.attach(target_id)
@@ -471,15 +460,6 @@ class BrowserController:
                 focused.append(target_id)
         if focused:
             return focused[0]
-        # No tab reports OS focus: trust the explicitly selected tab (returning
-        # ``None`` makes the caller keep it). ``visibilityState`` is stale here
-        # and would point at the previously-visible tab.
-        if self.focused_target_id in {t["targetId"] for t in targets}:
-            return None
-        # No explicit selection yet (e.g. the very first call): only now may the
-        # visibility signal be used, as a last resort.
-        if len(visible) == 1:
-            return visible[0]
         if visible:
             return visible[0]
         return None
@@ -503,52 +483,56 @@ class BrowserController:
             time.sleep(timing.get().ready.new_tab_poll_interval)
 
     def _resolve_focused_target(self) -> Optional[str]:
+        """The tab the tool operates on: the **explicit selection is the truth**.
+
+        The tool *owns* the browser: once ``focused_target_id`` is set (by
+        ``switch_tab`` / ``navigate``, or the first resolution), it is never
+        overridden by where the human happens to be looking. Human tab clicks,
+        peeking at the window, or a page opening a background tab therefore can
+        NOT redirect the LLM mid-task; only explicit tool actions change it.
+        (See :meth:`_activate_target`, which keeps the *displayed* tab in sync
+        with this selection so a peeking human sees what the tool is doing.)
+
+        Only when there is no live explicit selection do we adopt the human's
+        active tab, then fall back to the first target.
+        """
         targets = self._page_targets()
         if not targets:
             return None
-        probed = self._probe_focused_target()
-        if probed is not None:
-            self.focused_target_id = probed
-            return probed
-        # No tab reports focus (background browser): trust the explicit selection
-        # made by switch/navigate rather than an arbitrary first target.
         if self.focused_target_id and any(
             t["targetId"] == self.focused_target_id for t in targets
         ):
             return self.focused_target_id
+        probed = self._probe_focused_target()
+        if probed is not None:
+            self.focused_target_id = probed
+            return probed
         self.focused_target_id = targets[0]["targetId"]
         return self.focused_target_id
 
-    def _activate_target(self, target_id: str, attempts: int = 3) -> bool:
-        """Bring ``target_id`` to the foreground, retrying briefly.
+    def _activate_target(self, target_id: str) -> bool:
+        """Make ``target_id`` the browser's active (human-visible) tab.
 
-        ``Page.bringToFront`` is occasionally slow to take effect (more often
-        when the new tab was opened by the page rather than by CDP), so a probe
-        immediately afterwards can still see the old tab and the tool would
-        (correctly but uselessly) report "无法切换标签页" — which trapped the LLM
-        into closing the old tab to recover. Retry a few times with a short pause;
-        the visible-page truth is preserved because the probe still decides.
-        Returns ``True`` if the probe now agrees (or reports no focused tab).
+        Best-effort and non-verifying: under the "LLM owns the tab" contract the
+        explicit selection is authoritative, so there is nothing to verify — we
+        only need the *displayed* tab to follow the tool so a human peeking at
+        the window always sees what the LLM is operating on. Called before every
+        read/interaction, not just on switch/navigate.
+
+        ``Target.activateTarget`` alone does not always foreground a windowed
+        tab, so the page-scoped ``Page.bringToFront`` is sent too. Never raises.
         """
         assert self.client is not None
-        for attempt in range(max(1, attempts)):
-            try:
-                self.client.send("Target.activateTarget", {"targetId": target_id})
-            except CDPError:
-                pass
-            # Attach and ``Page.bringToFront`` are best-effort and independent:
-            # a transient attach failure must not skip the activation attempt.
-            try:
-                self._bring_to_front(self.client.attach(target_id))
-            except CDPError:
-                pass
-            self.focused_target_id = target_id
-            probed = self._probe_focused_target()
-            if probed is None or probed == target_id:
-                return True
-            if attempt + 1 < max(1, attempts):
-                time.sleep(timing.get().ready.poll_interval)
-        return False
+        try:
+            self.client.send("Target.activateTarget", {"targetId": target_id})
+        except CDPError:
+            pass
+        try:
+            self._bring_to_front(self.client.attach(target_id))
+        except CDPError:
+            pass
+        self.focused_target_id = target_id
+        return True
 
     # ------------------------------------------------------------------ #
     # DOM
@@ -754,6 +738,10 @@ class BrowserController:
         target_id = self._resolve_focused_target()
         if target_id is None:
             return self._base_result(INCREMENTAL, FAIL, "无", "没有可用的标签页", include_tabs=False)
+        # Keep the *displayed* tab in sync with the tool's target: a peeking
+        # human always sees what the LLM is operating on, and their tab clicks
+        # cannot redirect it.
+        self._activate_target(target_id)
 
         registry = self._registry_for(target_id)
         if registry.lookup(name) is None:
@@ -1175,6 +1163,7 @@ class BrowserController:
             return self._base_result(
                 INCREMENTAL, FAIL, "无", "没有可用的标签页", include_tabs=False
             )
+        self._activate_target(target_id)
 
         registry = self._registry_for(target_id)
         tree = self._prev_trees.get(target_id) or self.capture_tree(target_id)
@@ -1909,6 +1898,7 @@ class BrowserController:
         target_id = self._resolve_focused_target()
         if target_id is None:
             return self._base_result(FULL, FAIL, "无", "没有可用的标签页")
+        self._activate_target(target_id)
         old_name = self._name_for_target(target_id)
         session = self.client.attach(target_id)
         self.client.enable_page_domains(session)
@@ -1945,6 +1935,7 @@ class BrowserController:
         target_id = self._resolve_focused_target()
         if target_id is None:
             return self._base_result(INCREMENTAL, FAIL, "无", "没有可用的标签页", include_tabs=False)
+        self._activate_target(target_id)
         old_tree = self._prev_trees.get(target_id) or self.capture_tree(target_id)
         old_lines = self.serialize_lines_tree(old_tree, target_id)
         old_name = self._name_for_target(target_id)
