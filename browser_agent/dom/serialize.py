@@ -1351,15 +1351,39 @@ class DOMSerializer:
                 return True
             branch = branch.parent
             hops += 1
+        # The control may be a *descendant* of the named element: the Beisen
+        # transfer row names ``span.icon-container`` while the checked state
+        # lives on the inner ``svg.RadioChecked``. Without this, a click that
+        # only flips the icon (no text change) would render no ``[已选]`` marker
+        # and the LLM could not confirm its click. Inspect a small, bounded
+        # subtree (native ``input[checked]`` or a ``*Checked`` class).
+        if self._subtree_has_selection(node, depth=3):
+            return True
         return None
+
+    def _subtree_has_selection(self, node: EnhancedNode, depth: int) -> bool:
+        if depth < 0:
+            return False
+        for child in node.children:
+            if child.is_text or not child.is_element:
+                continue
+            if self._is_choice_input(child):
+                if "checked" in child.attributes or child.selected is True:
+                    return True
+            if self._class_has_selection_token(child):
+                return True
+            if self._subtree_has_selection(child, depth - 1):
+                return True
+        return False
 
     @staticmethod
     def _class_has_selection_token(node: EnhancedNode) -> bool:
         """True if a class token encodes a selected/checked state.
 
-        Only ``checked`` / ``selected`` suffixes count (``phoenix-radio--checked``,
-        ``is-checked``, ``Mui-checked``), never lookalikes such as ``unselected``
-        (no hyphen boundary) or ``checkbox``.
+        Covers separated suffixes (``phoenix-radio--checked``, ``is-checked``,
+        ``ant-radio-checked``) and concatenated/camelCase component classes
+        (``RadioChecked``, ``CheckboxChecked``), but never the negative
+        lookalikes ``unchecked`` / ``unselected`` (or ``checkbox``).
         """
         classes = node.attributes.get("class", "").lower()
         if not classes:
@@ -1368,6 +1392,10 @@ class DOMSerializer:
             if token in ("checked", "selected"):
                 return True
             if token.endswith(("-checked", "-selected")):
+                return True
+            if token.endswith("checked") and not token.endswith("unchecked"):
+                return True
+            if token.endswith("selected") and not token.endswith("unselected"):
                 return True
         return False
 

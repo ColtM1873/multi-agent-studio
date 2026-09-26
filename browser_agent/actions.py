@@ -260,30 +260,50 @@ class ActionExecutor:
         The tool's own mouse move induces ``:hover``; component libraries respond
         to hover by toggling classes (e.g. a search box's clear button) or even
         re-rendering, which changes ``outerHTML`` without any functional change.
-        Parking the mouse over plain ``<html>``/``<body>`` before/after an action
+        Parking the mouse over a non-interactive element before/after an action
         removes that noise so ``dom_signature`` can tell a real change from a no-op.
+
+        A real app page is covered edge-to-edge by app ``<div>``s, so the old
+        "only ``<html>``/``<body>`` qualifies" scan almost always found nothing
+        and ``park_mouse`` became a silent no-op — the no-op detection then
+        stayed fooled by hover, exactly the bug this hook exists to fix. We now
+        accept any point whose top element is *not interactive* (no
+        ``cursor:pointer``, no control tag, no ``role``/``tabindex``), preferring
+        ``<html>``/``<body>`` when present. Parking at a *consistent* point is
+        what matters: before/after both sit on the same element, so even a hover
+        effect of that element cancels out.
         """
         try:
             value = self._eval(
                 "(function(){var w=window.innerWidth,h=window.innerHeight;"
+                "function inert(el){if(!el)return false;var t=el.tagName;"
+                "if(t==='HTML'||t==='BODY')return true;"
+                "if(t==='A'||t==='BUTTON'||t==='INPUT'||t==='SELECT'||"
+                "t==='TEXTAREA'||t==='OPTION'||t==='SUMMARY')return false;"
+                "var cs;try{cs=getComputedStyle(el);}catch(e){return false;}"
+                "if(cs.cursor==='pointer')return false;"
+                "if(el.getAttribute&&(el.getAttribute('role')||"
+                "el.getAttribute('tabindex')!=null))return false;"
+                "return true;}"
+                "var best='';"
                 "for(var y=1;y<h;y+=29){for(var x=1;x<w;x+=29){"
                 "var el=document.elementFromPoint(x,y);"
-                "if(!el)continue;"
-                "var cs;try{cs=getComputedStyle(el);}catch(e){continue;}"
-                "var tag=el.tagName;"
-                "if((tag==='HTML'||tag==='BODY')&&cs.cursor!=='pointer')"
-                "{return x+':'+y;}}}"
-                "return '';})()"
+                "if(!inert(el))continue;"
+                "if(el.tagName==='HTML'||el.tagName==='BODY'){return x+':'+y;}"
+                "if(!best){best=x+':'+y;}}}"
+                "return best;})()"
             )
         except Exception:
             return None
         if not value:
-            return None
+            # Last resort: a fixed, harmless top-left pixel. Parking consistently
+            # is enough to cancel hover noise even when the scan finds nothing.
+            return (2.0, 2.0)
         try:
             xs, ys = str(value).split(":", 1)
             return float(xs), float(ys)
         except (ValueError, TypeError):
-            return None
+            return (2.0, 2.0)
 
     def park_mouse(self) -> None:
         """Move the mouse to an inert point without clicking (see ``_quiet_point``)."""
@@ -293,6 +313,25 @@ class ActionExecutor:
         self._dispatch_mouse("mouseMoved", point[0], point[1])
         self._mouse = point
         _sleep(*timing.get().actions.move_step)
+
+    def blur_active(self) -> None:
+        """Blur whatever currently holds focus (best effort).
+
+        A click that moves focus can make a component re-render (e.g. a search
+        box toggles its clear-button class when it loses focus). That markup
+        change is *not* a functional effect, but it changes ``outerHTML`` and so
+        defeats the no-op signature: a dead click then looks like a real change.
+        Blurring before each signature capture makes the focus state identical
+        on both sides, removing that noise. Blurring is idempotent and does not
+        alter values.
+        """
+        try:
+            self._eval(
+                "(()=>{const a=document.activeElement;"
+                "if(a&&a.blur){a.blur();}return true;})()"
+            )
+        except Exception:
+            pass
 
     def focus(self, backend_node_id: int) -> None:
         """Move keyboard focus to ``node`` (best effort).

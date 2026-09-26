@@ -890,9 +890,12 @@ class BrowserController:
                     else None
                 )
                 # Snapshot the DOM before acting so we can tell a real change
-                # from a no-op. Park the mouse first: our own hover move can toggle
-                # classes / trigger re-renders, changing ``outerHTML`` with no
-                # functional change, which used to defeat the no-op check entirely.
+                # from a no-op. Park the mouse *and* blur focus first: our own
+                # hover move and the click's focus shift can toggle classes /
+                # trigger re-renders, changing ``outerHTML`` with no functional
+                # change, which used to defeat the no-op check entirely (a dead
+                # click on a radio icon then looked like success).
+                executor.blur_active()
                 executor.park_mouse()
                 before_sig = executor.dom_signature()
                 # A same-document link (active nav item / in-page hash) must not
@@ -905,6 +908,7 @@ class BrowserController:
                     with self._watch_navigation(session) as nav_state:
                         executor.click(node.backend_node_id)
                         self._settle_navigation(session, nav_state, click_may_nav)
+                    executor.blur_active()
                     executor.park_mouse()
                     if before_sig:
                         after_sig = executor.dom_signature()
@@ -926,6 +930,7 @@ class BrowserController:
                             else:
                                 click_noop = True
                             if not click_noop:
+                                executor.blur_active()
                                 executor.park_mouse()
                                 after_sig = executor.dom_signature()
                                 click_noop = not (after_sig and after_sig != before_sig)
@@ -1139,7 +1144,8 @@ class BrowserController:
                 INCREMENTAL,
                 FAIL,
                 "无",
-                "name_list 与 fill_list 长度不合法（应等长，或 name_list 比 fill_list 多一个）",
+                "name_list 与 fill_list 长度不合法（应等长，或 name_list 比 fill_list 多一个）。"
+                "本工具不支持连续点击多个元素；若要连续点击，请对每个元素分别调用 tool_1_interact。",
                 include_tabs=False,
             )
 
