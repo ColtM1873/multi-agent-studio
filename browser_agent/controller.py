@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import re
 import threading
 import time
 from typing import Optional
 
 from . import debug, timing
-from .actions import ActionError, ActionExecutor
+from .actions import OVERLAY_ELEMENT_SELECTOR, ActionError, ActionExecutor
 from .cdp import CDPClient, CDPError, poll_until_quiet
 from .dom import (
     PAGE_SCROLL_TAG,
@@ -915,8 +916,20 @@ class BrowserController:
                 # trigger re-renders, changing ``outerHTML`` with no functional
                 # change, which used to defeat the no-op check entirely (a dead
                 # click on a radio icon then looked like success).
-                executor.blur_active()
-                executor.park_mouse()
+                #
+                # The one thing we must NOT neutralise is an overlay the click is
+                # *inside*: clicking an option in an open dropdown must keep that
+                # dropdown alive, or the blur below closes it and the click lands
+                # on nothing (reported as a no-op).
+                overlay_before = self._overlay_open(session)
+                inside_overlay = (
+                    executor.element_inside_overlay(node.backend_node_id)
+                    if overlay_before
+                    else False
+                )
+                if not inside_overlay:
+                    executor.blur_active()
+                    executor.park_mouse()
                 before_sig = executor.dom_signature()
                 # A same-document link (active nav item / in-page hash) must not
                 # pay the full navigation grace: it either fires a soft event or
@@ -928,32 +941,46 @@ class BrowserController:
                     with self._watch_navigation(session) as nav_state:
                         executor.click(node.backend_node_id)
                         self._settle_navigation(session, nav_state, click_may_nav)
-                    executor.blur_active()
-                    executor.park_mouse()
-                    if before_sig:
-                        after_sig = executor.dom_signature()
-                        if after_sig and after_sig == before_sig:
-                            # The click changed nothing. Retry on the real control:
-                            # a preceding sibling icon (radio/checkbox rows whose
-                            # label is a no-op), else the actionable descendant of a
-                            # wrapper (handler bound to an inner icon that a wrapper
-                            # click cannot reach). Only the brittle component shapes
-                            # (plain ``cursor:pointer`` spans / icon controls) are
-                            # retried, so a real disabled button is not re-fired.
-                            if retry_id is not None:
-                                with self._watch_navigation(session) as nav_state:
-                                    executor.click(retry_id)
-                                    self._settle_navigation(session, nav_state)
-                            elif is_cursor_pointer_only(node) or is_control_icon(node):
-                                executor.js_click(node.backend_node_id)
-                                self._stabilize(target_id)
-                            else:
-                                click_noop = True
-                            if not click_noop:
-                                executor.blur_active()
-                                executor.park_mouse()
-                                after_sig = executor.dom_signature()
-                                click_noop = not (after_sig and after_sig != before_sig)
+                    if inside_overlay or (
+                        (not overlay_before) and self._overlay_open(session)
+                    ):
+                        # Either we clicked inside an already-open popup (an
+                        # option / menu item) or the click opened a real overlay
+                        # (dropdown / menu / calendar). Either way, do NOT
+                        # neutralise the page now: ``blur_active`` would dismiss
+                        # the popup (component selects close on blur) before the
+                        # capture, so the option list vanished and the model was
+                        # told "（页面无变化）" while the options were on screen.
+                        # A popup interaction is itself proof the click was real.
+                        click_noop = False
+                    else:
+                        executor.blur_active()
+                        executor.park_mouse()
+                        if before_sig:
+                            after_sig = executor.dom_signature()
+                            if after_sig and after_sig == before_sig:
+                                # The click changed nothing. Retry on the real
+                                # control: a preceding sibling icon (radio/checkbox
+                                # rows whose label is a no-op), else the actionable
+                                # descendant of a wrapper (handler bound to an inner
+                                # icon that a wrapper click cannot reach). Only the
+                                # brittle component shapes (plain ``cursor:pointer``
+                                # spans / icon controls) are retried, so a real
+                                # disabled button is not re-fired.
+                                if retry_id is not None:
+                                    with self._watch_navigation(session) as nav_state:
+                                        executor.click(retry_id)
+                                        self._settle_navigation(session, nav_state)
+                                elif is_cursor_pointer_only(node) or is_control_icon(node):
+                                    executor.js_click(node.backend_node_id)
+                                    self._stabilize(target_id)
+                                else:
+                                    click_noop = True
+                                if not click_noop:
+                                    executor.blur_active()
+                                    executor.park_mouse()
+                                    after_sig = executor.dom_signature()
+                                    click_noop = not (after_sig and after_sig != before_sig)
         except ActionError as exc:
             return self._base_result(INCREMENTAL, FAIL, "无", str(exc), include_tabs=False)
         except CDPError as exc:
@@ -1064,14 +1091,20 @@ class BrowserController:
         seen: set[tuple[int, str]] = set()
         prev_lines = base_lines
         last_top = scroller.scroll_top()
+        moved = False
+        at_boundary = False
 
         for _ in range(max(1, max_steps)):
             top = scroller.scroll_step(signed_step)
             if top is None:
                 break
             if last_top is not None and abs(top - last_top) < 1:
+                # The scroller did not move: it is already at the top/bottom, or
+                # the element cannot scroll at all.
+                at_boundary = True
                 break
             last_top = top
+            moved = True
 
             tree = self.capture_tree(target_id)
             lines = self.serialize_lines_tree(tree, target_id)
@@ -1083,10 +1116,19 @@ class BrowserController:
             prev_lines = lines
 
             if (scroller.at_bottom() if down else scroller.at_top()):
+                at_boundary = True
                 break
 
         added = _dedupe_scroll_fragments(added)
         if not added:
+            where = "底部" if down else "顶部"
+            if not moved:
+                # Tell the model *why* nothing changed instead of a bare
+                # "（页面无变化）" it cannot act on: it is already at the end, or
+                # the element is not a scroller.
+                return f"（已到{where}或该元素当前不可滚动：没有新的可见内容）"
+            if at_boundary:
+                return f"（已滚动到{where}，但没有新增可见内容）"
             return "（页面无变化）"
         content = format_lines(added)
         lost_text = format_lost(compute_lost(base_lines, prev_lines, registry))
@@ -1491,6 +1533,47 @@ class BrowserController:
             if pending <= 0:
                 return
             time.sleep(timing.get().nav.settle_poll_interval)
+
+    # A click may open a real, *interactive* overlay (a custom dropdown / menu /
+    # calendar / popup). The click branch neutralises the page afterwards
+    # (``blur_active`` + ``park_mouse``) so its own hover / focus noise does not
+    # defeat the no-op signature — but that same neutralisation *dismisses* the
+    # overlay (component selects close on blur), so the option list never reached
+    # the capture and the model saw "（页面无变化）" while the options sat on
+    # screen. This probe lets the caller keep the overlay open for the capture.
+    #
+    # Only genuinely visible, on-screen popups count: a closed Ant Design
+    # ``.ant-select-dropdown`` stays mounted but parked at ``-9999`` (zero visible
+    # area) and is excluded by the viewport test; ``…-hidden`` menus are excluded
+    # by class. Comparing before vs after the click also ignores any overlay that
+    # was already open.
+    _OPEN_OVERLAY_PROBE = (
+        "(() => { try {"
+        "const sel=" + json.dumps(OVERLAY_ELEMENT_SELECTOR) + ";"
+        "const vw=innerWidth, vh=innerHeight;"
+        "for (const el of document.querySelectorAll(sel)) {"
+        "  let cs; try { cs=getComputedStyle(el); } catch(e) { continue; }"
+        "  if (cs.display==='none'||cs.visibility==='hidden') continue;"
+        "  if (parseFloat(cs.opacity||'1')<=0.01) continue;"
+        "  const r=el.getBoundingClientRect();"
+        "  if (r.width<2||r.height<2) continue;"
+        "  if (r.bottom<=0||r.top>=vh||r.right<=0||r.left>=vw) continue;"
+        "  return true; } return false; } catch (e) { return false; } })()"
+    )
+
+    def _overlay_open(self, session: str) -> bool:
+        """True if an interactive popup is currently visible on screen."""
+        assert self.client is not None
+        try:
+            result = self.client.send(
+                "Runtime.evaluate",
+                {"expression": self._OPEN_OVERLAY_PROBE, "returnByValue": True},
+                session_id=session,
+                timeout=timing.get().cdp.probe_timeout,
+            )
+            return bool((result.get("result") or {}).get("value"))
+        except Exception:
+            return False
 
     def _stabilize(self, target_id: str) -> None:
         assert self.client is not None

@@ -15,6 +15,22 @@ from .cdp import CDPClient, CDPError
 from . import timing
 
 
+# Selector for a *visible interactive popup* (custom dropdown / menu / calendar).
+# Shared by the controller's "did a popup open?" probe and the executor's "is
+# this click target inside an already-open popup?" check, so the two never drift
+# apart. Closed Ant Design dropdowns stay mounted but parked off-screen, so the
+# per-element visibility / size / viewport checks exclude them.
+OVERLAY_ELEMENT_SELECTOR = (
+    '[role="listbox"],[role="menu"],[role="dialog"],[role="alertdialog"],'
+    '[role="tree"],[role="grid"],'
+    '[class*="dropdown"]:not([class*="hidden"]),'
+    '[class*="popup"]:not([class*="hidden"]),'
+    '[class*="popper"]:not([class*="hidden"]),'
+    '[class*="picker-panel"],[class*="cascader"],[class*="select-dropdown"],'
+    '[class*="tooltip"]:not([class*="hidden"])'
+)
+
+
 class ActionError(RuntimeError):
     pass
 
@@ -253,6 +269,39 @@ class ActionExecutor:
     def js_click(self, backend_node_id: int) -> None:
         """Public JS-click (used as a no-op fallback by the controller)."""
         self._js_click(backend_node_id)
+
+    def element_inside_overlay(self, backend_node_id: int) -> bool:
+        """True if ``backend_node_id`` sits inside a currently visible popup.
+
+        The controller neutralises the page (``blur_active`` + ``park_mouse``)
+        before/after a click to strip hover / focus noise from the no-op
+        signature. But blurring an already-open dropdown dismisses it, so an
+        option click would miss its (now hidden) target and be misreported as a
+        no-op. When the target is inside a live popup the caller skips that
+        neutralisation so the option stays clickable.
+        """
+        object_id = self._resolve(backend_node_id)
+        if not object_id:
+            return False
+        script = (
+            "function(sel){try{"
+            "var el=this.closest(sel); if(!el) return false;"
+            "var cs=getComputedStyle(el);"
+            "if(cs.display==='none'||cs.visibility==='hidden') return false;"
+            "if(parseFloat(cs.opacity||'1')<=0.01) return false;"
+            "var r=el.getBoundingClientRect();"
+            "if(r.width<2||r.height<2) return false;"
+            "return r.bottom>0&&r.top<innerHeight&&r.right>0&&r.left<innerWidth;"
+            "}catch(e){return false;}}"
+        )
+        try:
+            return bool(
+                self._call_on_node(
+                    object_id, script, [{"value": OVERLAY_ELEMENT_SELECTOR}]
+                )
+            )
+        except Exception:
+            return False
 
     def _quiet_point(self) -> Optional[tuple[float, float]]:
         """Find a point over a non-interactive area, to "park" the mouse.

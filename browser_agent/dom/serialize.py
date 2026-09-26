@@ -281,6 +281,42 @@ _ICON_LABELS = {
     "sort": "排序",
 }
 
+# CamelCase / PascalCase control classes are common in hand-written markup
+# (``delIcon``, ``closeBtn``). ``_is_semantic_token`` rejects them (it only
+# accepts lowercase hyphenated words), so an icon-only control built that way was
+# left with the content-less generic label ``可点击项`` (user criterion i: a
+# clickable element with no content). This small allow-list maps the *action*
+# word of such a class to a short Chinese label. It is intentionally narrow —
+# only unambiguous action words, no directional words (``down``/``left``) that
+# would misfire on unrelated class names.
+_CAMEL_ACTION_LABELS = {
+    "del": "删除",
+    "delete": "删除",
+    "remove": "移除",
+    "close": "关闭",
+    "add": "新增",
+    "edit": "编辑",
+    "search": "搜索",
+    "upload": "上传",
+    "download": "下载",
+    "refresh": "刷新",
+    "reload": "刷新",
+    "save": "保存",
+    "submit": "提交",
+    "clear": "清除",
+    "filter": "筛选",
+    "sort": "排序",
+    "more": "更多",
+    "menu": "菜单",
+    "settings": "设置",
+    "help": "帮助",
+    "info": "信息",
+    "expand": "展开",
+    "collapse": "收起",
+    "play": "播放",
+    "pause": "暂停",
+}
+
 BBox = tuple[float, float, float, float]
 
 _SCROLL_OPEN = "<可滚动元素 "
@@ -508,6 +544,15 @@ class DOMSerializer:
             # list was right there. Fall through and serialize it as if visible
             # so the options get named (and stay clickable); a genuine collapsed
             # element keeps ``opacity: 1`` and still recurses box-only below.
+            #
+            # Only rescue subtrees that actually carry *interactive* content: a
+            # transparent, box-less fragment with no control (a form validation
+            # note caught on its appear first frame) is not actionable, and
+            # surfacing it leaked a bare ``[文本] 请输入`` that the model misread
+            # as a search box. A dropdown / calendar always owns named controls,
+            # so the ID90 rescue still fires for the cases it was written for.
+            if not self._has_interactive_descendant(child):
+                return
             pass
 
         level = self._heading_level(child)
@@ -1246,7 +1291,7 @@ class DOMSerializer:
                 # because their remainder carries no action word.
                 tokens.append(stripped)
         if not tokens:
-            return ""
+            return self._camel_case_action_label(node)
         hinted = [
             token
             for token in tokens
@@ -1280,6 +1325,36 @@ class DOMSerializer:
         if self._is_generic_structure_token(trimmed):
             return ""
         return self._truncate(trimmed, 40)
+
+    @staticmethod
+    def _split_class_words(token: str) -> list[str]:
+        """Split a class token into lowercase words (handles camelCase)."""
+        words: list[str] = []
+        for part in re.split(r"[-_]", token):
+            words.extend(
+                re.findall(r"[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+|\d+", part)
+            )
+        return [word.lower() for word in words if word]
+
+    def _camel_case_action_label(self, node: EnhancedNode) -> str:
+        """A short action label from a camelCase control class, else ``""``.
+
+        Last resort before the generic word: ``delIcon`` / ``closeBtn`` name a
+        real control but ``_is_semantic_token`` cannot read them. Decompose each
+        class token and map an unambiguous action word (``del`` → 删除) so the
+        icon-only control is not exposed as the content-less ``可点击项``.
+        """
+        for token in node.attributes.get("class", "").split():
+            if token.startswith(_FRAMEWORK_CLASS_PREFIXES):
+                continue
+            words = self._split_class_words(token)
+            if not words or len(words) > 4:
+                continue
+            for word in words:
+                mapped = _CAMEL_ACTION_LABELS.get(word)
+                if mapped:
+                    return mapped
+        return ""
 
     @staticmethod
     def _is_generic_structure_token(token: str) -> bool:
