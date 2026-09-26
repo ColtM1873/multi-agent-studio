@@ -43,6 +43,27 @@ FAIL = "失败"
 PARTIAL_FAIL = "部分失败"
 NOT_CALLED = "未进行互动元素调用"
 
+# Element names (``e12``) inside serialized lines. Used to compare two serialized
+# snapshots while ignoring pure renumbering: a click whose markup is unchanged but
+# whose React re-render swapped backend node ids produces a diff made *only* of
+# renamed tags, which must not be mistaken for real content.
+_ELEMENT_NAME_RE = re.compile(r"\be\d+\b")
+
+
+def _lines_have_new_text(old_lines: list[OutLine], new_lines: list[OutLine]) -> bool:
+    """True if ``new_lines`` carries text not present in ``old_lines`` (names ignored)."""
+    old_text = {
+        (line.depth, _ELEMENT_NAME_RE.sub("eN", line.text))
+        for line in old_lines
+        if line.text
+    }
+    for line in new_lines:
+        if not line.text:
+            continue
+        if (line.depth, _ELEMENT_NAME_RE.sub("eN", line.text)) not in old_text:
+            return True
+    return False
+
 # Prepended to a full-DOM result when the document is still a bare skeleton
 # (``<html><head>…</head></html>``, no rendered body). Without it the LLM sees a
 # normal-looking page with "可互动元素 0 个" and wastes calls guessing.
@@ -975,10 +996,18 @@ class BrowserController:
         # change, say so explicitly.
         if not opened_names and click_noop:
             # The (hover-neutral) markup is byte-identical before/after: the click
-            # truly did nothing. Never let the model believe a dead click landed.
+            # did not change the page markup. But the *serialized* viewport can
+            # still differ — most often because the click scrolled the page (a
+            # validation ``scrollIntoView``), which ``outerHTML`` does not reflect.
+            # Only claim "no change" when the new lines carry no text that was not
+            # already there (a pure element-renumbering diff); otherwise trust the
+            # diff, so the model is not told "nothing happened" while staring at
+            # newly revealed fields.
             opened_names = self._await_opened_tabs(old_target_ids)
             if not opened_names:
-                content = self._click_noop_notice(node) + "\n\n" + content
+                new_lines = self.serialize_lines_tree(new_tree, target_id)
+                if not _lines_have_new_text(old_lines, new_lines):
+                    content = self._click_noop_notice(node) + "\n\n" + content
         elif not opened_names and before_sig and "（页面无变化）" in content:
             if after_sig and after_sig != before_sig:
                 content += (

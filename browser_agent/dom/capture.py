@@ -16,6 +16,12 @@ REQUIRED_COMPUTED_STYLES = [
     "cursor",
     "pointer-events",
     "white-space",
+    # ``position`` is needed by the serializer to tell an in-flow descendant of a
+    # scroll container (which the container's ``overflow`` clips) from an
+    # absolutely/fixed positioned overlay that visually *escapes* it. Without it,
+    # a portalled dropdown whose box falls outside the scroller was silently
+    # dropped (see ``DOMSerializer._render_child`` / ``_in_clip``).
+    "position",
 ]
 
 

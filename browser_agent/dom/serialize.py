@@ -378,6 +378,12 @@ class DOMSerializer:
         # (the placeholder of a searchable select): skip them so the text is not
         # emitted a second time as a bare line.
         self._consumed: set[int] = set()
+        # Whether the scroll container that currently owns the clip is *not* a
+        # containing block for absolutely-positioned descendants (i.e. it is
+        # ``position: static``). When true, an ``absolute`` overlay descendant may
+        # visually escape the scroller and must not be clipped away. Managed as a
+        # save/restore around ``_group_scroll`` so nested scrollers compose.
+        self._clip_escapes = False
 
     # ------------------------------------------------------------------ #
     # public API
@@ -406,6 +412,7 @@ class DOMSerializer:
         self._buffer_names = []
         self._buffer_labels = []
         self._consumed = set()
+        self._clip_escapes = False
         self._render_children(tree.root, 0, None)
         self._flush(0)
         return list(self._lines)
@@ -455,6 +462,20 @@ class DOMSerializer:
             # Text already folded into a control's label (a searchable select's
             # placeholder); emit it only once.
             return
+        if clip is not None:
+            # An absolutely / fixed positioned overlay can escape its scroll
+            # container's overflow clip and still be visible on screen (a
+            # portalled dropdown / menu / tooltip whose host sits inside the
+            # scroller). Clipping it away made a click on a select return
+            # "（页面无变化）" while the option list was right there, sending the
+            # LLM into a retry loop. Stop applying the scroller's clip once we
+            # cross into such an overlay: its own ``visible`` / ``in_viewport``
+            # box still filters it. ``fixed`` is never clipped by an ancestor's
+            # overflow; ``absolute`` only escapes when the scroller is
+            # ``position: static`` (``_clip_escapes``).
+            position = child.styles.get("position")
+            if position == "fixed" or (position == "absolute" and self._clip_escapes):
+                clip = None
         if not self._in_clip(child, clip):
             return
 
@@ -739,10 +760,24 @@ class DOMSerializer:
         self._emit_header(depth, opening, (name,), closing)
         self._stack.append((depth, opening, closing))
         before = len(self._lines)
-        if inner_header:
-            self._group(node, depth + 1, inner_header, node.bbox)
-        else:
-            self._render_children(node, depth + 1, node.bbox)
+        # Only a positioned scroller is a containing block for absolutely
+        # positioned descendants, so only then does its ``overflow`` genuinely
+        # clip them. A ``static`` scroller lets an abspos overlay escape (see
+        # ``_render_child``); remember which case we are in for this subtree.
+        prev_escapes = self._clip_escapes
+        self._clip_escapes = node.styles.get("position") not in (
+            "relative",
+            "absolute",
+            "fixed",
+            "sticky",
+        )
+        try:
+            if inner_header:
+                self._group(node, depth + 1, inner_header, node.bbox)
+            else:
+                self._render_children(node, depth + 1, node.bbox)
+        finally:
+            self._clip_escapes = prev_escapes
         if len(self._lines) == before:
             self._emit_content(depth + 1, "（可滚动区域）")
         self._stack.pop()
