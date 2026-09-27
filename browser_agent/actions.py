@@ -20,6 +20,14 @@ from . import timing
 # this click target inside an already-open popup?" check, so the two never drift
 # apart. Closed Ant Design dropdowns stay mounted but parked off-screen, so the
 # per-element visibility / size / viewport checks exclude them.
+#
+# NOTE: a class-substring match is only a *candidate* — the ``_OVERLAY_VISIBLE_JS``
+# predicate below additionally rejects elements that are themselves interactive
+# controls. Ant Design renders the trigger of every ``ant-select``/``ant-dropdown``
+# with a class that also contains "dropdown" (``.ant-dropdown-trigger``,
+# ``Header_..._dropdown_text``); treating those as "an open popup" made the
+# controller's before/after differential permanently true, so the just-opened
+# dropdown was blurred shut before capture (see ``is_popup_trigger``).
 OVERLAY_ELEMENT_SELECTOR = (
     '[role="listbox"],[role="menu"],[role="dialog"],[role="alertdialog"],'
     '[role="tree"],[role="grid"],'
@@ -29,6 +37,49 @@ OVERLAY_ELEMENT_SELECTOR = (
     '[class*="picker-panel"],[class*="cascader"],[class*="select-dropdown"],'
     '[class*="tooltip"]:not([class*="hidden"])'
 )
+
+# Interactive popup *triggers*: clicking one (a combobox / aria-haspopup control,
+# or a wrapper that owns one) opens a self-drawn dropdown whose popup the page
+# closes on ``blur``. The controller must not neutralise (blur / park) such a
+# click, or the popup it just opened is dismissed before the capture.
+_POPUP_TRIGGER_SELECTOR = '[aria-haspopup],[role="combobox"]'
+
+# JS predicate (as source) answering: is ``el`` a *visible interactive popup
+# container* right now? Visible (display/visibility/opacity), sized, intersecting
+# the viewport, and **not itself an interactive control** (a trigger/button that
+# merely has "dropdown" in its class is ``cursor:pointer`` and must not count).
+_OVERLAY_VISIBLE_JS = (
+    "function(el){try{"
+    "var cs=getComputedStyle(el);"
+    "if(cs.display==='none'||cs.visibility==='hidden') return false;"
+    "if(parseFloat(cs.opacity||'1')<=0.01) return false;"
+    "var r=el.getBoundingClientRect();"
+    "if(r.width<2||r.height<2) return false;"
+    "if(r.bottom<=0||r.top>=innerHeight||r.right<=0||r.left>=innerWidth) return false;"
+    "var role=(el.getAttribute('role')||'');"
+    "var overlayRole=(role==='listbox'||role==='menu'||role==='dialog'"
+    "||role==='alertdialog'||role==='tree'||role==='grid');"
+    "if(!overlayRole&&cs.cursor==='pointer') return false;"
+    "return true;}catch(e){return false;}}"
+)
+
+
+def overlay_probe_expression() -> str:
+    """Self-contained in-page expression: is a visible interactive popup open?
+
+    Iterates every candidate matching :data:`OVERLAY_ELEMENT_SELECTOR` and accepts
+    the first that satisfies the :data:`_OVERLAY_VISIBLE_JS` predicate. Kept here
+    so controller and executor share one definition.
+    """
+    import json as _json
+
+    return (
+        "(() => { try {"
+        "const sel=" + _json.dumps(OVERLAY_ELEMENT_SELECTOR) + ";"
+        "const ok=" + _OVERLAY_VISIBLE_JS + ";"
+        "for (const el of document.querySelectorAll(sel)) { if (ok(el)) return true; }"
+        "return false; } catch (e) { return false; } })()"
+    )
 
 
 class ActionError(RuntimeError):
@@ -285,20 +336,44 @@ class ActionExecutor:
             return False
         script = (
             "function(sel){try{"
-            "var el=this.closest(sel); if(!el) return false;"
-            "var cs=getComputedStyle(el);"
-            "if(cs.display==='none'||cs.visibility==='hidden') return false;"
-            "if(parseFloat(cs.opacity||'1')<=0.01) return false;"
-            "var r=el.getBoundingClientRect();"
-            "if(r.width<2||r.height<2) return false;"
-            "return r.bottom>0&&r.top<innerHeight&&r.right>0&&r.left<innerWidth;"
-            "}catch(e){return false;}}"
+            "var ok=" + _OVERLAY_VISIBLE_JS + ";"
+            "var el=this;"
+            "while(el&&el!==document){"
+            "if(el.matches&&el.matches(sel)&&ok(el)) return true;"
+            "el=el.parentElement;}"
+            "return false;}catch(e){return false;}}"
         )
         try:
             return bool(
                 self._call_on_node(
                     object_id, script, [{"value": OVERLAY_ELEMENT_SELECTOR}]
                 )
+            )
+        except Exception:
+            return False
+
+    def is_popup_trigger(self, backend_node_id: int) -> bool:
+        """True if the click target opens a self-drawn popup (combobox/haspopup).
+
+        ``backend_node_id`` (or any ancestor, or any descendant) carrying
+        ``aria-haspopup`` / ``role="combobox"`` means the click may open a popup
+        that the component library dismisses on ``blur`` (a select's hidden search
+        input is a *descendant* of the visible selector, so both directions are
+        checked). The controller uses this to skip its blur/park neutralisation
+        around such a click, so the just-opened option list survives to capture.
+        """
+        object_id = self._resolve(backend_node_id)
+        if not object_id:
+            return False
+        script = (
+            "function(sel){try{"
+            "if(this.closest&&this.closest(sel)) return true;"
+            "if(this.querySelector&&this.querySelector(sel)) return true;"
+            "return false;}catch(e){return false;}}"
+        )
+        try:
+            return bool(
+                self._call_on_node(object_id, script, [{"value": _POPUP_TRIGGER_SELECTOR}])
             )
         except Exception:
             return False

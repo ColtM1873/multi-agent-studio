@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import contextlib
-import json
 import re
 import threading
 import time
 from typing import Optional
 
 from . import debug, timing
-from .actions import OVERLAY_ELEMENT_SELECTOR, ActionError, ActionExecutor
+from .actions import (
+    ActionError,
+    ActionExecutor,
+    overlay_probe_expression,
+)
 from .cdp import CDPClient, CDPError, poll_until_quiet
 from .dom import (
     PAGE_SCROLL_TAG,
@@ -921,13 +924,22 @@ class BrowserController:
                 # *inside*: clicking an option in an open dropdown must keep that
                 # dropdown alive, or the blur below closes it and the click lands
                 # on nothing (reported as a no-op).
+                #
+                # The same applies to a click that *opens* a self-drawn popup: the
+                # trigger carries ``aria-haspopup`` / ``role=combobox`` (often as a
+                # descendant of the visible selector), and the component library
+                # closes its popup on ``blur``. Neutralising around it dismissed the
+                # options before capture, which surfaced as "（页面无变化）" / "结构
+                # 变化但无新增互动元素" and sent the model into repeated clicks. So
+                # such a trigger is treated like an overlay click and never blurred.
                 overlay_before = self._overlay_open(session)
                 inside_overlay = (
                     executor.element_inside_overlay(node.backend_node_id)
                     if overlay_before
                     else False
                 )
-                if not inside_overlay:
+                popup_trigger = executor.is_popup_trigger(node.backend_node_id)
+                if not inside_overlay and not popup_trigger:
                     executor.blur_active()
                     executor.park_mouse()
                 before_sig = executor.dom_signature()
@@ -941,17 +953,22 @@ class BrowserController:
                     with self._watch_navigation(session) as nav_state:
                         executor.click(node.backend_node_id)
                         self._settle_navigation(session, nav_state, click_may_nav)
-                    if inside_overlay or (
-                        (not overlay_before) and self._overlay_open(session)
-                    ):
-                        # Either we clicked inside an already-open popup (an
-                        # option / menu item) or the click opened a real overlay
-                        # (dropdown / menu / calendar). Either way, do NOT
-                        # neutralise the page now: ``blur_active`` would dismiss
-                        # the popup (component selects close on blur) before the
-                        # capture, so the option list vanished and the model was
-                        # told "（页面无变化）" while the options were on screen.
-                        # A popup interaction is itself proof the click was real.
+                    if inside_overlay:
+                        # We clicked inside an already-open popup (an option /
+                        # menu item). Do NOT neutralise: ``blur_active`` would
+                        # dismiss it before the capture. A popup interaction is
+                        # itself proof the click was real.
+                        click_noop = False
+                    elif popup_trigger:
+                        # We clicked a popup trigger. Keep the popup alive (no
+                        # blur/park) and give it a bounded moment to paint, so the
+                        # capture sees its options instead of an empty diff.
+                        self._wait_overlay_open(session)
+                        click_noop = False
+                    elif (not overlay_before) and self._overlay_open(session):
+                        # The click opened a real overlay (custom dropdown / menu
+                        # / calendar) that is not a declared trigger. Same rule:
+                        # leave it open for the capture.
                         click_noop = False
                     else:
                         executor.blur_active()
@@ -1542,38 +1559,42 @@ class BrowserController:
     # the capture and the model saw "（页面无变化）" while the options sat on
     # screen. This probe lets the caller keep the overlay open for the capture.
     #
-    # Only genuinely visible, on-screen popups count: a closed Ant Design
-    # ``.ant-select-dropdown`` stays mounted but parked at ``-9999`` (zero visible
-    # area) and is excluded by the viewport test; ``…-hidden`` menus are excluded
-    # by class. Comparing before vs after the click also ignores any overlay that
-    # was already open.
-    _OPEN_OVERLAY_PROBE = (
-        "(() => { try {"
-        "const sel=" + json.dumps(OVERLAY_ELEMENT_SELECTOR) + ";"
-        "const vw=innerWidth, vh=innerHeight;"
-        "for (const el of document.querySelectorAll(sel)) {"
-        "  let cs; try { cs=getComputedStyle(el); } catch(e) { continue; }"
-        "  if (cs.display==='none'||cs.visibility==='hidden') continue;"
-        "  if (parseFloat(cs.opacity||'1')<=0.01) continue;"
-        "  const r=el.getBoundingClientRect();"
-        "  if (r.width<2||r.height<2) continue;"
-        "  if (r.bottom<=0||r.top>=vh||r.right<=0||r.left>=vw) continue;"
-        "  return true; } return false; } catch (e) { return false; } })()"
-    )
-
+    # The expression lives in ``actions`` (``overlay_probe_expression``) so the
+    # controller probe and the executor's "is this click inside a popup?" check
+    # share one definition: a candidate must be a *visible, sized, on-viewport*
+    # popup container that is **not itself an interactive control**. That last
+    # clause is essential — Ant Design gives every select trigger a class that
+    # contains "dropdown" (``.ant-dropdown-trigger``, the header login control),
+    # and naive ``[class*="dropdown"]`` matching made this probe permanently true,
+    # which dead-locked the before/after differential and closed every dropdown.
     def _overlay_open(self, session: str) -> bool:
         """True if an interactive popup is currently visible on screen."""
         assert self.client is not None
         try:
             result = self.client.send(
                 "Runtime.evaluate",
-                {"expression": self._OPEN_OVERLAY_PROBE, "returnByValue": True},
+                {"expression": overlay_probe_expression(), "returnByValue": True},
                 session_id=session,
                 timeout=timing.get().cdp.probe_timeout,
             )
             return bool((result.get("result") or {}).get("value"))
         except Exception:
             return False
+
+    def _wait_overlay_open(self, session: str, timeout: float = 0.6) -> bool:
+        """Poll briefly for a popup to become visible after a trigger click.
+
+        A self-drawn dropdown is mounted on the click but painted a frame or two
+        later; a single instantaneous probe can miss it. Bounded so a dead
+        trigger click is not delayed by more than ``timeout``.
+        """
+        deadline = time.time() + timeout
+        while True:
+            if self._overlay_open(session):
+                return True
+            if time.time() >= deadline:
+                return False
+            time.sleep(0.05)
 
     def _stabilize(self, target_id: str) -> None:
         assert self.client is not None
