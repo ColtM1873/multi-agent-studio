@@ -485,11 +485,29 @@ def classify(node: EnhancedNode) -> str:
     return ""
 
 
+def _clips_overflow(node: EnhancedNode) -> bool:
+    """True if ``node`` establishes its own clipping/scroll context.
+
+    A descendant with ``overflow != visible`` clips whatever is inside it, so
+    content that lies *below* such a descendant can never actually overflow the
+    ancestor being tested. Skipping those subtrees is what keeps a *nesting* of
+    scroll containers (an Ant ``<select>`` renders ``dropdown > div[overflow:auto]
+    > ul[overflow:auto]``) from marking every ancestor as scrollable: the inner
+    ``<li>`` bboxes are clipped by the ``<ul>``, yet their unbounded layout boxes
+    used to make the two outer wrappers look scrollable too. Only the element
+    that really clips the content is then named ``<可滚动元素>``.
+    """
+    return (
+        node.styles.get("overflow-x") in ("auto", "scroll", "hidden", "clip")
+        or node.styles.get("overflow-y") in ("auto", "scroll", "hidden", "clip")
+    )
+
+
 def _has_overflowing_child(node: EnhancedNode) -> bool:
     if not node.bbox:
         return False
     nx, ny, nw, nh = node.bbox
-    for child in _iter_descendants(node):
+    for child in _iter_unclipped_descendants(node):
         if not child.bbox:
             continue
         cx, cy, cw, ch = child.bbox
@@ -500,7 +518,14 @@ def _has_overflowing_child(node: EnhancedNode) -> bool:
     return False
 
 
-def _iter_descendants(node: EnhancedNode):
+def _iter_unclipped_descendants(node: EnhancedNode):
+    """Descendants whose layout box can actually overflow ``node``.
+
+    Yields every child (its own bbox is compared), but does not descend into a
+    child that clips its own overflow (see ``_clips_overflow``): that child's
+    inner content is contained by the child, not by ``node``.
+    """
     for child in node.children:
         yield child
-        yield from _iter_descendants(child)
+        if child.is_element and not _clips_overflow(child):
+            yield from _iter_unclipped_descendants(child)

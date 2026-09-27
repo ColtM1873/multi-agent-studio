@@ -1937,6 +1937,13 @@ class DOMSerializer:
         types here and the candidate list filters live. Unlike a passive widget
         part it is addressable by the model, so the serializer exposes it as a
         normal ``<可输入元素>`` and ``interact(fill=…)`` must target it.
+
+        The ``role=combobox`` / ``aria-autocomplete`` signal frequently lives on
+        an *ancestor* rather than on the ``<input>`` itself (Ant Design's
+        ``show-search`` select puts it on the wrapping
+        ``.atsx-select-selection``). Without also looking up the ancestor chain
+        the filter box of a 240-entry country/location picker stayed hidden
+        inside the clickable composite, forcing the model to scroll blindly.
         """
         if node.tag != "input":
             return False
@@ -1946,7 +1953,23 @@ class DOMSerializer:
             return False
         if node.role == "combobox":
             return True
-        return bool(node.attributes.get("aria-autocomplete"))
+        if node.attributes.get("aria-autocomplete"):
+            return True
+        # Ant Design's ``show-search`` select puts ``aria-autocomplete="list"``
+        # on the wrapping ``.atsx-select-selection`` (the ``<input>`` itself is
+        # a plain textbox). Keying on ``aria-autocomplete`` — not a bare
+        # ``role=combobox`` — keeps non-searchable composite selects (the
+        # ``.phoenix-select`` typeahead, whose container carries no
+        # ``aria-autocomplete``) as a single entry, while exposing the real
+        # filter box of a searchable one.
+        ancestor = node.parent
+        hops = 0
+        while ancestor is not None and hops < 5:
+            if ancestor.is_element and ancestor.attributes.get("aria-autocomplete"):
+                return True
+            ancestor = ancestor.parent
+            hops += 1
+        return False
 
     def _has_label_element_descendant(self, node: EnhancedNode) -> bool:
         """True if ``node`` is, or wraps, a ``<label>`` element.
