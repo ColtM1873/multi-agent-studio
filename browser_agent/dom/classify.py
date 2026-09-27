@@ -55,6 +55,36 @@ INPUT_ROLES = {"textbox", "searchbox", "spinbutton"}
 
 DRAGGABLE_ROLES = {"slider"}
 
+# Inline event-handler attributes that unambiguously mean "this element *is* a
+# control". Only click-like handlers count; hover handlers (``onmouseover`` /
+# ``onmouseout``, used purely for CSS class swaps) are deliberately excluded so
+# an element that merely inherits ``cursor:pointer`` is still treated as such.
+_CLICK_HANDLER_ATTRS = (
+    "onclick",
+    "onmousedown",
+    "onmouseup",
+    "ontouchstart",
+    "ontouchend",
+    "onpointerdown",
+    "onpointerup",
+)
+
+
+def has_inline_click_handler(node: EnhancedNode) -> bool:
+    """True if ``node`` carries an inline click-like handler attribute.
+
+    Many legacy widgets (My97 date pickers, Beisen ``basSelect`` lists, plain
+    ``<td onclick=...>`` grids) bind their action through an inline handler on
+    an element that has no ``href`` / ARIA role / ``tabindex``. Such an element
+    is a genuine, separately-callable control even though its only *style* cue
+    is an inherited ``cursor:pointer``; callers that demote "cursor-only" shapes
+    must not discard it.
+    """
+    if not node.is_element:
+        return False
+    attrs = node.attributes
+    return any(name in attrs for name in _CLICK_HANDLER_ATTRS)
+
 
 def _is_disabled(node: EnhancedNode) -> bool:
     return "disabled" in node.attributes or node.attributes.get("aria-disabled") == "true"
@@ -245,6 +275,20 @@ def is_clickable(node: EnhancedNode) -> bool:
     tabindex = node.attributes.get("tabindex")
     if tabindex is not None and tabindex.isdigit() and int(tabindex) >= 0:
         return True
+    if has_inline_click_handler(node):
+        # A genuine inline click handler is a semantic click signal even when
+        # the element is not a native control and its CSS cursor is ``auto``.
+        # My97 calendar day cells are ``<td onclick="day_Click(...)">``; the
+        # "today / selected" cell carries no ``cursor:pointer`` (its class
+        # ``Wselday`` only sets a background), so without this it was the one
+        # day a user could not click. Mirror the label guard used for the
+        # ``cursor:pointer`` branch so a clickable *form row* is still not named.
+        if node.bbox:
+            has_label = bool(node.ax_name or _has_text(node))
+            if has_label:
+                if _has_label_element(node) and not _has_interactive_descendant(node):
+                    return False
+                return True
     if is_control_icon(node):
         return True
     return False

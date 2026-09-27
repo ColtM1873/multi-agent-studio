@@ -30,6 +30,7 @@ from .classify import (
     CLICKABLE_INPUT_TYPES,
     CLICKABLE_ROLES,
     classify,
+    has_inline_click_handler,
     has_svg_descendant,
     is_clickable,
     is_control_icon,
@@ -512,7 +513,10 @@ class DOMSerializer:
 
         if child.tag in SKIP_TAGS or child.hidden:
             return
-        if child.tag == "label" and self._is_redundant_option_label(child):
+        if child.tag == "label" and (
+            self._is_redundant_option_label(child)
+            or self._is_redundant_choice_label(child)
+        ):
             # The text half of a native radio/checkbox option, already carried
             # by the named ``<input>``; emitting it again produced a duplicated
             # bare text line (``<可点击元素 eN>国内本硕 [已选]</可点击元素 eN>``
@@ -1486,7 +1490,13 @@ class DOMSerializer:
         """
         if not node.is_element or node.tag == "input":
             return False
-        if not is_cursor_pointer_only(node):
+        # A ``<label>`` that is a *sibling* of a native choice control is the
+        # option's visible text; the control already absorbs that same text as
+        # its label ("选择：男"), and a browser does not wire a sibling label to
+        # the radio without ``for``/``id``. It is not a control itself, so it
+        # may be dropped even though it lacks ``cursor:pointer`` (Beisen
+        # ``radio_list`` / ``basSelect`` option rows).
+        if node.tag != "label" and not is_cursor_pointer_only(node):
             return False
         text = self._collect_text(node)
         if not text:
@@ -1498,8 +1508,14 @@ class DOMSerializer:
             if sibling is node or not sibling.is_element:
                 continue
             for choice in self._iter_choice_inputs(sibling):
-                paired = self._pointer_sibling_label(choice) or self._nearby_text_label(choice)
-                if paired and paired == text:
+                # Only drop a ``<label>`` that the sibling control *already*
+                # carries as (part of) its own label. Comparing against a fresh
+                # nearby-text probe would wrongly drop a *field* label
+                # (``性别``) sitting next to a radio whose option text (its AX
+                # name) is ``男`` — the probe cannot see the AX name, so both
+                # would read as ``性别`` and the label would vanish.
+                control_label = self._interactive_label(choice, "click")
+                if control_label and text in control_label:
                     return True
             # SVG icon half of the same option row: the icon is the real,
             # separately-callable control (``_interactive_label`` names it
@@ -1814,6 +1830,7 @@ class DOMSerializer:
             field = self._associated_field_label(node)
         if not field:
             field = self._preceding_field_label(node)
+        field = self._clean_field_label(field)
         selected = self._selected_option_label(node)
         if selected:
             if field and field not in selected:
@@ -1867,10 +1884,10 @@ class DOMSerializer:
                 for attr in ("title", "aria-label"):
                     value = sibling.attributes.get(attr)
                     if value and not self._is_machine_token(value):
-                        return self._truncate(value, 40)
+                        return self._clean_field_label(self._truncate(value, 40))
                 text = self._collect_text(sibling)
                 if text:
-                    return self._truncate(text, 40)
+                    return self._clean_field_label(self._truncate(text, 40))
             branch = ancestor
             ancestor = ancestor.parent
             hops += 1
@@ -1954,6 +1971,12 @@ class DOMSerializer:
         control. Short ``cursor:pointer`` labels (real text buttons such as
         ``搜索职位``) stay clickable.
         """
+        if has_inline_click_handler(node):
+            # A real inline click handler is not "descriptive copy": the page
+            # author bound the action here (e.g. a My97 calendar day cell
+            # ``<td onclick="day_Click(...)">``). Demoting it to plain text
+            # silently deleted every day from the calendar's interactable grid.
+            return False
         if self._has_strong_descendant(node):
             return False
         if has_svg_descendant(node):
@@ -2042,7 +2065,7 @@ class DOMSerializer:
                     continue
                 text = self._find_label_text(sibling)
                 if text:
-                    return self._truncate(text, 40)
+                    return self._clean_field_label(self._truncate(text, 40))
             branch = ancestor
             ancestor = ancestor.parent
             hops += 1
@@ -2111,6 +2134,19 @@ class DOMSerializer:
                 return selected
         if node.ax_name:
             return self._icon_label(node.ax_name) or self._truncate(node.ax_name)
+        # A button-like ``<input>`` shows its action text in ``value`` ("清空" /
+        # "今天" / "确定"). The generic attribute loop below deliberately omits
+        # ``value`` (it is an input's current text everywhere else), so these
+        # controls were exposed as the content-less "按钮" even though the page
+        # author named them.
+        if node.tag == "input" and node.attributes.get("type", "").lower() in (
+            "button",
+            "submit",
+            "reset",
+        ):
+            value = node.attributes.get("value")
+            if value:
+                return self._icon_label(value) or self._truncate(value)
         text = self._collect_text(node)
         if text:
             # A visible glyph-only label (``X`` / ``×`` / ``Close``) is an icon in
@@ -2125,9 +2161,16 @@ class DOMSerializer:
                     if not value:
                         continue
                 label = self._icon_label(value) or self._truncate(value)
-                if attr == "name" and self._is_machine_token(label):
+                if attr == "name" and (
+                    self._is_machine_token(label) or self._is_choice_input(node)
+                ):
                     # ``name`` is the page's internal field id (``11_150051_1``),
                     # never a human label. Leaking it produced meaningless tags.
+                    # For a radio / checkbox the ``name`` is the *group* id
+                    # (``cateItems``, ``RecruitmentPortalPersonProfile_gender``),
+                    # identical for every option — using it as the option label
+                    # is always wrong; the option text comes from the nearby
+                    # ``<label>`` (see ``_interactive_label``).
                     continue
                 return label
         # A label-less wrapper around a single icon (Ant Design's
@@ -2243,6 +2286,18 @@ class DOMSerializer:
             prev_block = is_block
         joined = " ".join(out.split())
         return self._truncate(joined)
+
+    @staticmethod
+    def _clean_field_label(text: str) -> str:
+        """Trim a field label's decorative trailing colon / required mark.
+
+        Sites author the label as ``<label>证件类型：</label>``; composing it as
+        a prefix produced doubled punctuation (``证件类型：：请选择``). The
+        trailing ``：`` / ``:`` / ``*`` is decoration, never part of the name.
+        """
+        if not text:
+            return text
+        return text.strip().rstrip("：:＊*").strip()
 
     def _truncate(self, text: str, limit: int = 100) -> str:
         text = " ".join(text.split())
