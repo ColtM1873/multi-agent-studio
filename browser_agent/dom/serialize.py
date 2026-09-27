@@ -280,7 +280,65 @@ _ICON_LABELS = {
     "menu": "菜单",
     "filter": "筛选",
     "sort": "排序",
+    # Directional carets. A tree/list expander is often the *only* accessible
+    # name its host exposes, and Feishu's ATSX localizes Ant Design's icon
+    # aria-label to the literal string ``图标: caret-down`` — which then got
+    # concatenated into the sibling option's AX name
+    # (``图标: caret-down 中国大陆``). ``_clean_icon_accessible_name`` strips such
+    # prefixes; these entries are the fallback when the icon is the whole name.
+    "caret-down": "展开",
+    "caret-up": "收起",
+    "caret-right": "展开",
+    "caret-left": "收起",
 }
+
+# A component library may bake an icon name into an accessible name as
+# ``图标: caret-down`` (localized Ant Design ``anticon``). Concatenated with a
+# sibling's text it produced labels like ``图标: caret-down 中国大陆`` — a
+# criterion-ii mismatch (the entry is the option, not an expander). Match the
+# prefix and drop it, keeping the human remainder; if the whole name *was* the
+# icon, map it through ``_ICON_LABELS``.
+_ICON_LABEL_PREFIX_RE = re.compile(
+    r"(?:图标|icon)\s*[:：]\s*([A-Za-z0-9_\-]+)", re.IGNORECASE
+)
+
+
+# Placeholder labels that mean "the serializer could not find a human name".
+# When a clickable ends up with one of these *and* carries no text / aria /
+# title / href anywhere, it is criterion-i noise (an empty calendar cell, a
+# tree row with a collapsed child, a decorative loading spinner) rather than a
+# control the LLM can usefully call. Emitting it produced
+# ``<可点击元素 eN>可点击项</可点击元素 eN>`` and ``<可点击元素 eN>animation</>``
+# and pushed the model into repeated dead clicks.
+_NON_ACTIONABLE_LABELS = {
+    "可点击项",
+    "可交互元素",
+    "animation",
+    "loading",
+    "loader",
+    "spinner",
+    "动画",
+    "加载中",
+}
+
+
+def _clean_icon_accessible_name(name: str) -> str:
+    """Remove ``图标: <icon>`` fragments from an accessible name.
+
+    Keeps any human text around them; when the name is *only* an icon token,
+    returns its mapped Chinese label (or ``""`` so the caller falls back).
+    """
+    text = (name or "").strip()
+    if not text or "图标" not in text and "icon" not in text.lower():
+        return text
+    matches = list(_ICON_LABEL_PREFIX_RE.finditer(text))
+    if not matches:
+        return text
+    remainder = _ICON_LABEL_PREFIX_RE.sub("", text)
+    remainder = " ".join(remainder.split())
+    if remainder:
+        return remainder
+    return _ICON_LABELS.get(matches[0].group(1).lower(), "")
 
 # Icon-only navigation controls (a ``‹``/``›`` chevron with no text, no
 # ``aria-label``) previously leaked their raw CSS class fragment as the label:
@@ -544,44 +602,56 @@ class DOMSerializer:
             return
 
         if not child.visible or not child.in_viewport:
-            # The node itself has no visible box (typically zero-area), or its
-            # own box is outside the viewport, but its element descendants may
-            # still be laid out and visible. Two classic cases:
-            #   * portal/dropdown: `<div style="position:absolute;width:100%">`
-            #     wraps an absolutely positioned popup, so the wrapper collapses
-            #     to height 0 while the popup is clearly visible;
-            #   * deep scroll: the root/ICB or a fixed shell reports a
-            #     viewport-sized box (`y=0`) that no longer intersects
-            #     `scroll_y ± margin`, yet its descendants use page coordinates
-            #     and are on screen.
-            # Recurse transparently instead of pruning the whole subtree; the
-            # node's own (invisible / off-screen) text is skipped, and each
-            # descendant is still filtered by its own visibility/viewport box.
-            if child.visible or not self._effective_opacity_zero(child):
-                for grand in child.children:
-                    if not grand.is_text:
-                        self._render_child(grand, depth, clip)
-                return
-            # A zero-area node that is fully transparent (``opacity: 0`` on
-            # itself or an ancestor) is real content caught mid-enter-animation:
-            # component libraries mount a dropdown / menu / tooltip, then start
-            # its open animation on the next frame, so a capture taken during
-            # that frame sees a rendered-but-unlaid-out subtree. Pure viewport
-            # pruning then dropped it entirely, and the model saw
-            # “（页面无变化）” after clicking a select even though the option
-            # list was right there. Fall through and serialize it as if visible
-            # so the options get named (and stay clickable); a genuine collapsed
-            # element keeps ``opacity: 1`` and still recurses box-only below.
-            #
-            # Only rescue subtrees that actually carry *interactive* content: a
-            # transparent, box-less fragment with no control (a form validation
-            # note caught on its appear first frame) is not actionable, and
-            # surfacing it leaked a bare ``[文本] 请输入`` that the model misread
-            # as a search box. A dropdown / calendar always owns named controls,
-            # so the ID90 rescue still fires for the cases it was written for.
-            if not self._has_interactive_descendant(child):
-                return
-            pass
+            # A searchable select's inline filter input is a real field the model
+            # must be able to type into, even when it has no width yet (the
+            # component hides it until focus/typing; see ``_is_separate_control``).
+            # Let it fall through and be rendered as a normal ``<可输入元素>``.
+            search_box = (
+                child.tag == "input"
+                and child.in_viewport
+                and child.rendered
+                and not child.hidden
+                and self._is_searchable_typeahead(child)
+            )
+            if not search_box:
+                # The node itself has no visible box (typically zero-area), or
+                # its own box is outside the viewport, but its element
+                # descendants may still be laid out and visible. Two classic
+                # cases:
+                #   * portal/dropdown: `<div style="position:absolute;width:100%">`
+                #     wraps an absolutely positioned popup, so the wrapper collapses
+                #     to height 0 while the popup is clearly visible;
+                #   * deep scroll: the root/ICB or a fixed shell reports a
+                #     viewport-sized box (`y=0`) that no longer intersects
+                #     `scroll_y ± margin`, yet its descendants use page coordinates
+                #     and are on screen.
+                # Recurse transparently instead of pruning the whole subtree; the
+                # node's own (invisible / off-screen) text is skipped, and each
+                # descendant is still filtered by its own visibility/viewport box.
+                if child.visible or not self._effective_opacity_zero(child):
+                    for grand in child.children:
+                        if not grand.is_text:
+                            self._render_child(grand, depth, clip)
+                    return
+                # A zero-area node that is fully transparent (``opacity: 0`` on
+                # itself or an ancestor) is real content caught mid-enter-animation:
+                # component libraries mount a dropdown / menu / tooltip, then start
+                # its open animation on the next frame, so a capture taken during
+                # that frame sees a rendered-but-unlaid-out subtree. Pure viewport
+                # pruning then dropped it entirely, and the model saw
+                # “（页面无变化）” after clicking a select even though the option
+                # list was right there. Fall through and serialize it as if visible
+                # so the options get named (and stay clickable); a genuine collapsed
+                # element keeps ``opacity: 1`` and still recurses box-only below.
+                #
+                # Only rescue subtrees that actually carry *interactive* content: a
+                # transparent, box-less fragment with no control (a form validation
+                # note caught on its appear first frame) is not actionable, and
+                # surfacing it leaked a bare ``[文本] 请输入`` that the model misread
+                # as a search box. A dropdown / calendar always owns named controls,
+                # so the ID90 rescue still fires for the cases it was written for.
+                if not self._has_interactive_descendant(child):
+                    return
 
         level = self._heading_level(child)
         if level:
@@ -720,8 +790,19 @@ class DOMSerializer:
                 for grand in child.children:
                     self._render_child(grand, depth, clip)
             else:
-                name = self.registry.get_or_create(child)
                 label = self._interactive_label(child, category)
+                if self._is_contentless_clickable(child, label):
+                    # Criterion-i: a clickable whose only possible name is a
+                    # generic filler word — an empty calendar/tree cell, a
+                    # decorative loading spinner — is not a control. Naming it
+                    # produced ``<可点击元素 eN>可点击项</>`` and sent the LLM
+                    # into repeated dead clicks. Render its children instead so
+                    # any real content still surfaces.
+                    self._flush(depth)
+                    for grand in child.children:
+                        self._render_child(grand, depth, clip)
+                    return
+                name = self.registry.get_or_create(child)
                 tag, _ = CATEGORY_TAGS[category]
                 piece = f"<{tag} {name}>{label}</{tag} {name}>"
                 if self._is_block_level(child):
@@ -2024,6 +2105,30 @@ class DOMSerializer:
         # control: naming it produced a no-op ``<可点击元素>``.
         return is_cursor_pointer_only(node) and self._ancestor_owns_control(node)
 
+    def _is_contentless_clickable(self, node: EnhancedNode, label: str) -> bool:
+        """True for a clickable whose only name is a generic filler.
+
+        Used to drop criterion-i noise (an empty calendar/tree cell or a
+        decorative loading spinner) instead of emitting
+        ``<可点击元素 eN>可点击项</>``. Only fires when the label is one of the
+        known filler words *and* the node exposes no other human content
+        (text / cleaned accessible name / title / href), so a real (if
+        unnamed) control is never silently removed.
+        """
+        text = (label or "").strip()
+        if text.endswith(" [已选]"):
+            text = text[: -len(" [已选]")].strip()
+        if text.lower() not in _NON_ACTIONABLE_LABELS:
+            return False
+        if self._collect_text(node):
+            return False
+        accessible = _clean_icon_accessible_name(node.ax_name or "").strip().lower()
+        if accessible and accessible not in _NON_ACTIONABLE_LABELS:
+            return False
+        if node.attributes.get("title") or node.attributes.get("href"):
+            return False
+        return True
+
     def _has_image_descendant(self, node: EnhancedNode) -> bool:
         for child in node.children:
             if child.is_text:
@@ -2156,7 +2261,9 @@ class DOMSerializer:
                     return f"{field}：{selected}"
                 return selected
         if node.ax_name:
-            return self._icon_label(node.ax_name) or self._truncate(node.ax_name)
+            ax_name = _clean_icon_accessible_name(node.ax_name)
+            if ax_name:
+                return self._icon_label(ax_name) or self._truncate(ax_name)
         # A button-like ``<input>`` shows its action text in ``value`` ("清空" /
         # "今天" / "确定"). The generic attribute loop below deliberately omits
         # ``value`` (it is an input's current text everywhere else), so these
@@ -2211,13 +2318,13 @@ class DOMSerializer:
         for child in node.children:
             if child.is_text or not child.is_element:
                 continue
-            mapped = self._icon_label(child.ax_name or "")
+            mapped = self._icon_label(_clean_icon_accessible_name(child.ax_name or ""))
             if mapped:
                 return mapped
             for attr in ("aria-label", "title"):
                 value = child.attributes.get(attr)
                 if value:
-                    mapped = self._icon_label(value)
+                    mapped = self._icon_label(_clean_icon_accessible_name(value))
                     if mapped:
                         return mapped
             deeper = self._descendant_icon_label(child, max_depth - 1)
@@ -2402,6 +2509,20 @@ class DOMSerializer:
             # clickable container (whose inner button was outside the margin)
             # look like a leaf composite control, swallowing the button and
             # flattening the whole area into one named blob.
+            #
+            # Exception: a searchable select's inline typeahead is a real field
+            # even before it has any laid-out width (``visible`` is False while
+            # the box is zero-area). If the snapshot *did* lay it out
+            # (``rendered``), keep it as a separate control; a closed select's
+            # search input has no layout row (``rendered`` False) and stays an
+            # internal part, so no phantom fields appear.
+            if (
+                node.tag == "input"
+                and node.rendered
+                and not node.hidden
+                and self._is_searchable_typeahead(node)
+            ):
+                return True
             return False
         if node.tag in ("button", "select", "textarea", "summary"):
             return True
