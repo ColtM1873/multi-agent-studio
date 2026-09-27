@@ -2488,9 +2488,13 @@ class DOMSerializer:
         return False
 
     def _page_info(self, tree: EnhancedTree) -> str:
-        interactive = sum(
-            1 for n in tree.nodes if n.is_element and n.visible and n.in_viewport and classify(n)
-        )
+        # Count the interactive names actually emitted for this viewport, not
+        # every classified node in the viewport *margin*. The old tree-wide count
+        # routinely overstated the list (145 reported vs ~24 named on a real
+        # form), which pushed the LLM to guess element ids that were never
+        # rendered. ``self._lines`` is populated by ``serialize_lines`` just
+        # before this call.
+        interactive = len({name for line in self._lines for name in line.interactive})
         vp = tree.viewport
         return (
             f"<page_info>scrollY={int(vp['scroll_y'])} 视口={int(vp['width'])}x{int(vp['height'])} "

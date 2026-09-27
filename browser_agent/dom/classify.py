@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 from .build import PAGE_SCROLL_TAG, EnhancedNode
 
 CLICKABLE_TAGS = {"a", "button", "summary", "option"}
@@ -54,6 +56,72 @@ INPUT_TYPES = {
 INPUT_ROLES = {"textbox", "searchbox", "spinbutton"}
 
 DRAGGABLE_ROLES = {"slider"}
+
+# Action words inside a ``class`` / ``id`` token that, together with an icon and
+# a visible text label, identify a self-drawn button. Component libraries often
+# render such controls as::
+#
+#     <div class="createFormSection-addBtn addMore__d36c7e">
+#         <i class="anticon addMore-plus"><svg…/></i>
+#         <span class="addMore-add">添加</span>
+#     </div>
+#
+# where the *only* interactivity cue is a ``:hover`` style
+# (``…createFormSection-empty:hover{cursor:pointer}``): the static computed
+# ``cursor`` stays ``auto`` until the pointer is over the element, so the
+# ``cursor:pointer`` branch below cannot see it, and there is no ``role`` /
+# ``tabindex`` / inline handler either. Requiring an action word in the class/id
+# (plus an icon, a label and no already-interactive descendant) keeps purely
+# decorative "icon + text" markup out while still exposing the real control.
+_ACTION_CLASS_WORDS = {
+    "add", "addbtn", "addmore", "new", "create",
+    "remove", "delete", "del", "edit", "save", "submit", "cancel",
+    "search", "upload", "download", "refresh", "reload",
+    "close", "expand", "collapse", "filter", "sort", "share", "copy",
+    "plus", "minus", "play", "pause", "clear", "reset",
+}
+
+# CamelCase / PascalCase aware word splitter for class/id tokens
+# (``createFormSection-addBtn`` → create|form|section|add|btn).
+_CLASS_WORD_RE = re.compile(r"[A-Z]+(?=[A-Z][a-z])|[A-Z]?[a-z]+|[A-Z]+|\d+")
+
+
+def _class_has_action_word(node: EnhancedNode) -> bool:
+    """True if ``node``'s ``class``/``id`` contains a known action word."""
+    if not node.is_element:
+        return False
+    raw = f"{node.attributes.get('class', '')} {node.attributes.get('id', '')}"
+    for token in raw.split():
+        for part in re.split(r"[-_]+", token):
+            for word in _CLASS_WORD_RE.findall(part):
+                if word.lower() in _ACTION_CLASS_WORDS:
+                    return True
+    return False
+
+
+def is_hover_action_control(node: EnhancedNode) -> bool:
+    """True for an icon + label action button whose cursor is set only on hover.
+
+    A self-drawn ``<div class="…-addBtn"><svg/><span>添加</span></div>`` has no
+    native control tag, ARIA role, ``tabindex`` or inline handler, and its
+    ``cursor:pointer`` only applies while hovered — so every other branch of
+    ``is_clickable`` misses it and the LLM cannot address it. Guard rails: the
+    element must carry an action word in its class/id, wrap an ``<svg>`` icon and
+    a text label, have a box, and contain no already-interactive descendant (so
+    composite containers / search bars wrapping a real input are not named).
+    """
+    if not node.is_element or _is_disabled(node):
+        return False
+    if not node.bbox:
+        return False
+    if not has_svg_descendant(node):
+        return False
+    if _has_interactive_descendant(node):
+        return False
+    if not (node.ax_name or _has_text(node)):
+        return False
+    return _class_has_action_word(node)
+
 
 # Inline event-handler attributes that unambiguously mean "this element *is* a
 # control". Only click-like handlers count; hover handlers (``onmouseover`` /
@@ -289,6 +357,8 @@ def is_clickable(node: EnhancedNode) -> bool:
                 if _has_label_element(node) and not _has_interactive_descendant(node):
                     return False
                 return True
+    if is_hover_action_control(node):
+        return True
     if is_control_icon(node):
         return True
     return False
