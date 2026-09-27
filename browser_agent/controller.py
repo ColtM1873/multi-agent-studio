@@ -1287,12 +1287,16 @@ class BrowserController:
             node, err = self._resolve_interactive_node(registry, tree, click_name)
             if err:
                 return self._base_result(INCREMENTAL, FAIL, "无", err, include_tabs=False)
-            if classify(node) != "click":
+            click_cat = classify(node)
+            if click_cat != "click":
                 return self._base_result(
                     INCREMENTAL,
                     FAIL,
                     "无",
-                    f"互动元素 {click_name} 不是可点击元素",
+                    f"name_list 比 fill_list 多一个时，多余的那个（{click_name}）会被当作"
+                    f"收尾点击；但 {click_name} 是「{self._category_label(click_cat)}」类，"
+                    "不是可点击元素。若它也需要填写，请为它补一个 fill_list 值；"
+                    "若不操作它，请把它从 name_list 去掉。",
                     include_tabs=False,
                 )
             click_may_nav = may_navigate(node)

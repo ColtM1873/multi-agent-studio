@@ -281,6 +281,30 @@ _ICON_LABELS = {
     "sort": "排序",
 }
 
+# Icon-only navigation controls (a ``‹``/``›`` chevron with no text, no
+# ``aria-label``) previously leaked their raw CSS class fragment as the label:
+# a real Ant Design range picker exposed ``<可点击元素 eN>prev-btn</可点击元素 eN>``
+# / ``super-prev-btn`` — criterion-i "clickable with no (human) content". The
+# class token itself carries the action, so translate it. Inside a date/calendar
+# widget ``prev``/``next`` step a month and ``super-prev``/``super-next`` a year;
+# elsewhere they are plain previous/next page controls.
+_CALENDAR_NAV_LABELS = {
+    "prev": "上一月",
+    "previous": "上一月",
+    "next": "下一月",
+    "super-prev": "上一年",
+    "super-next": "下一年",
+}
+_GENERAL_NAV_LABELS = {
+    "prev": "上一页",
+    "previous": "上一页",
+    "next": "下一页",
+}
+# Class/id fragments that identify a date/calendar widget (Ant Design ``picker``,
+# Element UI ``date-picker``, generic ``calendar``).
+_CALENDAR_CONTEXT_HINTS = ("picker", "calendar", "datepicker", "date-picker")
+
+
 # CamelCase / PascalCase control classes are common in hand-written markup
 # (``delIcon``, ``closeBtn``). ``_is_semantic_token`` rejects them (it only
 # accepts lowercase hyphenated words), so an icon-only control built that way was
@@ -749,10 +773,20 @@ class DOMSerializer:
         interactive: tuple[str, ...] = (),
         closing: str = "",
     ) -> None:
+        before = len(self._lines)
         self._emit_header(depth, header, interactive, closing)
         self._stack.append((depth, header, closing))
         self._render_children(node, depth + 1, clip)
         self._stack.pop()
+        # A group that rendered no real content is pure noise: an off-screen
+        # ``<div class="title">基本信息</div>`` whose only text child fell outside
+        # the viewport still passed ``_is_text_block`` (``_collect_text`` does not
+        # filter by viewport), leaving a bare ``[文本]`` with nothing under it.
+        # Drop the whole group; if it later gains visible content it returns.
+        if not any(
+            line.kind == "content" and line.text for line in self._lines[before + 1 :]
+        ):
+            del self._lines[before:]
 
     def _group_or_interact(
         self, node: EnhancedNode, depth: int, header: str, clip: Optional[BBox]
@@ -1082,7 +1116,18 @@ class DOMSerializer:
         if node.tag in BLOCK_TAGS:
             return True
         display = node.styles.get("display", "")
-        return display.startswith(_BLOCK_DISPLAY_PREFIXES)
+        # ``display: table`` is a block-level box, but its *internal* boxes
+        # (``table-cell`` / ``table-row`` / ``table-*-group`` / ``table-column``
+        # / ``table-caption``) are NOT: the ``<tr>`` branch already lays the row
+        # out and inserts the ``|`` cell separators. Treating ``table-cell`` as
+        # block made every clickable table cell demand its own line, collapsing
+        # a calendar's 7-column day grid into a flat vertical list of numbers
+        # and emitting stray ``|`` lines (a real date picker, 2026-09-27 debug).
+        if display.startswith(_BLOCK_DISPLAY_PREFIXES) and not display.startswith(
+            "table-"
+        ):
+            return True
+        return False
 
     def _is_text_block(self, node: EnhancedNode) -> bool:
         if node.tag in TEXT_BLOCK_EXCLUDE:
@@ -1309,6 +1354,9 @@ class DOMSerializer:
                     start = index - 1
                 break
         trimmed = "-".join(parts[start:])
+        nav = self._navigation_label(node, trimmed)
+        if nav:
+            return nav
         # If one of the (remaining) words is a known icon/action name, prefer its
         # short Chinese label: ``search-submit-icon`` -> ``搜索`` instead of the
         # raw machine token. This runs before the structural rejection so a real
@@ -1364,6 +1412,29 @@ class DOMSerializer:
             return True
         cleaned = [re.sub(r"\d+$", "", part) or part for part in parts]
         return all(part in _GENERIC_STRUCTURE_WORDS for part in cleaned)
+
+    def _navigation_label(self, node: EnhancedNode, trimmed: str) -> str:
+        """Translate an icon-only prev/next control's class token, else ``""``.
+
+        Only reached when the control exposes no accessible name / text / title,
+        so the class token (``ant-picker-header-prev-btn`` trimmed to
+        ``prev-btn``) is the *only* clue. Inside a date/calendar widget the step
+        size differs (month vs year); elsewhere it is a generic page step.
+        """
+        words = [
+            part
+            for part in trimmed.split("-")
+            if part and part not in _GENERIC_STRUCTURE_WORDS
+        ]
+        if not words or words[-1] not in ("prev", "previous", "next"):
+            return ""
+        key = words[-1]
+        if len(words) >= 2 and words[-2] in _QUALIFIER_HINTS:
+            key = f"{words[-2]}-{words[-1]}"
+        classes = node.attributes.get("class", "").lower()
+        if any(hint in classes for hint in _CALENDAR_CONTEXT_HINTS):
+            return _CALENDAR_NAV_LABELS.get(key, "")
+        return _GENERAL_NAV_LABELS.get(key, "")
 
     @staticmethod
     def _is_semantic_token(token: str) -> bool:
