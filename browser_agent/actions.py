@@ -622,14 +622,55 @@ class ActionExecutor:
         return {"degraded": False}
 
     def scroll_step(self, backend_node_id: int, delta_y: float) -> Optional[float]:
-        """Dispatch one wheel event over the container; return its new scrollTop."""
+        """Dispatch one wheel event over the container; return its new scrollTop.
+
+        Falls back to a *direct native scroll* (``scrollTop += delta``) when the
+        wheel event leaves the element where it was. Some pages swallow
+        synthetic wheel events even though the container is genuinely
+        scrollable: custom "transition scroll" shells (``midas-customized-
+        transition-scroll-element``), scroll-locked overlays/modals that
+        intercept ``wheel``, and heavy SPAs that drop the event while busy.
+        In that case reading ``scrollTop`` after the wheel reported "（已到底部
+        …没有新的可见内容）" and the LLM concluded a long page had no more
+        content (observed on the Feishu Jobs apply form, where the very same
+        ``<section>`` scrolled fine once focus had moved). A direct ``scrollTop``
+        assignment is exactly what dragging that container's scrollbar does, so
+        it bypasses the swallowed wheel and restores the ability. It is a no-op
+        for a container that really cannot scroll, keeping the honest
+        "not scrollable" report.
+        """
         center = self._node_center(backend_node_id)
         if not center:
             raise ActionError("无法定位元素几何信息")
         cx, cy = center
         if self._mouse != center:
             self._human_move((cx, cy))
+        before = self.scroll_top(backend_node_id)
         self._dispatch_mouse("mouseWheel", cx, cy, delta_x=0, delta_y=delta_y)
+        _sleep(*timing.get().actions.scroll_settle)
+        after = self.scroll_top(backend_node_id)
+        if before is not None and after is not None and abs(after - before) < 1:
+            after = self.scroll_by(backend_node_id, delta_y)
+        return after
+
+    def scroll_by(self, backend_node_id: int, delta_y: float) -> Optional[float]:
+        """Scroll a container natively by ``delta_y`` CSS px; return new scrollTop.
+
+        Used as the wheel fallback (see :meth:`scroll_step`): it sets
+        ``scrollTop`` directly, mirroring a real scrollbar drag, so it works on
+        containers whose ``wheel`` events are intercepted or dropped.
+        """
+        object_id = self._resolve(backend_node_id)
+        if not object_id:
+            return None
+        try:
+            self._call_on_node(
+                object_id,
+                "function(d){this.scrollTop += d;}",
+                [{"value": float(delta_y)}],
+            )
+        except Exception:  # noqa: BLE001 - best effort; caller re-reads
+            pass
         _sleep(*timing.get().actions.scroll_settle)
         return self.scroll_top(backend_node_id)
 

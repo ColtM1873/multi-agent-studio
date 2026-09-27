@@ -580,6 +580,16 @@ class DOMSerializer:
             # bare text line (``<可点击元素 eN>国内本硕 [已选]</可点击元素 eN>``
             # followed by ``国内本硕``).
             return
+        if self._is_widget_mirror(child):
+            # A component library's text-size *mirror* helper
+            # (``.atsx-select-search__field__mirror`` / AntD's
+            # ``.ant-select-selection-search-mirror``) sits beside a searchable
+            # select's typeahead and repeats its value verbatim so the input can
+            # grow with it. It is invisible layout scaffolding, but on the Feishu
+            # Jobs form it rendered as a second bare text line right under the
+            # control (``<可输入元素 eN>上海外国语大学</可输入元素 eN>`` then
+            # ``上海外国语大学``), which the LLM read as a separate suggestion.
+            return
         if child.is_element and child.node_id in self._consumed:
             # Text already folded into a control's label (a searchable select's
             # placeholder); emit it only once.
@@ -1973,6 +1983,28 @@ class DOMSerializer:
             ancestor = ancestor.parent
             hops += 1
         return ""
+
+    def _is_widget_mirror(self, node: EnhancedNode) -> bool:
+        """True for a component library's text-size *mirror* helper.
+
+        Ant Design / ATSX render a width-measuring ``<span>`` beside a searchable
+        select's typeahead (``.ant-select-selection-search-mirror`` /
+        ``.atsx-select-search__field__mirror``) whose text duplicates the input's
+        own value. It is pure layout scaffolding — never user content — but it
+        leaked a second bare text line and looked like a separate suggestion.
+        Matched by the ``mirror`` class token only on a non-interactive element,
+        so a real control whose class happens to contain the word is untouched.
+        """
+        if not node.is_element:
+            return False
+        classes = node.attributes.get("class", "")
+        if not classes or "mirror" not in classes.lower():
+            return False
+        for token in classes.split():
+            low = token.lower()
+            if low.endswith("mirror") or "-mirror" in low or "_mirror" in low:
+                return not self._has_interactive_descendant(node)
+        return False
 
     def _has_field_input_descendant(self, node: EnhancedNode) -> bool:
         """True if ``node`` wraps a form field (input / textarea / select)."""
