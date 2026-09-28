@@ -243,6 +243,63 @@ _GENERIC_STRUCTURE_WORDS = {
     "select", "selection", "dropdown", "combobox", "listbox",
 }
 
+# ARIA roles that identify a *floating overlay* (a dropdown / menu / popup whose
+# entries are separate, individually-callable controls).
+_OVERLAY_ROLES = {
+    "listbox", "menu", "menubar", "menuitem", "tree", "tablist", "grid",
+    "radiogroup", "dialog", "tooltip", "popover",
+}
+# A floating overlay's entries (each is one selectable item, not a wrapper).
+_OPTION_ROLES = {
+    "option", "menuitem", "menuitemcheckbox", "menuitemradio", "treeitem",
+}
+# Class-name fragments that mark a floating overlay container. Used together
+# with an "option" class token (or an overlay role) so a plain nav ``menu-item``
+# elsewhere is not mistaken for a select's option list.
+_OVERLAY_CLASS_HINTS = (
+    "dropdown", "popup", "popper", "popover", "overlay",
+    "listbox", "select-menu", "autocomplete", "suggestion", "option-list",
+)
+# Utility-CSS property prefixes (Tailwind & friends). A class token such as
+# ``px-2`` / ``mt-2`` / ``w-[146px]`` is pure styling and must never become a
+# control label — an icon-only delete button used to surface as
+# ``<可点击元素 eN>px-2</可点击元素 eN>``.
+_UTILITY_CLASS_PREFIXES = {
+    "p", "px", "py", "pt", "pr", "pb", "pl",
+    "m", "mx", "my", "mt", "mr", "mb", "ml", "space",
+    "w", "min", "max", "h", "size",
+    "text", "font", "leading", "tracking", "indent", "align", "whitespace", "break",
+    "bg", "border", "divide", "ring", "rounded", "outline", "shadow",
+    "flex", "grid", "gap", "basis", "grow", "shrink", "order", "col", "row",
+    "items", "justify", "content", "self", "place",
+    "z", "opacity", "overflow", "object", "inset", "top", "right", "bottom", "left",
+    "static", "fixed", "absolute", "relative", "sticky",
+    "block", "inline", "hidden", "visible", "table",
+    "transition", "duration", "ease", "delay", "animate", "transform", "scale",
+    "rotate", "translate", "skew", "origin", "fill", "stroke", "cursor", "select",
+    "pointer-events", "resize", "list", "decoration", "filter", "backdrop", "blur",
+    "brightness", "contrast", "saturate", "grayscale", "sepia",
+}
+
+
+def _is_likely_utility_class(token: str) -> bool:
+    """True for a Tailwind-style utility class (``px-2`` / ``w-[146px]``).
+
+    Only the shape ``<property>-<numeric|bracketed value>`` is matched, so real
+    words that merely start with a shared prefix (PrimeNG's ``p-button``) are
+    preserved; arbitrary colour values (``bg-white``) are intentionally left
+    alone — the observed leaks (``px-2`` / ``mt-2`` / ``w-[146px]``) are numeric.
+    """
+    body = token[1:] if token.startswith("-") else token
+    parts = body.split("-", 1)
+    if len(parts) != 2:
+        return False
+    if parts[0].lower() not in _UTILITY_CLASS_PREFIXES:
+        return False
+    tail = parts[1]
+    return bool(tail) and (tail[0].isdigit() or tail[0] in "[(")
+
+
 # Common icon ``aria-label`` / ``alt`` names (Ant Design ``anticon``, Element UI,
 # Material icons …) mapped to a short, actionable Chinese label. Component
 # libraries label their icon-only controls with the *icon* name (`calendar`,
@@ -638,29 +695,36 @@ class DOMSerializer:
                 # Recurse transparently instead of pruning the whole subtree; the
                 # node's own (invisible / off-screen) text is skipped, and each
                 # descendant is still filtered by its own visibility/viewport box.
-                if child.visible or not self._effective_opacity_zero(child):
+                #
+                # Exception — a *transparent* (``opacity: 0``) subtree that is a
+                # floating overlay caught mid-enter-animation. Component libraries
+                # mount a dropdown / menu / tooltip, then start its open animation
+                # on the next frame, so a capture taken during that frame sees a
+                # rendered-but-unpositioned subtree (Ant Design parks a not-yet-
+                # positioned popup at ``left/top: -9999px``). Pure visibility /
+                # viewport pruning dropped it entirely and the model saw
+                # “（页面无变化）” after clicking a select even though the option
+                # list was right there. Fall through and serialize it as if visible
+                # so its controls get named (and stay clickable). Only a node that
+                # *is* a popup entry, or that sits inside a floating overlay and
+                # holds popup entries, qualifies: this keeps hover-only
+                # ``opacity: 0`` affordances (an input's increase/decrease arrows)
+                # and permanent transparent wrappers out of the output. A genuine
+                # collapsed element keeps ``opacity: 1`` and still recurses
+                # box-only in the branch above.
+                opacity_zero = self._effective_opacity_zero(child)
+                popup = self._is_popup_option(child) or (
+                    self._inside_overlay(child)
+                    and self._has_popup_option_descendant(child)
+                )
+                zero_size_rescue = (
+                    not child.visible
+                    and self._has_rescuable_interactive_descendant(child)
+                )
+                if not (opacity_zero and (popup or zero_size_rescue)):
                     for grand in child.children:
                         if not grand.is_text:
                             self._render_child(grand, depth, clip)
-                    return
-                # A zero-area node that is fully transparent (``opacity: 0`` on
-                # itself or an ancestor) is real content caught mid-enter-animation:
-                # component libraries mount a dropdown / menu / tooltip, then start
-                # its open animation on the next frame, so a capture taken during
-                # that frame sees a rendered-but-unlaid-out subtree. Pure viewport
-                # pruning then dropped it entirely, and the model saw
-                # “（页面无变化）” after clicking a select even though the option
-                # list was right there. Fall through and serialize it as if visible
-                # so the options get named (and stay clickable); a genuine collapsed
-                # element keeps ``opacity: 1`` and still recurses box-only below.
-                #
-                # Only rescue subtrees that actually carry *interactive* content: a
-                # transparent, box-less fragment with no control (a form validation
-                # note caught on its appear first frame) is not actionable, and
-                # surfacing it leaked a bare ``[文本] 请输入`` that the model misread
-                # as a search box. A dropdown / calendar always owns named controls,
-                # so the ID90 rescue still fires for the cases it was written for.
-                if not self._has_interactive_descendant(child):
                     return
 
         level = self._heading_level(child)
@@ -782,6 +846,11 @@ class DOMSerializer:
                 # text as one plain line instead of recursing (which would expose
                 # each inner ``<span>`` as a bogus clickable). Short
                 # ``cursor:pointer`` labels (real text buttons) stay clickable.
+                #
+                # ``_is_textual_click_only`` itself refuses a node that is or holds
+                # a popup option, so a dropdown wrapper is never demoted to text
+                # (which would swallow its options); it falls through to the
+                # prune-and-recurse branch below.
                 self._flush(depth)
                 text = self._collect_text(child)
                 if text:
@@ -1538,6 +1607,10 @@ class DOMSerializer:
         # Framework/runtime state & generated-style classes are not names.
         if token.startswith(_FRAMEWORK_CLASS_PREFIXES):
             return False
+        # Utility-CSS classes (``px-2`` / ``mt-2`` / ``text-sm``) are styling, not
+        # names: leaking one produced the content-less ``<可点击元素>px-2</>``.
+        if _is_likely_utility_class(token):
+            return False
         return all(ch.islower() or ch.isdigit() or ch == "-" for ch in token)
 
     @staticmethod
@@ -2107,6 +2180,12 @@ class DOMSerializer:
         control. Short ``cursor:pointer`` labels (real text buttons such as
         ``搜索职位``) stay clickable.
         """
+        if self._is_popup_option(node) or self._has_popup_option_descendant(node):
+            # A dropdown / menu entry is a real control, however terse its text
+            # ("TOP5%"); a wrapper holding such entries (the nested option list of
+            # an Ant Design select) must be pruned, not demoted to text. Demoting
+            # either made the option list unaddressable.
+            return False
         if has_inline_click_handler(node):
             # A real inline click handler is not "descriptive copy": the page
             # author bound the action here (e.g. a My97 calendar day cell
@@ -2420,6 +2499,13 @@ class DOMSerializer:
                 # (e.g. a country ``<select>`` named "中国 +86 美国 +1 …").
                 if child.hidden or not child.rendered:
                     continue
+                # An *open* floating overlay nested inside its trigger (Ant Design
+                # renders the dropdown inside the select when the page overrides
+                # ``getPopupContainer``) is not part of the trigger's own label;
+                # folding its entries in produced the unreadable
+                # ``成绩排名：请选择 TOP5% TOP10% TOP20% …`` blob.
+                if self._is_overlay_container(child):
+                    continue
                 nested = self._collect_text(child)
                 if nested:
                     parts.append((nested, self._is_block_level(child)))
@@ -2517,6 +2603,99 @@ class DOMSerializer:
                 return True
         return False
 
+    def _has_rescuable_interactive_descendant(self, node: EnhancedNode) -> bool:
+        """Like ``_has_interactive_descendant`` but ignores zero-width a11y mirrors.
+
+        Used by the mid-animation rescue: it must fire for a real popup option
+        (even one still 0-size) or a normal control, but must *not* revive the
+        zero-width ``role=listbox`` accessibility mirror whose only children are
+        degenerate ``role=option`` nodes that merely repeat the real entries.
+        """
+        for child in node.children:
+            if child.is_text or not child.is_element:
+                continue
+            if self._is_popup_option(child):
+                return True
+            if (child.role or "").lower() in _OPTION_ROLES and (
+                not child.bbox or child.bbox[2] <= 4
+            ):
+                # A zero-width ARIA-mirror option: not a real, clickable target;
+                # skip it and do not descend (its subtree holds only text).
+                continue
+            if classify(child):
+                return True
+            if self._has_rescuable_interactive_descendant(child):
+                return True
+        return False
+
+    def _inside_overlay(self, node: EnhancedNode, max_hops: int = 6) -> bool:
+        """True if an ancestor looks like a floating overlay (dropdown / menu)."""
+        current = node.parent
+        hops = 0
+        while current is not None and hops < max_hops:
+            if current.is_element:
+                if (current.role or "").lower() in _OVERLAY_ROLES:
+                    return True
+                classes = (current.attributes.get("class") or "").lower()
+                if any(hint in classes for hint in _OVERLAY_CLASS_HINTS):
+                    return True
+            current = current.parent
+            hops += 1
+        return False
+
+    def _is_popup_option(self, node: EnhancedNode) -> bool:
+        """True if ``node`` is one selectable entry of a floating overlay.
+
+        Covers both the ARIA mirror entries (``role=option``) and the rendered
+        entries that carry only a class (``.ant-select-item-option``). A bare
+        ``role=option`` additionally needs a real, non-degenerate box so the
+        zero-width accessibility mirror inside a ``height:0`` listbox is not named
+        a second time. Identification is shared by ``_is_separate_control`` (to
+        prune the wrapper) and the render pass (to rescue the mid-animation
+        popup), so the two never disagree.
+        """
+        if not node.is_element or not classify(node):
+            return False
+        role = (node.role or "").lower()
+        classes = (node.attributes.get("class") or "").lower()
+        tokens = classes.split()
+        if any(
+            tok == "option" or tok.endswith("-option") or tok.endswith("__option")
+            for tok in tokens
+        ):
+            return self._inside_overlay(node)
+        if role in _OPTION_ROLES:
+            if not node.bbox or node.bbox[2] <= 4:
+                # The a11y mirror listbox is ``width:0; overflow:hidden``; its
+                # ``role=option`` children duplicate the real entries.
+                return False
+            return self._inside_overlay(node)
+        return False
+
+    def _has_popup_option_descendant(self, node: EnhancedNode) -> bool:
+        """True if any descendant is a selectable entry of a floating overlay."""
+        for child in node.children:
+            if child.is_text or not child.is_element:
+                continue
+            if self._is_popup_option(child):
+                return True
+            if self._has_popup_option_descendant(child):
+                return True
+        return False
+
+    def _is_overlay_container(self, node: EnhancedNode) -> bool:
+        """True if ``node`` *is* a floating overlay (not one of its entries)."""
+        if not node.is_element:
+            return False
+        if (node.role or "").lower() in _OVERLAY_ROLES:
+            return True
+        classes = (node.attributes.get("class") or "").lower()
+        if not any(hint in classes for hint in _OVERLAY_CLASS_HINTS):
+            return False
+        # A trigger often carries a "...-dropdown" class; only treat a node as the
+        # overlay itself when it is actually positioned to float.
+        return node.styles.get("position") in ("absolute", "fixed")
+
     def _is_separate_control(self, node: EnhancedNode, root: Optional[EnhancedNode] = None) -> bool:
         """True if ``node`` is an independent control, not a mere internal part.
 
@@ -2534,7 +2713,16 @@ class DOMSerializer:
         input lives *inside* the box (``root``) and carries the selected value,
         so it must be treated as a part, not a separate control.
         """
-        if not node.is_element or node.hidden or not node.visible:
+        if not node.is_element or node.hidden:
+            return False
+        if self._is_popup_option(node):
+            # A dropdown / menu entry is a real, separately-callable control even
+            # while the just-opened popup is still 0-size / transparent (its box
+            # is resolved live at click time). Counting it as separate prunes the
+            # composite select wrapper, so the options are exposed instead of
+            # being flattened into the wrapper's label.
+            return node.rendered
+        if not node.visible:
             # NOTE: ``in_viewport`` is deliberately *not* consulted here. A real
             # control is still a real control when it is momentarily scrolled
             # just out of the viewport margin; judging by viewport made a

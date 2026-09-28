@@ -154,8 +154,55 @@ def has_inline_click_handler(node: EnhancedNode) -> bool:
     return any(name in attrs for name in _CLICK_HANDLER_ATTRS)
 
 
+# Component libraries mark a disabled *widget* with a class suffix rather than
+# the HTML ``disabled`` attribute (Ant Design ``.ant-select-disabled`` /
+# ``.ant-input-disabled`` / ``.ant-picker-disabled``). The class lives on the
+# wrapper whose own ``cursor`` may still be ``pointer``; only the inner parts get
+# ``cursor: not-allowed``. Without recognising this, the wrapper stayed
+# "clickable" and was exposed to the LLM — which then clicked and tried to fill a
+# control the page (and the mouse pointer) treats as forbidden.
+_DISABLED_CLASS_SUFFIXES = ("-disabled", "--disabled", "_disabled")
+_DISABLED_CLASS_TOKENS = {"disabled", "is-disabled", "true-disabled"}
+
+
+def _class_marks_disabled(value: str) -> bool:
+    for token in (value or "").split():
+        low = token.lower()
+        if low in _DISABLED_CLASS_TOKENS or low.endswith(_DISABLED_CLASS_SUFFIXES):
+            return True
+    return False
+
+
+def _node_marks_disabled(node: EnhancedNode) -> bool:
+    if "disabled" in node.attributes:
+        return True
+    if node.attributes.get("aria-disabled") == "true":
+        return True
+    if _class_marks_disabled(node.attributes.get("class", "")):
+        return True
+    # The ``cursor: not-allowed`` the disabled rules ultimately paint (captured by
+    # the computed-style snapshot) is the most uniform cross-framework signal.
+    if node.styles.get("cursor") == "not-allowed":
+        return True
+    return False
+
+
 def _is_disabled(node: EnhancedNode) -> bool:
-    return "disabled" in node.attributes or node.attributes.get("aria-disabled") == "true"
+    """True if ``node`` or a disabled widget ancestor is non-interactive.
+
+    Besides the node's own ``disabled`` / ``aria-disabled`` (and ``<fieldset
+    disabled>`` via the ancestor walk), this recognises component-library
+    ``*-disabled`` classes and the ``cursor: not-allowed`` they produce. A
+    disabled wrapper's own cursor often stays ``pointer``, so only an ancestor
+    walk exposes the true state.
+    """
+    hops = 0
+    while node is not None and hops < 10:
+        if node.is_element and _node_marks_disabled(node):
+            return True
+        node = node.parent
+        hops += 1
+    return False
 
 
 def _input_type(node: EnhancedNode) -> str:
