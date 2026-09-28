@@ -801,7 +801,7 @@ async def build_world(
         msg_list = state["messages"]
         return Command(goto = END,
                         update= {  "messages": [ RemoveMessage(id=msg.id) for msg in msg_list ],
-                                 "clean_all_msg" : False  })
+                                 "clean_every_and_all" : False  })
         
     (
         main_agent_builder
