@@ -3584,8 +3584,8 @@ async function renderChatView() {
       <span class="status-indicator" id="statusInd"></span>
       <span class="edit-mode-badge" id="editModeBadge" style="display:none;">✏️ ${t("编辑模式")}</span>
       <button class="btn small" id="memoryStoreBtn" title="${t("查看/编辑记忆库")}">🧠 ${t("查看/编辑记忆库")}</button>
+      <button class="btn small" id="delAllMsgBtn" title="${t("删除全部历史消息")}">🗑️ ${t("删除全部历史消息")}</button>
       <button class="btn small" id="editModeBtn">✏️ ${t("进入编辑模式")}</button>
-      <button class="btn small danger" id="delAllMsgBtn" title="${t("删除全部历史消息")}">🗑️ ${t("删除全部历史消息")}</button>
       <button class="btn small" id="proactiveSummaryBtn" title="${t("主动全量总结")}">📝 ${t("主动全量总结")}</button>
       <div class="zoom-controls">
         <span class="zoom-btn" id="rZoomOut" title="${t("思考字号减小")}">−</span>
