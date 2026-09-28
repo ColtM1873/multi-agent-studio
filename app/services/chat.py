@@ -22,6 +22,7 @@ def make_user_input(text: str) -> dict:
         "instructions_for_subagents": {},
         "instructions_ids": {},
         "subagents_reports_submit": {},
+        "clean_every_and_all": False,
     }
 
 
@@ -34,6 +35,7 @@ def make_proactive_summary_input(summary_percent: float | None = None) -> dict:
         "instructions_for_subagents": {},
         "instructions_ids": {},
         "subagents_reports_submit": {},
+        "clean_every_and_all": False,
     }
 
 
@@ -44,6 +46,18 @@ def make_proactive_summary_input_for_sub_agent(
         "messages": [],
         "proactive_summary_requested_for_specified_sub_agent": sub_agent_name,
         "proactive_summary_percent": summary_percent,
+        "instructions_for_subagents": {},
+        "instructions_ids": {},
+        "subagents_reports_submit": {},
+        "clean_every_and_all": False,
+    }
+
+
+def make_clean_all_input() -> dict:
+    """构造「删除全部历史消息」的图输入（空消息触发，删除主图全部消息）。"""
+    return {
+        "messages": [],
+        "clean_every_and_all": True,
         "instructions_for_subagents": {},
         "instructions_ids": {},
         "subagents_reports_submit": {},
@@ -70,6 +84,7 @@ def make_edit_input(
         "instructions_for_subagents": {},
         "instructions_ids": {},
         "subagents_reports_submit": {},
+        "clean_every_and_all": False,
     }
 
 

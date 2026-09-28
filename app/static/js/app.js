@@ -595,6 +595,9 @@ const I18N_EN = {
   "内容": "Content",
   "主题不能为空": "Subject cannot be empty",
   "确定删除该条记忆？此操作不可撤销。": "Delete this memory? This cannot be undone.",
+  "删除全部历史消息": "Delete all history messages",
+  "删除全部历史消息不可复原，是否继续？": "Deleting all history messages cannot be undone. Continue?",
+  "删除全部历史消息失败": "Failed to delete all history messages",
 };
 const t = (s) => (lang === "zh" || !I18N_EN[s]) ? s : I18N_EN[s];
 function setLang(l) {
@@ -3582,6 +3585,7 @@ async function renderChatView() {
       <span class="edit-mode-badge" id="editModeBadge" style="display:none;">✏️ ${t("编辑模式")}</span>
       <button class="btn small" id="memoryStoreBtn" title="${t("查看/编辑记忆库")}">🧠 ${t("查看/编辑记忆库")}</button>
       <button class="btn small" id="editModeBtn">✏️ ${t("进入编辑模式")}</button>
+      <button class="btn small danger" id="delAllMsgBtn" title="${t("删除全部历史消息")}">🗑️ ${t("删除全部历史消息")}</button>
       <button class="btn small" id="proactiveSummaryBtn" title="${t("主动全量总结")}">📝 ${t("主动全量总结")}</button>
       <div class="zoom-controls">
         <span class="zoom-btn" id="rZoomOut" title="${t("思考字号减小")}">−</span>
@@ -4662,6 +4666,8 @@ async function renderChatView() {
   bindEditLineEvents();
   const memoryBtn = $("#memoryStoreBtn");
   if (memoryBtn) memoryBtn.onclick = () => openMemoryStoreModal();
+  const delAllMsgBtn = $("#delAllMsgBtn");
+  if (delAllMsgBtn) delAllMsgBtn.onclick = () => triggerCleanAll();
 
   function updateSendState() {
     // 浏览器接管提示正在获取页面内容时，禁止发送（否则消息会缺少页面内容）。
@@ -4834,6 +4840,38 @@ async function renderChatView() {
     }
   }
 
+  async function triggerCleanAll() {
+    if (isRunning) return;
+    const ans = await askConfirm(t("删除全部历史消息不可复原，是否继续？"));
+    if (ans !== "yes") return;
+    // 待删除的历史中包含编辑态正在编辑的消息，直接退出编辑模式（放弃未提交的改动）。
+    if (editModeOn) leaveEditMode();
+    setRunning(true, "loading");
+    currentReplyEl = null;
+    appendReplyHeader();
+    const ok = await openChatWs("", false, null, null, true);
+    if (ok) {
+      // 原地刷新历史，避免整页 render() 造成闪屏
+      currentReplyEl = null;
+      try {
+        const h = await api(`/api/agents/${encodeURIComponent(S.agentId)}/threads/${encodeURIComponent(S.threadId)}/history`);
+        historyEl.innerHTML = renderMd(h.markdown);
+        injectExportButtons(historyEl);
+        sel.value = "";
+        while (sel.options.length > 1) sel.remove(1);
+        const subs = await api(`/api/agents/${encodeURIComponent(S.agentId)}/threads/${encodeURIComponent(S.threadId)}/subgraphs`);
+        subs.forEach(s => { const o = document.createElement("option"); o.value = s.node_name; o.textContent = s.node_name; sel.appendChild(o); });
+        scrollToLastUserMsg();
+      } catch (e) {
+        historyEl.innerHTML = `<div class="muted">${t("（无历史）")}</div>`;
+      }
+      setRunning(false);
+    } else {
+      setRunning(false);
+      toast(t("删除全部历史消息失败"), true);
+    }
+  }
+
   sendBtn.onclick = send;
   input.onkeydown = e => {
     if (e.key !== "Enter") return;
@@ -4950,7 +4988,7 @@ function appendReplyHeader() {
   }
 }
 
-function openChatWs(content, proactive = false, subAgent = null, summaryPercent = null) {
+function openChatWs(content, proactive = false, subAgent = null, summaryPercent = null, cleanAll = false) {
   return new Promise((resolve) => {
     const proto = location.protocol === "https:" ? "wss" : "ws";
     ws = new WebSocket(`${proto}://${location.host}/api/agents/${encodeURIComponent(S.agentId)}/threads/${encodeURIComponent(S.threadId)}/chat`);
@@ -5105,9 +5143,10 @@ function openChatWs(content, proactive = false, subAgent = null, summaryPercent 
     }
 
     ws.onopen = () => ws.send(JSON.stringify(
-      subAgent ? { type: "proactive_summarize_sub", sub_agent: subAgent, percent: summaryPercent }
-        : proactive ? { type: "proactive_summarize", percent: summaryPercent }
-          : { type: "send", content }
+      cleanAll ? { type: "clean_all" }
+        : subAgent ? { type: "proactive_summarize_sub", sub_agent: subAgent, percent: summaryPercent }
+          : proactive ? { type: "proactive_summarize", percent: summaryPercent }
+            : { type: "send", content }
     ));
 
     ws.onmessage = async (ev) => {
