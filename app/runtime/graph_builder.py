@@ -793,7 +793,19 @@ async def build_world(
         elif ( state.get("request_to_edit_msg_in_the_past") != None 
               and  state["request_to_edit_msg_in_the_past"].get("request_or_not") ):
             return Command(goto = "edit_msg_in_the_past")
+        elif (state.get("clean_every_and_all") == True):
+            return Command(goto = "clean_all_msg")
         return Command(goto="is_human_msg_or_not")
+    
+    async def clean_all_msg (state):
+        msg_list = state["messages"]
+        return Command(goto = END,
+                        update= {  "messages": [ RemoveMessage(id=msg.id) for msg in msg_list ]  })
+        
+    (
+        main_agent_builder
+        .add_node("clean_all_msg" , clean_all_msg)
+    )
 
     async def edit_msg_in_the_past (state):
         request_for_subagent_or_not = state["request_to_edit_msg_in_the_past"]["request_for_subagent"]

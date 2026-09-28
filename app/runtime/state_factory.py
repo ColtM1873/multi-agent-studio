@@ -56,6 +56,7 @@ def make_main_state() -> type:
         proactive_summary_requested_for_specified_sub_agent : str | None
         proactive_summary_percent : float | None
         request_to_edit_msg_in_the_past : dict[str , Any] | None
+        clean_every_and_all : bool
     return MainAgentState
 
 #request_to_edit_msg_in_the_past assumed structure
