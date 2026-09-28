@@ -800,7 +800,8 @@ async def build_world(
     async def clean_all_msg (state):
         msg_list = state["messages"]
         return Command(goto = END,
-                        update= {  "messages": [ RemoveMessage(id=msg.id) for msg in msg_list ]  })
+                        update= {  "messages": [ RemoveMessage(id=msg.id) for msg in msg_list ],
+                                 "clean_all_msg" : False  })
         
     (
         main_agent_builder
