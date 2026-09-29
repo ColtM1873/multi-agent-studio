@@ -81,10 +81,13 @@ def get_status():
 def open_browser(body: AgentBody | None = None):
     """打开（或复用）浏览器，并显示系统级浮动按钮。返回是否就绪与实际端口。"""
     try:
-        from browser_agent.controller import BrowserController,NOT_CALLED
+        from browser_agent.controller import BrowserController
 
         _apply_browser_timing()
-        BrowserController.instance().full_dom(action_ok=NOT_CALLED)  # ensure_connected：复用或启动
+        # 只做「连接/复用浏览器」——不要在这里抓取整页 DOM：启动时浏览器往往是
+        # 空白页，full_dom 会空等 15s 才返回，使「打开浏览器」卡住约半分钟。
+        # 页面内容由随后的「提示接管」预览（viewport-dom）按需抓取。
+        BrowserController.instance().ensure_connected()
         # 提前完成首次互动所需的一次性加载/准备（预导入、attach、轻量 evaluate）。
         warmup_browser()
         connected, port = browser_status()

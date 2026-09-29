@@ -334,6 +334,15 @@ class BrowserController:
         self._prev_trees: dict[str, EnhancedTree] = {}
         self._tab_registry = TabRegistry()
         self._last_error: str = ""
+        # 串行化「抓取/互动」类浏览器操作：只有一个浏览器 / 一条 CDP 连接，多个
+        # 入口并发（前端「提示接管」轮询 viewport-dom、图内浏览器工具）同时抓取会
+        # 让 CDP 连接排队，单条命令拖到 30s 超时并触发断线重连。
+        # RLock 允许同一线程内嵌套。
+        self._op_lock = threading.RLock()
+        # 只用于「建立/重建 CDP 连接」的专用锁。它**不**与 _op_lock 共享：已连接
+        # 时的快速路径（refresh_targets）绝不排队在一段正在进行的 DOM 抓取/序列化
+        # 之后，否则「打开浏览器」会被长时间进行的预览抓取饿死。
+        self._connect_lock = threading.Lock()
 
     @classmethod
     def instance(cls) -> "BrowserController":
@@ -345,6 +354,8 @@ class BrowserController:
     # connection
     # ------------------------------------------------------------------ #
     def ensure_connected(self) -> None:
+        # 快速路径：已连接且健康。**不参与 _op_lock**——否则「打开浏览器」会排队在
+        # 一段正在进行的 DOM 抓取/序列化之后被饿死（而抓取本身又是慢的根源）。
         if self.client is not None:
             try:
                 self.client.refresh_targets()
@@ -356,15 +367,29 @@ class BrowserController:
                     pass
                 self.client = None
 
-        info = self.launcher.ensure_browser()
-        self.client = CDPClient(
-            info["ws_url"], command_timeout=timing.get().cdp.command_timeout
-        )
-        try:
-            self.client.send("Target.setDiscoverTargets", {"discover": True})
-        except CDPError:
-            pass
-        self.client.refresh_targets()
+        # 建立/重建连接：只用专用的 _connect_lock，避免两个线程同时建连。
+        with self._connect_lock:
+            # 双重检查：等锁期间别的线程可能已经建好了连接。
+            if self.client is not None:
+                try:
+                    self.client.refresh_targets()
+                    return
+                except Exception:
+                    try:
+                        self.client.close()
+                    except Exception:
+                        pass
+                    self.client = None
+
+            info = self.launcher.ensure_browser()
+            self.client = CDPClient(
+                info["ws_url"], command_timeout=timing.get().cdp.command_timeout
+            )
+            try:
+                self.client.send("Target.setDiscoverTargets", {"discover": True})
+            except CDPError:
+                pass
+            self.client.refresh_targets()
 
     # ------------------------------------------------------------------ #
     # tabs
@@ -721,6 +746,13 @@ class BrowserController:
     }
 
     def _begin_interaction(
+        self, name: str, allowed: tuple
+    ) -> tuple[Optional[_InteractContext], Optional[dict]]:
+        """串行化入口：所有互动工具都经此持有全局浏览器锁。"""
+        with self._op_lock:
+            return self._begin_interaction_locked(name, allowed)
+
+    def _begin_interaction_locked(
         self, name: str, allowed: tuple
     ) -> tuple[Optional[_InteractContext], Optional[dict]]:
         """Resolve ``name`` and snapshot the pre-action state.
@@ -1687,7 +1719,9 @@ class BrowserController:
         except Exception:
             return -1
 
-    def _wait_for_content(self, session: str, quiet: bool = True) -> None:
+    def _wait_for_content(
+        self, session: str, quiet: bool = True, wait_content: bool = True
+    ) -> None:
         """Wait out a not-yet-rendered SPA shell.
 
         After a click that triggers an async render (no document navigation), the
@@ -1697,17 +1731,24 @@ class BrowserController:
         page. When ``<body>`` has no element children we keep polling up to
         ``nav.load_timeout`` for the first content to appear, then re-check
         quietness. Non-empty pages are unaffected.
+
+        ``wait_content=False`` skips the empty-body wait entirely and only runs
+        the quiet check when ``quiet=True``. ``full_dom`` (the "提示接管" preview
+        and ``tool_10_get_full_viewport``) uses it: a blank page is returned as
+        a blank notice immediately instead of blocking up to ``nav.load_timeout``
+        (15s) on every poll — the front-end polls once a second and will pick up
+        content as soon as the page renders.
         """
         assert self.client is not None
         cfg = timing.get()
         empty = self._body_child_count(session) == 0
-        if empty:
+        if empty and wait_content:
             deadline = time.time() + cfg.nav.load_timeout
             while time.time() < deadline:
                 time.sleep(cfg.nav.settle_poll_interval)
                 if self._body_child_count(session) > 0:
                     break
-        if quiet or empty:
+        if quiet:
             self._quiet(session)
 
     @staticmethod
@@ -1927,6 +1968,12 @@ class BrowserController:
         return result
 
     def full_dom(self, action_ok: str = NOT_CALLED) -> dict:
+        # 串行化：前端「提示接管」每秒轮询一次，且「打开浏览器」也会走这里，
+        # 并发抓取会拖垮 CDP 连接。持有全局锁，一次只跑一个。
+        with self._op_lock:
+            return self._full_dom_impl(action_ok)
+
+    def _full_dom_impl(self, action_ok: str = NOT_CALLED) -> dict:
         try:
             self.ensure_connected()
             target_id = self._resolve_focused_target()
@@ -1934,7 +1981,9 @@ class BrowserController:
                 return self._base_result(FULL, FAIL, rp.EMPTY_CONTENT, rp.NO_TABS)
             session = self.client.attach(target_id)
             self.client.enable_page_domains(session)
-            self._wait_for_content(session, quiet=False)
+            # 预览/全量快照：空白页立即返回「空白页」提示，不空等 15s（前端每秒
+            # 轮询，页面渲染出来后自然会拿到内容）。判稳静默也不做（只取快照）。
+            self._wait_for_content(session, quiet=False, wait_content=False)
             tree = self.capture_tree(target_id)
             content = self.serialize_tree(tree, target_id)
             if self._is_blank_shell(tree):

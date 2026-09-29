@@ -27,6 +27,15 @@ from fastapi.staticfiles import StaticFiles
 from app.api import agents, browser, chat_ws, downloads, drafts, export_html, memories, settings, snapshots, threads
 from app.deps import draft_store
 
+# 可选的浏览器工具计时 / 卡死看门狗探针（仅当设置 BROWSER_TOOL_TIMING=1 时安装，
+# 未设置时零开销、不改变任何行为）。见 browser_agent/diagnostics.py。
+try:
+    from browser_agent import diagnostics as _browser_diagnostics
+
+    _browser_diagnostics.install()
+except Exception:
+    pass
+
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):

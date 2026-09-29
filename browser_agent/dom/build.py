@@ -51,6 +51,20 @@ class EnhancedNode:
     children: list["EnhancedNode"] = field(default_factory=list)
     parent: Optional["EnhancedNode"] = None
 
+    # 分类结果惰性缓存（见 ``classify.py``）。节点在 ``build_enhanced_tree`` 里
+    # 全新构造，且构建后属性不再变化，故缓存不会跨快照失效。
+    # 没有这些缓存时，``classify`` / ``_has_text`` / ``has_svg_descendant`` /
+    # ``_has_interactive_descendant`` / ``_has_label_element`` /
+    # ``_has_overflowing_child`` 会对**每个节点重新扫描整棵子树**，并且
+    # ``classify`` 与 ``_has_interactive_descendant`` 相互递归——真实大页面上
+    # 序列化会退化成超线性，卡数十秒乃至数分钟（详见 inner_docs/ID116）。
+    cache_classify: Optional[str] = None
+    cache_has_text: Optional[bool] = None
+    cache_has_svg: Optional[bool] = None
+    cache_has_interactive_desc: Optional[bool] = None
+    cache_has_label_element: Optional[bool] = None
+    cache_has_overflowing_child: Optional[bool] = None
+
     @property
     def key(self) -> tuple[str, str, int]:
         return (self.doc_token, self.frame_id, self.backend_node_id)

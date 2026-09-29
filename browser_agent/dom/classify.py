@@ -272,28 +272,46 @@ def _has_text(node: EnhancedNode) -> bool:
     Element nodes keep their own ``text`` empty; visible text lives in ``#text``
     child nodes. So a ``cursor:pointer`` ``<div>搜索职位</div>`` has a label only
     through its descendants, not through ``node.text``.
+
+    结果按节点缓存：这是一个子树级扫描，而 ``is_clickable`` 等会对每个节点调用它，
+    不缓存则序列化退化成 O(n×子树)。
     """
+    cached = node.cache_has_text
+    if cached is not None:
+        return cached
+    result = False
     if node.text:
-        return True
-    for child in node.children:
-        if child.is_text:
-            if child.text:
-                return True
-        elif child.is_element and _has_text(child):
-            return True
-    return False
+        result = True
+    else:
+        for child in node.children:
+            if child.is_text:
+                if child.text:
+                    result = True
+                    break
+            elif child.is_element and _has_text(child):
+                result = True
+                break
+    node.cache_has_text = result
+    return result
 
 
 def has_svg_descendant(node: EnhancedNode) -> bool:
     """True if ``node`` contains an ``<svg>`` (i.e. looks like an icon)."""
+    cached = node.cache_has_svg
+    if cached is not None:
+        return cached
+    result = False
     for child in node.children:
         if child.is_text:
             continue
         if child.is_element and child.tag == "svg":
-            return True
+            result = True
+            break
         if has_svg_descendant(child):
-            return True
-    return False
+            result = True
+            break
+    node.cache_has_svg = result
+    return result
 
 
 def _has_following_pointer_labeled_sibling(node: EnhancedNode) -> bool:
@@ -413,26 +431,42 @@ def is_clickable(node: EnhancedNode) -> bool:
 
 def _has_label_element(node: EnhancedNode) -> bool:
     """True if ``node`` is, or contains, a ``<label>`` element."""
+    cached = node.cache_has_label_element
+    if cached is not None:
+        return cached
+    result = False
     if node.is_element and node.tag == "label":
-        return True
-    for child in node.children:
-        if child.is_element and _has_label_element(child):
-            return True
-    return False
+        result = True
+    else:
+        for child in node.children:
+            if child.is_element and _has_label_element(child):
+                result = True
+                break
+    node.cache_has_label_element = result
+    return result
 
 
 def _has_interactive_descendant(node: EnhancedNode) -> bool:
-    """True if any visible descendant of ``node`` is itself interactive."""
+    """True if any visible descendant of ``node`` is itself interactive.
+
+    按节点缓存（``classify`` ↔ 本函数的相互递归正是卡死的主因）。缓存后每个
+    节点的 ``classify`` 与 ``_has_interactive_descendant`` 各只计算一次，整体
+    摊还为 O(节点数)。
+    """
+    cached = node.cache_has_interactive_desc
+    if cached is not None:
+        return cached
+    result = False
     for child in node.children:
         if child.is_text or not child.is_element:
             continue
         if child.hidden or not child.visible:
             continue
-        if classify(child):
-            return True
-        if _has_interactive_descendant(child):
-            return True
-    return False
+        if classify(child) or _has_interactive_descendant(child):
+            result = True
+            break
+    node.cache_has_interactive_desc = result
+    return result
 
 
 def has_text(node: EnhancedNode) -> bool:
@@ -555,23 +589,34 @@ def is_searchable_typeahead(node: EnhancedNode) -> bool:
 
 
 def classify(node: EnhancedNode) -> str:
-    """Return the primary interactive category, or '' if none."""
+    """Return the primary interactive category, or '' if none.
+
+    结果按节点缓存（``cache_classify``，``None`` 为「未计算」哨兵）。本函数会被
+    ``DOMSerializer`` 对每个节点调用，且 ``_has_interactive_descendant`` 也会对每个
+    后代调用它——不缓存则两者相互递归、反复重扫子树，大页面序列化会卡死。
+    """
+    cached = node.cache_classify
+    if cached is not None:
+        return cached
     if is_searchable_typeahead(node) and not _is_disabled(node):
         # A searchable select's filter box outranks ``input``: typing only
         # narrows the candidate list, so it must not be routed to the plain
         # fill-in tool (``tool_02``).
-        return "searchable"
-    if is_input(node):
-        return "input"
-    if is_select(node):
-        return "select"
-    if is_draggable(node):
-        return "drag"
-    if is_scrollable(node):
-        return "scroll"
-    if is_clickable(node):
-        return "click"
-    return ""
+        result = "searchable"
+    elif is_input(node):
+        result = "input"
+    elif is_select(node):
+        result = "select"
+    elif is_draggable(node):
+        result = "drag"
+    elif is_scrollable(node):
+        result = "scroll"
+    elif is_clickable(node):
+        result = "click"
+    else:
+        result = ""
+    node.cache_classify = result
+    return result
 
 
 def _clips_overflow(node: EnhancedNode) -> bool:
@@ -593,18 +638,24 @@ def _clips_overflow(node: EnhancedNode) -> bool:
 
 
 def _has_overflowing_child(node: EnhancedNode) -> bool:
-    if not node.bbox:
-        return False
-    nx, ny, nw, nh = node.bbox
-    for child in _iter_unclipped_descendants(node):
-        if not child.bbox:
-            continue
-        cx, cy, cw, ch = child.bbox
-        if cy + ch > ny + nh + 4 or cx + cw > nx + nw + 4:
-            return True
-        if cy < ny - 4 or cx < nx - 4:
-            return True
-    return False
+    cached = node.cache_has_overflowing_child
+    if cached is not None:
+        return cached
+    result = False
+    if node.bbox:
+        nx, ny, nw, nh = node.bbox
+        for child in _iter_unclipped_descendants(node):
+            if not child.bbox:
+                continue
+            cx, cy, cw, ch = child.bbox
+            if cy + ch > ny + nh + 4 or cx + cw > nx + nw + 4:
+                result = True
+                break
+            if cy < ny - 4 or cx < nx - 4:
+                result = True
+                break
+    node.cache_has_overflowing_child = result
+    return result
 
 
 def _iter_unclipped_descendants(node: EnhancedNode):

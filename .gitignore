@@ -40,6 +40,10 @@ INNER_DOCS_GUIDE.md
 /.chrome-profile/
 /browser_takeover_debug_logs/
 /browser_tools_DEBUG_logs/
+# 浏览器工具计时 / 卡死看门狗诊断日志（BROWSER_TOOL_TIMING=1 时生成，不入库）
+/browser_tools_timing.log
+# 临时诊断交接目录
+/DEBUG_BROWSER/
 
 # 浏览器工具 debug 产物（含网页原始数据 / 用户 PII，本地保留，不入库）
 /debug_folder/
