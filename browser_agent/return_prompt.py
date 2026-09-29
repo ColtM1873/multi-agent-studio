@@ -54,6 +54,7 @@ EMPTY_CONTENT = "无"
 def category_label(category: str) -> str:
     return {
         "input": "可输入",
+        "searchable": "可搜索下拉",
         "select": "可选择",
         "click": "可点击",
         "drag": "可拖动",
@@ -67,6 +68,7 @@ def action_label(category: str) -> str:
     return {
         "click": "点击",
         "input": "输入",
+        "searchable": "可搜索下拉筛选",
         "select": "下拉选择",
         "scroll": "滚动",
         "drag": "拖动",
@@ -247,7 +249,14 @@ def category_mismatch(
 # 触发条件：批量填值列表里的元素类别不是 input / select。
 # 返回时机：作为 error 字段返回（批量操作在执行前整体失败）。
 def not_fillable(name: str, category: str) -> str:
-    return f"互动元素 {name} 不是可填入元素（它是「{category_label(category)}」类）"
+    hint = (
+        "；可搜索下拉请改用 tool_07_searchable_dropdown 操作"
+        if category == "searchable"
+        else ""
+    )
+    return (
+        f"互动元素 {name} 不是可填入元素（它是「{category_label(category)}」类）{hint}"
+    )
 
 
 # 作用：interact_many 中，告知被当作「收尾点击」的多余元素其实不是可点击元素，并说明如何处理。
@@ -289,27 +298,6 @@ def fill_not_effective(name: str, fill: str, current) -> str:
         f"但控件当前值为「{current or '空'}」。"
         f"该控件可能是只读、或日期/时间选择器，无法用 fill 直接写入；"
         f"请点击它之后在弹出的选择器里选择，或改为对其它可输入元素填值。"
-    )
-
-
-# 作用：提示「可搜索下拉」的输入框只用于筛选、输入本身不会提交选择，需再点候选项。
-# 触发条件：_run_fill 中元素是 role=combobox 且非 readonly 的输入框。
-# 返回时机：作为 fill_notice（与 DOM 增量一起拼进 content）返回。
-def typeahead_filter_notice(fill: str) -> str:
-    return (
-        f"[提示] 已把「{fill}」输入到搜索框用于筛选；"
-        f"**仅输入不会提交选择**，请在随后出现的候选项里点击目标项才算填入。"
-    )
-
-
-# 作用：interact_many 中，汇总提示哪些元素是「可搜索下拉」，需要点击候选项才算填入。
-# 触发条件：批量填值里存在 role=combobox 的输入框。
-# 返回时机：拼进增量 content 的前缀。
-def batch_typeahead_notice(names: list) -> str:
-    return (
-        "[提示] 以下元素是「可搜索下拉」："
-        + "、".join(names)
-        + "。仅输入不会提交选择，请在随后出现的候选项里点击目标项才算填入。\n"
     )
 
 

@@ -558,6 +558,19 @@ class ActionExecutor:
             return {"degraded": True, "reason": "native setter fallback"}
         return {"degraded": click_result.get("degraded", False)}
 
+    def clear_field(self, backend_node_id: int) -> None:
+        """Focus an editable control and clear its text without typing.
+
+        Used by the searchable-dropdown tool: an empty filter means "show the
+        full candidate list", so a leftover filter from a previous call must be
+        wiped. Plain ``input_text(id, "")`` deliberately does *not* clear (there
+        an empty fill means "just click / focus"), hence this explicit reset.
+        """
+        self.focus(backend_node_id)
+        _sleep(*timing.get().actions.input_focus)
+        self._clear_field()
+        _sleep(*timing.get().actions.input_clear)
+
     def press_enter(self) -> None:
         """Dispatch a real Enter key press (search / form submit).
 

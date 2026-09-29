@@ -76,6 +76,22 @@ async def tool_06_interact_sequence(
 
 
 @langchain_tool
+async def tool_07_searchable_dropdown(
+    elem_mark: Annotated[str, "<可搜索下拉元素 eN>的标识符eN"],
+    type_in_to_filter: Annotated[str, "输入要搜索的内容，以收缩匹配结果（通常是严格的前缀匹配，输入ab只会匹配ab开头的内容）"],
+) -> str|dict:
+    """用于跟<可搜索下拉元素>进行交互，
+本处的输入只可以用于筛选（收缩）下拉选单（候选项），输入的内容本身不能作数，只输入内容，不对返回的候选单进行点击的话，
+一旦点击其他地方，输入内容就被清空，该表单项视作未填。
+必须要点击下拉选单中的项（调用tool_01_click）才能真正作数。
+拿不准选单内容时，可以填入空字符串，用于获得完整候选表单。"""
+    sync_func_here = BrowserController.instance().interact_searchable_fill_in
+    type_in_to_filter = apply_sensitive_replacement(str(type_in_to_filter))
+    return await   _wrap_up(sync_func_here , name = elem_mark, fill = type_in_to_filter)  
+
+
+
+@langchain_tool
 async def tool_10_get_full_viewport() -> str|dict:
     """获得当前视窗的全貌，通常不需要调用。
 普通交互工具通常只返回 交互前 和 交互后 的新增值（交互后新出现的内容），
@@ -149,6 +165,7 @@ async def return_browser_tools():
         tool_04_drag,
         tool_05_type_in_select,
         tool_06_interact_sequence,
+        tool_07_searchable_dropdown,
         tool_10_get_full_viewport,
         tool_20_list_tabs,
         tool_21_switch_tab,

@@ -35,6 +35,7 @@ from .classify import (
     is_clickable,
     is_control_icon,
     is_cursor_pointer_only,
+    is_searchable_typeahead,
 )
 from .registry import NameRegistry
 
@@ -142,6 +143,7 @@ _BLOCK_DISPLAY_PREFIXES = (
 CATEGORY_TAGS = {
     "click": ("可点击元素", "点击"),
     "input": ("可输入元素", "输入"),
+    "searchable": ("可搜索下拉元素", "筛选"),
     "select": ("可选择元素", "选择"),
     "drag": ("可拖动元素", "拖动"),
     "scroll": ("可滚动元素", "滚动"),
@@ -1352,31 +1354,19 @@ class DOMSerializer:
             # LLM knows *what* it is and *whether* a choice was made. (``fill`` on
             # this element selects the option whose text matches.)
             return self._select_label(node)
-        if category == "input":
+        if category == "searchable":
+            # A searchable select's typeahead has neither a value nor a
+            # placeholder of its own (the chosen value lives in a sibling
+            # ``.ant-select-selection-item``). Name it after the field and the
+            # current selection so the model knows what it is editing:
+            # ``最高学历专业：金融学``. Its own tool (``tool_07``) carries the
+            # "typing only filters, click a candidate" contract, so the label
+            # stays a plain "field: value" without extra hints.
+            label = self._searchable_label(node)
+        elif category == "input":
             value = self._input_value(node)
             if value:
                 label = value
-            elif self._is_searchable_typeahead(node):
-                # A searchable select's typeahead has neither a value nor a
-                # placeholder of its own (the chosen value lives in a sibling
-                # ``.ant-select-selection-item``). Name it after the field and
-                # the current selection so the model knows what it is editing:
-                # ``最高学历专业：金融学``.
-                prefix = self._associated_field_label(node)
-                current = self._nearby_text_label(node)
-                if prefix and current:
-                    if prefix in current:
-                        label = current
-                    elif current in prefix:
-                        label = prefix
-                    else:
-                        label = f"{prefix}：{current}"
-                else:
-                    label = prefix or current or self._empty_input_label(node)
-                if current and current in label:
-                    # The placeholder / current value was folded into the label;
-                    # do not emit the element that shows it a second time.
-                    self._consume_nearby_label_source(node, current)
             else:
                 # Never render the placeholder as if it were the current value:
                 # an empty field used to read ``<可输入元素 e53>结束日期</…>`` and
@@ -1423,6 +1413,31 @@ class DOMSerializer:
             label = f"{label} [已选]"
         return label
 
+    def _searchable_label(self, node: EnhancedNode) -> str:
+        """Label a searchable select's typeahead as ``字段：当前值``.
+
+        The typeahead input itself has neither a value nor a placeholder (the
+        chosen value lives in a sibling ``.ant-select-selection-item``), so the
+        field name comes from the associated ``<label>`` and the current
+        selection from the nearest sibling text. When the placeholder and the
+        folded value coincide, the sibling text is consumed so it is not emitted
+        a second time.
+        """
+        prefix = self._associated_field_label(node)
+        current = self._nearby_text_label(node)
+        if prefix and current:
+            if prefix in current:
+                label = current
+            elif current in prefix:
+                label = prefix
+            else:
+                label = f"{prefix}：{current}"
+        else:
+            label = prefix or current or self._empty_input_label(node)
+        if current and current in label:
+            self._consume_nearby_label_source(node, current)
+        return label
+
     def _fallback_label(self, node: EnhancedNode, category: str) -> str:
         """Guarantee a non-empty label for an otherwise unnamed interactive element.
 
@@ -1457,6 +1472,8 @@ class DOMSerializer:
             return "可点击项"
         if category == "input":
             return "输入框"
+        if category == "searchable":
+            return "可搜索下拉"
         if category == "drag":
             return "可拖动"
         if category == "scroll":
@@ -2119,43 +2136,13 @@ class DOMSerializer:
     def _is_searchable_typeahead(node: EnhancedNode) -> bool:
         """True for an *editable* combobox / autocomplete input.
 
-        This is the typeahead of a searchable select (``show-search``): the user
-        types here and the candidate list filters live. Unlike a passive widget
-        part it is addressable by the model, so the serializer exposes it as a
-        normal ``<可输入元素>`` and ``interact(fill=…)`` must target it.
-
-        The ``role=combobox`` / ``aria-autocomplete`` signal frequently lives on
-        an *ancestor* rather than on the ``<input>`` itself (Ant Design's
-        ``show-search`` select puts it on the wrapping
-        ``.atsx-select-selection``). Without also looking up the ancestor chain
-        the filter box of a 240-entry country/location picker stayed hidden
-        inside the clickable composite, forcing the model to scroll blindly.
+        Thin delegate to :func:`browser_agent.dom.classify.is_searchable_typeahead`
+        so the predicate has a single source of truth: ``classify`` uses it to
+        assign the ``searchable`` category, and the serializer uses it to decide
+        which input is a searchable select's filter box (exposed as
+        ``<可搜索下拉元素>`` and driven by ``tool_07``).
         """
-        if node.tag != "input":
-            return False
-        if "readonly" in node.attributes:
-            return False
-        if node.attributes.get("type", "text").lower() == "hidden":
-            return False
-        if node.role == "combobox":
-            return True
-        if node.attributes.get("aria-autocomplete"):
-            return True
-        # Ant Design's ``show-search`` select puts ``aria-autocomplete="list"``
-        # on the wrapping ``.atsx-select-selection`` (the ``<input>`` itself is
-        # a plain textbox). Keying on ``aria-autocomplete`` — not a bare
-        # ``role=combobox`` — keeps non-searchable composite selects (the
-        # ``.phoenix-select`` typeahead, whose container carries no
-        # ``aria-autocomplete``) as a single entry, while exposing the real
-        # filter box of a searchable one.
-        ancestor = node.parent
-        hops = 0
-        while ancestor is not None and hops < 5:
-            if ancestor.is_element and ancestor.attributes.get("aria-autocomplete"):
-                return True
-            ancestor = ancestor.parent
-            hops += 1
-        return False
+        return is_searchable_typeahead(node)
 
     def _has_label_element_descendant(self, node: EnhancedNode) -> bool:
         """True if ``node`` is, or wraps, a ``<label>`` element.

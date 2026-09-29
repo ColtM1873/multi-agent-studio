@@ -517,8 +517,50 @@ def may_navigate(node: EnhancedNode) -> bool:
     return False
 
 
+def is_searchable_typeahead(node: EnhancedNode) -> bool:
+    """True for an *editable* combobox / autocomplete input.
+
+    This is the typeahead of a searchable select (``show-search``): the user
+    types here and the candidate list filters live. Typing only *filters* — the
+    value is committed only by clicking a candidate — so it is given its own
+    category (``searchable``) and driven by ``tool_07_searchable_dropdown``
+    instead of being treated as an ordinary ``<可输入元素>``.
+
+    The ``role=combobox`` / ``aria-autocomplete`` signal frequently lives on an
+    *ancestor* rather than on the ``<input>`` itself (Ant Design's
+    ``show-search`` select puts it on the wrapping ``.atsx-select-selection``).
+    Keying on ``aria-autocomplete`` — not a bare ``role=combobox`` — keeps
+    non-searchable composite selects (the ``.phoenix-select`` typeahead, whose
+    container carries no ``aria-autocomplete``) as a single entry, while
+    exposing the real filter box of a searchable one.
+    """
+    if node.tag != "input":
+        return False
+    if "readonly" in node.attributes:
+        return False
+    if node.attributes.get("type", "text").lower() == "hidden":
+        return False
+    if node.role == "combobox":
+        return True
+    if node.attributes.get("aria-autocomplete"):
+        return True
+    ancestor = node.parent
+    hops = 0
+    while ancestor is not None and hops < 5:
+        if ancestor.is_element and ancestor.attributes.get("aria-autocomplete"):
+            return True
+        ancestor = ancestor.parent
+        hops += 1
+    return False
+
+
 def classify(node: EnhancedNode) -> str:
     """Return the primary interactive category, or '' if none."""
+    if is_searchable_typeahead(node) and not _is_disabled(node):
+        # A searchable select's filter box outranks ``input``: typing only
+        # narrows the candidate list, so it must not be routed to the plain
+        # fill-in tool (``tool_02``).
+        return "searchable"
     if is_input(node):
         return "input"
     if is_select(node):

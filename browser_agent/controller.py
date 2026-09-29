@@ -714,6 +714,7 @@ class BrowserController:
     _SPLIT_CATEGORY_TOOL = {
         "click": "tool_01_click",
         "input": "tool_02_type_in_content",
+        "searchable": "tool_07_searchable_dropdown",
         "select": "tool_05_type_in_select",
         "scroll": "tool_03_scroll",
         "drag": "tool_04_drag",
@@ -921,14 +922,6 @@ class BrowserController:
                 current = executor.read_value(node.backend_node_id)
                 if not _fills_same(fill, current):
                     fill_error = self._date_fill_error(name, fill, current)
-            elif (
-                node.tag == "input"
-                and node.role == "combobox"
-                and "readonly" not in node.attributes
-            ):
-                # A searchable select's typeahead: typing only filters the
-                # candidate list, it does not commit a choice.
-                fill_notice = rp.typeahead_filter_notice(fill)
         if press_enter and not fill_error:
             # A bare search box may have no submit button at all: only pressing
             # Enter submits it. Treat it like a click (wait for a possible
@@ -966,6 +959,33 @@ class BrowserController:
         return {
             "fill_error": fill_error,
             "fill_notice": fill_notice,
+            "dialog": {"type": "", "message": ""},
+        }
+
+    def _run_searchable(self, ctx: _InteractContext, fill: str) -> dict:
+        """Filter a searchable select's typeahead and surface the candidates.
+
+        Typing only narrows the candidate list; the value is committed by a
+        later ``tool_01_click`` on a candidate, so this never reports a fill
+        success or failure. ``input_text`` clicks/focuses first, which is what
+        opens the dropdown. An empty ``fill`` means "show the full list": click
+        to open, then wipe any leftover filter from a previous call (``input_text``
+        deliberately does not clear on an empty fill).
+        """
+        node = ctx.node
+        executor = ctx.executor
+        if fill:
+            executor.input_text(node.backend_node_id, fill)
+        else:
+            executor.input_text(node.backend_node_id, "")
+            executor.clear_field(node.backend_node_id)
+        self._stabilize(ctx.target_id)
+        # A dropdown mounts on focus/typing and paints a frame or two later;
+        # give it a bounded moment so its candidates are captured.
+        self._wait_overlay_open(ctx.session)
+        return {
+            "fill_error": "",
+            "fill_notice": "",
             "dialog": {"type": "", "message": ""},
         }
 
@@ -1106,6 +1126,23 @@ class BrowserController:
         assert ctx is not None
         try:
             extras = self._run_select(ctx, fill)
+        except (ActionError, CDPError) as exc:
+            return self._base_result(INCREMENTAL, FAIL, rp.EMPTY_CONTENT, str(exc), include_tabs=False)
+        return self._finish_interaction(ctx, extras)
+
+    def interact_searchable_fill_in(self, name: str, fill: str = "") -> dict:
+        """对单个『可搜索下拉元素』输入筛选词并返回候选项，返回增量 DOM。
+
+        输入只用于筛选（收缩）下拉候选项，输入本身不作数；必须再调用
+        ``tool_01_click`` 点击候选项才算填入。``fill`` 为空字符串时清空筛选、
+        展示完整候选列表。
+        """
+        ctx, err = self._begin_interaction(name, allowed=("searchable",))
+        if err is not None:
+            return err
+        assert ctx is not None
+        try:
+            extras = self._run_searchable(ctx, fill)
         except (ActionError, CDPError) as exc:
             return self._base_result(INCREMENTAL, FAIL, rp.EMPTY_CONTENT, str(exc), include_tabs=False)
         return self._finish_interaction(ctx, extras)
@@ -1305,13 +1342,14 @@ class BrowserController:
         # ---- up-front validation (nothing runs if this fails) ----
         plan: list[tuple[str, str, int]] = []  # (name, category, backendNodeId)
         fill_nodes: dict[str, EnhancedNode] = {}
-        typeahead_names: list[str] = []
         for name in fill_names:
             node, err = self._resolve_interactive_node(registry, tree, name)
             if err:
                 return self._base_result(INCREMENTAL, FAIL, rp.EMPTY_CONTENT, err, include_tabs=False)
             cat = classify(node)
             if cat not in ("input", "select"):
+                # A searchable select (``searchable``) is not batch-fillable:
+                # typing only filters, so it needs its own tool (``tool_07``).
                 return self._base_result(
                     INCREMENTAL,
                     FAIL,
@@ -1319,13 +1357,6 @@ class BrowserController:
                     rp.not_fillable(name, cat),
                     include_tabs=False,
                 )
-            if (
-                cat == "input"
-                and node.role == "combobox"
-                and "readonly" not in node.attributes
-            ):
-                # Searchable select's typeahead: typing only filters candidates.
-                typeahead_names.append(name)
             fill_nodes[name] = node
             plan.append((name, cat, node.backend_node_id))
         click_may_nav = False
@@ -1464,8 +1495,6 @@ class BrowserController:
         else:
             new_tree = self.capture_tree(target_id)
             notice = self._title_change_notice(target_id, old_name)
-            if typeahead_names:
-                notice += rp.batch_typeahead_notice(typeahead_names)
             content = self._incremental_content(
                 old_lines, new_tree, target_id, notice, old_url=tree.url
             )
