@@ -274,7 +274,7 @@ const I18N_EN = {
   "开启后，流式输出时子 agent 的工具调用与工具结果会像主 agent 一样实时显示；关闭则只显示子 agent 的正文与思考。": "When enabled, a sub-agent's tool calls and tool results stream in real time like the main agent's; when disabled, only the sub-agent's text and reasoning are shown.",
   "浏览器接管": "Browser takeover",
   "浏览器工具debug模式": "Browser tool debug mode",
-  "开启后，LLM 每次调用浏览器工具都会在程序根目录的 browser_takeover_debug_logs 文件夹下，按小时记录一份日志（含整个 viewport 的原始 DOM、处理后的 DOM、LLM 输入、工具返回的 content），便于排查。": "When enabled, every browser tool call by the LLM writes an hourly log under the browser_takeover_debug_logs folder in the program root (the whole viewport's raw DOM, processed DOM, LLM input and returned content) to help troubleshooting.",
+  "开启后，LLM 每次调用浏览器工具都会在程序根目录的 browser_tools_DEBUG_logs 文件夹下，按小时记录一份日志（含整个 viewport 的原始 DOM、处理后的 DOM、LLM 输入、工具返回的 content），便于排查。": "When enabled, every browser tool call by the LLM writes an hourly log under the browser_tools_DEBUG_logs folder in the program root (the whole viewport's raw DOM, processed DOM, LLM input and returned content) to help troubleshooting.",
   "隐私遮蔽模式": "Privacy masking mode",
   "开启隐私遮蔽模式": "Enable privacy masking mode",
   "暂不开启": "Not now",
@@ -2216,7 +2216,7 @@ async function openAdvancedSettings() {
       </div>
       <div class="muted" style="margin:10px 0 2px;">${t("浏览器接管")}</div>
       <div class="switch-row">
-        <span class="sw-label">🐞 ${t("浏览器工具debug模式")} <i class="info-icon">!<span class="tip">${t("开启后，LLM 每次调用浏览器工具都会在程序根目录的 browser_takeover_debug_logs 文件夹下，按小时记录一份日志（含整个 viewport 的原始 DOM、处理后的 DOM、LLM 输入、工具返回的 content），便于排查。")}</span></i></span>
+        <span class="sw-label">🐞 ${t("浏览器工具debug模式")} <i class="info-icon">!<span class="tip">${t("开启后，LLM 每次调用浏览器工具都会在程序根目录的 browser_tools_DEBUG_logs 文件夹下，按小时记录一份日志（含整个 viewport 的原始 DOM、处理后的 DOM、LLM 输入、工具返回的 content），便于排查。")}</span></i></span>
         <label class="toggle"><input type="checkbox" id="adv_browser_debug" ${s.browser_takeover_debug ? "checked" : ""}><span class="track"></span></label>
       </div>
       <div class="muted" style="margin:10px 0 2px;">${t("记忆检索相似度门槛")}（${t("取值范围 0~1")}）</div>

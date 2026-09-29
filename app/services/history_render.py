@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import base64
 import io
 import json
@@ -350,19 +351,35 @@ def _render_ai(msg, w, show_reasoning, show_tool_calls, reasoning_expanded=True,
 # 只有浏览器工具的返回里才有 content 字段，其他工具（记忆/文件等）不会命中。
 _BROWSER_TOOL_NAME_RE = re.compile(r"^tool_\d+_")
 
+def _try_parse_tool_output(content: str):
+    """解析工具返回的文本，返回 (格式化文本, 解析后的对象)；无法解析则 (原文本, None)。
 
-def _try_format_json(content: str):
-    """若 content 是单行 JSON，返回 (格式化文本, 解析后的对象)；否则 (原文本, None)。"""
+    兼容两种历史格式：
+    - 旧版浏览器工具返回合法 JSON（``json.dumps`` 产物）；
+    - 新版浏览器工具让 ``ToolMessage`` 直接接收 dict，其 content 被序列化为
+      Python ``repr`` 字符串（单引号、``\\n`` 转义），用 ``ast.literal_eval`` 还原。
+    解析出的对象仅接受 dict / list，展示时统一重新序列化为缩进 JSON。
+    """
     s = content.strip()
-    if not s or "\n" in s:
+    if not s or not (s.startswith("{") or s.startswith("[")):
         return content, None
-    if not (s.startswith("{") or s.startswith("[")):
-        return content, None
+
+    obj = None
     try:
         obj = json.loads(s)
     except Exception:  # noqa: BLE001
+        try:
+            obj = ast.literal_eval(s)
+        except Exception:  # noqa: BLE001
+            return content, None
+
+    if not isinstance(obj, (dict, list)):
         return content, None
-    return json.dumps(obj, ensure_ascii=False, indent="\t"), obj
+    try:
+        pretty = json.dumps(obj, ensure_ascii=False, indent="\t")
+    except (TypeError, ValueError):
+        return content, None
+    return pretty, obj
 
 
 def _apply_tool_result_limits(text: str, max_lines: int, max_chars: int) -> tuple[str, bool]:
@@ -402,8 +419,8 @@ def _render_tool(
         content = "\n\n".join(text_parts)
 
     content_str = str(content)
-    # 单行 JSON → 结构化后再展示；否则原样。
-    pretty, parsed = _try_format_json(content_str)
+    # 工具返回（JSON 或 Python repr）→ 结构化后再展示；否则原样。
+    pretty, parsed = _try_parse_tool_output(content_str)
     display = pretty
     truncated = False
     if not full:

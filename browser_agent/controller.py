@@ -6,6 +6,7 @@ import contextlib
 import re
 import threading
 import time
+from dataclasses import dataclass
 from typing import Optional
 
 from . import debug, timing
@@ -39,13 +40,18 @@ from .dom import (
 from .launcher import BrowserLauncher, BrowserLaunchError
 from .tab_registry import TabRegistry
 
-FULL = "全量模式"
-INCREMENTAL = "增量模式"
+# 所有对外返回文本 / 状态码集中在 ``return_prompt`` 中定义，这里以别名导入：
+# 既保持模块内引用不变，也保持外部
+# ``from browser_agent.controller import NOT_CALLED`` 可用。
+from . import return_prompt as rp
 
-OK = "成功"
-FAIL = "失败"
-PARTIAL_FAIL = "部分失败"
-NOT_CALLED = "未进行互动元素调用"
+FULL = rp.FULL
+INCREMENTAL = rp.INCREMENTAL
+
+OK = rp.OK
+FAIL = rp.FAIL
+PARTIAL_FAIL = rp.PARTIAL_FAIL
+NOT_CALLED = rp.NOT_CALLED
 
 # Element names (``e12``) inside serialized lines. Used to compare two serialized
 # snapshots while ignoring pure renumbering: a click whose markup is unchanged but
@@ -68,24 +74,8 @@ def _lines_have_new_text(old_lines: list[OutLine], new_lines: list[OutLine]) -> 
             return True
     return False
 
-# Prepended to a full-DOM result when the document is still a bare skeleton
-# (``<html><head>…</head></html>``, no rendered body). Without it the LLM sees a
-# normal-looking page with "可互动元素 0 个" and wastes calls guessing.
-_BLANK_SHELL_NOTICE = (
-    "[页面可能仍在加载] 当前页面几乎为空（尚未渲染出正文）。"
-    "请稍等片刻后重试 tool_2_get_viewport_dom，或使用 tool_6_refresh 刷新。\n\n"
-)
-
-# Prepended when the page is not merely "not rendered yet" but has actually been
-# reset to ``about:blank``. Sites do this deliberately after detecting automation
-# (a whole new tab can otherwise appear to "flash the page, then go blank"), so a
-# "still loading" hint would mislead the LLM into retrying the same dead page.
-_ABOUT_BLANK_NOTICE = (
-    "[页面为空] 当前聚焦标签页停在 about:blank，没有正文。"
-    "常见原因：①该网址未能加载或被重定向到空白页；"
-    "②网站脚本/反爬在加载后把页面重置成了空白页。"
-    "请稍候重试 tool_2_get_viewport_dom，或用 tool_8_navigate 重新打开目标网址。\n\n"
-)
+# 空白页/骨架提示文本见 ``return_prompt.BLANK_SHELL_NOTICE`` / ``ABOUT_BLANK_NOTICE``；
+# 由 ``_blank_notice(tree)`` 依据 URL 选择。
 
 # Structural/document nodes that never count as "rendered body content".
 _SHELL_TAGS = {
@@ -307,6 +297,28 @@ class _PageScroller:
         return self._executor.page_at_top()
 
 
+@dataclass
+class _InteractContext:
+    """Pre-action snapshot shared by the split interaction methods.
+
+    Companion to :meth:`BrowserController.interact` (which is kept untouched):
+    produced by ``_begin_interaction`` and consumed by the ``_run_*`` /
+    ``_finish_interaction`` helpers so each split method shares one preamble
+    and one post-processing path.
+    """
+
+    name: str
+    target_id: str
+    registry: NameRegistry
+    node: EnhancedNode
+    old_tree: EnhancedTree
+    old_lines: list[OutLine]
+    old_name: str
+    old_target_ids: set
+    session: str
+    executor: ActionExecutor
+
+
 class BrowserController:
     _instance: Optional["BrowserController"] = None
 
@@ -391,12 +403,7 @@ class BrowserController:
         return self._name_for_target(target_id)
 
     def _title_change_notice(self, target_id: str, old_name: str) -> str:
-        if not old_name:
-            return ""
-        new_name = self._name_for_target(target_id)
-        if new_name and new_name != old_name:
-            return f"[标签页标题变更] {old_name} → {new_name}\n"
-        return ""
+        return rp.title_change_notice(old_name, self._name_for_target(target_id))
 
     def _opened_tab_names(self, old_target_ids: set) -> list:
         """Names of page tabs that appeared since ``old_target_ids``.
@@ -415,7 +422,7 @@ class BrowserController:
 
         ``Target.activateTarget`` alone does not always bring a windowed tab to
         the foreground: ``document.hasFocus()`` can keep reporting the old tab,
-        so ``tool_4_switch_tab`` returned the requested DOM while ``tool_1_interact``
+        so ``tool_21_switch_tab`` returned the requested DOM while ``tool_0x_interact_xxx``
         then rejected its elements as "belonging to another tab". The
         page-scoped ``Page.bringToFront`` performs the actual activation.
         Never raises (the caller already has a working session).
@@ -431,22 +438,12 @@ class BrowserController:
         """Explain that a requested tab could not be brought to the foreground."""
         requested = self._name_for_target(requested_id) or requested_id
         actual = self._name_for_target(actual_id) or actual_id
-        return (
-            f"[无法切换标签页] 未能把「{requested}」切到前台，浏览器当前仍聚焦"
-            f"「{actual}」。可稍后重试 tool_4_switch_tab 切换到「{requested}」，"
-            f"或用 tool_7_close_tab 关闭「{actual}」，"
-            f"或用 tool_8_navigate 打开目标页面后再继续操作。\n\n"
-        )
+        return rp.focus_mismatch_notice(requested, actual)
 
     def _new_tab_notice(self, opened_names: list) -> str:
         """Hint for "a click opened a background tab, focus did not move"."""
         opened = "、".join(opened_names)
-        focus = self.focused_tab_label() or "未知标签页"
-        return (
-            f"[新标签页] 本次互动在当前聚焦标签页之外新打开了标签页（{opened}），"
-            f"但当前聚焦标签页并未改变（仍为 {focus}），因此当前聚焦页没有内容变化或只有少量内容变化。"
-            f"如需查看或操作新标签页，使用 tool_4_switch_tab 切换到目标标签页。"
-        )
+        return rp.new_tab_notice(opened, self.focused_tab_label())
 
     def _probe_focused_target(self) -> Optional[str]:
         """The tab the human is looking at, for the **initial** pick only.
@@ -573,7 +570,7 @@ class BrowserController:
         if target_id is None:
             target_id = self._resolve_focused_target()
         if target_id is None:
-            raise RuntimeError("没有可用的标签页")
+            raise RuntimeError(rp.NO_TABS)
         session = self.client.attach(target_id)
         self.client.enable_page_domains(session)
         raw = capture_raw(self.client, session)
@@ -623,18 +620,8 @@ class BrowserController:
         return "\n\n".join(p for p in parts if p)
 
     # ------------------------------------------------------------------ #
-    # interaction (tool-1)
+    # interaction (tool-0x)
     # ------------------------------------------------------------------ #
-    @staticmethod
-    def _category_label(category: str) -> str:
-        return {
-            "input": "可输入",
-            "select": "可选择",
-            "click": "可点击",
-            "drag": "可拖动",
-            "scroll": "可滚动",
-        }.get(category, "不可互动")
-
     @staticmethod
     def _scroll_plan(scroll_delta: int) -> tuple[int, int]:
         """Map ``scroll_delta`` to ``(direction, steps)``.
@@ -654,13 +641,7 @@ class BrowserController:
     @staticmethod
     def _date_fill_error(name: str, fill: str, current: Optional[str] = None) -> str:
         """Human, actionable error for a fill that a date picker did not commit."""
-        got = f"，控件当前值为「{current or '空'}」" if current is not None else ""
-        return (
-            f"元素 {name} 是日期/时间选择控件，无法用 fill 写入「{fill}」这类非日期文本{got}。"
-            f"该控件只接受具体日期，页面上通常也没有『至今』这种选项；"
-            f"请改为点击它并在弹出的日历里选择具体日期，"
-            f"或先与用户确认该字段如何处理（例如选当天日期、或留空）。"
-        )
+        return rp.date_fill_error(name, fill, current)
 
     @staticmethod
     def _select_option_texts(node: EnhancedNode, limit: int = 30) -> list:
@@ -691,36 +672,10 @@ class BrowserController:
     def _select_fill_error(
         self, name: str, fill: str, current: Optional[str], options: list
     ) -> str:
-        opts = "、".join(options) if options else "（无可选项）"
-        return (
-            f"元素 {name} 是下拉选择控件，未能选中「{fill}」"
-            f"（控件当前值为「{current or '未选择'}」）。"
-            f"该控件只能从已有选项中选一个：请用 fill 传入下方某一项的文字。"
-            f"当前可选值：{opts}。若目标值不在其中，请先与用户确认该字段如何填写。"
-        )
+        return rp.select_fill_error(name, fill, current, options)
 
     def _select_click_notice(self, name: str, options: list) -> str:
-        opts = "、".join(options) if options else "（无可选项）"
-        return (
-            f"[提示] 元素 {name} 是原生下拉选择控件：点击它只会展开浏览器/系统原生下拉层，"
-            f"该弹层不在 DOM 中、工具无法捕获，因此不会产生任何可见变化。"
-            f"请直接用 fill 参数指定要选择的选项文字。当前可选值：{opts}。"
-        )
-
-    @staticmethod
-    def _click_noop_notice(node: EnhancedNode) -> str:
-        """Honest, actionable message for a click that changed nothing.
-
-        Shown when the hover-neutral DOM signature is byte-identical before and
-        after the action (plus its retry). Without it the model reads a renumbered
-        diff as "something happened" and loops on a dead element.
-        """
-        return (
-            "[提示] 本次点击没有产生任何页面变化（前后 DOM 完全一致）。"
-            "常见原因：①该元素只是文字/装饰，真正的控件是它紧邻的图标（单选/复选圈），"
-            "请改点相邻的图标控件；②该控件处于只读/禁用状态；③操作需要先满足某个前置条件。"
-            "请勿据此认为操作已生效；可换一个元素重试，或改用其它方式。"
-        )
+        return rp.select_click_notice(name, options)
 
     def _alternative_click_target(self, node: EnhancedNode) -> Optional[int]:
         """The unlabeled control icon that may be the real action behind a label.
@@ -746,265 +701,320 @@ class BrowserController:
                 return sibling.backend_node_id
         return None
 
-    def interact(
-        self,
-        name: str,
-        fill: str = "",
-        drag_pct: int = 0,
-        scroll_delta: int = 0,
-        press_enter: bool = False,
-    ) -> dict:
+    # ------------------------------------------------------------------ #
+    # interaction, split by function
+    #
+    # original ``interact`` is removed. The methods
+    # below are a functionally split surface: each begins from the same
+    # ``_begin_interaction`` snapshot, runs one category-specific action
+    # (``_run_*``) and shares one post-processing path
+    # (``_finish_interaction``).
+    # ------------------------------------------------------------------ #
+    # 元素真实类别 → 建议改用的工具名（用于类别不匹配时的提示）。
+    _SPLIT_CATEGORY_TOOL = {
+        "click": "tool_01_click",
+        "input": "tool_02_type_in_content",
+        "select": "tool_05_type_in_select",
+        "scroll": "tool_03_scroll",
+        "drag": "tool_04_drag",
+    }
+
+    def _begin_interaction(
+        self, name: str, allowed: tuple
+    ) -> tuple[Optional[_InteractContext], Optional[dict]]:
+        """Resolve ``name`` and snapshot the pre-action state.
+
+        Returns ``(ctx, None)`` when ready, or ``(None, error_result)`` with a
+        ready-to-return failure dict. ``allowed`` is the set of element
+        categories the calling method accepts (single-element for every caller,
+        and ``allowed[0]`` doubles as the "attempted action" label).
+        """
         try:
             self.ensure_connected()
         except (BrowserLaunchError, CDPError) as exc:
-            return self._base_result(INCREMENTAL, FAIL, "无", str(exc), include_tabs=False)
+            return None, self._base_result(
+                INCREMENTAL, FAIL, rp.EMPTY_CONTENT, str(exc), include_tabs=False
+            )
 
         assert self.client is not None
         target_id = self._resolve_focused_target()
         if target_id is None:
-            return self._base_result(INCREMENTAL, FAIL, "无", "没有可用的标签页", include_tabs=False)
-        # Keep the *displayed* tab in sync with the tool's target: a peeking
-        # human always sees what the LLM is operating on, and their tab clicks
-        # cannot redirect it.
+            return None, self._base_result(
+                INCREMENTAL, FAIL, rp.EMPTY_CONTENT, rp.NO_TABS, include_tabs=False
+            )
         self._activate_target(target_id)
 
         registry = self._registry_for(target_id)
         if registry.lookup(name) is None:
-            return self._base_result(
-                INCREMENTAL, FAIL, "无", self._unknown_name_message(name), include_tabs=False
+            return None, self._base_result(
+                INCREMENTAL, FAIL, rp.EMPTY_CONTENT, self._unknown_name_message(name), include_tabs=False
             )
         if not registry.is_active(name):
-            return self._base_result(
-                INCREMENTAL, FAIL, "无", self._stale_name_message(name), include_tabs=False
+            return None, self._base_result(
+                INCREMENTAL, FAIL, rp.EMPTY_CONTENT, self._stale_name_message(name), include_tabs=False
             )
 
         old_tree = self._prev_trees.get(target_id) or self.capture_tree(target_id)
         key = registry.lookup(name)
         node = next((n for n in old_tree.nodes if n.key == key), None)
         if node is None:
-            return self._base_result(
-                INCREMENTAL, FAIL, "无", self._stale_name_message(name), include_tabs=False
+            return None, self._base_result(
+                INCREMENTAL, FAIL, rp.EMPTY_CONTENT, self._stale_name_message(name), include_tabs=False
             )
 
         category = classify(node)
-        if fill and category not in ("input", "select"):
-            # ``fill`` only means anything on an input or a native select. On a
-            # click-only element the old code silently dropped the text and still
-            # reported success, so the model believed it had filled a field that
-            # never changed. Fail loudly with actionable guidance instead.
-            return self._base_result(
+        if category not in allowed:
+            target_tool = self._SPLIT_CATEGORY_TOOL.get(category, "")
+            return None, self._base_result(
                 INCREMENTAL,
                 FAIL,
-                "无",
-                f"互动元素 {name} 不是可填入元素（它是「{self._category_label(category)}」类），"
-                f"fill 参数未执行；请改为对可输入/可选择元素填值，或先点击该元素。",
+                rp.EMPTY_CONTENT,
+                rp.category_mismatch(name, category, allowed[0], target_tool),
                 include_tabs=False,
             )
+
         old_lines = self.serialize_lines_tree(old_tree, target_id)
-        old_focus = self.focused_target_id
         old_name = self._name_for_target(target_id)
         old_target_ids = {t["targetId"] for t in self._live_targets()}
-        fill_error = ""
-        fill_notice = ""
-        dialog = {"type": "", "message": ""}
-        before_sig = ""
-        after_sig = ""
-        click_noop = False
 
         try:
             session = self.client.attach(target_id)
             self.client.enable_page_domains(session)
-            executor = ActionExecutor(self.client, session)
-            if category == "input":
-                executor.input_text(node.backend_node_id, fill)
-                self._stabilize(target_id)
-                # A fill can be silently swallowed (a readonly input, or a date /
-                # time picker that only accepts calendar selection). Reporting
-                # success on an unchanged field sent the LLM into long, confused
-                # retries, so verify the value actually landed and fail loudly if
-                # it did not.
-                if fill:
-                    current = executor.read_value(node.backend_node_id)
-                    date_like = _is_date_like_input(node)
-                    if date_like and not _looks_like_date(fill):
-                        # ``至今`` / ``present`` typed into a picker: the input
-                        # echoes the text but no date is committed (the form keeps
-                        # showing its "请选择…" error). Fail with actionable
-                        # guidance instead of letting the model move on.
-                        fill_error = self._date_fill_error(name, fill)
-                    elif not _fills_same(fill, current):
-                        fill_error = (
-                            f"元素 {name} 的填充未生效：填入了「{fill}」，"
-                            f"但控件当前值为「{current or '空'}」。"
-                            f"该控件可能是只读、或日期/时间选择器，无法用 fill 直接写入；"
-                            f"请点击它之后在弹出的选择器里选择，或改为对其它可输入元素填值。"
-                        )
-                    elif date_like:
-                        # The picker may display typed text without committing it;
-                        # blur to force a re-render, then re-read: a committed
-                        # value survives, an uncommitted one reverts (typically to
-                        # empty / the old value).
-                        executor.blur(node.backend_node_id)
-                        self._stabilize(target_id)
-                        current = executor.read_value(node.backend_node_id)
-                        if not _fills_same(fill, current):
-                            fill_error = self._date_fill_error(name, fill, current)
-                    elif (
-                        node.tag == "input"
-                        and node.role == "combobox"
-                        and "readonly" not in node.attributes
-                    ):
-                        # A searchable select's typeahead: typing only *filters*
-                        # the candidate list, it does not commit a choice.
-                        fill_notice = (
-                            f"[提示] 已把「{fill}」输入到搜索框用于筛选；"
-                            f"**仅输入不会提交选择**，请在随后出现的候选项里点击目标项才算填入。"
-                        )
-                if press_enter and not fill_error:
-                    # A bare search box may have no submit button at all: only
-                    # pressing Enter submits it. Treat it like a click (wait for a
-                    # possible navigation / async result) instead of just tapping
-                    # the key and returning a stale diff.
-                    with self._watch_navigation(session) as nav_state:
-                        executor.press_enter()
-                        self._settle_navigation(session, nav_state, True)
-            elif category == "select":
-                # A native ``<select>``: its popup is drawn by the browser/OS and
-                # is not part of the DOM, so a click produces no diff and options
-                # cannot be clicked. The only reliable operation is to select the
-                # option whose text (or value) matches ``fill``.
-                options = self._select_option_texts(node)
-                if fill:
-                    executor.select_option(node.backend_node_id, fill)
-                    self._stabilize(target_id)
-                    current = executor.read_select_text(node.backend_node_id)
-                    if not _fills_same(fill, current):
-                        fill_error = self._select_fill_error(name, fill, current, options)
-                else:
-                    # Do not click: it would open an uncapturable native popup
-                    # and still report "（页面无变化）". Explain the operation.
-                    fill_notice = self._select_click_notice(name, options)
-            elif category == "drag":
-                executor.drag(node.backend_node_id, drag_pct)
-                self._stabilize(target_id)
-            elif category == "scroll":
-                scroller = (
-                    _PageScroller(executor)
-                    if node.tag == PAGE_SCROLL_TAG
-                    else _ContainerScroller(executor, node.backend_node_id)
-                )
-                direction, steps = self._scroll_plan(scroll_delta)
-                diff = self._scroll_and_collect(
-                    scroller,
-                    target_id,
-                    old_lines,
-                    registry,
-                    direction=direction,
-                    max_steps=steps,
-                )
-                notice = self._title_change_notice(target_id, old_name).strip()
-                content = "\n\n".join(p for p in (notice, diff) if p)
-                return self._base_result(INCREMENTAL, OK, content, include_tabs=False)
-            else:
-                # A click may trigger a navigation; wait for it to actually
-                # begin/finish instead of trusting the stale DOM's quietness.
-                retry_id = (
-                    self._alternative_click_target(node)
-                    if is_cursor_pointer_only(node)
-                    else None
-                )
-                # Snapshot the DOM before acting so we can tell a real change
-                # from a no-op. Park the mouse *and* blur focus first: our own
-                # hover move and the click's focus shift can toggle classes /
-                # trigger re-renders, changing ``outerHTML`` with no functional
-                # change, which used to defeat the no-op check entirely (a dead
-                # click on a radio icon then looked like success).
-                #
-                # The one thing we must NOT neutralise is an overlay the click is
-                # *inside*: clicking an option in an open dropdown must keep that
-                # dropdown alive, or the blur below closes it and the click lands
-                # on nothing (reported as a no-op).
-                #
-                # The same applies to a click that *opens* a self-drawn popup: the
-                # trigger carries ``aria-haspopup`` / ``role=combobox`` (often as a
-                # descendant of the visible selector), and the component library
-                # closes its popup on ``blur``. Neutralising around it dismissed the
-                # options before capture, which surfaced as "（页面无变化）" / "结构
-                # 变化但无新增互动元素" and sent the model into repeated clicks. So
-                # such a trigger is treated like an overlay click and never blurred.
-                overlay_before = self._overlay_open(session)
-                inside_overlay = (
-                    executor.element_inside_overlay(node.backend_node_id)
-                    if overlay_before
-                    else False
-                )
-                popup_trigger = executor.is_popup_trigger(node.backend_node_id)
-                if not inside_overlay and not popup_trigger:
-                    executor.blur_active()
-                    executor.park_mouse()
-                before_sig = executor.dom_signature()
-                # A same-document link (active nav item / in-page hash) must not
-                # pay the full navigation grace: it either fires a soft event or
-                # does nothing.
-                click_may_nav = may_navigate(node)
-                if click_may_nav and _href_targets_same_document(node, old_tree.url):
-                    click_may_nav = False
-                with self._handle_dialogs(session) as dialog:
-                    with self._watch_navigation(session) as nav_state:
-                        executor.click(node.backend_node_id)
-                        self._settle_navigation(session, nav_state, click_may_nav)
-                    if inside_overlay:
-                        # We clicked inside an already-open popup (an option /
-                        # menu item). Do NOT neutralise: ``blur_active`` would
-                        # dismiss it before the capture. A popup interaction is
-                        # itself proof the click was real.
-                        click_noop = False
-                    elif popup_trigger:
-                        # We clicked a popup trigger. Keep the popup alive (no
-                        # blur/park) and give it a bounded moment to paint, so the
-                        # capture sees its options instead of an empty diff.
-                        self._wait_overlay_open(session)
-                        click_noop = False
-                    elif (not overlay_before) and self._overlay_open(session):
-                        # The click opened a real overlay (custom dropdown / menu
-                        # / calendar) that is not a declared trigger. Same rule:
-                        # leave it open for the capture.
-                        click_noop = False
-                    else:
-                        executor.blur_active()
-                        executor.park_mouse()
-                        if before_sig:
-                            after_sig = executor.dom_signature()
-                            if after_sig and after_sig == before_sig:
-                                # The click changed nothing. Retry on the real
-                                # control: a preceding sibling icon (radio/checkbox
-                                # rows whose label is a no-op), else the actionable
-                                # descendant of a wrapper (handler bound to an inner
-                                # icon that a wrapper click cannot reach). Only the
-                                # brittle component shapes (plain ``cursor:pointer``
-                                # spans / icon controls) are retried, so a real
-                                # disabled button is not re-fired.
-                                if retry_id is not None:
-                                    with self._watch_navigation(session) as nav_state:
-                                        executor.click(retry_id)
-                                        self._settle_navigation(session, nav_state)
-                                elif is_cursor_pointer_only(node) or is_control_icon(node):
-                                    executor.js_click(node.backend_node_id)
-                                    self._stabilize(target_id)
-                                else:
-                                    click_noop = True
-                                if not click_noop:
-                                    executor.blur_active()
-                                    executor.park_mouse()
-                                    after_sig = executor.dom_signature()
-                                    click_noop = not (after_sig and after_sig != before_sig)
-        except ActionError as exc:
-            return self._base_result(INCREMENTAL, FAIL, "无", str(exc), include_tabs=False)
         except CDPError as exc:
-            return self._base_result(INCREMENTAL, FAIL, "无", str(exc), include_tabs=False)
+            return None, self._base_result(
+                INCREMENTAL, FAIL, rp.EMPTY_CONTENT, str(exc), include_tabs=False
+            )
+        executor = ActionExecutor(self.client, session)
+
+        return (
+            _InteractContext(
+                name=name,
+                target_id=target_id,
+                registry=registry,
+                node=node,
+                old_tree=old_tree,
+                old_lines=old_lines,
+                old_name=old_name,
+                old_target_ids=old_target_ids,
+                session=session,
+                executor=executor,
+            ),
+            None,
+        )
+
+    def _run_click(self, ctx: _InteractContext) -> dict:
+        node = ctx.node
+        executor = ctx.executor
+        session = ctx.session
+        target_id = ctx.target_id
+        old_tree = ctx.old_tree
+        before_sig = ""
+        after_sig = ""
+        click_noop = False
+
+        # A click may trigger a navigation; wait for it to actually begin/finish
+        # instead of trusting the stale DOM's quietness.
+        retry_id = (
+            self._alternative_click_target(node)
+            if is_cursor_pointer_only(node)
+            else None
+        )
+        # Snapshot the DOM before acting so we can tell a real change from a
+        # no-op. Park the mouse *and* blur focus first: our own hover move and
+        # the click's focus shift can toggle classes / trigger re-renders,
+        # changing ``outerHTML`` with no functional change.
+        #
+        # The one thing we must NOT neutralise is an overlay the click is
+        # *inside* (an open dropdown option) or a click that *opens* a
+        # self-drawn popup (``aria-haspopup`` / ``role=combobox``): blurring
+        # would dismiss it before the capture.
+        overlay_before = self._overlay_open(session)
+        inside_overlay = (
+            executor.element_inside_overlay(node.backend_node_id)
+            if overlay_before
+            else False
+        )
+        popup_trigger = executor.is_popup_trigger(node.backend_node_id)
+        if not inside_overlay and not popup_trigger:
+            executor.blur_active()
+            executor.park_mouse()
+        before_sig = executor.dom_signature()
+        # A same-document link (active nav item / in-page hash) must not pay the
+        # full navigation grace: it either fires a soft event or does nothing.
+        click_may_nav = may_navigate(node)
+        if click_may_nav and _href_targets_same_document(node, old_tree.url):
+            click_may_nav = False
+        with self._handle_dialogs(session) as dialog:
+            with self._watch_navigation(session) as nav_state:
+                executor.click(node.backend_node_id)
+                self._settle_navigation(session, nav_state, click_may_nav)
+            if inside_overlay:
+                # Clicked inside an already-open popup: a popup interaction is
+                # itself proof the click was real.
+                click_noop = False
+            elif popup_trigger:
+                # Keep the just-opened popup alive (no blur/park) and let it
+                # paint before the capture.
+                self._wait_overlay_open(session)
+                click_noop = False
+            elif (not overlay_before) and self._overlay_open(session):
+                # The click opened a real overlay: leave it open for capture.
+                click_noop = False
+            else:
+                executor.blur_active()
+                executor.park_mouse()
+                if before_sig:
+                    after_sig = executor.dom_signature()
+                    if after_sig and after_sig == before_sig:
+                        # The click changed nothing. Retry on the real control:
+                        # a preceding sibling icon, else the actionable
+                        # descendant of a wrapper.
+                        if retry_id is not None:
+                            with self._watch_navigation(session) as nav_state:
+                                executor.click(retry_id)
+                                self._settle_navigation(session, nav_state)
+                        elif is_cursor_pointer_only(node) or is_control_icon(node):
+                            executor.js_click(node.backend_node_id)
+                            self._stabilize(target_id)
+                        else:
+                            click_noop = True
+                        if not click_noop:
+                            executor.blur_active()
+                            executor.park_mouse()
+                            after_sig = executor.dom_signature()
+                            click_noop = not (after_sig and after_sig != before_sig)
+        return {
+            "fill_error": "",
+            "fill_notice": "",
+            "dialog": dialog,
+            "click_noop": click_noop,
+            "before_sig": before_sig,
+            "after_sig": after_sig,
+        }
+
+    def _run_fill(
+        self, ctx: _InteractContext, fill: str, press_enter: bool = False
+    ) -> dict:
+        node = ctx.node
+        executor = ctx.executor
+        target_id = ctx.target_id
+        name = ctx.name
+        fill_error = ""
+        fill_notice = ""
+        executor.input_text(node.backend_node_id, fill)
+        self._stabilize(target_id)
+        # A fill can be silently swallowed (a readonly input, or a date / time
+        # picker that only accepts calendar selection). Verify the value landed
+        # and fail loudly if it did not.
+        if fill:
+            current = executor.read_value(node.backend_node_id)
+            date_like = _is_date_like_input(node)
+            if date_like and not _looks_like_date(fill):
+                fill_error = self._date_fill_error(name, fill)
+            elif not _fills_same(fill, current):
+                fill_error = rp.fill_not_effective(name, fill, current)
+            elif date_like:
+                # The picker may display typed text without committing it; blur
+                # to force a re-render, then re-read.
+                executor.blur(node.backend_node_id)
+                self._stabilize(target_id)
+                current = executor.read_value(node.backend_node_id)
+                if not _fills_same(fill, current):
+                    fill_error = self._date_fill_error(name, fill, current)
+            elif (
+                node.tag == "input"
+                and node.role == "combobox"
+                and "readonly" not in node.attributes
+            ):
+                # A searchable select's typeahead: typing only filters the
+                # candidate list, it does not commit a choice.
+                fill_notice = rp.typeahead_filter_notice(fill)
+        if press_enter and not fill_error:
+            # A bare search box may have no submit button at all: only pressing
+            # Enter submits it. Treat it like a click (wait for a possible
+            # navigation / async result).
+            with self._watch_navigation(ctx.session) as nav_state:
+                executor.press_enter()
+                self._settle_navigation(ctx.session, nav_state, True)
+        return {
+            "fill_error": fill_error,
+            "fill_notice": fill_notice,
+            "dialog": {"type": "", "message": ""},
+        }
+
+    def _run_select(self, ctx: _InteractContext, fill: str) -> dict:
+        node = ctx.node
+        executor = ctx.executor
+        target_id = ctx.target_id
+        name = ctx.name
+        fill_error = ""
+        fill_notice = ""
+        # A native ``<select>``: its popup is drawn by the browser/OS and is not
+        # part of the DOM, so the only reliable operation is to select the
+        # option whose text (or value) matches ``fill``.
+        options = self._select_option_texts(node)
+        if fill:
+            executor.select_option(node.backend_node_id, fill)
+            self._stabilize(target_id)
+            current = executor.read_select_text(node.backend_node_id)
+            if not _fills_same(fill, current):
+                fill_error = self._select_fill_error(name, fill, current, options)
+        else:
+            # Do not click: it would open an uncapturable native popup and still
+            # report "（页面无变化）". Explain the operation instead.
+            fill_notice = self._select_click_notice(name, options)
+        return {
+            "fill_error": fill_error,
+            "fill_notice": fill_notice,
+            "dialog": {"type": "", "message": ""},
+        }
+
+    def _run_drag(self, ctx: _InteractContext, drag_pct: int) -> dict:
+        ctx.executor.drag(ctx.node.backend_node_id, drag_pct)
+        self._stabilize(ctx.target_id)
+        return {
+            "fill_error": "",
+            "fill_notice": "",
+            "dialog": {"type": "", "message": ""},
+        }
+
+    def _run_scroll(self, ctx: _InteractContext, scroll_delta: int) -> dict:
+        node = ctx.node
+        executor = ctx.executor
+        target_id = ctx.target_id
+        scroller = (
+            _PageScroller(executor)
+            if node.tag == PAGE_SCROLL_TAG
+            else _ContainerScroller(executor, node.backend_node_id)
+        )
+        direction, steps = self._scroll_plan(scroll_delta)
+        diff = self._scroll_and_collect(
+            scroller,
+            target_id,
+            ctx.old_lines,
+            ctx.registry,
+            direction=direction,
+            max_steps=steps,
+        )
+        notice = self._title_change_notice(target_id, ctx.old_name).strip()
+        content = "\n\n".join(p for p in (notice, diff) if p)
+        return self._base_result(INCREMENTAL, OK, content, include_tabs=False)
+
+    def _finish_interaction(self, ctx: _InteractContext, extras: dict) -> dict:
+        target_id = ctx.target_id
+        old_tree = ctx.old_tree
+        old_lines = ctx.old_lines
+        old_name = ctx.old_name
+        old_target_ids = ctx.old_target_ids
+        fill_error = extras.get("fill_error", "")
+        fill_notice = extras.get("fill_notice", "")
+        dialog = extras.get("dialog") or {"type": "", "message": ""}
+        click_noop = bool(extras.get("click_noop", False))
+        before_sig = extras.get("before_sig", "")
+        after_sig = extras.get("after_sig", "")
 
         new_focus = self._resolve_focused_target()
-        if new_focus and new_focus != old_focus:
+        if new_focus and new_focus != target_id:
             new_tree = self.capture_tree(new_focus)
             new_text = self.serialize_tree(new_tree, new_focus)
             if self._is_blank_shell(new_tree):
@@ -1013,17 +1023,11 @@ class BrowserController:
                 FULL,
                 FAIL if fill_error else OK,
                 self._dialog_notice(dialog) + (fill_notice + "\n\n" if fill_notice else "") + new_text,
-                error=fill_error or "无",
+                error=fill_error or rp.NO_ERROR,
                 include_tabs=True,
             )
 
-        # The click may have opened a background tab without moving focus. The
-        # focused page then looks unchanged and an incremental diff would read
-        # "（页面无变化）", which falsely implies nothing happened; tell the LLM
-        # explicitly and hand it the full tab list instead. A page-driven
-        # ``window.open`` can register its target *after* the click settled, so
-        # this check runs after the (time-consuming) DOM capture, and the no-change
-        # path additionally polls briefly (see ``_await_opened_tabs``).
+
         new_tree = self.capture_tree(target_id)
         notice = (
             self._dialog_notice(dialog)
@@ -1033,47 +1037,101 @@ class BrowserController:
         content = self._incremental_content(
             old_lines, new_tree, target_id, notice, old_url=old_tree.url
         )
+
+        # The click may have opened a background tab without moving focus. The
+        # focused page then looks unchanged, so tell the LLM explicitly and hand
+        # it the full tab list instead.
         opened_names = self._opened_tab_names(old_target_ids)
-        # A click that closes a popup / clears a selection removes content; the
-        # diff only reports additions, so it would read "（页面无变化）" and the LLM
-        # would mistake a real toggle for a dead click. If the raw markup did
-        # change, say so explicitly.
+
         if not opened_names and click_noop:
-            # The (hover-neutral) markup is byte-identical before/after: the click
-            # did not change the page markup. But the *serialized* viewport can
-            # still differ — most often because the click scrolled the page (a
-            # validation ``scrollIntoView``), which ``outerHTML`` does not reflect.
-            # Only claim "no change" when the new lines carry no text that was not
-            # already there (a pure element-renumbering diff); otherwise trust the
-            # diff, so the model is not told "nothing happened" while staring at
-            # newly revealed fields.
             opened_names = self._await_opened_tabs(old_target_ids)
             if not opened_names:
                 new_lines = self.serialize_lines_tree(new_tree, target_id)
                 if not _lines_have_new_text(old_lines, new_lines):
-                    content = self._click_noop_notice(node) + "\n\n" + content
-        elif not opened_names and before_sig and "（页面无变化）" in content:
+                    content = rp.CLICK_NOOP_NOTICE + "\n\n" + content
+
+        # A click that closes a popup / clears a selection removes content; the
+        # diff only reports additions, so say so explicitly rather than a
+        # misleading "（页面无变化）".
+        elif not opened_names and before_sig and rp.PAGE_NO_CHANGE in content:
             if after_sig and after_sig != before_sig:
-                content += (
-                    "\n\n[提示] 页面结构确实发生了变化，但没有新增的可见文本/互动元素"
-                    "（常见于：关闭了浮层/下拉、取消选中，或仅状态/样式变化）。"
-                )
+                content += rp.STRUCTURE_CHANGED_NOTICE
             else:
                 opened_names = self._await_opened_tabs(old_target_ids)
         if opened_names:
             extra = self._new_tab_notice(opened_names)
             # When the focused page did change, keep it and append the hint;
-            # when it did not, the new tab *is* the outcome — replace the
-            # misleading "（页面无变化）".
-            content = extra if "（页面无变化）" in content else content + "\n\n" + extra
+            # when it did not, the new tab *is* the outcome.
+            content = extra if rp.PAGE_NO_CHANGE in content else content + "\n\n" + extra
             return self._base_result(
                 INCREMENTAL, FAIL if fill_error else OK, content,
-                error=fill_error or "无", include_tabs=True,
+                error=fill_error or rp.NO_ERROR, include_tabs=True,
             )
         return self._base_result(
             INCREMENTAL, FAIL if fill_error else OK, content,
-            error=fill_error or "无", include_tabs=False,
+            error=fill_error or rp.NO_ERROR, include_tabs=False,
         )
+
+    def interact_click(self, name: str) -> dict:
+        """与单个『可点击元素』互动，返回增量 DOM。"""
+        ctx, err = self._begin_interaction(name, allowed=("click",))
+        if err is not None:
+            return err
+        assert ctx is not None
+        try:
+            extras = self._run_click(ctx)
+        except (ActionError, CDPError) as exc:
+            return self._base_result(INCREMENTAL, FAIL, rp.EMPTY_CONTENT, str(exc), include_tabs=False)
+        return self._finish_interaction(ctx, extras)
+
+    def interact_fill_in(
+        self, name: str, fill: str = "", press_enter: bool = False
+    ) -> dict:
+        """对单个『可输入元素』填写内容（可选填完按回车），返回增量 DOM。"""
+        ctx, err = self._begin_interaction(name, allowed=("input",))
+        if err is not None:
+            return err
+        assert ctx is not None
+        try:
+            extras = self._run_fill(ctx, fill, press_enter)
+        except (ActionError, CDPError) as exc:
+            return self._base_result(INCREMENTAL, FAIL, rp.EMPTY_CONTENT, str(exc), include_tabs=False)
+        return self._finish_interaction(ctx, extras)
+
+    def interact_select(self, name: str, fill: str = "") -> dict:
+        """对单个『可选择元素』（原生下拉）选择选项文字，返回增量 DOM。"""
+        ctx, err = self._begin_interaction(name, allowed=("select",))
+        if err is not None:
+            return err
+        assert ctx is not None
+        try:
+            extras = self._run_select(ctx, fill)
+        except (ActionError, CDPError) as exc:
+            return self._base_result(INCREMENTAL, FAIL, rp.EMPTY_CONTENT, str(exc), include_tabs=False)
+        return self._finish_interaction(ctx, extras)
+
+    def interact_scroll(self, name: str, scroll_delta: int = 0) -> dict:
+        """对单个『可滚动元素』滚动，返回滚动新增内容。"""
+        ctx, err = self._begin_interaction(name, allowed=("scroll",))
+        if err is not None:
+            return err
+        assert ctx is not None
+        try:
+            return self._run_scroll(ctx, scroll_delta)
+        except (ActionError, CDPError) as exc:
+            return self._base_result(INCREMENTAL, FAIL, rp.EMPTY_CONTENT, str(exc), include_tabs=False)
+
+    def interact_drag(self, name: str, drag_pct: int = 0) -> dict:
+        """对单个『可拖动元素』拖动到指定百分比位置，返回增量 DOM。"""
+        ctx, err = self._begin_interaction(name, allowed=("drag",))
+        if err is not None:
+            return err
+        assert ctx is not None
+        try:
+            extras = self._run_drag(ctx, drag_pct)
+        except (ActionError, CDPError) as exc:
+            return self._base_result(INCREMENTAL, FAIL, rp.EMPTY_CONTENT, str(exc), include_tabs=False)
+        return self._finish_interaction(ctx, extras)
 
     def _scroll_and_collect(
         self,
@@ -1138,15 +1196,14 @@ class BrowserController:
 
         added = _dedupe_scroll_fragments(added)
         if not added:
-            where = "底部" if down else "顶部"
             if not moved:
                 # Tell the model *why* nothing changed instead of a bare
                 # "（页面无变化）" it cannot act on: it is already at the end, or
                 # the element is not a scroller.
-                return f"（已到{where}或该元素当前不可滚动：没有新的可见内容）"
+                return rp.scroll_no_new_content(down)
             if at_boundary:
-                return f"（已滚动到{where}，但没有新增可见内容）"
-            return "（页面无变化）"
+                return rp.scroll_at_boundary(down)
+            return rp.PAGE_NO_CHANGE
         content = format_lines(added)
         lost_text = format_lost(compute_lost(base_lines, prev_lines, registry))
         if lost_text:
@@ -1187,25 +1244,15 @@ class BrowserController:
     def _unknown_name_message(self, name: str) -> str:
         focus = self.focused_tab_label()
         other = self._foreign_tab_for_name(name, self.focused_target_id or "")
-        if other:
-            return (
-                f"互动元素 {name} 不属于当前聚焦标签页（{focus or '未知'}），"
-                f"而属于「{other}」；请先用 tool_4_switch_tab 切换到该标签页再互动。"
-            )
-        return f"未知的互动元素名称 {name}"
+        return rp.unknown_name_message(name, focus, other)
 
     def _stale_name_message(self, name: str) -> str:
         focus = self.focused_tab_label()
         other = self._foreign_tab_for_name(name, self.focused_target_id or "")
-        if other:
-            return (
-                f"互动元素 {name} 在当前聚焦标签页（{focus or '未知'}）中已不存在，"
-                f"它属于「{other}」；如需继续，请先用 tool_4_switch_tab 切换。"
-            )
-        return "该互动元素已经不存在于viewport中了"
+        return rp.stale_name_message(name, focus, other)
 
     # ------------------------------------------------------------------ #
-    # batch interaction (tool-10)
+    # batch interaction (tool-06)
     # ------------------------------------------------------------------ #
     def interact_many(self, name_list: list, fill_list: list) -> dict:
         """A sequence of fills plus an optional trailing click, run serially.
@@ -1224,15 +1271,14 @@ class BrowserController:
 
         if n_names == 0:
             return self._base_result(
-                INCREMENTAL, FAIL, "无", "name_list 不能为空", include_tabs=False
+                INCREMENTAL, FAIL, rp.EMPTY_CONTENT, rp.INTERACT_MANY_EMPTY, include_tabs=False
             )
         if n_fills not in (n_names, n_names - 1):
             return self._base_result(
                 INCREMENTAL,
                 FAIL,
-                "无",
-                "name_list 与 fill_list 长度不合法（应等长，或 name_list 比 fill_list 多一个）。"
-                "本工具不支持连续点击多个元素；若要连续点击，请对每个元素分别调用 tool_1_interact。",
+                rp.EMPTY_CONTENT,
+                rp.INTERACT_MANY_LENGTH,
                 include_tabs=False,
             )
 
@@ -1243,13 +1289,13 @@ class BrowserController:
         try:
             self.ensure_connected()
         except (BrowserLaunchError, CDPError) as exc:
-            return self._base_result(INCREMENTAL, FAIL, "无", str(exc), include_tabs=False)
+            return self._base_result(INCREMENTAL, FAIL, rp.EMPTY_CONTENT, str(exc), include_tabs=False)
 
         assert self.client is not None
         target_id = self._resolve_focused_target()
         if target_id is None:
             return self._base_result(
-                INCREMENTAL, FAIL, "无", "没有可用的标签页", include_tabs=False
+                INCREMENTAL, FAIL, rp.EMPTY_CONTENT, rp.NO_TABS, include_tabs=False
             )
         self._activate_target(target_id)
 
@@ -1263,14 +1309,14 @@ class BrowserController:
         for name in fill_names:
             node, err = self._resolve_interactive_node(registry, tree, name)
             if err:
-                return self._base_result(INCREMENTAL, FAIL, "无", err, include_tabs=False)
+                return self._base_result(INCREMENTAL, FAIL, rp.EMPTY_CONTENT, err, include_tabs=False)
             cat = classify(node)
             if cat not in ("input", "select"):
                 return self._base_result(
                     INCREMENTAL,
                     FAIL,
-                    "无",
-                    f"互动元素 {name} 不是可填入元素（它是「{self._category_label(cat)}」类）",
+                    rp.EMPTY_CONTENT,
+                    rp.not_fillable(name, cat),
                     include_tabs=False,
                 )
             if (
@@ -1286,17 +1332,14 @@ class BrowserController:
         if has_click:
             node, err = self._resolve_interactive_node(registry, tree, click_name)
             if err:
-                return self._base_result(INCREMENTAL, FAIL, "无", err, include_tabs=False)
+                return self._base_result(INCREMENTAL, FAIL, rp.EMPTY_CONTENT, err, include_tabs=False)
             click_cat = classify(node)
             if click_cat != "click":
                 return self._base_result(
                     INCREMENTAL,
                     FAIL,
-                    "无",
-                    f"name_list 比 fill_list 多一个时，多余的那个（{click_name}）会被当作"
-                    f"收尾点击；但 {click_name} 是「{self._category_label(click_cat)}」类，"
-                    "不是可点击元素。若它也需要填写，请为它补一个 fill_list 值；"
-                    "若不操作它，请把它从 name_list 去掉。",
+                    rp.EMPTY_CONTENT,
+                    rp.trailing_click_not_clickable(click_name, click_cat),
                     include_tabs=False,
                 )
             click_may_nav = may_navigate(node)
@@ -1314,7 +1357,7 @@ class BrowserController:
             session = self.client.attach(target_id)
             self.client.enable_page_domains(session)
         except CDPError as exc:
-            return self._base_result(INCREMENTAL, FAIL, "无", str(exc), include_tabs=False)
+            return self._base_result(INCREMENTAL, FAIL, rp.EMPTY_CONTENT, str(exc), include_tabs=False)
 
         executor = ActionExecutor(self.client, session)
         success_count = 0
@@ -1341,14 +1384,14 @@ class BrowserController:
                 _run_plan()
                 if error_msg and success_count == 0:
                     return self._base_result(
-                        INCREMENTAL, FAIL, "无", error_msg, include_tabs=False
+                        INCREMENTAL, FAIL, rp.EMPTY_CONTENT, error_msg, include_tabs=False
                     )
                 self._settle_navigation(session, nav_state, click_may_nav)
         else:
             _run_plan()
             if error_msg and success_count == 0:
                 return self._base_result(
-                    INCREMENTAL, FAIL, "无", error_msg, include_tabs=False
+                    INCREMENTAL, FAIL, rp.EMPTY_CONTENT, error_msg, include_tabs=False
                 )
             self._stabilize(target_id)
 
@@ -1422,11 +1465,7 @@ class BrowserController:
             new_tree = self.capture_tree(target_id)
             notice = self._title_change_notice(target_id, old_name)
             if typeahead_names:
-                notice += (
-                    "[提示] 以下元素是「可搜索下拉」："
-                    + "、".join(typeahead_names)
-                    + "。仅输入不会提交选择，请在随后出现的候选项里点击目标项才算填入。\n"
-                )
+                notice += rp.batch_typeahead_notice(typeahead_names)
             content = self._incremental_content(
                 old_lines, new_tree, target_id, notice, old_url=tree.url
             )
@@ -1440,9 +1479,9 @@ class BrowserController:
                     opened_names = late
                     extra = self._new_tab_notice(late)
                     content = (
-                        extra if "（页面无变化）" in content else content + "\n\n" + extra
+                        extra if rp.PAGE_NO_CHANGE in content else content + "\n\n" + extra
                     )
-                if not opened_names and "（页面无变化）" in content:
+                if not opened_names and rp.PAGE_NO_CHANGE in content:
                     opened_names = self._await_opened_tabs(old_target_ids)
                     if opened_names:
                         content = self._new_tab_notice(opened_names)
@@ -1457,20 +1496,14 @@ class BrowserController:
         if failed_fills or failed_selects:
             chunks: list[str] = []
             if failed_fills:
-                chunks.append(
-                    "以下元素的填充未生效："
-                    + "、".join(f"{n}（当前值：{c or '空'}）" for n, c in failed_fills)
-                    + "。它们可能是只读、或日期/时间选择器，无法用 fill 直接写入"
-                    "（日期选择器通常也不接受『至今』这类非日期文本）；"
-                    "请点击它之后在弹出的日历里选择具体日期，"
-                    "或先与用户确认该字段如何处理，或改用其它可输入元素。"
-                )
+                chunks.append(rp.failed_fills_message(failed_fills))
             if failed_selects:
                 chunks.append(
-                    "以下下拉选择未能选中："
-                    + "；".join(
-                        self._select_fill_error(n, fval, c, opts)
-                        for n, fval, c, opts in failed_selects
+                    rp.failed_selects_message(
+                        [
+                            rp.select_fill_error(n, fval, c, opts)
+                            for n, fval, c, opts in failed_selects
+                        ]
                     )
                 )
             return self._base_result(
@@ -1664,8 +1697,8 @@ class BrowserController:
         """Notice for an empty tree: distinguish a reset about:blank from loading."""
         url = (getattr(tree, "url", "") or "").strip()
         if not url or url == "about:blank":
-            return _ABOUT_BLANK_NOTICE
-        return _BLANK_SHELL_NOTICE
+            return rp.ABOUT_BLANK_NOTICE
+        return rp.BLANK_SHELL_NOTICE
 
     @contextlib.contextmanager
     def _watch_navigation(self, session: str):
@@ -1787,18 +1820,7 @@ class BrowserController:
 
     @staticmethod
     def _dialog_notice(seen: dict) -> str:
-        dtype = (seen or {}).get("type") or ""
-        if not dtype:
-            return ""
-        if dtype == "beforeunload":
-            return ""
-        message = (seen.get("message") or "").strip()
-        labels = {"alert": "警告", "confirm": "确认", "prompt": "输入"}
-        return (
-            f"[原生对话框] 页面弹出了{labels.get(dtype, dtype)}框"
-            + (f"：「{message}」" if message else "")
-            + "（已自动处理）。\n\n"
-        )
+        return rp.dialog_notice(seen)
 
     def _settle_navigation(
         self, session: str, state: dict, may_navigate: bool = True
@@ -1861,7 +1883,7 @@ class BrowserController:
         mode: str,
         action_ok: str,
         content: str,
-        error: str = "无",
+        error: str = rp.NO_ERROR,
         include_tabs: bool = True,
     ) -> dict:
         result = {
@@ -1880,7 +1902,7 @@ class BrowserController:
             self.ensure_connected()
             target_id = self._resolve_focused_target()
             if target_id is None:
-                return self._base_result(FULL, FAIL, "无", "没有可用的标签页")
+                return self._base_result(FULL, FAIL, rp.EMPTY_CONTENT, rp.NO_TABS)
             session = self.client.attach(target_id)
             self.client.enable_page_domains(session)
             self._wait_for_content(session, quiet=False)
@@ -1890,7 +1912,7 @@ class BrowserController:
                 content = self._blank_notice(tree) + content
             return self._base_result(FULL, action_ok, content)
         except (BrowserLaunchError, CDPError, RuntimeError) as exc:
-            return self._base_result(FULL, FAIL, "无", str(exc))
+            return self._base_result(FULL, FAIL, rp.EMPTY_CONTENT, str(exc))
 
     def list_tabs(self) -> dict:
         try:
@@ -1900,7 +1922,7 @@ class BrowserController:
             return {"tabs": [], "error": str(exc)}
 
     # ------------------------------------------------------------------ #
-    # navigation / tab tools (P2: tool-4 .. tool-8)
+    # navigation / tab tools ( tool-3x)
     # ------------------------------------------------------------------ #
     @staticmethod
     def _parse_tab_id(raw: str) -> str:
@@ -1994,15 +2016,15 @@ class BrowserController:
         return self._base_result(FULL, action_ok, content)
 
     def switch_tab(self, tab_id: str) -> dict:
-        """tool-4: focus an existing tab and return its full DOM."""
+        """tool_21_switch_tab: focus an existing tab and return its full DOM."""
         try:
             self.ensure_connected()
         except (BrowserLaunchError, CDPError) as exc:
-            return self._base_result(FULL, FAIL, "无", str(exc))
+            return self._base_result(FULL, FAIL, rp.EMPTY_CONTENT, str(exc))
         assert self.client is not None
         target_id = self._resolve_tab(tab_id)
         if target_id is None:
-            return self._base_result(FULL, FAIL, "无", f"未找到标签页 {tab_id}")
+            return self._base_result(FULL, FAIL, rp.EMPTY_CONTENT, rp.tab_not_found(tab_id))
         try:
             self._activate_target(target_id)
             self._wait_ready(target_id)
@@ -2015,7 +2037,7 @@ class BrowserController:
                 self._activate_target(target_id)
                 actual = self._resolve_focused_target()
         except (CDPError, RuntimeError) as exc:
-            return self._base_result(FULL, FAIL, "无", str(exc))
+            return self._base_result(FULL, FAIL, rp.EMPTY_CONTENT, str(exc))
         result = self._full_result_for(target_id)
         # If the browser refused to foreground the requested tab, do not pretend
         # the switch succeeded (that trapped the LLM in a switch/interact loop):
@@ -2026,15 +2048,15 @@ class BrowserController:
         return result
 
     def go_back(self) -> dict:
-        """tool-5: browser back button, return full DOM."""
+        """tool_30_go_back: browser back button, return full DOM."""
         try:
             self.ensure_connected()
         except (BrowserLaunchError, CDPError) as exc:
-            return self._base_result(FULL, FAIL, "无", str(exc))
+            return self._base_result(FULL, FAIL, rp.EMPTY_CONTENT, str(exc))
         assert self.client is not None
         target_id = self._resolve_focused_target()
         if target_id is None:
-            return self._base_result(FULL, FAIL, "无", "没有可用的标签页")
+            return self._base_result(FULL, FAIL, rp.EMPTY_CONTENT, rp.NO_TABS)
         self._activate_target(target_id)
         old_name = self._name_for_target(target_id)
         session = self.client.attach(target_id)
@@ -2042,11 +2064,11 @@ class BrowserController:
         try:
             history = self.client.send("Page.getNavigationHistory", {}, session_id=session)
         except CDPError as exc:
-            return self._base_result(FULL, FAIL, "无", str(exc))
+            return self._base_result(FULL, FAIL, rp.EMPTY_CONTENT, str(exc))
         index = history.get("currentIndex", 0)
         entries = history.get("entries", [])
         if index <= 0 or index >= len(entries):
-            return self._base_result(FULL, FAIL, "无", "无法返回：没有可回退的历史记录")
+            return self._base_result(FULL, FAIL, rp.EMPTY_CONTENT, rp.GO_BACK_NO_HISTORY)
         try:
             with self._handle_dialogs(session) as dialog:
                 with self._watch_navigation(session) as nav_state:
@@ -2057,21 +2079,21 @@ class BrowserController:
                     )
                     self._settle_navigation(session, nav_state)
         except CDPError as exc:
-            return self._base_result(FULL, FAIL, "无", str(exc))
+            return self._base_result(FULL, FAIL, rp.EMPTY_CONTENT, str(exc))
         result = self._full_result_for(target_id)
         result["content"] = self._dialog_notice(dialog) + self._title_change_notice(target_id, old_name) + result["content"]
         return result
 
     def refresh(self) -> dict:
-        """tool-6: reload current tab, return incremental diff."""
+        """tool_31_refresh: reload current tab, return incremental diff."""
         try:
             self.ensure_connected()
         except (BrowserLaunchError, CDPError) as exc:
-            return self._base_result(INCREMENTAL, FAIL, "无", str(exc), include_tabs=False)
+            return self._base_result(INCREMENTAL, FAIL, rp.EMPTY_CONTENT, str(exc), include_tabs=False)
         assert self.client is not None
         target_id = self._resolve_focused_target()
         if target_id is None:
-            return self._base_result(INCREMENTAL, FAIL, "无", "没有可用的标签页", include_tabs=False)
+            return self._base_result(INCREMENTAL, FAIL, rp.EMPTY_CONTENT, rp.NO_TABS, include_tabs=False)
         self._activate_target(target_id)
         old_tree = self._prev_trees.get(target_id) or self.capture_tree(target_id)
         old_lines = self.serialize_lines_tree(old_tree, target_id)
@@ -2084,7 +2106,7 @@ class BrowserController:
                     self.client.send("Page.reload", {"ignoreCache": False}, session_id=session)
                     self._settle_navigation(session, nav_state)
         except CDPError as exc:
-            return self._base_result(INCREMENTAL, FAIL, "无", str(exc), include_tabs=False)
+            return self._base_result(INCREMENTAL, FAIL, rp.EMPTY_CONTENT, str(exc), include_tabs=False)
         new_tree = self.capture_tree(target_id)
         notice = self._dialog_notice(dialog) + self._title_change_notice(target_id, old_name)
         content = self._incremental_content(
@@ -2093,7 +2115,7 @@ class BrowserController:
         return self._base_result(INCREMENTAL, OK, content, include_tabs=False)
 
     def close_tab(self, tab_id: str) -> dict:
-        """tool-7: close a tab, return the remaining tab list."""
+        """tool_32_close_tab: close a tab, return the remaining tab list."""
         try:
             self.ensure_connected()
         except (BrowserLaunchError, CDPError) as exc:
@@ -2101,7 +2123,7 @@ class BrowserController:
         assert self.client is not None
         target_id = self._resolve_tab(tab_id)
         if target_id is None:
-            return {"tabs": self.tab_labels(), "error": f"未找到标签页 {tab_id}"}
+            return {"tabs": self.tab_labels(), "error": rp.tab_not_found(tab_id)}
         try:
             self.client.send("Target.closeTarget", {"targetId": target_id})
         except CDPError as exc:
@@ -2120,15 +2142,15 @@ class BrowserController:
         return {"tabs": self.tab_labels()}
 
     def navigate(self, url: str) -> dict:
-        """tool-8: open a new tab at the given URL, return its full DOM."""
+        """tool_33_navigate: open a new tab at the given URL, return its full DOM."""
         try:
             self.ensure_connected()
         except (BrowserLaunchError, CDPError) as exc:
-            return self._base_result(FULL, FAIL, "无", str(exc))
+            return self._base_result(FULL, FAIL, rp.EMPTY_CONTENT, str(exc))
         assert self.client is not None
         target_url = (url or "").strip()
         if not target_url:
-            return self._base_result(FULL, FAIL, "无", "地址为空")
+            return self._base_result(FULL, FAIL, rp.EMPTY_CONTENT, rp.EMPTY_URL)
         if not target_url.startswith(
             ("http://", "https://", "file://", "about:", "data:", "chrome://", "view-source:")
         ):
@@ -2139,7 +2161,7 @@ class BrowserController:
             )
             target_id = result["targetId"]
         except CDPError as exc:
-            return self._base_result(FULL, FAIL, "无", str(exc))
+            return self._base_result(FULL, FAIL, rp.EMPTY_CONTENT, str(exc))
         self.focused_target_id = target_id
         try:
             self._activate_target(target_id)
@@ -2151,7 +2173,7 @@ class BrowserController:
             # raw CDP error, so the LLM can retry rather than treat the browser
             # as broken.
             return self._base_result(
-                FULL, FAIL, "无", f"新标签页已创建但暂时无法连接：{exc}", include_tabs=True
+                FULL, FAIL, rp.EMPTY_CONTENT, rp.new_tab_unreachable(exc), include_tabs=True
             )
         actual = self._resolve_focused_target()
         if actual is not None and actual != target_id:

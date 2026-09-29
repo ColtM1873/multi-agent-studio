@@ -13,15 +13,19 @@ from __future__ import annotations
 from fastapi import APIRouter
 from pydantic import BaseModel
 
-from app.runtime.browser_takeover import (
-    STOP_TEXT,
+from app.runtime.browser_tools_privacy_mask import make_sensitive_masker
+from app.runtime.browser_tools_wrap_up import (
+    PAUSE_PROMPT,
     _apply_browser_timing,
-    browser_status,
     is_paused,
-    make_sensitive_masker,
     set_paused,
+)
+from app.runtime.browser_tools_api import (
+    browser_status,
     warmup_browser,
 )
+
+
 from app.runtime.floating_stop import FloatingStop
 
 router = APIRouter(prefix="/api/browser", tags=["browser"])
@@ -77,10 +81,10 @@ def get_status():
 def open_browser(body: AgentBody | None = None):
     """打开（或复用）浏览器，并显示系统级浮动按钮。返回是否就绪与实际端口。"""
     try:
-        from browser_agent import tool_0_open_browser
+        from browser_agent.controller import BrowserController,NOT_CALLED
 
         _apply_browser_timing()
-        tool_0_open_browser()  # ensure_connected：复用或启动
+        BrowserController.instance().full_dom(action_ok=NOT_CALLED)  # ensure_connected：复用或启动
         # 提前完成首次互动所需的一次性加载/准备（预导入、attach、轻量 evaluate）。
         warmup_browser()
         connected, port = browser_status()
@@ -114,19 +118,19 @@ def floating(body: FloatingBody):
 
 @router.post("/viewport-dom")
 def viewport_dom(body: AgentBody | None = None):
-    """调用 tool-2：返回当前聚焦标签页 viewport 的全量 DOM（前端拼进输入框）。"""
+    """返回当前聚焦标签页 viewport 的全量 DOM（前端拼进输入框）。"""
     if is_paused():
-        return {"ok": False, "content": "", "error": STOP_TEXT}
+        return {"ok": False, "content": "", "error": PAUSE_PROMPT}
     allow_open = True if body is None else body.allow_open
     if not allow_open:
         connected, port = browser_status()
         if not connected:
             return {"ok": False, "content": "", "error": "浏览器未打开", "port": port}
     try:
-        from browser_agent import tool_2_get_viewport_dom
+        from browser_agent.controller import BrowserController,NOT_CALLED
 
         _apply_browser_timing()
-        result = tool_2_get_viewport_dom()
+        result = BrowserController.instance().full_dom(action_ok=NOT_CALLED)
         if browser_status()[0]:
             _show_floating(body.agent_id if body else None)
         content = result.get("content") or ""

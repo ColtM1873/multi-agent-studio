@@ -192,7 +192,7 @@ class FloatingStop:
         def browser_connected() -> bool:
             """探测浏览器 CDP 端口是否仍可应答；探测不可用时保守返回 True（不误隐藏）。"""
             try:
-                from app.runtime.browser_takeover import browser_status
+                from app.runtime.browser_tools_api import browser_status
 
                 return bool(browser_status()[0])
             except Exception:  # noqa: BLE001
@@ -205,7 +205,7 @@ class FloatingStop:
             canvas.itemconfigure(action_id, text="继续" if paused else "停止")
 
         def on_ball_click(_evt=None) -> None:
-            from app.runtime.browser_takeover import is_paused, set_paused
+            from app.runtime.browser_tools_wrap_up import is_paused, set_paused
 
             set_paused(not is_paused())
             apply_state(is_paused())
@@ -242,7 +242,7 @@ class FloatingStop:
         root.geometry(f"{WIN_W}x{WIN_H}+{x}+{y}")
 
         def drain() -> None:
-            from app.runtime.browser_takeover import is_paused, set_paused
+            from app.runtime.browser_tools_wrap_up import is_paused, set_paused
 
             try:
                 while True:
