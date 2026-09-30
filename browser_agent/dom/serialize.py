@@ -35,6 +35,7 @@ from .classify import (
     is_clickable,
     is_control_icon,
     is_cursor_pointer_only,
+    is_custom_select_input,
     is_searchable_typeahead,
 )
 from .registry import NameRegistry
@@ -142,12 +143,44 @@ _BLOCK_DISPLAY_PREFIXES = (
 
 CATEGORY_TAGS = {
     "click": ("可点击元素", "点击"),
+    "clickdropdown": ("可点击下拉元素", "点击"),
     "input": ("可输入元素", "输入"),
     "searchable": ("可搜索下拉元素", "筛选"),
     "select": ("可选择元素", "选择"),
     "drag": ("可拖动元素", "拖动"),
     "scroll": ("可滚动元素", "滚动"),
 }
+
+
+# Class / id tokens that mark a *helper / error* text (not the control's value or
+# label). A custom select renders its validation message as a sibling of its
+# filter input (Moka ``.sd-Input-message`` → “必填项未填写”); treating it as the
+# current value produced ``是否校园大使推荐：必填项未填写`` and consumed the marker.
+_HELPER_TEXT_TOKENS = (
+    "message",
+    "error",
+    "validate",
+    "validation",
+    "help",
+    "hint",
+    "describe",
+    "feedback",
+    "warning",
+    "required",
+    "asterisk",
+    "tooltip",
+)
+
+
+def _is_click_like(category: str) -> bool:
+    """True for ``click`` and its dropdown sub-family ``clickdropdown``.
+
+    A ``clickdropdown`` behaves exactly like a ``click`` (the tool's action is a
+    click that opens the candidate list); only its tag / tool differ. Share every
+    behavioural branch between the two so the new category never regresses the
+    click handling.
+    """
+    return category in ("click", "clickdropdown")
 
 MAX_TEXT_LENGTH = 4000
 
@@ -817,7 +850,14 @@ class DOMSerializer:
             return
 
         if category:
-            if category == "click" and (
+            if _is_click_like(category) and self._is_searchable_display_value(child):
+                # The passive "display value" of a searchable select (Moka
+                # ``.sd-Input-display-value``) is only clickable because it
+                # inherits the control's pointer cursor; its text is folded into
+                # the searchable input's label. Drop it so the value is not emitted
+                # a second time as a separate ``<可点击元素>``.
+                return
+            if _is_click_like(category) and (
                 self._has_label_element_descendant(child)
                 and self._has_interactive_descendant(child)
             ):
@@ -834,13 +874,13 @@ class DOMSerializer:
                 self._flush(depth)
                 for grand in child.children:
                     self._render_child(grand, depth, clip)
-            elif category == "click" and self._is_redundant_choice_label(child):
+            elif _is_click_like(category) and self._is_redundant_choice_label(child):
                 # The text half of a native radio / checkbox option: it only looks
                 # clickable because it inherits ``cursor:pointer``; the sibling
                 # ``<input>`` already carries this exact label. Skip it so the
                 # option is not named twice.
                 return
-            elif category == "click" and self._is_textual_click_only(child):
+            elif _is_click_like(category) and self._is_textual_click_only(child):
                 # A ``cursor:pointer`` element with no strong control descendant,
                 # no icon and only a long descriptive text run (e.g. Ant Design's
                 # ``.ant-form-item-extra`` helper note) is *not* a control: the
@@ -857,7 +897,7 @@ class DOMSerializer:
                 text = self._collect_text(child)
                 if text:
                     self._emit_content(depth, text)
-            elif category == "click" and self._has_separate_interactive_descendant(child):
+            elif _is_click_like(category) and self._has_separate_interactive_descendant(child):
                 # A clickable wrapper around *separate* controls (e.g. a
                 # media-control bar, a clickable card holding links) is noise:
                 # the model would never call the wrapper. Skip it (assign no
@@ -970,7 +1010,7 @@ class DOMSerializer:
         category = classify(node)
         if category == "scroll":
             self._group_scroll(node, depth, clip, inner_header=header)
-        elif category == "click" and not self._has_interactive_descendant(node):
+        elif _is_click_like(category) and not self._has_interactive_descendant(node):
             self._group_click(node, depth, header, clip)
         else:
             before = len(self._lines)
@@ -1032,8 +1072,9 @@ class DOMSerializer:
         self, node: EnhancedNode, depth: int, header: str, clip: Optional[BBox]
     ) -> None:
         name = self.registry.get_or_create(node)
-        opening = f"<可点击元素 {name}>"
-        closing = f"</可点击元素 {name}>"
+        tag, _ = CATEGORY_TAGS[classify(node)]
+        opening = f"<{tag} {name}>"
+        closing = f"</{tag} {name}>"
         before = len(self._lines)
         self._emit_header(depth, opening, (name,), closing)
         self._stack.append((depth, opening, closing))
@@ -1380,7 +1421,7 @@ class DOMSerializer:
             # label's own clickable entry (which expands / navigates): “选择：重庆市”.
             # A native checkbox / radio input is the same "control + text" shape
             # without an icon, so it gets the same treatment instead of an empty tag.
-            if category == "click" and (
+            if _is_click_like(category) and (
                 is_control_icon(node) or self._is_choice_input(node)
             ):
                 paired = (
@@ -1396,7 +1437,7 @@ class DOMSerializer:
             # A composite control (e.g. a select box) often shows only its value or
             # placeholder (“请选择”). Prefix the associated field label so the LLM
             # can tell which field it is: “政治面貌：请选择”.
-            if category == "click" and self._has_field_input_descendant(node):
+            if _is_click_like(category) and self._has_field_input_descendant(node):
                 prefix = self._associated_field_label(node)
                 if prefix and prefix not in label:
                     label = f"{prefix}：{label}" if label else prefix
@@ -1422,9 +1463,20 @@ class DOMSerializer:
         selection from the nearest sibling text. When the placeholder and the
         folded value coincide, the sibling text is consumed so it is not emitted
         a second time.
+
+        A *custom* select filter input (Moka ``sd-Select``) needs a different
+        label walk (its field name is a sibling ``…title…`` element, its control
+        wrapper is a ``<label>`` that must not be treated as a field title, and its
+        validation message sits beside the input); that walk is gated on
+        ``is_custom_select_input`` so every other site's searchable label is
+        unchanged.
         """
-        prefix = self._associated_field_label(node)
-        current = self._nearby_text_label(node)
+        if is_custom_select_input(node):
+            prefix = self._searchable_field_label(node)
+            current = self._searchable_value_text(node)
+        else:
+            prefix = self._associated_field_label(node)
+            current = self._nearby_text_label(node)
         if prefix and current:
             if prefix in current:
                 label = current
@@ -1453,6 +1505,10 @@ class DOMSerializer:
         token = self._attribute_token(node)
         if token:
             return token
+        if category == "clickdropdown":
+            # A custom dropdown opened by clicking; give a usable word if neither a
+            # value nor a field label could name it.
+            return "下拉框"
         if category == "click":
             if node.role == "combobox" or node.tag == "select":
                 return "下拉框"
@@ -1760,8 +1816,13 @@ class DOMSerializer:
         bare text line (``<可输入元素 eN>研发类：更多</可输入元素 eN>`` followed by
         ``[文本] 更多``). Consume the most specific non-interactive element that
         shows exactly ``text`` within the same bounded ancestor walk the label
-        lookup uses, so the text is emitted only once. Interactive siblings are
-        never consumed.
+        lookup uses, so the text is emitted only once.
+
+        A searchable select's *display value* (Moka ``.sd-Input-display-value``)
+        only looks clickable because it inherits the control's ``cursor:pointer``;
+        it is a passive part, not a control, so it is consumed too (otherwise the
+        value would be emitted twice: once in the label and once as a separate
+        ``<可点击元素>``). Genuine interactive siblings are never consumed.
         """
         if not text:
             return
@@ -1779,7 +1840,9 @@ class DOMSerializer:
                     or not sibling.rendered
                 ):
                     continue
-                if classify(sibling) or self._has_interactive_descendant(sibling):
+                if self._has_interactive_descendant(sibling):
+                    continue
+                if classify(sibling) and not self._is_passive_value_part(sibling):
                     continue
                 if self._collect_text(sibling) != text:
                     continue
@@ -1897,6 +1960,59 @@ class DOMSerializer:
             if text:
                 return text
         return ""
+
+    def _is_helper_text(self, node: EnhancedNode) -> bool:
+        """True if ``node`` is a helper / error / hint text, not a value or label."""
+        raw = (
+            f"{node.attributes.get('class', '')} {node.attributes.get('id', '')}"
+        ).lower()
+        return any(tok in raw for tok in _HELPER_TEXT_TOKENS)
+
+    def _is_passive_value_part(self, node: EnhancedNode) -> bool:
+        """True for a non-control text part of a composite widget (its display value).
+
+        Used to allow consuming the visible value of a searchable select
+        (``.sd-Input-display-value`` / ``.ant-select-selection-item``) which is
+        ``cursor:pointer`` *only because it inherits the control's pointer cursor*,
+        never a control of its own. A genuine clickable (native tag / ARIA role /
+        inline handler / ``tabindex`` / ``href``) is never consumed.
+        """
+        if node.tag in ("a", "button", "select", "textarea", "input", "summary", "option"):
+            return False
+        if (node.role or "").lower() in CLICKABLE_ROLES:
+            return False
+        if has_inline_click_handler(node):
+            return False
+        if node.attributes.get("href") is not None:
+            return False
+        tabindex = node.attributes.get("tabindex")
+        if tabindex is not None and tabindex.isdigit() and int(tabindex) >= 0:
+            return False
+        return True
+
+    def _is_searchable_display_value(self, node: EnhancedNode) -> bool:
+        """True if ``node`` is the passive value display of a searchable select.
+
+        Its text equals the ``_nearby_text_label`` of a searchable ``<input>``
+        sibling (Moka renders the committed value in ``.sd-Input-display-value``
+        next to the filter input). Such a node must not be serialized as a
+        separate clickable, or the value appears twice.
+        """
+        if not self._is_passive_value_part(node):
+            return False
+        parent = node.parent
+        if parent is None:
+            return False
+        text = self._collect_text(node)
+        if not text:
+            return False
+        for sibling in parent.children:
+            if sibling is node or not sibling.is_element:
+                continue
+            if sibling.tag == "input" and is_custom_select_input(sibling):
+                if self._searchable_value_text(sibling) == text:
+                    return True
+        return False
 
     def _nearby_text_label(self, node: EnhancedNode, max_hops: int = 3) -> str:
         """Nearest short label text on a sibling of ``node`` or of its ancestors.
@@ -2244,7 +2360,7 @@ class DOMSerializer:
         while current is not None and hops < max_hops:
             if (
                 current.is_element
-                and classify(current) == "click"
+                and _is_click_like(classify(current))
                 and self._has_separate_interactive_descendant(current)
             ):
                 return True
@@ -2297,6 +2413,39 @@ class DOMSerializer:
             hops += 1
         return ""
 
+    @staticmethod
+    def _is_fields_container(node: EnhancedNode) -> bool:
+        """True for a list-of-fields container (shared box holding many fields)."""
+        raw = f"{node.attributes.get('class', '')} {node.attributes.get('id', '')}".lower()
+        return any(
+            tok in raw
+            for tok in ("fields", "fields-col", "fields-row", "form-fields", "field-list")
+        )
+
+    def _find_title_text(self, node: EnhancedNode, max_depth: int = 3) -> str:
+        """The first field-*title* element's text within ``max_depth`` levels.
+
+        A field title is ``<div class="…title…"><span>字段名</span></div>`` (Moka
+        ``.title-…``); unlike ``<label>`` it is not a form association, so it is
+        used only as a fallback when no ``<label>`` names the field. Helper / error
+        nodes never qualify.
+        """
+        if not node.is_element or self._is_helper_text(node):
+            return ""
+        raw = f"{node.attributes.get('class', '')} {node.attributes.get('id', '')}".lower()
+        if "title" in raw:
+            text = self._collect_text(node)
+            if text:
+                return text
+        if max_depth <= 0:
+            return ""
+        for child in node.children:
+            if child.is_element:
+                text = self._find_title_text(child, max_depth - 1)
+                if text:
+                    return text
+        return ""
+
     def _find_label_text(self, node: EnhancedNode, max_depth: int = 3) -> str:
         """The first ``<label>`` text within ``max_depth`` levels of ``node``.
 
@@ -2317,6 +2466,86 @@ class DOMSerializer:
                 text = self._find_label_text(child, max_depth - 1)
                 if text:
                     return text
+        return ""
+
+    def _find_field_label_candidate(self, node: EnhancedNode, max_depth: int = 3) -> str:
+        """Like ``_find_label_text`` but for a *custom select filter input*.
+
+        Skips a control-wrapper ``<label>`` (a ``<label>`` that wraps the actual
+        ``<input>`` — returning its text names the field after a *sibling field's*
+        value) and helper / error labels.
+        """
+        if node.tag == "label":
+            if self._is_helper_text(node) or self._has_field_input_descendant(node):
+                return ""
+            return self._collect_text(node)
+        if max_depth <= 0:
+            return ""
+        for child in node.children:
+            if child.is_element:
+                text = self._find_field_label_candidate(child, max_depth - 1)
+                if text:
+                    return text
+        return ""
+
+    def _searchable_field_label(self, node: EnhancedNode) -> str:
+        """Field name for a *custom select filter input* (Moka ``sd-Select``).
+
+        Same walk as ``_associated_field_label`` but: stops before a shared
+        *fields list* container (a sibling there is a different field), accepts a
+        ``…title…`` element as a fallback for the field name, and skips the
+        control's own wrapper label.
+        """
+        branch = node
+        ancestor = node.parent
+        hops = 0
+        while ancestor is not None and hops < 8:
+            if ancestor.is_element and self._is_fields_container(ancestor):
+                break
+            for sibling in ancestor.children:
+                if sibling is branch or not sibling.is_element:
+                    continue
+                text = self._find_field_label_candidate(sibling) or self._find_title_text(
+                    sibling
+                )
+                if text:
+                    return self._clean_field_label(self._truncate(text, 40))
+            branch = ancestor
+            ancestor = ancestor.parent
+            hops += 1
+        return ""
+
+    def _searchable_value_text(self, node: EnhancedNode, max_hops: int = 3) -> str:
+        """Current-value text for a *custom select filter input*.
+
+        Same as ``_nearby_text_label`` but skips helper / validation text
+        (``必填项未填写``), which a custom select renders right beside its input.
+        """
+        branch = node
+        ancestor = node.parent
+        hops = 0
+        while ancestor is not None and hops < max_hops:
+            siblings = list(ancestor.children)
+            index = siblings.index(branch) if branch in siblings else -1
+            ordered = (
+                siblings[index + 1 :] + siblings[:index] if index >= 0 else siblings
+            )
+            texts: list[str] = []
+            for sibling in ordered:
+                if sibling is branch or not sibling.is_element:
+                    continue
+                if sibling.hidden or not sibling.visible or not sibling.in_viewport:
+                    continue
+                if self._is_helper_text(sibling):
+                    continue
+                text = self._collect_text(sibling)
+                if text:
+                    texts.append(text)
+            if texts:
+                return self._truncate(min(texts, key=len), 40)
+            branch = ancestor
+            ancestor = ancestor.parent
+            hops += 1
         return ""
 
     def _interactive_text(
@@ -2817,7 +3046,7 @@ class DOMSerializer:
         """
         ancestor = node.parent
         while ancestor is not None:
-            if ancestor.is_element and classify(ancestor) == "click":
+            if ancestor.is_element and _is_click_like(classify(ancestor)):
                 return True
             if ancestor is root:
                 break

@@ -1,11 +1,25 @@
 from datetime import datetime
 from pathlib import Path
 import json
+import threading
 
 
 # debug 日志根目录：程序根目录（app/runtime/browser_tools_debug_log.py 上溯三层）。
 _ROOT_DIR = Path(__file__).resolve().parents[2]
 _DEBUG_LOG_DIR = _ROOT_DIR / "browser_tools_DEBUG_logs"
+
+# 同一秒内的并发工具调用（同一个 AI 轮可并发多个 tool_call）会落到同一文件名而
+# 互相覆盖（实测 3 个并发 `tool_05_type_in_select` 只留 1 份日志）。文件名追加一个
+# 进程内递增的唯一后缀，保证每次调用一份日志。
+_log_seq = 0
+_log_seq_lock = threading.Lock()
+
+
+def _unique_suffix() -> str:
+    global _log_seq
+    with _log_seq_lock:
+        _log_seq += 1
+        return f"{_log_seq:04d}"
 
 def _load_settings_safe():
     """读取全局设置；失败返回 None（不干扰工具调用）。"""
@@ -58,7 +72,7 @@ def _write_debug_log(tool_name: str, llm_input: dict, content: str, capture) -> 
         end_hour = (now.hour + 1) % 24
         folder = _DEBUG_LOG_DIR / f"{now:%Y%m%d}-{now.hour:02d}-{end_hour:02d}"
         folder.mkdir(parents=True, exist_ok=True)
-        path = folder / f"{now:%H%M%S}-{tool_name}"
+        path = folder / f"{now:%H%M%S}-{tool_name}-{_unique_suffix()}"
 
         raw_dom = capture.raw_dom if capture is not None else ""
         processed_dom = capture.processed_dom if capture is not None else ""

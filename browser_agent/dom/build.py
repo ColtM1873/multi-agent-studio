@@ -124,6 +124,8 @@ class EnhancedNode:
     cache_has_interactive_desc: Optional[bool] = None
     cache_has_label_element: Optional[bool] = None
     cache_has_overflowing_child: Optional[bool] = None
+    cache_has_dropdown_indicator: Optional[bool] = None
+    cache_contains_control: Optional[bool] = None
 
     @property
     def key(self) -> tuple[str, str, int]:

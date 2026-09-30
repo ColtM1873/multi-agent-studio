@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from .build import PAGE_SCROLL_TAG, EnhancedNode
+from .build import PAGE_SCROLL_TAG, EnhancedNode, _OVERLAY_ROLES
 
 CLICKABLE_TAGS = {"a", "button", "summary", "option"}
 CLICKABLE_INPUT_TYPES = {
@@ -551,22 +551,161 @@ def may_navigate(node: EnhancedNode) -> bool:
     return False
 
 
+# ---------------------------------------------------------------------------
+# 自绘「下拉」控件的识别（可搜索下拉 / 可点击下拉）
+#
+# 组件库的自绘下拉（Moka ``sd-Select``、Ant ``.ant-select``、Beisen
+# ``.phoenix-select``、Feishu ``.atsx-select``、Element ``.el-select`` …）把「下拉」
+# 语义写在 class 名里，并在触发器里放一个朝下的箭头图标；它们没有统一的 ARIA
+# （实测这些自绘控件 ``role`` / ``aria-*`` 常为 0）。因此用「class/id 令牌 +
+# 下拉箭头」这条跨库信号来识别：
+#   * 可编辑输入框充当控件的「筛选框」 → ``searchable``（输入只筛选，须点候选）
+#   * 非输入的可点击触发器              → ``clickdropdown``（点击展开候选/菜单）
+# ---------------------------------------------------------------------------
+
+_SELECT_TOKENS = ("select", "combobox")
+_MENU_TOKENS = ("dropdown", "menu")
+# A dropdown-*menu* trigger is a small control (a caret button), never a container
+# that merely wraps the menu's items (a sidebar of links). Requiring an explicit
+# trigger token keeps containers out.
+_MENU_TRIGGER_TOKENS = (
+    "toggle",
+    "trigger",
+    "menu-button",
+    "menu-btn",
+    "dropdown-btn",
+    "dropdown-button",
+    "dropdown-toggle",
+    "dropdown-trigger",
+    "selector",
+    "switch",
+    "button",
+    "btn",
+)
+_INDICATOR_TOKENS = (
+    "caret",
+    "chevron",
+    "arrow",
+    "angle-down",
+    "angle_down",
+    "icon-down",
+    "down-icon",
+)
+
+
+def _class_id_text(node: EnhancedNode) -> str:
+    """Lower-cased ``class`` + ``id`` of ``node`` (for token / substring probes)."""
+    if not node.is_element:
+        return ""
+    return (
+        f"{node.attributes.get('class', '')} {node.attributes.get('id', '')}"
+    ).lower()
+
+
+def _has_token(text: str, tokens) -> bool:
+    return any(tok in text for tok in tokens)
+
+
+def _marks_select_control(node: EnhancedNode) -> bool:
+    """True if ``node``'s class/id marks it as a select / combobox container."""
+    return node.is_element and _has_token(_class_id_text(node), _SELECT_TOKENS)
+
+
+def _contains_control(node: EnhancedNode) -> bool:
+    """True if ``node``'s subtree holds a native control / link / editable region.
+
+    A dropdown *trigger* wraps only an arrow / icon. A sibling that is itself a
+    whole composite control (Ant Design's phone-country-code selector next to the
+    phone ``<input>``) wraps an ``<input>``; without excluding it the plain text
+    field beside it would be mistaken for a search box.
+    """
+    cached = node.cache_contains_control
+    if cached is not None:
+        return cached
+    result = False
+    for child in node.children:
+        if child.is_text or not child.is_element:
+            continue
+        if child.tag in ("input", "select", "textarea", "button"):
+            result = True
+        elif (child.role or "").lower() in CLICKABLE_ROLES:
+            result = True
+        elif child.tag == "a" and child.attributes.get("href") is not None:
+            result = True
+        elif child.attributes.get("contenteditable") in ("", "true", "plaintext-only"):
+            result = True
+        elif _contains_control(child):
+            result = True
+        if result:
+            break
+    node.cache_contains_control = result
+    return result
+
+
+def _has_dropdown_indicator(node: EnhancedNode) -> bool:
+    """True if ``node`` or a descendant carries a down-arrow / caret icon."""
+    cached = node.cache_has_dropdown_indicator
+    if cached is not None:
+        return cached
+    result = False
+    if node.is_element and _has_token(_class_id_text(node), _INDICATOR_TOKENS):
+        result = True
+    else:
+        for child in node.children:
+            if child.is_element and _has_dropdown_indicator(child):
+                result = True
+                break
+    node.cache_has_dropdown_indicator = result
+    return result
+
+
+def _descendant_has_dropdown_indicator(node: EnhancedNode) -> bool:
+    """True if a *strict descendant* of ``node`` is a down-arrow indicator.
+
+    Requiring a descendant (not the node itself) keeps the arrow / addon *part*
+    (``.ant-select-arrow``, ``.sd-Select-addon`` whose own signal is the element
+    itself) from being mistaken for the control root.
+    """
+    for child in node.children:
+        if child.is_element and _has_dropdown_indicator(child):
+            return True
+    return False
+
+
+def _has_searchable_input(node: EnhancedNode) -> bool:
+    """True if ``node``'s subtree contains a searchable-select filter input."""
+    for child in node.children:
+        if child.is_text or not child.is_element:
+            continue
+        if child.tag == "input" and is_searchable_typeahead(child):
+            return True
+        if _has_searchable_input(child):
+            return True
+    return False
+
+
 def is_searchable_typeahead(node: EnhancedNode) -> bool:
     """True for an *editable* combobox / autocomplete input.
 
-    This is the typeahead of a searchable select (``show-search``): the user
-    types here and the candidate list filters live. Typing only *filters* — the
-    value is committed only by clicking a candidate — so it is given its own
-    category (``searchable``) and driven by ``tool_07_searchable_dropdown``
-    instead of being treated as an ordinary ``<可输入元素>``.
+    This is the typeahead of a searchable select: the user types here and the
+    candidate list filters live. Typing only *filters* — the value is committed
+    only by clicking a candidate — so it is given its own category
+    (``searchable``) and driven by ``tool_07_searchable_dropdown`` instead of
+    being treated as an ordinary ``<可输入元素>``.
 
-    The ``role=combobox`` / ``aria-autocomplete`` signal frequently lives on an
-    *ancestor* rather than on the ``<input>`` itself (Ant Design's
-    ``show-search`` select puts it on the wrapping ``.atsx-select-selection``).
-    Keying on ``aria-autocomplete`` — not a bare ``role=combobox`` — keeps
-    non-searchable composite selects (the ``.phoenix-select`` typeahead, whose
-    container carries no ``aria-autocomplete``) as a single entry, while
-    exposing the real filter box of a searchable one.
+    Three families of signal are recognised:
+
+    1. the input itself is an ARIA combobox (``role=combobox``);
+    2. an ``aria-autocomplete`` lives on the input or an ancestor (Ant Design's
+       ``show-search`` select puts it on the wrapping ``.atsx-select-selection``);
+    3. a *custom select control* (class/id token ``select`` / ``combobox``)
+       wraps the input together with a down-arrow addon, and the input is
+       editable. Moka's ``sd-Select`` is exactly this shape and carries no ARIA
+       at all. The arrow must be a *sibling* of the input (inside the same
+       control box) and must not itself be a composite control, which is what
+       separates a search box (Moka) from a value-bearing custom select whose
+       arrow lives outside the input wrapper (Beisen ``.phoenix-select`` — that
+       one is a ``clickdropdown``, see ``is_click_dropdown``).
     """
     if node.tag != "input":
         return False
@@ -585,7 +724,86 @@ def is_searchable_typeahead(node: EnhancedNode) -> bool:
             return True
         ancestor = ancestor.parent
         hops += 1
+    # Family 3: a custom select control wrapping this input.
+    return is_custom_select_input(node)
+
+
+def is_custom_select_input(node: EnhancedNode) -> bool:
+    """True if ``node`` is the *filter input* of a custom (non-ARIA) select.
+
+    The label / value logic for these controls differs from a plain searchable
+    input (their field name lives in a sibling ``…title…`` element and their
+    validation message is a sibling of the input), so callers gate the enhanced
+    handling on this predicate to avoid touching any other site's searchable
+    inputs.
+
+    Shape: an editable ``<input>`` whose immediate parent is marked as a select /
+    combobox control and which has a down-arrow addon *sibling* inside that control
+    (Moka ``sd-Select``). A sibling that is itself a composite control (an
+    Ant-Design phone-country selector) does not count.
+    """
+    if node.tag != "input":
+        return False
+    if "readonly" in node.attributes:
+        return False
+    if node.attributes.get("type", "text").lower() == "hidden":
+        return False
+    parent = node.parent
+    if parent is None or not _marks_select_control(parent):
+        return False
+    for sibling in parent.children:
+        if sibling is node or sibling.is_text or not sibling.is_element:
+            continue
+        if _contains_control(sibling):
+            continue
+        if _has_dropdown_indicator(sibling):
+            return True
     return False
+
+
+def is_click_dropdown(node: EnhancedNode) -> bool:
+    """True for a clickable control that opens a dropdown list of candidates.
+
+    Two semantic families (both are *click-to-open*, no editable filter):
+
+    * 表单类下拉选框：class/id 含 ``select`` / ``combobox`` 令牌，且子树里带一个
+      朝下箭头（Beisen ``.phoenix-select``、Ant ``.ant-select``、Feishu
+      ``.atsx-select``、Element ``.el-select`` …）；
+    * 明确的下拉菜单触发器：class/id 含 ``dropdown`` / ``menu`` 令牌，且子树里带
+      下拉箭头。
+
+    Excluded: the arrow / addon *part* itself (its own signal is the element, so it
+    has no indicator *descendant*), the popup body (overlay role or absolutely /
+    fixed positioned), and a wrapper that merely contains a searchable filter input
+    (that belongs to ``searchable``).
+    """
+    if not node.is_element or _is_disabled(node):
+        return False
+    if node.tag in ("input", "select", "textarea"):
+        return False
+    raw = _class_id_text(node)
+    if not raw.strip():
+        return False
+    form_select = _has_token(raw, _SELECT_TOKENS)
+    menu = (not form_select) and _has_token(raw, _MENU_TOKENS)
+    if not (form_select or menu):
+        return False
+    if menu:
+        # Only an explicit *trigger*, and never a container that wraps the menu's
+        # own items (a sidebar/nav list of links).
+        if not _has_token(raw, _MENU_TRIGGER_TOKENS):
+            return False
+        if _has_interactive_descendant(node):
+            return False
+    if not _descendant_has_dropdown_indicator(node):
+        return False
+    if (node.role or "").lower() in _OVERLAY_ROLES:
+        return False
+    if node.styles.get("position") in ("absolute", "fixed"):
+        return False
+    if _has_searchable_input(node):
+        return False
+    return is_clickable(node)
 
 
 def classify(node: EnhancedNode) -> str:
@@ -612,7 +830,10 @@ def classify(node: EnhancedNode) -> str:
     elif is_scrollable(node):
         result = "scroll"
     elif is_clickable(node):
-        result = "click"
+        # A clickable that semantically opens a dropdown of candidates (a custom
+        # select box / dropdown-menu trigger) is separated from plain clicks and
+        # driven by ``tool_08_click_dropdown``.
+        result = "clickdropdown" if is_click_dropdown(node) else "click"
     else:
         result = ""
     node.cache_classify = result

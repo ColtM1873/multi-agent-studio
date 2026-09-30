@@ -783,6 +783,7 @@ class BrowserController:
     # 元素真实类别 → 建议改用的工具名（用于类别不匹配时的提示）。
     _SPLIT_CATEGORY_TOOL = {
         "click": "tool_01_click",
+        "clickdropdown": "tool_08_click_dropdown",
         "input": "tool_02_type_in_content",
         "searchable": "tool_07_searchable_dropdown",
         "select": "tool_05_type_in_select",
@@ -1208,6 +1209,22 @@ class BrowserController:
             return self._base_result(INCREMENTAL, FAIL, rp.EMPTY_CONTENT, str(exc), include_tabs=False)
         return self._finish_interaction(ctx, extras)
 
+    def interact_click_dropdown(self, name: str) -> dict:
+        """点击单个『可点击下拉元素』，使其展开候选/菜单，返回增量 DOM。
+
+        与 ``interact_click`` 共用同一套点击与浮层兜底逻辑（点击后保留刚打开的
+        浮层以便捕获候选），区别只是类别与工具：候选项仍由 ``tool_01_click`` 点选。
+        """
+        ctx, err = self._begin_interaction(name, allowed=("clickdropdown",))
+        if err is not None:
+            return err
+        assert ctx is not None
+        try:
+            extras = self._run_click(ctx)
+        except (ActionError, CDPError) as exc:
+            return self._base_result(INCREMENTAL, FAIL, rp.EMPTY_CONTENT, str(exc), include_tabs=False)
+        return self._finish_interaction(ctx, extras)
+
     def interact_fill_in(
         self, name: str, fill: str = "", press_enter: bool = False
     ) -> dict:
@@ -1469,7 +1486,7 @@ class BrowserController:
             if err:
                 return self._base_result(INCREMENTAL, FAIL, rp.EMPTY_CONTENT, err, include_tabs=False)
             click_cat = classify(node)
-            if click_cat != "click":
+            if click_cat not in ("click", "clickdropdown"):
                 return self._base_result(
                     INCREMENTAL,
                     FAIL,

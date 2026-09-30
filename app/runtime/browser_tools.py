@@ -89,6 +89,14 @@ async def tool_07_searchable_dropdown(
     type_in_to_filter = apply_sensitive_replacement(str(type_in_to_filter))
     return await   _wrap_up(sync_func_here , name = elem_mark, fill = type_in_to_filter)  
 
+@langchain_tool
+async def tool_08_click_dropdown(
+    elem_mark: Annotated[str, "<可点击下拉元素 eN>的标识符eN"],
+) -> str|dict:
+    """用于跟<可点击下拉元素>进行交互，交互后通常会弹出一个下拉列表（候选项），需要再调用tool_01_click进行选择，
+本工具只用于点击相关元素，使得下拉框弹出"""
+    sync_func_here = BrowserController.instance().interact_click_dropdown
+    return await   _wrap_up(sync_func_here , name = elem_mark)  
 
 
 @langchain_tool
@@ -166,6 +174,7 @@ async def return_browser_tools():
         tool_05_type_in_select,
         tool_06_interact_sequence,
         tool_07_searchable_dropdown,
+        tool_08_click_dropdown,
         tool_10_get_full_viewport,
         tool_20_list_tabs,
         tool_21_switch_tab,

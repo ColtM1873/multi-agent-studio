@@ -253,6 +253,7 @@ def install() -> bool:
                 "_begin_interaction",
                 "_finish_interaction",
                 "interact_click",
+                "interact_click_dropdown",
                 "interact_fill_in",
                 "interact_select",
                 "interact_searchable_fill_in",

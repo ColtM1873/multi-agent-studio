@@ -57,6 +57,7 @@ def category_label(category: str) -> str:
         "searchable": "可搜索下拉",
         "select": "可选择",
         "click": "可点击",
+        "clickdropdown": "可点击下拉",
         "drag": "可拖动",
         "scroll": "可滚动",
     }.get(category, "不可互动")
@@ -70,6 +71,7 @@ def action_label(category: str) -> str:
         "input": "输入",
         "searchable": "可搜索下拉筛选",
         "select": "下拉选择",
+        "clickdropdown": "点击下拉",
         "scroll": "滚动",
         "drag": "拖动",
     }.get(category, "")
