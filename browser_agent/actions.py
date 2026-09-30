@@ -581,11 +581,17 @@ class ActionExecutor:
         # write the text into both elements.
         self.focus(backend_node_id)
         _sleep(*timing.get().actions.input_focus)
+        # Verifiable clear: the real-keyboard Ctrl+A/Delete can be swallowed by a
+        # controlled widget (Element Plus' range picker restores its own model
+        # while the panel animates in), after which typing APPENDS to the stale
+        # value ("2026-05" + "2024-09"). Report honestly instead of leaving a
+        # corrupted field behind.
+        clear_ok = False
         if text:
             # Only clear when there is something to replace: an empty ``fill``
             # means "just click / focus this element", so a bare interaction must
             # not wipe a field the caller never meant to touch.
-            self._clear_field()
+            clear_ok = self.clear_field(backend_node_id)
             _sleep(*timing.get().actions.input_clear)
 
         if len(text) > self.PASTE_THRESHOLD:
@@ -596,23 +602,70 @@ class ActionExecutor:
                 _sleep(*timing.get().actions.type_char)
 
         current = self._read_value(backend_node_id)
-        if current is not None and text not in (current or ""):
-            self._native_set(backend_node_id, text)
-            return {"degraded": True, "reason": "native setter fallback"}
-        return {"degraded": click_result.get("degraded", False)}
+        return {
+            "degraded": click_result.get("degraded", False),
+            "clear_ok": clear_ok,
+            "value": current,
+        }
 
-    def clear_field(self, backend_node_id: int) -> None:
-        """Focus an editable control and clear its text without typing.
+    def interaction_state(self, backend_node_id: int) -> dict:
+        """Live flags that decide whether a programmatic edit is *sane*.
 
-        Used by the searchable-dropdown tool: an empty filter means "show the
-        full candidate list", so a leftover filter from a previous call must be
-        wiped. Plain ``input_text(id, "")`` deliberately does *not* clear (there
-        an empty fill means "just click / focus"), hence this explicit reset.
+        ``readonly`` (with ``aria-readonly``) is the important one: such a control
+        only displays a value that the widget itself commits (a cascader, a date
+        picker, a masked field). The native-setter fallback can still write into
+        it, which leaves the visible text and the widget's model out of sync —
+        the form then submits a different value than the screen shows. Callers use
+        this to refuse the write and tell the model to drive the real control.
+        """
+        object_id = self._resolve(backend_node_id)
+        if not object_id:
+            return {"resolved": False, "readonly": False, "disabled": False}
+        try:
+            value = self._call_on_node(
+                object_id,
+                "function(){"
+                "const ro = !!(this.readOnly || this.getAttribute('readonly') !== null"
+                " || (this.getAttribute('aria-readonly') || '').toLowerCase() === 'true');"
+                "const dis = !!this.disabled;"
+                "return {resolved:true, readonly:ro, disabled:dis,"
+                " tag:(this.tagName||'').toLowerCase(),"
+                " type:(this.getAttribute('type')||'text').toLowerCase()};"
+                "}",
+            )
+            return value if isinstance(value, dict) else {"resolved": False, "readonly": False, "disabled": False}
+        except Exception:
+            return {"resolved": False, "readonly": False, "disabled": False}
+
+    def clear_field(self, backend_node_id: int) -> bool:
+        """Focus an editable control and clear its text; return whether it is empty.
+
+        Used by the searchable-dropdown tool (an empty filter means "show the full
+        candidate list") and before every fill. Plain
+        ``input_text(id, "")`` deliberately does *not* clear (there an empty fill
+        means "just click / focus"), hence this explicit reset.
+
+        The clear is *verified*: the keyboard select-all+delete is the honest
+        first choice (it goes through the page's own handlers), but a controlled
+        widget may swallow it. When the field is still non-empty the native setter
+        is used as a bounded second attempt, and the real outcome is returned so
+        the caller never believes a stale value was replaced.
         """
         self.focus(backend_node_id)
         _sleep(*timing.get().actions.input_focus)
         self._clear_field()
         _sleep(*timing.get().actions.input_clear)
+        current = self._read_value(backend_node_id)
+        if current:
+            self._clear_field()
+            _sleep(*timing.get().actions.input_clear)
+            current = self._read_value(backend_node_id)
+        if current:
+            # Last resort for composite widgets that re-render on every keystroke.
+            self._native_set(backend_node_id, "")
+            _sleep(*timing.get().actions.input_clear)
+            current = self._read_value(backend_node_id)
+        return not current
 
     def press_enter(self) -> None:
         """Dispatch a real Enter key press (search / form submit).

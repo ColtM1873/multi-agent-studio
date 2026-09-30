@@ -774,7 +774,24 @@ class DOMSerializer:
                     not child.visible
                     and self._has_rescuable_interactive_descendant(child)
                 )
-                if not (opacity_zero and (popup or zero_size_rescue)):
+                # A *zero-area* text run inside an overlay that is genuinely open
+                # is panel context, not decoration: a month-range picker's
+                # "<div>2026 年</div>" header collapses to 0x0 for a frame while
+                # the popup animates/positions, and the cells around it were kept
+                # (``_table_cell_renderable``) while the year label was dropped —
+                # leaving two identical month grids with no year, so the model
+                # could not tell which panel it was clicking and never escaped the
+                # loop. Rescue the text; the overlay must itself be painted, which
+                # keeps a permanently collapsed block's text out of the output.
+                overlay_text_rescue = (
+                    not child.visible
+                    and child.in_viewport
+                    and self._has_direct_text(child)
+                    and self._inside_open_overlay(child)
+                )
+                if not (
+                    (opacity_zero and (popup or zero_size_rescue)) or overlay_text_rescue
+                ):
                     for grand in child.children:
                         if not grand.is_text:
                             self._render_child(grand, depth, clip)
@@ -1924,30 +1941,86 @@ class DOMSerializer:
         ancestor = node.parent
         hops = 0
         while ancestor is not None and hops < 3:
-            best: Optional[EnhancedNode] = None
-            for sibling in ancestor.children:
-                if sibling is branch or not sibling.is_element:
-                    continue
-                if (
-                    sibling.node_id in self._consumed
-                    or sibling.hidden
-                    or not sibling.rendered
-                ):
-                    continue
-                if self._has_interactive_descendant(sibling):
-                    continue
-                if classify(sibling) and not self._is_passive_value_part(sibling):
-                    continue
-                if self._collect_text(sibling) != text:
-                    continue
-                if best is None or len(sibling.children) < len(best.children):
-                    best = sibling
+            best = self._find_consumable_text_source(ancestor, branch, text)
             if best is not None:
                 self._consumed.add(best.node_id)
                 return
             branch = ancestor
             ancestor = ancestor.parent
             hops += 1
+
+    def _find_consumable_text_source(
+        self, ancestor: EnhancedNode, branch: EnhancedNode, text: str
+    ) -> Optional[EnhancedNode]:
+        """Nearest element under ``ancestor`` that renders exactly ``text``.
+
+        Two shapes qualify:
+
+        * an element sibling (or the branch's own descendant, for a value nested
+          in an *invisible* wrapper) whose collected text equals ``text`` and
+          which is not itself a control — the classic sibling placeholder;
+        * an element that only *contains* a matching text run inside a zero-area
+          wrapper. Element Plus renders a select's current value inside
+          ``<div class="el-select__selected-item el-select__input-wrapper is-hidden">
+          <input …></div>`` plus a visible ``.el-select__placeholder``; the hidden
+          wrapper is skipped by ``_collect_text``, so the placeholder was never
+          matched and the value was emitted twice (once inside the control's label,
+          once as a bare ``25000 - 50000`` line right after it).
+        """
+        candidates: list[EnhancedNode] = []
+        for child in ancestor.children:
+            if not child.is_element or child.hidden or not child.rendered:
+                continue
+            if child is branch:
+                candidates.extend(g for g in child.children if g.is_element)
+                continue
+            candidates.append(child)
+        best: Optional[EnhancedNode] = None
+        for sibling in candidates:
+            if sibling.node_id in self._consumed or sibling.hidden or not sibling.rendered:
+                continue
+            # A wrapper that genuinely holds *another* control must not be
+            # consumed — except when it is the composite widget's own passive
+            # value display (Element Plus ``.el-select__placeholder`` inherits the
+            # select's ``cursor:pointer`` and so reports a "click" descendant of
+            # itself; it is the control's value, not a second field).
+            if self._has_interactive_descendant(sibling) and not (
+                self._is_passive_value_part(sibling)
+                and self._is_searchable_display_value(sibling)
+            ):
+                continue
+            if classify(sibling) and not self._is_passive_value_part(sibling):
+                continue
+            hay = self._collect_text(sibling)
+            if hay == text or self._contains_text_run(sibling, text):
+                if best is None or len(sibling.children) < len(best.children):
+                    best = sibling
+        return best
+
+    def _contains_text_run(self, node: EnhancedNode, text: str, depth: int = 3) -> bool:
+        """True if ``node`` shows ``text`` anywhere in a *passive* subtree.
+
+        Used to consume a value that the control's label already folded in even
+        when the matching text sits inside a zero-area wrapper (see
+        ``_find_consumable_text_source``). Recursion stops at any nested control
+        so a genuine second field is never swallowed.
+        """
+        if depth <= 0:
+            return False
+        for child in node.children:
+            if child.is_text:
+                if " ".join((child.text or "").split()) == text:
+                    return True
+                continue
+            if not child.is_element or child.hidden or not child.rendered:
+                continue
+            if self._collect_text(child) == text:
+                return True
+            if classify(child) or self._has_interactive_descendant(child):
+                continue
+            if self._contains_text_run(child, text, depth - 1):
+                return True
+        return False
 
     def _iter_choice_inputs(self, node: EnhancedNode):
         """Yield every native checkbox / radio input in ``node``'s subtree."""
@@ -2103,10 +2176,29 @@ class DOMSerializer:
         for sibling in parent.children:
             if sibling is node or not sibling.is_element:
                 continue
-            if sibling.tag == "input" and is_custom_select_input(sibling):
-                if self._searchable_value_text(sibling) == text:
+            for candidate in self._iter_searchable_inputs(sibling, depth=2):
+                if self._searchable_value_text(candidate) == text:
                     return True
         return False
+
+    def _iter_searchable_inputs(self, node: EnhancedNode, depth: int = 2):
+        """Yield editable filter inputs of a composite select inside ``node``.
+
+        The filter input is often nested one level deeper than the value display
+        (Element Plus renders ``.el-select__selection > .el-select__input-wrapper >
+        input.el-select__input`` next to ``.el-select__placeholder``), so the
+        display-value check must look through small wrappers instead of only at
+        direct ``<input>`` siblings.
+        """
+        if node.tag == "input":
+            if is_custom_select_input(node) or self._is_searchable_typeahead(node):
+                yield node
+            return
+        if depth <= 0:
+            return
+        for child in node.children:
+            if child.is_element:
+                yield from self._iter_searchable_inputs(child, depth - 1)
 
     def _nearby_text_label(self, node: EnhancedNode, max_hops: int = 3) -> str:
         """Nearest short label text on a sibling of ``node`` or of its ancestors.
@@ -2488,23 +2580,53 @@ class DOMSerializer:
         """Find the field label associated with a form control.
 
         Component libraries usually wrap a control as
-        ``<div class="form-item"><div class="...title"><label>政治面貌</label>
-        </div><div class="...control">…control…</div></div>``. Walk up a few
-        ancestor levels and take the nearest sibling subtree's ``<label>`` text.
+        ``<div class="form-item"><div class="...label">政治面貌</div>
+        <div class="...control">…control…</div></div>``.
+
+        Two passes, both bounded, ordered from the most to the least reliable:
+
+        1. **the nearest enclosing field container** — the closest ancestor that
+           holds *both* a label element and this control. Its own label is the
+           field name (Element Plus ``.el-form-item``, Ant ``.ant-form-item``,
+           Beisen/Moka ``.form-item`` …). This must win: while climbing further
+           the walk eventually reaches a *row* container whose siblings are other
+           fields, and the first label found there names the control after the
+           neighbouring field (the 4399 简历 form labelled 期望薪酬 as
+           ``生源地：月薪``).
+        2. **the original sibling walk** — kept as a fallback for the layouts
+           where the label is not inside a shared container with the control
+           (label rendered in a separate column / portal). Unchanged semantics so
+           no already-working site regresses.
         """
         branch = node
         ancestor = node.parent
+        chain: list[tuple[EnhancedNode, EnhancedNode]] = []
         hops = 0
         while ancestor is not None and hops < 8:
-            for sibling in ancestor.children:
-                if sibling is branch or not sibling.is_element:
+            chain.append((ancestor, branch))
+            branch = ancestor
+            ancestor = ancestor.parent
+            hops += 1
+
+        # Pass 1: nearest enclosing container that owns a label element.
+        for container, child in chain:
+            for candidate in container.children:
+                if candidate is child or not candidate.is_element:
+                    continue
+                text = self._find_label_text(candidate)
+                if text:
+                    return self._clean_field_label(self._truncate(text, 40))
+
+        # Pass 2: original sibling walk (identical order to the historical
+        # implementation: every sibling at the first level that yields any label
+        # wins, in document order).
+        for container, child in chain:
+            for sibling in container.children:
+                if sibling is child or not sibling.is_element:
                     continue
                 text = self._find_label_text(sibling)
                 if text:
                     return self._clean_field_label(self._truncate(text, 40))
-            branch = ancestor
-            ancestor = ancestor.parent
-            hops += 1
         return ""
 
     @staticmethod
@@ -2540,8 +2662,35 @@ class DOMSerializer:
                     return text
         return ""
 
+    # Class / id tokens that mark a *label-like* element. Modern component
+    # libraries (Element Plus ``.el-form-item__label``, Ant ``.ant-form-item-label``,
+    # ``.form-item__label``, ``.field-label`` …) render the field name in a plain
+    # ``<div>``, not in a ``<label>``. Without this, ``_find_label_text`` skipped
+    # the field's own label element and kept climbing until it hit some *other*
+    # field's ``<label>`` — which is how the 4399 简历 form labelled the 期望薪酬
+    # dropdown as ``生源地：月薪`` (the neighbouring field's name). Recognising the
+    # label-like element makes the search stop at the right level.
+    _LABEL_CLASS_TOKENS = ("label", "title", "caption", "legend")
+
+    def _is_label_like(self, node: EnhancedNode) -> bool:
+        if not node.is_element:
+            return False
+        if node.tag in ("label", "legend", "caption"):
+            return True
+        raw = f"{node.attributes.get('class', '')} {node.attributes.get('id', '')}".lower()
+        if not raw.strip():
+            return False
+        for token in re.split(r"[^a-z0-9]+", raw):
+            if token in self._LABEL_CLASS_TOKENS:
+                return True
+        return False
+
     def _find_label_text(self, node: EnhancedNode, max_depth: int = 3) -> str:
-        """The first ``<label>`` text within ``max_depth`` levels of ``node``.
+        """The first label element's text within ``max_depth`` levels of ``node``.
+
+        A label element is a real ``<label>``/``<legend>``/``<caption>`` or an
+        element whose class/id marks it as a label (``…__label`` / ``…-label`` /
+        ``…label…``) — see ``_LABEL_CLASS_TOKENS``.
 
         The depth cap matters: a field label always sits in a shallow "label
         column" (``<div class="...label"><label>姓名</label></div>``). Without it,
@@ -2551,8 +2700,14 @@ class DOMSerializer:
         reached the deep ``<label>姓名</label>`` inside the sibling basic-info
         form.
         """
-        if node.tag == "label":
-            return self._collect_text(node)
+        if self._is_label_like(node):
+            text = self._collect_text(node)
+            # A control-wrapper label (one that *contains* the input) is not a
+            # field name; its text is the control's own value/placeholder.
+            if text and not self._has_field_input_descendant(node):
+                return text
+            if node.tag == "label":
+                return ""
         if max_depth <= 0:
             return ""
         for child in node.children:
@@ -2565,11 +2720,12 @@ class DOMSerializer:
     def _find_field_label_candidate(self, node: EnhancedNode, max_depth: int = 3) -> str:
         """Like ``_find_label_text`` but for a *custom select filter input*.
 
-        Skips a control-wrapper ``<label>`` (a ``<label>`` that wraps the actual
-        ``<input>`` — returning its text names the field after a *sibling field's*
-        value) and helper / error labels.
+        Skips a control-wrapper label (one that wraps the actual ``<input>`` —
+        returning its text names the field after a *sibling field's* value) and
+        helper / error labels. Accepts the same label elements as
+        ``_find_label_text`` (real ``<label>`` plus class-marked label divs).
         """
-        if node.tag == "label":
+        if self._is_label_like(node):
             if self._is_helper_text(node) or self._has_field_input_descendant(node):
                 return ""
             return self._collect_text(node)
@@ -2950,6 +3106,40 @@ class DOMSerializer:
                 classes = (current.attributes.get("class") or "").lower()
                 if any(hint in classes for hint in _OVERLAY_CLASS_HINTS):
                     return True
+            current = current.parent
+            hops += 1
+        return False
+
+    @staticmethod
+    def _has_direct_text(node: EnhancedNode) -> bool:
+        """True if ``node`` owns a non-empty text run (no element needed)."""
+        for child in node.children:
+            if child.is_text and (child.text or "").strip():
+                return True
+        return False
+
+    def _inside_open_overlay(self, node: EnhancedNode, max_hops: int = 10) -> bool:
+        """True if an ancestor is a *painted* floating overlay (see ``_rescue``).
+
+        "Painted" means the overlay itself is not hidden, has a real box and is on
+        screen (or is caught on the transparent first frame of its enter
+        animation) — so a closed / detached popup never leaks its text.
+        """
+        current = node.parent
+        hops = 0
+        while current is not None and hops < max_hops:
+            if current.is_element:
+                role = (current.role or "").lower()
+                classes = (current.attributes.get("class") or "").lower()
+                looks_overlay = role in _OVERLAY_ROLES or any(
+                    hint in classes for hint in _OVERLAY_CLASS_HINTS
+                )
+                if looks_overlay and not current.hidden:
+                    if current.bbox and current.bbox[2] > 0 and current.bbox[3] > 0:
+                        if current.in_viewport:
+                            return True
+                    elif self._effective_opacity_zero(current):
+                        return True
             current = current.parent
             hops += 1
         return False

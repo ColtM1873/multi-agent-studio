@@ -318,6 +318,42 @@ def fill_not_effective(name: str, fill: str, current) -> str:
     )
 
 
+# 作用：拒绝对 readonly 控件写入，并说明它是「只显示值、由自己的控件提交」的字段。
+# 触发条件：_run_fill 中 fill 非空且 interaction_state 报告 readonly（含 aria-readonly）。
+# 返回时机：作为 fill_error 返回；本次调用不触碰页面，避免「显示值被改、真实值没改」。
+def readonly_fill_error(name: str, fill: str) -> str:
+    return (
+        f"元素 {name} 是只读控件（readonly），它只显示由自身控件提交的值，"
+        f"不能直接填入「{fill}」。直接写入会让页面显示的文字和真实提交值不一致。"
+        f"请改为点击它、在弹出的候选/日历/级联面板里选择；"
+        f"若该控件没有任何弹层入口，请与用户确认该字段如何填写。"
+    )
+
+
+# 作用：告知「清空」未能生效，字段里仍留着旧值。
+# 触发条件：_run_fill 收到空 fill（清空语义）且 clear_field 复核后字段仍非空。
+# 返回时机：作为 fill_error 返回。
+def clear_fill_error(name: str) -> str:
+    return (
+        f"元素 {name} 的清空未生效：控件被页面重新填回了原值，无法用 fill 置空。"
+        f"该控件可能是只读、或由组件库托管的受控字段。"
+        f"请改为点击它并在弹出的选择器里操作，或与用户确认该字段是否必须留空。"
+    )
+
+
+# 作用：告知「先清空再输入」中的清空这一步失败，字段现在是被拼接污染的脏值。
+# 触发条件：_run_fill 中 input_text 报告 clear_ok=False（清空后字段仍非空）。
+# 返回时机：作为 fill_error 返回（此时报告成功会让 LLM 在错误前提上继续操作）。
+def fill_clobbered_error(name: str, fill: str, current) -> str:
+    return (
+        f"元素 {name} 的旧值未能清除，本次填入「{fill}」会与旧值拼在一起"
+        f"（控件当前值为「{current or '空'}」）。"
+        f"为避免写坏字段，本次未按「覆盖」处理。"
+        f"该控件由组件库托管（常见于日期/月份区间选择器）："
+        f"请改为点击它并在弹出的面板里选择，不要再用 fill 覆盖。"
+    )
+
+
 # 作用：告知原生 <select> 的选项没有匹配上，列出可选值，并说明只能从已有项中选。
 # 触发条件：_run_select / 批量校验中，select_option 后读回的值与目标不匹配。
 # 返回时机：作为 fill_error / 批量失败汇总的一部分返回。

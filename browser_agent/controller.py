@@ -134,11 +134,23 @@ def _href_targets_same_document(node: EnhancedNode, page_url: str) -> bool:
 def _fills_same(requested: str, current: Optional[str]) -> bool:
     """Heuristic: did a ``fill`` actually land in the field's current value?
 
-    Exact comparison is too strict — browsers / component libraries reformat a
-    typed date (``2027-06-01`` ⇄ ``2027/06/01``) or phone number — so compare the
-    alphanumeric skeleton. An empty request is never a check (``True``). A
-    ``None`` current value means the node could not be read: also ``True``, to
-    avoid a false failure.
+    A fill counts as landed when the control now holds the requested value and
+    nothing else:
+
+    * whitespace/case are ignored, and the comparison is done in *both*
+      directions so a reformatting widget still verifies — a typed date coming
+      back as ``2027/06/01`` or ``2027-06-01`` for a requested ``2027-06`` is a
+      landing, not a failure;
+    * a mere substring on either side is **not** enough. The previous one-way
+      containment accepted a *corrupted* value: when the clear was swallowed the
+      field held the concatenation ``2026-052024-09`` and the requested
+      ``2024-09`` was "found" inside it, so the tool reported success while the
+      page showed garbage (the real 4399 session then typed on top of it and made
+      it worse).
+
+    An empty request is never a check here (``True``); callers that mean "clear
+    the field" verify emptiness themselves. ``None`` means the node could not be
+    read: also ``True``, to avoid a false failure.
     """
     if not requested:
         return True
@@ -151,7 +163,46 @@ def _fills_same(requested: str, current: Optional[str]) -> bool:
     wanted = _norm(requested)
     if not wanted:
         return True
-    return wanted in _norm(current)
+    got = _norm(current)
+    if wanted == got:
+        return True
+    # Reformatting tolerance, deliberately narrow. A control may add/remove
+    # *digit-only* decoration (a day appended to a month, a separator swap), and
+    # the requested text must then still appear as one **contiguous** run whose
+    # digit budget is unchanged apart from that decoration. A concatenation has no
+    # contiguous match at all (``2026-05`` + ``2024-09`` ⇒ ``202605202409``:
+    # ``202409`` is not a substring) and a re-sliced fragment exceeds the digit
+    # budget, so neither is mistaken for success.
+    if len(got) > len(wanted):
+        index = got.find(wanted)
+        if index < 0:
+            return False
+        if not _same_digit_budget(wanted, got):
+            return False
+        extra_left = got[:index]
+        extra_right = got[index + len(wanted):]
+        if not (extra_left.isdigit() or extra_right.isdigit()):
+            return False
+        return len(extra_left) <= 2 and len(extra_right) <= 2
+    # The control kept *less* than we typed: accept only when what it kept is a
+    # contiguous run of the request (a masked / truncated display).
+    return got in wanted and _same_digit_budget(got, wanted)
+
+
+def _same_digit_budget(shorter: str, longer: str) -> bool:
+    """True unless ``longer`` holds a *re-sliced* fragment of ``shorter``'s digits.
+
+    ``2027-06`` vs ``2027-06-01`` share the digit run ``202706`` (longer simply
+    appends ``01``) — a reformat. ``24-0`` vs ``2024-09`` does not: the shorter
+    value's digits are a *misaligned* slice of the longer one, which is the
+    signature of a concatenated / half-replaced field. Allowing at most two extra
+    digits keeps the tolerance to a day / year fragment.
+    """
+    want_digits = "".join(ch for ch in shorter if ch.isdigit())
+    got_digits = "".join(ch for ch in longer if ch.isdigit())
+    if want_digits and want_digits in got_digits:
+        return len(got_digits) - len(want_digits) <= 2
+    return not want_digits
 
 
 # Native input ``type`` values that are rendered by a date/time picker widget.
@@ -1027,26 +1078,58 @@ class BrowserController:
         name = ctx.name
         fill_error = ""
         fill_notice = ""
-        executor.input_text(node.backend_node_id, fill)
-        self._stabilize(target_id)
+        # A ``readonly`` control (a cascader / date picker / masked field that
+        # only displays a value its own widget committed) must never be written:
+        # the native-setter fallback *can* write it, which leaves the visible text
+        # and the widget's model disagreeing (the form then submits the old value
+        # while the screen shows the typed one). Refuse up front and point at the
+        # real control instead of silently corrupting the page.
+        if fill and not fill_error:
+            state = executor.interaction_state(node.backend_node_id)
+            if state.get("readonly"):
+                fill_error = rp.readonly_fill_error(name, fill)
+        if not fill and not fill_error:
+            # An empty fill is an explicit *clear* request: verify it really is
+            # empty afterwards instead of answering "（页面无变化）" (which the model
+            # read as "nothing happened" and retried; the real session burned
+            # several turns on the 微信号 field this way).
+            if not executor.clear_field(node.backend_node_id):
+                fill_error = rp.clear_fill_error(name)
+            self._stabilize(target_id)
+            return {
+                "fill_error": fill_error,
+                "fill_notice": fill_notice,
+                "dialog": {"type": "", "message": ""},
+            }
+        if not fill_error:
+            result = executor.input_text(node.backend_node_id, fill)
+            self._stabilize(target_id)
+        else:
+            result = {}
         # A fill can be silently swallowed (a readonly input, or a date / time
         # picker that only accepts calendar selection). Verify the value landed
         # and fail loudly if it did not.
-        if fill:
-            current = executor.read_value(node.backend_node_id)
-            date_like = _is_date_like_input(node)
-            if date_like and not _looks_like_date(fill):
-                fill_error = self._date_fill_error(name, fill)
-            elif not _fills_same(fill, current):
-                fill_error = rp.fill_not_effective(name, fill, current)
-            elif date_like:
-                # The picker may display typed text without committing it; blur
-                # to force a re-render, then re-read.
-                executor.blur(node.backend_node_id)
-                self._stabilize(target_id)
+        if fill and not fill_error:
+            if not result.get("clear_ok", True):
+                # The old value could not be removed, so whatever the field shows
+                # now is a concatenation, not the requested value.
                 current = executor.read_value(node.backend_node_id)
-                if not _fills_same(fill, current):
-                    fill_error = self._date_fill_error(name, fill, current)
+                fill_error = rp.fill_clobbered_error(name, fill, current)
+            else:
+                current = executor.read_value(node.backend_node_id)
+                date_like = _is_date_like_input(node)
+                if date_like and not _looks_like_date(fill):
+                    fill_error = self._date_fill_error(name, fill)
+                elif not _fills_same(fill, current):
+                    fill_error = rp.fill_not_effective(name, fill, current)
+                elif date_like:
+                    # The picker may display typed text without committing it; blur
+                    # to force a re-render, then re-read.
+                    executor.blur(node.backend_node_id)
+                    self._stabilize(target_id)
+                    current = executor.read_value(node.backend_node_id)
+                    if not _fills_same(fill, current):
+                        fill_error = self._date_fill_error(name, fill, current)
         if press_enter and not fill_error:
             # A bare search box may have no submit button at all: only pressing
             # Enter submits it. Treat it like a click (wait for a possible
@@ -1562,6 +1645,15 @@ class BrowserController:
             for index, (_name, category, backend_node_id) in enumerate(plan):
                 try:
                     if category == "input":
+                        # A readonly control (cascader / picker / masked field)
+                        # must not be written: the native-setter fallback *can*
+                        # write it and then the visible text and the widget's own
+                        # model disagree. Validate before touching the page.
+                        if fills[index] and executor.interaction_state(backend_node_id).get(
+                            "readonly"
+                        ):
+                            error_msg = rp.readonly_fill_error(_name, fills[index])
+                            break
                         executor.input_text(backend_node_id, fills[index])
                     elif category == "select":
                         executor.select_option(backend_node_id, fills[index])
@@ -1625,9 +1717,17 @@ class BrowserController:
                             (fname, fval, current, self._select_option_texts(node))
                         )
                     continue
-                if fcat != "input" or not fval:
+                if fcat != "input":
                     continue
                 node = fill_nodes.get(fname)
+                if not fval:
+                    # An empty fill is a *clear* request: it must be verified too,
+                    # otherwise "clear" silently did nothing and the batch still
+                    # reported 成功 (the real session cleared 微信号 by accident
+                    # with a space, then could not tell whether it had worked).
+                    if not executor.clear_field(fbid):
+                        failed_fills.append((fname, executor.read_value(fbid)))
+                    continue
                 current = executor.read_value(fbid)
                 if _is_date_like_input(node) and not _looks_like_date(fval):
                     # Nonsense text on a picker (``至今``): never committed.
