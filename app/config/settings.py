@@ -31,6 +31,14 @@ class Settings(BaseModel):
     show_placeholders: bool = True
     # 聊天输入框是否显示「注入当前日期」按钮（开启后可在会话里选择把当前日期拼接到用户消息前）
     show_date_inject_button: bool = True
+    # 常用 prompt 注入功能总开关：关闭后，会话页的「注入常用prompt」「编辑会话常用prompt」
+    # 与主界面的「编辑全局常用prompt」三个按钮都不再显示；**已保存的数据一律保留**
+    # （全局库 common_prompts 与会话选择都存在后端，不因开关而删除）。
+    # 纯前端显示开关，不参与图编译，无需 invalidate_all。默认开启。
+    common_prompt_enabled: bool = True
+    # 全局常用 prompt 库（多条，每条可多行）；会话页可从中选取一条作为本会话的常用 prompt，
+    # 也可「直接输入」（保存时自动追加到这里）。
+    common_prompts: list[str] = Field(default_factory=list)
     # 裸公式识别：无分隔符公式的启发式渲染，默认关闭以避开日常场景误判
     bare_math_detect: bool = False
     # 激进公式渲染：在裸公式识别基础上支持单字符上下标/希腊字母/数学符号，

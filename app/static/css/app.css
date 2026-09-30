@@ -299,6 +299,32 @@ html[data-style-danger="solid"] .card-btn-danger:hover { filter: brightness(.92)
 .sensitive-row input { width: 100%; }
 .sensitive-row .sens-minus, .sensitive-row .sens-plus { width: 34px; padding: 0; font-size: 16px; line-height: 1; }
 
+/* ── 常用 prompt ───────────────────────── */
+/* 会话常用 prompt 的灰色只读提示行：接在日期提示行下方（同款灰字、可选中复制）；
+   可能多行，故限定高度、超出可滚动，点击可在当前视窗弹窗看全文。 */
+.input-pane .common-prompt-hint {
+  max-height: 6.5em; overflow-y: auto; cursor: pointer;
+  scrollbar-gutter: stable;
+}
+.input-pane .common-prompt-hint:hover { color: var(--primary); }
+/* 「注入常用prompt」开关：开启后长亮绿灯（发送后自动关闭）；未设置时禁用置灰 */
+#commonPromptInjectBtn.on .date-dot { background: #22c55e; }
+/* 全局 / 会话常用 prompt 弹窗：每行一个多行文本框 +「−」「+」 */
+.modal.common-prompt-modal { width: min(680px, calc(100vw - 32px)); }
+.common-prompt-head { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; font-size: 12px; color: var(--text-muted); padding: 0 2px 6px; }
+.common-prompt-row { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: start; margin-bottom: 8px; }
+.common-prompt-row .cp-text { width: 100%; min-height: 64px; resize: vertical; font-family: inherit; font-size: 13px; line-height: 1.5; }
+.common-prompt-row .cp-minus, .common-prompt-row .cp-plus { width: 34px; padding: 0; font-size: 16px; line-height: 1; }
+.common-prompt-tabs { display: flex; gap: 18px; margin-bottom: 10px; font-size: 14px; }
+.common-prompt-tabs label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.common-prompt-list { max-height: 46vh; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; scrollbar-gutter: stable; }
+.common-prompt-item {
+  border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px;
+  cursor: pointer; white-space: pre-wrap; font-size: 13px; line-height: 1.5;
+}
+.common-prompt-item:hover { border-color: var(--primary); }
+.common-prompt-item.sel { border-color: var(--primary); background: var(--bg); box-shadow: inset 0 0 0 1px var(--primary); }
+
 .gutter { background: var(--border); opacity: .6; cursor: row-resize; }
 .gutter:hover, .gutter.gutter-horizontal:hover { opacity: 1; background: var(--primary); }
 .gutter-horizontal { cursor: col-resize; }

@@ -24,8 +24,20 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api import agents, browser, chat_ws, downloads, drafts, export_html, memories, settings, snapshots, threads
-from app.deps import draft_store
+from app.api import (
+    agents,
+    browser,
+    chat_ws,
+    common_prompts,
+    downloads,
+    drafts,
+    export_html,
+    memories,
+    settings,
+    snapshots,
+    threads,
+)
+from app.deps import common_prompt_store, draft_store
 
 # 可选的浏览器工具计时 / 卡死看门狗探针（仅当设置 BROWSER_TOOL_TIMING=1 时安装，
 # 未设置时零开销、不改变任何行为）。见 browser_agent/diagnostics.py。
@@ -40,11 +52,12 @@ except Exception:
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     yield
-    # 退出托盘程序时兜底把未发送消息缓存再落盘一次
-    try:
-        draft_store.flush()
-    except Exception:
-        pass
+    # 退出托盘程序时兜底把未发送消息缓存 / 会话常用 prompt 再落盘一次
+    for store in (draft_store, common_prompt_store):
+        try:
+            store.flush()
+        except Exception:
+            pass
 
 
 app = FastAPI(title="Multi-Agent Studio", lifespan=lifespan)
@@ -74,6 +87,7 @@ app.include_router(settings.router)
 app.include_router(downloads.router)
 app.include_router(export_html.router)
 app.include_router(drafts.router)
+app.include_router(common_prompts.router)
 app.include_router(browser.router)
 
 

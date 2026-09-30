@@ -192,6 +192,30 @@ const I18N_EN = {
   "开启后，聊天输入框右侧会出现「注入当前日期」按钮；开启该按钮后，发送消息时会在用户消息前面拼接当前日期。": "When enabled, an \"Inject current date\" button appears next to the chat input. When that button is on, the current date is prepended to your message when sending.",
   "注入当前日期": "Inject current date",
   "开启后，发送消息时会在用户消息前面拼接当前日期。": "When enabled, the current date is prepended to your message when sending.",
+  "开启常用prompt注入功能": "Enable common-prompt injection",
+  "开启后，会话页会出现「注入常用prompt」「编辑会话常用prompt」按钮，主界面会出现「编辑全局常用prompt」按钮；关闭后这三个按钮都不再显示，但已保存的全局常用 prompt 库与每个会话的设置都会一直保留。": "When enabled, the chat view shows the \"Inject common prompt\" and \"Edit session common prompt\" buttons, and the main screen shows \"Edit global common prompts\". When disabled these three buttons are hidden, but the saved global prompt library and each session's setting are always kept.",
+  "注入常用prompt": "Inject common prompt",
+  "编辑全局常用prompt": "Edit global common prompts",
+  "编辑会话常用prompt": "Edit session common prompt",
+  "会话常用prompt": "Session common prompt",
+  "点击开启：发送时把当前会话的常用 prompt 拼接到消息中（日期行下方、你输入的内容上方）": "Click to enable: this session's common prompt is inserted into your message when sending (below the date line, above your own input).",
+  "已开启：发送时会把当前会话的常用 prompt 拼接到消息中（日期行下方、你输入的内容上方；发送后自动关闭）": "On: this session's common prompt will be inserted into your message when sending (below the date line, above your own input; turns off automatically after sending).",
+  "当前会话还没有设置常用 prompt，请先点「编辑会话常用prompt」设置。": "This session has no common prompt yet. Click \"Edit session common prompt\" to set one first.",
+  "用于当前会话：开启「注入常用prompt」后，发送消息时会把下方内容拼接到消息中（日期行下方、你输入的内容上方）。": "For this session: when \"Inject common prompt\" is on, the content below is inserted into your message when sending (below the date line, above your own input).",
+  "下方每一条是一段常用 prompt（可多行，直接按 Enter 换行）；聊天时可在会话页「编辑会话常用prompt」中选取一条，或直接输入新内容（保存时会自动加入这里）。": "Each entry below is one common prompt (multi-line; press Enter freely). In a chat view you can pick one via \"Edit session common prompt\", or type new content there (it is added here automatically on save).",
+  "常用 prompt 内容": "Common prompt content",
+  "例如：请用简体中文回答，先给结论再给理由。": "e.g. Answer in Simplified Chinese; give the conclusion first, then the reasoning.",
+  "从全局常用prompt选取": "Pick from global common prompts",
+  "直接输入": "Enter manually",
+  "从下方全局库中选取一条，作为当前会话的常用 prompt。": "Pick one entry from the global library below as this session's common prompt.",
+  "直接输入一段常用 prompt；点「保存」后会自动加入全局常用 prompt 库，并设为当前会话的常用 prompt。": "Type a common prompt; when you click Save it is added to the global library and set as this session's common prompt.",
+  "全局常用prompt库为空：可切换到「直接输入」，或先到主界面「编辑全局常用prompt」新增条目。": "The global common-prompt library is empty. Switch to \"Enter manually\", or add entries via \"Edit global common prompts\" on the main screen first.",
+  "请先选取一条常用 prompt": "Please pick a common prompt first",
+  "常用 prompt 不能为空": "Common prompt cannot be empty",
+  "清空（不设置）": "Clear (none)",
+  "已保存当前会话的常用 prompt": "Saved this session's common prompt",
+  "已清空当前会话的常用 prompt": "Cleared this session's common prompt",
+  "点击查看完整内容": "Click to view the full content",
   "开启浏览器接管功能": "Enable browser takeover",
   "开启后，会向主 agent 注入一组浏览器接管工具（占用上下文）。只有需要让 agent 操作浏览器时才开启。": "When enabled, a set of browser-takeover tools is injected into the main agent (consuming context). Only turn it on when the agent needs to operate a browser.",
   "显示浏览器接管说明弹窗": "Show the browser-takeover intro popup",
@@ -1827,6 +1851,7 @@ async function renderAgents() {
       <button class="btn small" id="langBtn" title="切换语言 / Switch language">${lang === "zh" ? "EN" : "中文"}</button>
       <button class="gear-btn" id="gearBtn" title="${t("系统设置")}">⚙️</button>
       <button class="btn small" id="editSensitiveBtn">${t("编辑敏感信息表单")}</button>
+      <button class="btn small" id="editGlobalPromptBtn" style="display:none;">${t("编辑全局常用prompt")}</button>
       <button class="btn small" id="editDefaultBtn">${t("编辑默认配置")}</button>
       <button class="btn primary" id="newBtn">+ ${t("新建 multi-agent")}</button>
     </div>
@@ -1843,6 +1868,15 @@ async function renderAgents() {
   $("#newBtn").onclick = () => { S.editingDefault = false; S.agentId = null; S.view = "editor"; render(); };
   $("#editDefaultBtn").onclick = () => { S.editingDefault = true; S.agentId = null; S.view = "editor"; render(); };
   $("#editSensitiveBtn").onclick = () => openSensitiveForm();
+  // 「编辑全局常用prompt」：显示与否由系统设置「开启常用prompt注入功能」决定（关闭时隐藏，数据保留）
+  const globalPromptBtn = $("#editGlobalPromptBtn");
+  if (globalPromptBtn) {
+    globalPromptBtn.onclick = () => openGlobalPromptModal();
+    try {
+      const st = await getSettings();
+      globalPromptBtn.style.display = st.common_prompt_enabled === false ? "none" : "";
+    } catch (e) { globalPromptBtn.style.display = "none"; }
+  }
   $("#gearBtn").onclick = () => openSettings();
   $("#langBtn").onclick = () => setLang(lang === "zh" ? "en" : "zh");
 
@@ -1989,6 +2023,10 @@ async function openSettings() {
         <label class="toggle"><input type="checkbox" id="set_date_inject" ${s.show_date_inject_button !== false ? "checked" : ""}><span class="track"></span></label>
       </div>
       <div class="switch-row">
+        <span class="sw-label">${t("开启常用prompt注入功能")} <i class="info-icon">!<span class="tip">${t("开启后，会话页会出现「注入常用prompt」「编辑会话常用prompt」按钮，主界面会出现「编辑全局常用prompt」按钮；关闭后这三个按钮都不再显示，但已保存的全局常用 prompt 库与每个会话的设置都会一直保留。")}</span></i></span>
+        <label class="toggle"><input type="checkbox" id="set_common_prompt" ${s.common_prompt_enabled !== false ? "checked" : ""}><span class="track"></span></label>
+      </div>
+      <div class="switch-row">
         <span class="sw-label">${t("显示浏览器接管说明弹窗")} <i class="info-icon">!<span class="tip">${t("每次打开浏览器时，弹窗说明红色浮动按钮（停止/继续）的作用。关闭后不再弹出。")}</span></i></span>
         <label class="toggle"><input type="checkbox" id="set_browser_popup" ${s.browser_takeover_intro_popup !== false ? "checked" : ""}><span class="track"></span></label>
       </div>
@@ -2113,6 +2151,7 @@ async function openSettings() {
         edit_all_message_types: mask.querySelector("#set_edit_types").checked,
         auto_scroll_on_send: mask.querySelector("#set_autoscroll").checked,
         show_date_inject_button: mask.querySelector("#set_date_inject").checked,
+        common_prompt_enabled: mask.querySelector("#set_common_prompt").checked,
         browser_takeover_intro_popup: mask.querySelector("#set_browser_popup").checked,
         summary_token_percent: Math.min(100, Math.max(1, +mask.querySelector("#set_summary_pct").value || 20)),
         proactive_summary_custom_percent: mask.querySelector("#set_summary_custom").checked,
@@ -2174,6 +2213,180 @@ async function openSensitiveForm() {
       await saveSettings({ ...s, sensitive_info });
       mask.remove();
       toast(t("设置已保存"));
+    } catch (e) { toast(e.message, true); }
+  };
+}
+
+/* ================= 全局常用 prompt 库（编辑，多条） ================= */
+
+async function openGlobalPromptModal() {
+  let s;
+  try { s = await getSettings(); } catch (e) { toast(e.message, true); return; }
+  const mask = document.createElement("div");
+  mask.className = "modal-mask";
+  mask.innerHTML = `
+    <div class="modal common-prompt-modal">
+      <h3>📝 ${t("编辑全局常用prompt")}</h3>
+      <div class="muted" style="margin-bottom:10px;">${esc(t("下方每一条是一段常用 prompt（可多行，直接按 Enter 换行）；聊天时可在会话页「编辑会话常用prompt」中选取一条，或直接输入新内容（保存时会自动加入这里）。"))}</div>
+      <div class="common-prompt-head"><span>${t("常用 prompt 内容")}</span><span></span><span></span></div>
+      <div id="globalPromptRows"></div>
+      <div class="modal-actions">
+        <button class="btn" id="gpCancel">${t("取消")}</button>
+        <button class="btn primary" id="gpSave">${t("保存")}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(mask);
+
+  const rowsEl = mask.querySelector("#globalPromptRows");
+
+  // 每行 = 一段可多行文本 +「−」（删除本行）/「+」（在下方新增一行）。
+  // 内容存 textarea，Enter 只换行、不触发保存（不挤占用户的回车键）。
+  function addRow(text = "", afterEl = null) {
+    const row = document.createElement("div");
+    row.className = "common-prompt-row";
+    row.innerHTML = `
+      <textarea class="cp-text" rows="3" placeholder="${t("例如：请用简体中文回答，先给结论再给理由。")}"></textarea>
+      <button class="btn small cp-minus" type="button" title="${t("删除本行")}">−</button>
+      <button class="btn small cp-plus" type="button" title="${t("在下方新增一行")}">+</button>`;
+    row.querySelector(".cp-text").value = text;   // 用 value 赋值，避免多行文本被 HTML 解析吞掉首行
+    row.querySelector(".cp-minus").onclick = () => row.remove();
+    row.querySelector(".cp-plus").onclick = () => addRow("", row);
+    if (afterEl && afterEl.parentNode === rowsEl) afterEl.after(row);
+    else rowsEl.appendChild(row);
+    return row;
+  }
+
+  const initial = Array.isArray(s.common_prompts) ? s.common_prompts : [];
+  if (initial.length) initial.forEach(v => addRow(String(v)));
+  else addRow();
+
+  const close = () => mask.remove();
+  mask.querySelector("#gpCancel").onclick = close;
+  mask.addEventListener("click", (e) => { if (e.target === mask) close(); });
+  mask.querySelector("#gpSave").onclick = async () => {
+    try {
+      const common_prompts = $$(".common-prompt-row .cp-text", rowsEl)
+        .map(el => el.value.trim())
+        .filter(Boolean);
+      await saveSettings({ ...s, common_prompts });
+      close();
+      toast(t("设置已保存"));
+    } catch (e) { toast(e.message, true); }
+  };
+}
+
+/* ================= 会话常用 prompt（从全局选取 / 直接输入） ================= */
+
+async function openSessionPromptModal(current, onSaved) {
+  if (!S.agentId || !S.threadId) return;
+  let s;
+  try { s = await getSettings(); } catch (e) { toast(e.message, true); return; }
+  const lib = (Array.isArray(s.common_prompts) ? s.common_prompts : [])
+    .map(v => String(v)).filter(v => v.trim());
+  const cur = String(current || "");
+  let selected = lib.findIndex(v => v.trim() === cur.trim());
+
+  const mask = document.createElement("div");
+  mask.className = "modal-mask";
+  mask.innerHTML = `
+    <div class="modal common-prompt-modal">
+      <h3>📝 ${t("编辑会话常用prompt")}</h3>
+      <div class="common-prompt-tabs">
+        <label><input type="radio" name="cpMode" value="pick" checked>${t("从全局常用prompt选取")}</label>
+        <label><input type="radio" name="cpMode" value="input">${t("直接输入")}</label>
+      </div>
+      <div id="cpPickPane">
+        <div class="muted" style="margin-bottom:8px;">${esc(t("从下方全局库中选取一条，作为当前会话的常用 prompt。"))}</div>
+        <div class="common-prompt-list" id="cpList"></div>
+      </div>
+      <div id="cpInputPane" style="display:none;">
+        <div class="muted" style="margin-bottom:8px;">${esc(t("直接输入一段常用 prompt；点「保存」后会自动加入全局常用 prompt 库，并设为当前会话的常用 prompt。"))}</div>
+        <textarea id="cpInput" rows="6" placeholder="${t("例如：请用简体中文回答，先给结论再给理由。")}"></textarea>
+      </div>
+      <div class="modal-actions">
+        <button class="btn" id="cpClear">${t("清空（不设置）")}</button>
+        <div class="spacer" style="flex:1;"></div>
+        <button class="btn" id="cpCancel">${t("取消")}</button>
+        <button class="btn primary" id="cpSave">${t("保存")}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(mask);
+
+  const listEl = mask.querySelector("#cpList");
+  const pickPane = mask.querySelector("#cpPickPane");
+  const inputPane = mask.querySelector("#cpInputPane");
+  const inputEl = mask.querySelector("#cpInput");
+
+  function paintList() {
+    listEl.innerHTML = "";
+    if (!lib.length) {
+      listEl.innerHTML = `<div class="muted">${esc(t("全局常用prompt库为空：可切换到「直接输入」，或先到主界面「编辑全局常用prompt」新增条目。"))}</div>`;
+      return;
+    }
+    lib.forEach((text, i) => {
+      const item = document.createElement("div");
+      item.className = "common-prompt-item" + (i === selected ? " sel" : "");
+      item.textContent = text;
+      item.onclick = () => { selected = i; paintList(); };
+      listEl.appendChild(item);
+    });
+  }
+  paintList();
+
+  // 当前会话已有的内容若不来自全局库，切到「直接输入」时预填，方便就地修改
+  if (selected < 0 && cur) inputEl.value = cur;
+
+  mask.querySelectorAll('input[name="cpMode"]').forEach(r => {
+    r.onchange = () => {
+      const pick = mask.querySelector('input[name="cpMode"]:checked').value === "pick";
+      pickPane.style.display = pick ? "" : "none";
+      inputPane.style.display = pick ? "none" : "";
+    };
+  });
+
+  const close = () => mask.remove();
+  mask.querySelector("#cpCancel").onclick = close;
+  mask.addEventListener("click", (e) => { if (e.target === mask) close(); });
+
+  const putPrompt = (text) => api(
+    `/api/agents/${encodeURIComponent(S.agentId)}/threads/${encodeURIComponent(S.threadId)}/common-prompt`,
+    { method: "PUT", body: JSON.stringify({ text }) },
+  );
+
+  // 「清空（不设置）」：该会话回到「未设置」，注入按钮变灰不可点
+  mask.querySelector("#cpClear").onclick = async () => {
+    try {
+      await putPrompt("");
+      close();
+      if (onSaved) onSaved("");
+      toast(t("已清空当前会话的常用 prompt"));
+    } catch (e) { toast(e.message, true); }
+  };
+
+  mask.querySelector("#cpSave").onclick = async () => {
+    const mode = mask.querySelector('input[name="cpMode"]:checked').value;
+    let text = "";
+    if (mode === "pick") {
+      if (!lib.length || selected < 0) { toast(t("请先选取一条常用 prompt"), true); return; }
+      text = lib[selected];
+    } else {
+      text = inputEl.value.trim();
+      if (!text) { toast(t("常用 prompt 不能为空"), true); return; }
+    }
+    try {
+      // 「直接输入」的内容：保存时自动加入全局常用 prompt 库（内容已存在则不重复添加）
+      if (mode === "input" && !lib.some(v => v.trim() === text)) {
+        try {
+          const curSettings = await getSettings();
+          const next = Array.isArray(curSettings.common_prompts) ? curSettings.common_prompts.slice() : [];
+          next.push(text);
+          await saveSettings({ ...curSettings, common_prompts: next });
+        } catch (e) { toast(e.message, true); }
+      }
+      await putPrompt(text);
+      close();
+      if (onSaved) onSaved(text);
+      toast(t("已保存当前会话的常用 prompt"));
     } catch (e) { toast(e.message, true); }
   };
 }
@@ -3583,6 +3796,7 @@ async function renderChatView() {
       <div class="spacer" style="flex:1;"></div>
       <span class="status-indicator" id="statusInd"></span>
       <span class="edit-mode-badge" id="editModeBadge" style="display:none;">✏️ ${t("编辑模式")}</span>
+      <button class="btn small" id="editSessionPromptBtn" style="display:none;">📝 ${t("编辑会话常用prompt")}</button>
       <button class="btn small" id="memoryStoreBtn" title="${t("查看/编辑记忆库")}">🧠 ${t("查看/编辑记忆库")}</button>
       <button class="btn small" id="delAllMsgBtn" title="${t("删除全部历史消息")}">🗑️ ${t("删除全部历史消息")}</button>
       <button class="btn small" id="editModeBtn">✏️ ${t("进入编辑模式")}</button>
@@ -3610,6 +3824,7 @@ async function renderChatView() {
           <div class="input-main-left">
             <div class="input-toolbar"><span class="muted" id="inputHint">${t("输入消息（Enter 发送，Shift+Enter 换行）")}</span><div class="spacer" style="flex:1;"></div></div>
             <div class="date-inject-hint" id="dateInjectHint" style="display:none;"></div>
+            <div class="date-inject-hint common-prompt-hint" id="commonPromptHint" style="display:none;" title="${t("点击查看完整内容")}"></div>
             <textarea id="msgInput" placeholder="${t("输入消息…")}"></textarea>
             <div class="inject-blocks">
               <div class="inject-block" id="sensitiveInjectBlock" style="display:none;"></div>
@@ -3620,6 +3835,7 @@ async function renderChatView() {
             <div class="input-actions-top">
               <button class="btn small" id="stopBtn" style="display:none;">${t("停止")}</button>
               <button class="btn small" id="dateInjectBtn" style="display:none;" title="${t("开启后，发送消息时会在用户消息前面拼接当前日期。")}"><span class="date-dot"></span>${t("注入当前日期")}</button>
+              <button class="btn small" id="commonPromptInjectBtn" style="display:none;"><span class="date-dot"></span>${t("注入常用prompt")}</button>
             </div>
             <button class="btn small primary" id="sendBtn">${t("发送")}</button>
           </div>
@@ -3720,6 +3936,58 @@ async function renderChatView() {
     };
   }
   refreshDateInjectUI();
+
+  /* ============ 注入常用 prompt（每个会话一条，内容落盘在后端） ============ */
+  // 与「注入当前日期」同款显示方式：开启后，在日期提示行的下一行显示本会话的常用 prompt
+  // （灰色只读文本；多行时限定高度，点击可看全文）；发送时按「日期 → 常用prompt → 用户输入」
+  // 的顺序拼进消息。语义与「注入敏感信息替换列表」一致：**一次性**，发送成功后自动关闭。
+  // 按钮显示与否由系统设置「开启常用prompt注入功能」控制；本会话尚未设置时按钮置灰不可点。
+  const commonPromptEnabled = !(settings && settings.common_prompt_enabled === false);
+  let commonPromptText = "";
+  let commonPromptOn = false;
+  if (commonPromptEnabled) {
+    try {
+      const r = await api(`/api/agents/${encodeURIComponent(S.agentId)}/threads/${encodeURIComponent(S.threadId)}/common-prompt`);
+      commonPromptText = (r && r.text) || "";
+    } catch (e) { commonPromptText = ""; }
+  }
+  function refreshCommonPromptUI() {
+    const btn = $("#commonPromptInjectBtn"), hint = $("#commonPromptHint"), editBtn = $("#editSessionPromptBtn");
+    if (editBtn) editBtn.style.display = commonPromptEnabled ? "" : "none";
+    if (btn) {
+      btn.style.display = commonPromptEnabled ? "" : "none";
+      btn.disabled = !commonPromptText;
+      btn.classList.toggle("on", commonPromptOn && !!commonPromptText);
+      btn.title = !commonPromptText
+        ? t("当前会话还没有设置常用 prompt，请先点「编辑会话常用prompt」设置。")
+        : commonPromptOn
+          ? t("已开启：发送时会把当前会话的常用 prompt 拼接到消息中（日期行下方、你输入的内容上方；发送后自动关闭）")
+          : t("点击开启：发送时把当前会话的常用 prompt 拼接到消息中（日期行下方、你输入的内容上方）");
+    }
+    if (hint) {
+      if (commonPromptOn && commonPromptText) { hint.textContent = commonPromptText; hint.style.display = ""; }
+      else { hint.textContent = ""; hint.style.display = "none"; }
+    }
+  }
+  const commonPromptBtn = $("#commonPromptInjectBtn");
+  if (commonPromptBtn) {
+    commonPromptBtn.onclick = () => {
+      if (!commonPromptText) { toast(t("当前会话还没有设置常用 prompt，请先点「编辑会话常用prompt」设置。")); return; }
+      commonPromptOn = !commonPromptOn;
+      refreshCommonPromptUI();
+    };
+  }
+  const commonPromptHintEl = $("#commonPromptHint");
+  if (commonPromptHintEl) {
+    commonPromptHintEl.onclick = () => {
+      if (!commonPromptText) return;
+      showContentModal(`📝 ${t("会话常用prompt")}`,
+        `<div class="muted" style="margin-bottom:8px;">${esc(t("用于当前会话：开启「注入常用prompt」后，发送消息时会把下方内容拼接到消息中（日期行下方、你输入的内容上方）。"))}</div>` +
+        esc(commonPromptText).replace(/\n/g, "<br>"));
+    };
+  }
+  function resetCommonPrompt() { commonPromptOn = false; refreshCommonPromptUI(); }
+  refreshCommonPromptUI();
 
   /* ============ 浏览器接管：提示注入开关状态（供 send() 读取） ============ */
   // 「提示Agent开始接管浏览器」/「注入 敏感信息替换列表」= 开关式状态：
@@ -4666,6 +4934,14 @@ async function renderChatView() {
   bindEditLineEvents();
   const memoryBtn = $("#memoryStoreBtn");
   if (memoryBtn) memoryBtn.onclick = () => openMemoryStoreModal();
+  const sessionPromptBtn = $("#editSessionPromptBtn");
+  if (sessionPromptBtn) {
+    sessionPromptBtn.onclick = () => openSessionPromptModal(commonPromptText, (text) => {
+      commonPromptText = text || "";
+      if (!commonPromptText) commonPromptOn = false;   // 清空后回到「未设置」：按钮变灰不可点
+      refreshCommonPromptUI();
+    });
+  }
   const delAllMsgBtn = $("#delAllMsgBtn");
   if (delAllMsgBtn) delAllMsgBtn.onclick = () => triggerCleanAll();
 
@@ -4730,13 +5006,17 @@ async function renderChatView() {
     if (takeoverHintOn && !takeoverPreviewText) { toast(t("正在获取当前页面内容，请稍候…")); return; }
     const userText = raw.replace(/\s+$/, "");
     const injectDate = dateInjectAvailable && dateInjectOn;
+    const injectCommon = commonPromptEnabled && commonPromptOn && !!commonPromptText;
     const injectTakeover = takeoverHintOn && !!takeoverPreviewText;
     const injectSensitive = sensitiveInjectOn && !!sensitiveInjectText;
-    // 开启日期注入 / 浏览器接管提示 / 敏感信息注入后，允许「空输入」发送
-    if (!userText && !injectDate && !injectTakeover && !injectSensitive) return;
-    let content = injectDate
-      ? (userText ? datePromptText() + "\n" + userText : datePromptText())
-      : userText;
+    // 开启日期注入 / 常用 prompt 注入 / 浏览器接管提示 / 敏感信息注入后，允许「空输入」发送
+    if (!userText && !injectDate && !injectCommon && !injectTakeover && !injectSensitive) return;
+    // 前缀按「日期 → 常用prompt → 用户输入」拼接，与输入框上方灰色提示从上到下的顺序一致
+    const parts = [];
+    if (injectDate) parts.push(datePromptText());
+    if (injectCommon) parts.push(commonPromptText);
+    if (userText) parts.push(userText);
+    let content = parts.join("\n");
     // 敏感信息替换列表：追加到用户消息之后（发送成功后自动关闭）
     if (injectSensitive) content = content ? content + "\n" + sensitiveInjectText : sensitiveInjectText;
     // 浏览器接管提示：把当前聚焦标签页内容（已包裹）追加到用户消息之后
@@ -4757,9 +5037,10 @@ async function renderChatView() {
     const ok = await openChatWs(content);
     setRunning(false);
     if (ok) {
-      // 浏览器接管提示 / 敏感信息替换列表为「一次性状态」：发送成功后自动关闭
+      // 浏览器接管提示 / 敏感信息替换列表 / 常用 prompt 为「一次性状态」：发送成功后自动关闭
       if (takeoverHintOn && takeoverHintReset) takeoverHintReset();
       if (sensitiveInjectOn && sensitiveInjectReset) sensitiveInjectReset();
+      if (injectCommon) resetCommonPrompt();
       showDoneBubble();
     } else {
       // 失败/被中断（含点击「停止」）：气泡提示是否回填原发送信息。
