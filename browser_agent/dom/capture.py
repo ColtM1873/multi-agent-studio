@@ -138,4 +138,9 @@ def viewport_from_metrics(metrics: dict) -> dict[str, float]:
         "height": float(height),
         "scroll_x": float(page_x),
         "scroll_y": float(page_y),
+        # Carried so the serializer can say whether the *document* scroller is at
+        # its top / bottom (``_scroller_summary``). ``scroll_y`` alone cannot:
+        # 0 means "at the top" only if there is more document below.
+        "scroll_height": float(layout.get("contentHeight") or visual.get("contentHeight") or height),
+        "client_height": float(height),
     }

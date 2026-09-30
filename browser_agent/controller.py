@@ -971,6 +971,7 @@ class BrowserController:
         before_sig = ""
         after_sig = ""
         click_noop = False
+        popup_missing = False
 
         # A click may trigger a navigation; wait for it to actually begin/finish
         # instead of trusting the stale DOM's quietness.
@@ -1023,7 +1024,23 @@ class BrowserController:
             elif popup_trigger:
                 # Keep the just-opened popup alive (no blur/park) and let it
                 # paint before the capture.
-                self._wait_overlay_open(session)
+                opened = self._wait_overlay_open(session)
+                if not opened:
+                    # The contract of this category is "clicking opens a panel".
+                    # When nothing opened, one bounded retry on the same target is
+                    # worth far more than a silent "成功": in the Feishu Jobs
+                    # session the first click on 国籍 left ``aria-expanded=false``
+                    # and the caller was told nothing, so the model re-clicked on
+                    # its own — after burning a full reasoning turn reading an
+                    # unrelated diff. Retrying here makes the common transient
+                    # case (focus/entry-animation race) disappear, and when the
+                    # retry also fails the result says so explicitly.
+                    with self._watch_navigation(session) as retry_nav:
+                        executor.click(node.backend_node_id)
+                        self._settle_navigation(session, retry_nav, click_may_nav)
+                    opened = self._wait_overlay_open(session)
+                if not opened:
+                    popup_missing = True
                 click_noop = False
             elif (not overlay_before) and self._overlay_open(session):
                 # The click opened a real overlay: leave it open for capture.
@@ -1074,6 +1091,7 @@ class BrowserController:
             "fill_notice": "",
             "dialog": dialog,
             "click_noop": click_noop,
+            "popup_missing": popup_missing,
             "before_sig": before_sig,
             "after_sig": after_sig,
         }
@@ -1289,6 +1307,11 @@ class BrowserController:
         scroll_note = self._viewport_scroll_note(ctx)
         if scroll_note:
             content = scroll_note + "\n\n" + content
+        if extras.get("popup_missing"):
+            # Honest failure beats a truthful-looking "成功": the model must not
+            # believe a dropdown was opened (and therefore that a value was
+            # chosen) when no panel exists.
+            content = rp.popup_not_opened_notice(ctx.name) + "\n\n" + content
 
         # The click may have opened a background tab without moving focus. The
         # focused page then looks unchanged, so tell the LLM explicitly and hand

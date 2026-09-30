@@ -126,6 +126,10 @@ class EnhancedNode:
     cache_has_overflowing_child: Optional[bool] = None
     cache_has_dropdown_indicator: Optional[bool] = None
     cache_contains_control: Optional[bool] = None
+    # 「这个外壳里有没有真正可用的文本输入框」与「它就是那个点击展开的选择器控件」
+    # ——两者都要扫子树，故同上一组一样按节点惰性缓存（见 inner_docs/ID123）。
+    cache_usable_text_input: Optional[bool] = None
+    cache_picker_shell: Optional[bool] = None
 
     @property
     def key(self) -> tuple[str, str, int]:

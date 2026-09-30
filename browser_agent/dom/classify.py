@@ -943,8 +943,140 @@ def picker_range_position(node: EnhancedNode):
 
 
 def is_range_picker_entry(node: EnhancedNode) -> bool:
-    """True if ``node`` is one text input of a two-end picker range control."""
-    return picker_range_position(node) is not None
+    """True if ``node`` is the entry of a two-end picker *range* control.
+
+    Either one text input of an input-based range (Element Plus ``monthrange`` /
+    Ant ``RangePicker``), or the whole div-based picker shell (Feishu Jobs
+    「起止时间」). Both are **one** widget with **one** panel that only commits
+    after two candidate picks inside the same overlay session.
+    """
+    return picker_range_position(node) is not None or is_range_picker_shell(node)
+
+
+# ---------------------------------------------------------------------------
+# 「div 型」弹层选择控件：整个外壳才是控件，隐藏 input 只是内部件
+#
+# 飞书招聘把「起止时间」渲染成
+#   ``<div class="atsx-date-picker atsx-date-picker-period-month">
+#        <div class="…-period-month-label">2017-09</div>
+#        <div class="…-period-line"></div>
+#        <div class="…-period-month-label">2021-06</div>
+#        <input class="…-period-hidden-input" style="width:0;height:0"></div>``
+# 两个可见的年月文本才是「当前值」，真正能打字的输入框**没有**。以前只有
+# ``<input>`` 才被当成选择器入口，于是这个 0×0 的隐藏 input 被命名为
+# ``<可搜索下拉元素>``、标签取自它**左边那个值部件**（``2017-09：（空）``），
+# 而右端的 ``2021-06`` 又作为一条游离的裸文本/可点击元素出现；``tool_07`` 往里
+# 打字没有任何候选、``tool_01``/``tool_02`` 又都拒绝并把它推回 ``tool_07``，模型
+# 就此在「到底填上了没有」上烧掉近万推理 token（详见 inner_docs/ID123）。
+#
+# 正解：外壳**就是**那个控件，而且是「点击展开面板」型 —— 人类操作它时也没有
+# 输入的机会，只有点开面板再点格子，所以类别与「可点击下拉」共用（``clickdropdown``），
+# 标签与当前值都由序列化层从外壳的可见文本里取。
+# ---------------------------------------------------------------------------
+# 弹层本体（面板/候选列表）自带这些词：它虽然也叫 ``*date-picker*``，但它是**被展开的
+# 东西**，不是触发器，必须排除，否则面板会被命名成一个控件、把格子全吞掉。
+_PICKER_PANEL_TOKENS = (
+    "panel",
+    "dropdown",
+    "popup",
+    "popper",
+    "overlay",
+    "menu",
+    "list",
+    "table",
+)
+# 「两端」语义：区间控件的外壳名字里通常明说（``range`` / ``period``）。
+_RANGE_SHELL_TOKENS = ("range", "period", "interval", "between")
+
+
+def has_usable_text_input(node: EnhancedNode) -> bool:
+    """True if ``node``'s subtree holds a text input with a real (non-zero) box.
+
+    ``DOMSnapshot`` omits ``display:none`` nodes and reports a 0×0 box for an
+    element that is laid out but has no area, so "usable" means *laid out with an
+    area*. Element Plus / Ant / Moka / Beisen date pickers all render a real
+    ``<input>`` here and must keep their existing per-input handling; only a shell
+    whose inputs are all zero-area (Feishu's ``…-period-hidden-input``) falls into
+    the "the shell *is* the control" branch.
+    """
+    cached = node.cache_usable_text_input
+    if cached is not None:
+        return cached
+    result = False
+    stack = list(node.children)
+    seen = 0
+    while stack and seen < 300:
+        cur = stack.pop()
+        seen += 1
+        if not cur.is_element:
+            continue
+        if cur.tag == "input" and _input_type(cur) in ("", "text", "search", "email"):
+            box = cur.bbox
+            if box and box[2] > 1 and box[3] > 1 and not cur.hidden:
+                result = True
+                break
+            continue
+        stack.extend(cur.children)
+    node.cache_usable_text_input = result
+    return result
+
+
+def is_picker_shell_trigger(node: EnhancedNode) -> bool:
+    """True for a click-to-open picker shell that has **no usable text entry**.
+
+    Narrow by construction: the node's own class/id must spell a known picker
+    component, it must not be the popped-up panel, and none of its inputs may have
+    a real box. Any picker with a typeable input (Element/Ant/Moka/Beisen) is
+    therefore untouched.
+    """
+    cached = node.cache_picker_shell
+    if cached is not None:
+        return cached
+
+    def compute() -> bool:
+        if not node.is_element or node.tag in ("input", "select", "textarea"):
+            return False
+        if node.hidden or not node.visible:
+            return False
+        box = node.bbox
+        if not box or box[2] <= 1 or box[3] <= 1:
+            return False
+        if node.styles.get("position") in ("absolute", "fixed"):
+            return False
+        if (node.role or "").lower() in _OVERLAY_ROLES:
+            return False
+        raw = _class_id_text(node)
+        if any(tok in raw for tok in _PICKER_PANEL_TOKENS):
+            return False
+        if not _is_named_picker_shell(node) and not (
+            _is_generic_picker_shell(node) and _has_picker_indicator_in_shell(node)
+        ):
+            return False
+        # Only the **outermost** element that spells a picker component is the
+        # widget: Ant Design names every part ``ant-picker-…``, so ``-input`` /
+        # ``-suffix`` / ``-separator`` / ``-header`` / ``-body`` / ``-panel`` all
+        # matched the marker, and claiming them turned a calendar panel's header
+        # and day grid into two bogus "clickable dropdowns" (caught by replaying
+        # the 快手 campus-application capture from 20260924).
+        ancestor = node.parent
+        hops = 0
+        while ancestor is not None and hops < 4:
+            if _is_named_picker_shell(ancestor):
+                return False
+            ancestor = ancestor.parent
+            hops += 1
+        return not has_usable_text_input(node)
+
+    result = compute()
+    node.cache_picker_shell = result
+    return result
+
+
+def is_range_picker_shell(node: EnhancedNode) -> bool:
+    """True if a click-to-open picker shell is a two-end *range* control."""
+    if not is_picker_shell_trigger(node):
+        return False
+    return any(tok in _class_id_text(node) for tok in _RANGE_SHELL_TOKENS)
 
 
 def is_date_picker_input(node: EnhancedNode) -> bool:
@@ -1157,6 +1289,15 @@ def classify(node: EnhancedNode) -> str:
         result = "clickdropdown"
     elif is_input(node):
         result = "input"
+    elif is_picker_shell_trigger(node):
+        # A div-based date / month picker shell: the whole widget is
+        # click-to-open and there is nothing to type into (see
+        # ``is_picker_shell_trigger``). Checked before ``is_clickable`` so the
+        # shell itself — not one of its value parts — carries the identity, and
+        # routed to ``clickdropdown`` so the tool prompt says "click to open the
+        # panel, then click a cell" instead of "type to filter" (which sent the
+        # model into an unwinnable ``tool_07`` loop in the Feishu Jobs session).
+        result = "clickdropdown"
     elif is_select(node):
         result = "select"
     elif is_draggable(node):

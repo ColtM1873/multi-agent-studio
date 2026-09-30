@@ -37,9 +37,14 @@ from .classify import (
     is_cursor_pointer_only,
     is_custom_select_input,
     is_date_picker_input,
+    is_picker_shell_trigger,
+    is_range_picker_shell,
     is_searchable_typeahead,
     is_widget_trigger_input,
     picker_range_position,
+    _is_generic_picker_shell,
+    _is_named_picker_shell,
+    _marks_select_control,
 )
 from .registry import NameRegistry
 
@@ -153,6 +158,11 @@ CATEGORY_TAGS = {
     "drag": ("可拖动元素", "拖动"),
     "scroll": ("可滚动元素", "滚动"),
 }
+
+# Marks a one-element range control (a div-based 「起止时间」 whose two ends live
+# inside the same shell). The two-input form uses ``[区间 i/n]`` per entry instead
+# (see ``_picker_entry_label``); both tell the model "two picks, one overlay".
+RANGE_SHELL_MARK = "[区间控件]"
 
 
 # Class / id tokens that mark a *helper / error* text (not the control's value or
@@ -625,6 +635,10 @@ class DOMSerializer:
         # visually escape the scroller and must not be clipped away. Managed as a
         # save/restore around ``_group_scroll`` so nested scrollers compose.
         self._clip_escapes = False
+        # Per-call caches (see ``_enclosing_section_title`` / ``_scroller_summary``).
+        self._section_titles: dict[int, str] = {}
+        self._scroll_reports: list[tuple] = []
+        self._tree: Optional[EnhancedTree] = None
 
     # ------------------------------------------------------------------ #
     # public API
@@ -654,6 +668,9 @@ class DOMSerializer:
         self._buffer_labels = []
         self._consumed = set()
         self._clip_escapes = False
+        self._section_titles = {}
+        self._scroll_reports = []
+        self._tree = tree
         self._render_children(tree.root, 0, None)
         self._flush(0)
         return list(self._lines)
@@ -897,6 +914,20 @@ class DOMSerializer:
             return
 
         if category:
+            if is_picker_shell_trigger(child):
+                # A div-based picker (see ``classify.is_picker_shell_trigger``) is
+                # **one** control: its two value parts and its 0×0 hidden input are
+                # internals, not fields. Emit a single line whose label carries the
+                # field name plus the *displayed* value, and never recurse — the
+                # parts used to be emitted as a bare ``2021-06`` text line and as
+                # the bogus field name of the hidden input (``2017-09：（空）``),
+                # which left the model unable to tell whether the range was filled.
+                self._flush(depth)
+                label = self._picker_shell_label(child)
+                name = self.registry.get_or_create(child)
+                tag, _ = CATEGORY_TAGS[category]
+                self._emit_content(depth, f"<{tag} {name}>{label}</{tag} {name}>", (name,))
+                return
             if _is_click_like(category) and self._is_searchable_display_value(child):
                 # The passive "display value" of a searchable select (Moka
                 # ``.sd-Input-display-value``) is only clickable because it
@@ -1091,6 +1122,11 @@ class DOMSerializer:
         closing = f"</可滚动元素 {name}>"
         self._emit_header(depth, opening, (name,), closing)
         self._stack.append((depth, opening, closing))
+        # Record where this scroller actually *is* so ``_page_info`` can report the
+        # real one instead of ``document.scrollingElement`` (see ``_scroller_summary``).
+        self._scroll_reports.append(
+            (depth, name, node.tag == PAGE_SCROLL_TAG) + self._scroll_position(node)
+        )
         before = len(self._lines)
         # Only a positioned scroller is a containing block for absolutely
         # positioned descendants, so only then does its ``overflow`` genuinely
@@ -1454,7 +1490,14 @@ class DOMSerializer:
         elif category == "input":
             value = self._input_value(node)
             if value:
-                label = value
+                # Say "value" explicitly. A privacy-masked real value reads as
+                # ``<邮箱>`` — byte-identical to the placeholder the model is told
+                # to type — so ``<可输入元素 e61><邮箱></>`` was understood as "empty
+                # field, placeholder hint 邮箱" and the model re-filled a field that
+                # already held the real address. ``值：…`` versus
+                # ``（空，占位提示：…）`` removes the ambiguity, and matches the
+                # picker-entry wording already introduced in ID122.
+                label = f"值：{value}"
             else:
                 # Never render the placeholder as if it were the current value:
                 # an empty field used to read ``<可输入元素 e53>结束日期</…>`` and
@@ -1520,7 +1563,117 @@ class DOMSerializer:
         # item is marked; unselected items carry no marker.
         if self._selection_state(node) is True:
             label = f"{label} [已选]"
+        if _is_click_like(category):
+            label = self._qualify_action_label(node, label)
         return label
+
+    # A bare action verb ("添加" / "删除" / "编辑" …) says nothing about *what* it
+    # acts on. A form that repeats it once per section (Feishu Jobs lists 教育经历
+    # / 实习经历 / 项目经历 / 作品 / 获奖 / 语言能力, each with its own 添加) turns
+    # every one of them into the same unreadable tag; in the real session the model
+    # burned two long reasoning turns guessing whether the 添加 sitting right under
+    # 「描述」 added a project or confirmed the description. Qualifying it with the
+    # enclosing section title ("项目经历·添加") removes the guess.
+    _GENERIC_ACTION_LABELS = (
+        "添加",
+        "新增",
+        "新建",
+        "删除",
+        "移除",
+        "编辑",
+        "修改",
+        "保存",
+        "提交",
+        "取消",
+        "确定",
+        "确认",
+        "搜索",
+        "查询",
+        "上传",
+        "下载",
+        "更多",
+        "展开",
+        "收起",
+        "查看",
+        "复制",
+        "清空",
+        "重置",
+        "返回",
+        "上一步",
+        "下一步",
+        "完成",
+        "上传文件",
+        "加载更多",
+        "展开更多",
+    )
+    _SECTION_TITLE_TOKENS = ("title", "heading", "headline", "section-name")
+
+    def _qualify_action_label(self, node: EnhancedNode, label: str) -> str:
+        """Prefix a generic action verb with its enclosing section's title."""
+        if not label or label not in self._GENERIC_ACTION_LABELS:
+            return label
+        title = self._enclosing_section_title(node)
+        if not title or title == label or label in title:
+            return label
+        return f"{title}·{label}"
+
+    def _enclosing_section_title(self, node: EnhancedNode, max_hops: int = 6) -> str:
+        """The nearest *preceding* title text of an enclosing block, else ``""``.
+
+        Bounded to a few ancestors and to short title-like nodes so a page header
+        ("投递简历 - 加入沐瞳科技") can never become a control's qualifier. Cached per
+        node because the walk is only cheap relative to being done once.
+        """
+        cached = self._section_titles.get(node.node_id)
+        if cached is not None:
+            return cached
+        title = ""
+        branch = node
+        ancestor = node.parent
+        hops = 0
+        while ancestor is not None and hops < max_hops:
+            for child in ancestor.children:
+                if child is branch:
+                    break
+                if not child.is_element:
+                    continue
+                found = self._title_text_in(child, 3)
+                if found:
+                    title = found
+                    break
+            if title:
+                break
+            branch = ancestor
+            ancestor = ancestor.parent
+            hops += 1
+        self._section_titles[node.node_id] = title
+        return title
+
+    def _title_text_in(self, node: EnhancedNode, max_depth: int) -> str:
+        """The first heading-like text inside ``node`` (≤ ``max_depth`` levels)."""
+        if not node.is_element or self._is_helper_text(node):
+            return ""
+        raw = (
+            f"{node.attributes.get('class', '')} {node.attributes.get('id', '')}"
+        ).lower()
+        if node.tag in ("h1", "h2", "h3", "h4", "h5", "h6") or any(
+            tok in raw for tok in self._SECTION_TITLE_TOKENS
+        ):
+            text = self._collect_text(node).strip()
+            # A real section heading is short and unpunctuated. Without this guard
+            # a ``…__title`` wrapper around a *paragraph* became the qualifier: the
+            # iTalent form's declaration "我所提交的上述材料、信息均真实有效" got
+            # prefixed onto its 上一题 button.
+            if text and len(text) <= 16 and not re.search(r"[，,。.；;！!？?]", text):
+                return text
+        if max_depth <= 0:
+            return ""
+        for child in node.children:
+            if child.is_element:
+                text = self._title_text_in(child, max_depth - 1)
+                if text:
+                    return text
+        return ""
 
     @staticmethod
     def _is_error_text(node: EnhancedNode) -> bool:
@@ -1587,7 +1740,16 @@ class DOMSerializer:
             # label has to be built from the input itself.
             return self._picker_entry_label(node)
         if is_custom_select_input(node):
-            prefix = self._searchable_field_label(node)
+            # The Moka-shaped walk first; fall back to the generic field-label
+            # association when it finds nothing. Feishu's ``.atsx-select`` inline
+            # search box hits ``is_custom_select_input`` too, and the Moka walk
+            # looks for a ``…title…`` sibling that Feishu does not render — so the
+            # field name was lost and the control showed only its value
+            # (``<可搜索下拉元素 e64>上海外国语大学</>`` with 「学校名称」 stranded on
+            # the line above).
+            prefix = self._searchable_field_label(node) or self._associated_field_label(
+                node
+            )
             current = self._searchable_value_text(node)
         else:
             prefix = self._associated_field_label(node)
@@ -1611,6 +1773,67 @@ class DOMSerializer:
         if current and current in label:
             self._consume_nearby_label_source(node, current)
         return label
+
+    def _picker_shell_label(self, node: EnhancedNode) -> str:
+        """Label the whole div-based picker shell: ``字段：值`` / ``字段：（空…）``.
+
+        The shell holds no typeable input, so both halves come from the widget
+        itself: the field name from the associated ``<label>`` *outside* the shell
+        (``_associated_field_label`` skips the shell's own value parts) and the
+        current value from the visible value parts (``2017-09`` + ``2021-06`` →
+        ``2017-09 ~ 2021-06``). Report emptiness honestly — the previous output
+        claimed ``（空）`` for a range that was plainly filled, which is what made
+        the model re-open and re-pick a field that was already correct.
+        """
+        prefix = self._associated_field_label(node)
+        parts = self._shell_value_parts(node)
+        values = [text for text in parts if not self._is_format_placeholder(text)]
+        if values:
+            value = " ~ ".join(values) if len(parts) > 1 else values[0]
+            label = f"{prefix}：{value}" if prefix and prefix not in value else value
+        else:
+            hint = parts[0] if parts else ""
+            empty = f"（空，占位提示：{self._truncate(hint, 40)}）" if hint else "（空）"
+            label = f"{prefix}：{empty}" if prefix and prefix not in empty else empty
+        if is_range_picker_shell(node):
+            label += RANGE_SHELL_MARK
+        return label
+
+    def _shell_value_parts(self, node: EnhancedNode) -> list:
+        """The visible value runs of a div-based picker, in document order.
+
+        Feishu's period picker renders one ``<div>`` per end; a library that adds
+        further furniture is bounded by the two-part limit.
+        """
+        parts: list = []
+        for child in node.children:
+            if not child.is_element or child.hidden or not child.rendered:
+                continue
+            if child.tag in ("input", "textarea", "select"):
+                continue
+            text = self._collect_text(child).strip()
+            if text:
+                parts.append(text)
+            if len(parts) >= 2:
+                break
+        return parts
+
+    @staticmethod
+    def _is_format_placeholder(text: str) -> bool:
+        """True for a date *format* hint (``YYYY-MM``) rather than a value.
+
+        An empty picker still renders its format so the user knows what to type;
+        treating it as the current value would report ``起止时间：YYYY-MM ~ YYYY-MM``
+        for an untouched field.
+        """
+        stripped = (text or "").strip()
+        if not stripped or len(stripped) > 12:
+            return False
+        if re.search(r"YYYY|yyyy|MM|DD|HH|mm|ss", stripped):
+            return True
+        # ``年-月`` / ``----`` style hints carry no digits at all; a real value
+        # ("至今", "2026-05") always does or is not pure punctuation.
+        return bool(re.fullmatch(r"[\s\-/.年月日：:]+", stripped))
 
     def _picker_entry_label(self, node: EnhancedNode) -> str:
         """Label a picker / widget text entry as ``字段：值`` or ``字段：（空…）``.
@@ -2746,31 +2969,118 @@ class DOMSerializer:
         ancestor = node.parent
         chain: list[tuple[EnhancedNode, EnhancedNode]] = []
         hops = 0
-        while ancestor is not None and hops < 8:
+        # 12 hops: Feishu nests a select's search input as
+        # ``wrap > search > div > rendered > selection > select > children >
+        # control > col > row``, so the field's own row (which holds the label) sits
+        # beyond the old 8-hop cap and the control was left without a field name.
+        while ancestor is not None and hops < 12:
             chain.append((ancestor, branch))
             branch = ancestor
             ancestor = ancestor.parent
             hops += 1
 
-        # Pass 1: nearest enclosing container that owns a label element.
-        for container, child in chain:
-            for candidate in container.children:
-                if candidate is child or not candidate.is_element:
-                    continue
-                text = self._find_label_text(candidate)
-                if text:
-                    return self._clean_field_label(self._truncate(text, 40))
+        # A control's *own* widget shell is not its field name: Feishu's period
+        # picker renders each end as ``<div class="…-period-month-label">2017-09
+        # </div>``, which ``_is_label_like`` accepted (its class contains the token
+        # "label"), so the control was named after its own value. Keep every
+        # candidate inside that shell out of the search.
+        skip_root = self._widget_shell_of(node)
 
-        # Pass 2: original sibling walk (identical order to the historical
-        # implementation: every sibling at the first level that yields any label
-        # wins, in document order).
+        # Pass 1: the nearest enclosing container that owns a label element.
         for container, child in chain:
-            for sibling in container.children:
-                if sibling is child or not sibling.is_element:
-                    continue
-                text = self._find_label_text(sibling)
+            text = self._label_beside(container, child, skip_root)
+            if text:
+                return self._clean_field_label(self._truncate(text, 40))
+
+        # Pass 2: historical sibling walk (kept for layouts where the label is not
+        # inside a shared container with the control).
+        for container, child in chain:
+            text = self._label_beside(container, child, skip_root)
+            if text:
+                return self._clean_field_label(self._truncate(text, 40))
+        return ""
+
+    def _label_beside(
+        self,
+        container: EnhancedNode,
+        branch: EnhancedNode,
+        skip_root: Optional[EnhancedNode],
+    ) -> str:
+        """``branch``'s own field label among ``container``'s children, else ``""``.
+
+        A label **before** the control wins over one after it, and among those the
+        *nearest* (last) one wins. A row that holds several fields renders
+        ``label, control, label, control``; taking the first label in document
+        order named a control after its *neighbour* field — the 4399 简历 form
+        labelled 期望薪酬 as ``生源地：月薪``. The closest preceding label is the
+        field's own.
+        """
+        seen_branch = False
+        nearest_before = ""
+        first_after = ""
+        for candidate in container.children:
+            if candidate is branch:
+                seen_branch = True
+                continue
+            if not candidate.is_element:
+                continue
+            text = self._find_label_text(candidate, skip_root=skip_root)
+            if not text:
+                continue
+            if not seen_branch:
+                nearest_before = text
+            elif not first_after:
+                first_after = text
+        return nearest_before or first_after
+
+    def _widget_shell_of(self, node: EnhancedNode):
+        """The *picker* shell that owns ``node`` (nearest ancestor), else ``None``.
+
+        Deliberately strict: only an ancestor whose own class/id spells a known
+        picker component counts. A loose "date + container" match would treat a
+        form row such as ``date_field_component`` as the shell and then swallow
+        that row's own field label.
+        """
+        current = node.parent
+        hops = 0
+        while current is not None and hops < 4:
+            if current.is_element and _is_named_picker_shell(current):
+                return current
+            current = current.parent
+            hops += 1
+        return None
+
+    @staticmethod
+    def _within(node: EnhancedNode, ancestor: Optional[EnhancedNode]) -> bool:
+        """True if ``node`` is ``ancestor`` or one of its descendants."""
+        if ancestor is None:
+            return False
+        current: Optional[EnhancedNode] = node
+        hops = 0
+        while current is not None and hops < 64:
+            if current is ancestor:
+                return True
+            current = current.parent
+            hops += 1
+        return False
+
+    def _inner_label_text(self, node: EnhancedNode, max_depth: int = 2) -> str:
+        """The text of a *real* ``<label>`` inside ``node``, else ``""``.
+
+        A field-name column often carries extra hint copy beside the ``<label>``
+        (Feishu's 「起止时间」 row appends 「无准确的毕业时间可填写预计毕业时间」);
+        preferring the inner ``<label>`` keeps that hint out of the field name.
+        Bounded so it can never reach a *neighbouring* field's label.
+        """
+        if node.tag == "label":
+            return self._collect_text(node)
+        if max_depth <= 0:
+            return ""
+        for child in node.children:
+            if child.is_element:
+                text = self._inner_label_text(child, max_depth - 1)
                 if text:
-                    return self._clean_field_label(self._truncate(text, 40))
+                    return text
         return ""
 
     @staticmethod
@@ -2829,7 +3139,12 @@ class DOMSerializer:
                 return True
         return False
 
-    def _find_label_text(self, node: EnhancedNode, max_depth: int = 3) -> str:
+    def _find_label_text(
+        self,
+        node: EnhancedNode,
+        max_depth: int = 3,
+        skip_root: Optional[EnhancedNode] = None,
+    ) -> str:
         """The first label element's text within ``max_depth`` levels of ``node``.
 
         A label element is a real ``<label>``/``<legend>``/``<caption>`` or an
@@ -2844,8 +3159,14 @@ class DOMSerializer:
         reached the deep ``<label>姓名</label>`` inside the sibling basic-info
         form.
         """
+        if skip_root is not None and node is not skip_root and self._within(
+            node, skip_root
+        ):
+            # Inside the control's own widget shell: this is value furniture, not
+            # a field name (see ``_associated_field_label``).
+            return ""
         if self._is_label_like(node):
-            text = self._collect_text(node)
+            text = self._inner_label_text(node) or self._collect_text(node)
             # A control-wrapper label (one that *contains* the input) is not a
             # field name; its text is the control's own value/placeholder.
             if text and not self._has_field_input_descendant(node):
@@ -2856,7 +3177,7 @@ class DOMSerializer:
             return ""
         for child in node.children:
             if child.is_element:
-                text = self._find_label_text(child, max_depth - 1)
+                text = self._find_label_text(child, max_depth - 1, skip_root)
                 if text:
                     return text
         return ""
@@ -3506,6 +3827,72 @@ class DOMSerializer:
         interactive = len({name for line in self._lines for name in line.interactive})
         vp = tree.viewport
         return (
-            f"<page_info>scrollY={int(vp['scroll_y'])} 视口={int(vp['width'])}x{int(vp['height'])} "
-            f"可互动元素 {interactive} 个</page_info>"
+            f"<page_info>视口={int(vp['width'])}x{int(vp['height'])} "
+            f"可互动元素 {interactive} 个 {self._scroller_summary()}</page_info>"
+        )
+
+    def _scroll_position(self, node: EnhancedNode) -> tuple:
+        """``(can_move_up, can_move_down)`` for one scroll container.
+
+        Two independent sources, because neither is universal:
+
+        * a container: does any laid-out descendant lie above / below the box that
+          clips it (the same comparison ``_in_clip`` uses)? That is exactly "is
+          there anything further up / further down", i.e. "已到顶/已到底";
+        * the document scroller (``#page``): use the page metrics captured in
+          ``viewport`` — a synthetic node has no subtree to measure.
+        """
+        if node.tag == PAGE_SCROLL_TAG:
+            vp = (self._tree.viewport if self._tree is not None else {}) or {}
+            top = float(vp.get("scroll_y") or 0.0)
+            height = float(vp.get("height") or 0.0)
+            full = float(vp.get("scroll_height") or 0.0)
+            client = float(vp.get("client_height") or height)
+            return (top > 1.0, top + client < full - 4.0)
+        box = node.bbox
+        if not box or box[2] <= 0 or box[3] <= 0:
+            return (False, False)
+        top, bottom = box[1], box[1] + box[3]
+        up = down = False
+        stack = list(node.children)
+        seen = 0
+        while stack and seen < 4000 and not (up and down):
+            current = stack.pop()
+            seen += 1
+            if not current.is_element:
+                continue
+            if current.styles.get("position") == "fixed":
+                continue
+            box2 = current.bbox
+            if box2 and box2[2] > 0 and box2[3] > 0:
+                if box2[1] + box2[3] < top - 2:
+                    up = True
+                elif box2[1] > bottom + 2:
+                    down = True
+            stack.extend(current.children)
+        return (up, down)
+
+    def _scroller_summary(self) -> str:
+        """Tell the model *which* scroller matters and whether it can still move.
+
+        ``scrollY`` describes only ``document.scrollingElement``. On an SPA layout
+        (Feishu Jobs scrolls inside ``section.atsx-layout``) the page never moves,
+        so ``scrollY=0`` was reported while the form's own container sat 1060px
+        down — the model read "we are at the top" and concluded a field it could
+        not see (姓名 / 手机号码, hidden above the viewport) did not exist. Report
+        the outermost scroller instead, or the document scroller when no container
+        scrolls.
+        """
+        report = None
+        for item in self._scroll_reports:
+            if report is None or item[0] < report[0]:
+                report = item
+        if report is None:
+            return "滚动：无（内容已全部可见）"
+        _depth, name, is_page, can_up, can_down = report
+        target = "整页" if is_page else f"<可滚动元素 {name}>"
+        return "滚动：%s %s、%s" % (
+            target,
+            "未到顶" if can_up else "已到顶",
+            "未到底" if can_down else "已到底",
         )

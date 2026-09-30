@@ -126,18 +126,115 @@ def _load_sensitive_reverse_map() -> tuple[tuple[str, str], ...]:
 def _build_sensitive_automaton(patterns: tuple[tuple[str, str], ...]) -> _AhoCorasick:
     return _AhoCorasick(patterns)
 
+
+# ── 数字型敏感值的「分组容差」补充匹配 ─────────────────────────────────────
+# 精确匹配只看字面相等，而网页/组件库常把同一个号码排版成带分隔符或国际区号的
+# 形式：设置里配置 ``15683862160``，页面上却是 ``+86 156-8386-2160``，于是**真实
+# 号码被明文返回给 LLM**（真实会话里就发生了，连模型自己都点出来「这是隐私问题」）。
+# 这里为「≥6 位数字」的值再编一条正则：数字之间允许分隔符、允许 ``+86`` / ``0086``
+# 这类国家码前缀；全角数字也算。所有条目合并成**一条**正则（单次扫描），并按
+# 「最左最长」与精确匹配结果合并，故开销与值条数无关、只与文本长度线性相关。
+_SEP_CLASS = r"[\s\-–—_.·:：/|()（）\[\]{}]{0,3}"
+_ASCII_DIGITS = "0123456789"
+_FULLWIDTH_DIGITS = "０１２３４５６７８９"
+_DIGIT_LOOKAROUND = "[0-9０-９]"
+
+
+def _digit_tolerant_atom(ch: str) -> str:
+    """One digit of a pattern, accepting its full-width twin as well."""
+    index = _ASCII_DIGITS.find(ch)
+    if index >= 0:
+        return "[%s%s]" % (ch, _FULLWIDTH_DIGITS[index])
+    return re.escape(ch)
+
+
+def _digit_tolerant_pattern(value: str) -> str:
+    """A regex body matching ``value``'s digits with optional separators between."""
+    digits = [ch for ch in value if ch.isdigit()]
+    body = _SEP_CLASS.join(_digit_tolerant_atom(ch) for ch in digits)
+    # An international prefix (``+86`` / ``0086``) is part of the number on screen.
+    prefix = r"(?:(?:\+|00)[\s\-]{0,2}[0-9]{1,3}[\s\-]{0,2})?"
+    return (
+        r"(?<!" + _DIGIT_LOOKAROUND + r")"
+        + prefix
+        + body
+        + r"(?!" + _DIGIT_LOOKAROUND + r")"
+    )
+
+
+def _should_tolerate_digits(value: str) -> bool:
+    """Only long, mostly-numeric values get the tolerant pattern (avoid noise)."""
+    digits = [ch for ch in value if ch.isdigit()]
+    if len(digits) < 6:
+        return False
+    return len(digits) * 5 >= len(value) * 3
+
+
+class _SensitiveMasker:
+    """Exact (Aho-Corasick) plus digit-tolerant (one regex) sensitive masking."""
+
+    def __init__(self, patterns: tuple[tuple[str, str], ...]) -> None:
+        self._automaton = _AhoCorasick(patterns)
+        tolerants = [
+            (value, name) for value, name in patterns if _should_tolerate_digits(value)
+        ]
+        self._digit_names: dict[int, str] = {}
+        self._digit_re = None
+        if tolerants:
+            pieces = []
+            for index, (value, name) in enumerate(tolerants, start=1):
+                self._digit_names[index] = name
+                pieces.append(
+                    "(?P<d%d>%s)" % (index, _digit_tolerant_pattern(value))
+                )
+            try:
+                self._digit_re = re.compile("|".join(pieces))
+            except re.error:
+                # A pathological value must never break masking of the others.
+                self._digit_re = None
+                self._digit_names = {}
+
+    def replace(self, text: str) -> str:
+        matches = self._automaton._search(text)
+        if self._digit_re is not None:
+            for found in self._digit_re.finditer(text):
+                name = self._digit_names.get(found.lastindex or 0)
+                if name:
+                    matches.append(
+                        (found.start(), found.end(), found.group(0), name)
+                    )
+        if not matches:
+            return text
+        # 同一位置优先最长匹配；再按最左贪心选出互不重叠的匹配。
+        matches.sort(key=lambda m: (m[0], -(m[1] - m[0])))
+        parts: list[str] = []
+        pos = 0
+        for start, end, value, name in matches:
+            if start < pos:
+                continue
+            if not _boundary_ok(text, start, end, value):
+                continue
+            parts.append(text[pos:start])
+            parts.append(f"<{name}>")
+            pos = end
+        parts.append(text[pos:])
+        return "".join(parts)
+
+@lru_cache(maxsize=8)
+def _build_masker(patterns: tuple[tuple[str, str], ...]) -> _SensitiveMasker:
+    return _SensitiveMasker(patterns)
+
 def make_sensitive_masker():
     """返回 ``mask(text) -> text``（隐私遮蔽模式开启且表单非空时），否则返回 None。
 
-    每次调用现读设置与表单，故改表/改开关即时生效；表单不变时复用已编译的自动机。
+    每次调用现读设置与表单，故改表/改开关即时生效；表单不变时复用已编译的匹配器。
     """
     if not _load_privacy_mask_enabled():
         return None
     patterns = _load_sensitive_reverse_map()
     if not patterns:
         return None
-    automaton = _build_sensitive_automaton(patterns)
-    return automaton.replace
+    return _build_masker(patterns).replace
 
 def _mask_deep(obj, mask):
     """递归地对 dict / list / str 里的文本做遮蔽（用于工具返回的整个结果）。"""
