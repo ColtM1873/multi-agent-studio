@@ -432,6 +432,24 @@ def _clean_icon_accessible_name(name: str) -> str:
         return remainder
     return _ICON_LABELS.get(matches[0].group(1).lower(), "")
 
+
+# Icon fonts put their glyphs in the Unicode Private Use Areas (``\ue76e`` /
+# ``\ue71f`` / ``\ue72a`` …). They carry no readable text, so a control whose
+# only "content" is such a glyph was rendered as a content-free label
+# (``<可点击元素 e11>\ue76e</可点击元素 e11>``) and read as criterion-i noise.
+# Zero-width and bidi control marks are likewise invisible. Strip both wherever
+# element text becomes a label so every clickable shows something actionable.
+_PRIVATE_USE_RE = re.compile("[\ue000-\uf8ff\U000F0000-\U0010FFFD]")
+_INVISIBLE_MARK_RE = re.compile("[\u200b-\u200f\u202a-\u202e\u2060-\u2064\ufeff]")
+
+
+def _strip_icon_glyphs(text: str) -> str:
+    """Remove private-use icon glyphs and invisible format marks from ``text``."""
+    if not text:
+        return text
+    cleaned = _PRIVATE_USE_RE.sub("", text)
+    return _INVISIBLE_MARK_RE.sub("", cleaned)
+
 # Icon-only navigation controls (a ``‹``/``›`` chevron with no text, no
 # ``aria-label``) previously leaked their raw CSS class fragment as the label:
 # a real Ant Design range picker exposed ``<可点击元素 eN>prev-btn</可点击元素 eN>``
@@ -1441,10 +1459,24 @@ class DOMSerializer:
                 prefix = self._associated_field_label(node)
                 if prefix and prefix not in label:
                     label = f"{prefix}：{label}" if label else prefix
+        # Drop icon-font private-use glyphs / invisible marks first: a label that
+        # was *only* a glyph (``\ue76e``) must fall through to the human fallback
+        # below instead of being emitted as a content-free clickable.
+        label = _strip_icon_glyphs(label).strip()
         # Never emit an empty interactive tag: an unnamed control is useless to the
         # LLM. Fall back to nearby text / a semantic attribute token / a generic word.
         if not label:
             label = self._fallback_label(node, category)
+        # Fold an inline validation message into the field's own label. A page
+        # renders "必填项未填写" in a sibling ``.…error…`` node of the control and
+        # the old serializer emitted it as a bare ``[文本]`` line — the LLM could
+        # not tell which field it belonged to (and one appeared next to an already
+        # filled field). Attaching it (``… [校验：必填项未填写]``) makes the state
+        # unambiguous; the node is consumed so it is not emitted twice.
+        if category in ("input", "select", "searchable"):
+            error = self._inline_error_text(node)
+            if error and error not in label:
+                label = f"{label} [校验：{error}]"
         # Mark the selected option of a radio / checkbox / tab group. A click on
         # one of these changes only the control's state (the page text is
         # unchanged), so without this marker the diff would say “（页面无变化）” and
@@ -1453,6 +1485,48 @@ class DOMSerializer:
         if self._selection_state(node) is True:
             label = f"{label} [已选]"
         return label
+
+    @staticmethod
+    def _is_error_text(node: EnhancedNode) -> bool:
+        """True for an *error* / invalid / alert node (not a mere hint)."""
+        if not node.is_element:
+            return False
+        if (node.attributes.get("role") or "").lower() == "alert":
+            return True
+        raw = (
+            f"{node.attributes.get('class', '')} {node.attributes.get('id', '')}"
+        ).lower()
+        return any(tok in raw for tok in ("error", "invalid", "danger", "-err-", "err-"))
+
+    def _inline_error_text(self, node: EnhancedNode) -> str:
+        """Visible inline validation text attached to ``node``'s field, else ``""``.
+
+        Walks a couple of ancestor levels looking for an ``error`` sibling of the
+        control's wrapper (``sd-Input-message sd-Input-error`` and friends),
+        consumes it and returns its text so it can be folded into the label.
+        """
+        branch = node
+        ancestor = node.parent
+        hops = 0
+        while ancestor is not None and hops < 3:
+            for sibling in ancestor.children:
+                if sibling is branch or not sibling.is_element:
+                    continue
+                if not self._is_error_text(sibling):
+                    continue
+                if sibling.hidden or not sibling.rendered or not sibling.visible:
+                    continue
+                if sibling.node_id in self._consumed:
+                    continue
+                text = self._collect_text(sibling)
+                if not text or text in ("*", "＊"):
+                    continue
+                self._consumed.add(sibling.node_id)
+                return self._truncate(text, 40)
+            branch = ancestor
+            ancestor = ancestor.parent
+            hops += 1
+        return ""
 
     def _searchable_label(self, node: EnhancedNode) -> str:
         """Label a searchable select's typeahead as ``字段：当前值``.
@@ -1479,8 +1553,10 @@ class DOMSerializer:
             current = self._nearby_text_label(node)
         if prefix and current:
             if prefix in current:
+                # ``current`` already contains the field name (e.g. the nearby
+                # text is the whole ``性别：男`` block).
                 label = current
-            elif current in prefix:
+            elif self._field_already_has_value(prefix, current):
                 label = prefix
             else:
                 label = f"{prefix}：{current}"
@@ -1489,6 +1565,24 @@ class DOMSerializer:
         if current and current in label:
             self._consume_nearby_label_source(node, current)
         return label
+
+    @staticmethod
+    def _field_already_has_value(field: str, value: str) -> bool:
+        """True if ``field`` already renders ``value`` as its suffix value.
+
+        Used to avoid duplicating the value (``性别：男：男``) when the field text
+        already ends with it. A *bare* substring match is deliberately NOT enough:
+        a one-character value such as ``是`` / ``否`` occurs inside almost any
+        Chinese field name (``是否校园大使推荐``), so ``value in field`` wrongly
+        erased the current selection and made the control look unset — after
+        which selecting it produced no visible change and the LLM retried forever.
+        Only the value after a separator counts as "already shown".
+        """
+        if not field or not value:
+            return False
+        if field == value:
+            return True
+        return any(field.endswith(sep + value) for sep in ("：", ":", " ", "、", "|", "·"))
 
     def _fallback_label(self, node: EnhancedNode, category: str) -> str:
         """Guarantee a non-empty label for an otherwise unnamed interactive element.
@@ -2749,6 +2843,7 @@ class DOMSerializer:
             out += text
             prev_block = is_block
         joined = " ".join(out.split())
+        joined = _strip_icon_glyphs(joined)
         return self._truncate(joined)
 
     @staticmethod

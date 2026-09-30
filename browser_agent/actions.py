@@ -189,13 +189,26 @@ class ActionExecutor:
     def _node_box(
         self, backend_node_id: int
     ) -> Optional[tuple[float, float, float, float]]:
-        """Return (x, y, w, h) in viewport coordinates, scrolling into view first."""
+        """Return (x, y, w, h) in viewport coordinates, scrolling into view first.
+
+        The scroll-into-view is made instant (many component sites set
+        ``scroll-behavior: smooth``) and we wait until the element's own geometry
+        settles, so the returned box — and any DOM capture taken right after — is
+        a stable frame, not a mid-animation one.
+        """
+        self._force_scroll_behavior_auto()
         try:
             self._send("DOM.scrollIntoViewIfNeeded", {"backendNodeId": backend_node_id})
         except Exception:
             pass
+        self._wait_box_stable(backend_node_id)
         _sleep(*timing.get().actions.node_box)
+        return self._raw_box(backend_node_id)
 
+    def _raw_box(
+        self, backend_node_id: int
+    ) -> Optional[tuple[float, float, float, float]]:
+        """Current (x, y, w, h) in viewport coordinates, without scrolling."""
         try:
             res = self._send("DOM.getContentQuads", {"backendNodeId": backend_node_id})
             quads = res.get("quads") or []
@@ -238,6 +251,36 @@ class ActionExecutor:
             except Exception:
                 pass
         return None
+
+    def _wait_box_stable(
+        self,
+        backend_node_id: int,
+        timeout: float = 0.8,
+        interval: float = 0.05,
+        quiet_reads: int = 2,
+    ) -> None:
+        """Poll the element's viewport rect until it stops moving.
+
+        Covers both document scrolls and inner-container scrolls: whichever
+        ancestor the browser chose to scroll, the element's on-screen box is what
+        matters, and a ``scroll-behavior: smooth`` ancestor animates it over
+        several frames. Reading geometry (or capturing the DOM) before this
+        settles returned a mid-animation frame.
+        """
+        prev = self._raw_box(backend_node_id)
+        stable = 0
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            time.sleep(interval)
+            cur = self._raw_box(backend_node_id)
+            if prev is not None and cur is not None:
+                if max(abs(a - b) for a, b in zip(prev, cur)) <= 1.0:
+                    stable += 1
+                    if stable >= quiet_reads:
+                        return
+                else:
+                    stable = 0
+            prev = cur
 
     def _node_center(self, backend_node_id: int) -> Optional[tuple[float, float]]:
         box = self._node_box(backend_node_id)
@@ -658,10 +701,10 @@ class ActionExecutor:
         cx, cy = center
         if self._mouse != center:
             self._human_move((cx, cy))
+        self._force_node_scroll_auto(backend_node_id)
         before = self.scroll_top(backend_node_id)
         self._dispatch_mouse("mouseWheel", cx, cy, delta_x=0, delta_y=delta_y)
-        _sleep(*timing.get().actions.scroll_settle)
-        after = self.scroll_top(backend_node_id)
+        after = self._settle_node_scroll(backend_node_id)
         if before is not None and after is not None and abs(after - before) < 1:
             after = self.scroll_by(backend_node_id, delta_y)
         return after
@@ -671,11 +714,15 @@ class ActionExecutor:
 
         Used as the wheel fallback (see :meth:`scroll_step`): it sets
         ``scrollTop`` directly, mirroring a real scrollbar drag, so it works on
-        containers whose ``wheel`` events are intercepted or dropped.
+        containers whose ``wheel`` events are intercepted or dropped. A
+        ``scroll-behavior: smooth`` container would animate a bare ``scrollTop``
+        assignment too, so the behavior is forced instant first and the offset is
+        polled to settle before it is reported.
         """
         object_id = self._resolve(backend_node_id)
         if not object_id:
             return None
+        self._force_node_scroll_auto(backend_node_id)
         try:
             self._call_on_node(
                 object_id,
@@ -684,7 +731,44 @@ class ActionExecutor:
             )
         except Exception:  # noqa: BLE001 - best effort; caller re-reads
             pass
-        _sleep(*timing.get().actions.scroll_settle)
+        return self._settle_node_scroll(backend_node_id)
+
+    def _force_node_scroll_auto(self, backend_node_id: int) -> None:
+        """Inline-override ``scroll-behavior`` on this scroll container."""
+        object_id = self._resolve(backend_node_id)
+        if not object_id:
+            return
+        try:
+            self._call_on_node(
+                object_id,
+                "function(){try{this.style.scrollBehavior='auto';}catch(e){}}",
+            )
+        except Exception:
+            pass
+
+    def _settle_node_scroll(
+        self,
+        backend_node_id: int,
+        timeout: float = 1.2,
+        interval: float = 0.05,
+        quiet_reads: int = 3,
+    ) -> Optional[float]:
+        """Poll a container's scrollTop until it stops changing (or times out)."""
+        prev = self.scroll_top(backend_node_id)
+        stable = 0
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            time.sleep(interval)
+            cur = self.scroll_top(backend_node_id)
+            if cur is None:
+                return prev
+            if prev is not None and abs(cur - prev) <= 0.5:
+                stable += 1
+                if stable >= quiet_reads:
+                    return cur
+            else:
+                stable = 0
+            prev = cur
         return self.scroll_top(backend_node_id)
 
     def scroll_top(self, backend_node_id: int) -> Optional[float]:
@@ -769,19 +853,69 @@ class ActionExecutor:
             return ""
         return str(value) if value is not None else ""
 
+    def _force_scroll_behavior_auto(self) -> None:
+        """Inline-override ``scroll-behavior: smooth`` on the scrolling elements.
+
+        Many component sites set ``html/body { scroll-behavior: smooth }``. Every
+        programmatic scroll (``window.scrollBy`` / ``scrollIntoView``) then
+        animates over ~0.3–0.6 s, so a single read right after issuing it returned
+        the *old* scrollTop and the tool wrongly reported "已到底部/已到顶部 …
+        没有新的可见内容" on a form that still had thousands of px left. Inline
+        style beats a stylesheet's ``smooth`` (no ``!important`` needed for the
+        common case); the settle-poll is the fallback when it does not.
+        """
+        try:
+            self._eval(
+                "(function(){try{"
+                "var se=document.scrollingElement||document.documentElement;"
+                "se.style.scrollBehavior='auto';"
+                "if(document.body)document.body.style.scrollBehavior='auto';"
+                "return 1;}catch(e){return 0;}})()"
+            )
+        except Exception:
+            pass
+
+    def _settle_page_scroll(
+        self, timeout: float = 1.2, interval: float = 0.05, quiet_reads: int = 3
+    ) -> Optional[float]:
+        """Poll the document scrollTop until it stops changing (or times out)."""
+        prev = self.page_scroll_top()
+        stable = 0
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            time.sleep(interval)
+            cur = self.page_scroll_top()
+            if cur is None:
+                return prev
+            if prev is not None and abs(cur - prev) <= 0.5:
+                stable += 1
+                if stable >= quiet_reads:
+                    return cur
+            else:
+                stable = 0
+            prev = cur
+        return self.page_scroll_top()
+
     def page_scroll_step(self, delta_y: float) -> Optional[float]:
-        """Scroll the document by ``delta_y`` CSS px; return the new scrollTop.
+        """Scroll the document by ``delta_y`` CSS px; return the settled scrollTop.
 
         The whole-page scrollbar belongs to the viewport, not an element, so a
         wheel event would be captured by whatever inner scroller sits under the
-        cursor. ``window.scrollBy`` deterministically drives the document.
+        cursor. ``window.scrollBy`` deterministically drives the document; it is
+        forced instant and then polled to settle so a smooth-scroll page cannot
+        make the (unchanged-at-first-read) offset look like a boundary.
         """
+        self._force_scroll_behavior_auto()
         try:
-            self._eval(f"window.scrollBy(0, {float(delta_y)});")
+            self._eval(
+                f"window.scrollBy({{left: 0, top: {float(delta_y)}, behavior: 'instant'}});"
+            )
         except Exception:
-            pass
-        _sleep(*timing.get().actions.scroll_settle)
-        return self.page_scroll_top()
+            try:
+                self._eval(f"window.scrollBy(0, {float(delta_y)});")
+            except Exception:
+                pass
+        return self._settle_page_scroll()
 
     def page_scroll_top(self) -> Optional[float]:
         try:

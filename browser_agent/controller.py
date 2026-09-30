@@ -318,6 +318,7 @@ class _InteractContext:
     old_target_ids: set
     session: str
     executor: ActionExecutor
+    scroll_before: Optional[float] = None
 
 
 class BrowserController:
@@ -650,6 +651,25 @@ class BrowserController:
             parts.append(lost_text)
         return "\n\n".join(p for p in parts if p)
 
+    def _viewport_scroll_note(self, ctx: "_InteractContext") -> str:
+        """A notice when the interaction auto-scrolled the whole document.
+
+        A click/fill on an off-screen target calls ``DOM.scrollIntoViewIfNeeded``,
+        which moves the viewport. The resulting incremental diff is then dominated
+        by content that merely *scrolled into view* and has nothing to do with the
+        action itself; without a heads-up the LLM misreads it as "opening this
+        control revealed hidden content" and wastes reasoning. Returns "" when the
+        page did not move (or the offset could not be read).
+        """
+        before = getattr(ctx, "scroll_before", None)
+        try:
+            after = ctx.executor.page_scroll_top()
+        except Exception:  # noqa: BLE001
+            after = None
+        if before is None or after is None or abs(after - before) < 8:
+            return ""
+        return rp.viewport_scrolled(before, after)
+
     # ------------------------------------------------------------------ #
     # interaction (tool-0x)
     # ------------------------------------------------------------------ #
@@ -864,6 +884,14 @@ class BrowserController:
                 INCREMENTAL, FAIL, rp.EMPTY_CONTENT, str(exc), include_tabs=False
             )
         executor = ActionExecutor(self.client, session)
+        # Snapshot the document scroll offset so ``_finish_interaction`` can tell
+        # the LLM when the action auto-scrolled the page (``scrollIntoViewIfNeeded``
+        # on an off-screen target). The diff alone cannot distinguish "the action
+        # revealed this" from "the viewport moved and pulled this in".
+        try:
+            scroll_before = executor.page_scroll_top()
+        except Exception:  # noqa: BLE001
+            scroll_before = None
 
         return (
             _InteractContext(
@@ -877,6 +905,7 @@ class BrowserController:
                 old_target_ids=old_target_ids,
                 session=session,
                 executor=executor,
+                scroll_before=scroll_before,
             ),
             None,
         )
@@ -1159,6 +1188,9 @@ class BrowserController:
         content = self._incremental_content(
             old_lines, new_tree, target_id, notice, old_url=old_tree.url
         )
+        scroll_note = self._viewport_scroll_note(ctx)
+        if scroll_note:
+            content = scroll_note + "\n\n" + content
 
         # The click may have opened a background tab without moving focus. The
         # focused page then looks unchanged, so tell the LLM explicitly and hand
@@ -1326,15 +1358,23 @@ class BrowserController:
         last_top = scroller.scroll_top()
         moved = False
         at_boundary = False
+        blocked = False
 
         for _ in range(max(1, max_steps)):
             top = scroller.scroll_step(signed_step)
             if top is None:
                 break
             if last_top is not None and abs(top - last_top) < 1:
-                # The scroller did not move: it is already at the top/bottom, or
-                # the element cannot scroll at all.
-                at_boundary = True
+                # This step did not move the scroller. Confirm a *real* boundary
+                # (scrollTop+clientHeight >= scrollHeight) before claiming
+                # "已到底/顶": a smooth-scroll page (or a swallowed programmatic
+                # scroll) can leave the offset unchanged on the first read while
+                # plenty of content remains. Only a confirmed boundary — or a
+                # deliberate "blocked" report — may be returned, never a lie.
+                if scroller.at_bottom() if down else scroller.at_top():
+                    at_boundary = True
+                elif not moved:
+                    blocked = True
                 break
             last_top = top
             moved = True
@@ -1354,13 +1394,15 @@ class BrowserController:
 
         added = _dedupe_scroll_fragments(added)
         if not added:
+            if at_boundary:
+                return rp.scroll_at_boundary(down)
+            if blocked:
+                return rp.scroll_blocked(down)
             if not moved:
                 # Tell the model *why* nothing changed instead of a bare
                 # "（页面无变化）" it cannot act on: it is already at the end, or
                 # the element is not a scroller.
                 return rp.scroll_no_new_content(down)
-            if at_boundary:
-                return rp.scroll_at_boundary(down)
             return rp.PAGE_NO_CHANGE
         content = format_lines(added)
         lost_text = format_lost(compute_lost(base_lines, prev_lines, registry))
