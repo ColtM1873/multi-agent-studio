@@ -855,21 +855,96 @@ def _iter_picker_shells(node: EnhancedNode, max_hops: int = 4):
         hops += 1
 
 
-def _picker_shell(node: EnhancedNode, max_hops: int = 4) -> bool:
-    """True if a date/time picker shell wraps ``node`` (≤ ``max_hops`` up)."""
+def _picker_shell_node(node: EnhancedNode, max_hops: int = 4):
+    """The nearest date/time picker *shell* wrapping ``node``, else ``None``."""
     if _is_named_picker_shell(node):
-        return True
+        return node
     for ancestor, branch in _iter_picker_shells(node, max_hops):
         if not ancestor.is_element:
             continue
         if _is_named_picker_shell(ancestor):
-            return True
+            return ancestor
         if _is_generic_picker_shell(ancestor) and (
             _has_popup_contract(ancestor)
             or _has_picker_indicator_in_shell(branch)
         ):
-            return True
-    return False
+            return ancestor
+    return None
+
+
+def _picker_shell(node: EnhancedNode, max_hops: int = 4) -> bool:
+    """True if a date/time picker shell wraps ``node`` (≤ ``max_hops`` up)."""
+    return _picker_shell_node(node, max_hops) is not None
+
+
+def _shell_text_inputs(shell: EnhancedNode, limit: int = 8) -> list:
+    """Text-like ``<input>``s of a picker shell, in document order.
+
+    A *range* picker (``日期从 ___ 到 ___``) is one control holding two of these.
+    ``limit`` bounds the scan: only the *count* matters, so a huge shell is not
+    walked to the end.
+    """
+    found: list = []
+
+    def walk(node: EnhancedNode) -> None:
+        if len(found) >= limit:
+            return
+        for child in node.children:
+            if child.is_text or not child.is_element:
+                continue
+            if child.tag == "input":
+                itype = (child.attributes.get("type") or "text").lower()
+                if itype in ("", "text", "search", "email"):
+                    found.append(child)
+            walk(child)
+
+    walk(shell)
+    return found
+
+
+def picker_range_position(node: EnhancedNode):
+    """``(index, total)`` of ``node`` among its picker range shell's text inputs.
+
+    Returns ``None`` unless a picker shell around ``node`` holds **two or more**
+    text inputs — i.e. a *range* control (``日期从 __ 到 __``；Element Plus
+    ``monthrange`` / Ant ``RangePicker``). Such a control is **one** widget driven
+    by **one** panel and it commits only after **two** candidates were picked
+    **inside the same overlay session**; the widget sorts the pair (earlier =
+    start), and a single pick followed by a blur rolls *both* ends back. Miss this
+    fact and the two inputs look like two independent fields — the model then
+    expects one pick to commit (it does not) or leaves the overlay after the first
+    pick (discarding it), which is exactly how the 4399 简历 session burned
+    thousands of tokens.
+
+    The climb matters: Ant Design nests ``.ant-picker > .ant-picker-input`` and the
+    *inner* div is marker-matched too, so the nearest shell alone would report
+    ``total == 1`` and lose the range fact. Walk outwards while the ancestors are
+    still picker shells and take the first shell that really holds two ends.
+    """
+    shell = _picker_shell_node(node)
+    if shell is None:
+        return None
+    current = shell
+    hops = 0
+    while current is not None and hops < 4:
+        inputs = _shell_text_inputs(current)
+        if len(inputs) >= 2:
+            for index, candidate in enumerate(inputs):
+                if candidate is node:
+                    return (index, len(inputs))
+        parent = current.parent
+        if parent is None or not parent.is_element:
+            break
+        if not (_is_named_picker_shell(parent) or _is_generic_picker_shell(parent)):
+            break
+        current = parent
+        hops += 1
+    return None
+
+
+def is_range_picker_entry(node: EnhancedNode) -> bool:
+    """True if ``node`` is one text input of a two-end picker range control."""
+    return picker_range_position(node) is not None
 
 
 def is_date_picker_input(node: EnhancedNode) -> bool:

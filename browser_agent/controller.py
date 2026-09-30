@@ -35,6 +35,7 @@ from .dom import (
     has_text,
     is_control_icon,
     is_cursor_pointer_only,
+    is_range_picker_entry,
     may_navigate,
     read_outer_html,
 )
@@ -1199,9 +1200,15 @@ class BrowserController:
         # A dropdown mounts on focus/typing and paints a frame or two later;
         # give it a bounded moment so its candidates are captured.
         self._wait_overlay_open(ctx.session)
+        # A *range* control (``从 __ 到 __``) is one widget whose value commits
+        # only after TWO candidate picks inside this same overlay session; the
+        # widget sorts the pair and a single pick followed by a blur rolls both
+        # ends back. Say so here, at the moment the panel is opened — the model
+        # otherwise treats the two ends as independent fields.
+        fill_notice = rp.range_picker_notice(ctx.name) if is_range_picker_entry(node) else ""
         return {
             "fill_error": "",
-            "fill_notice": "",
+            "fill_notice": fill_notice,
             "dialog": {"type": "", "message": ""},
         }
 
@@ -1346,6 +1353,11 @@ class BrowserController:
             extras = self._run_click(ctx)
         except (ActionError, CDPError) as exc:
             return self._base_result(INCREMENTAL, FAIL, rp.EMPTY_CONTENT, str(exc), include_tabs=False)
+        if is_range_picker_entry(ctx.node):
+            # A readonly range picker (readonly date range / non-searchable select
+            # pair): same two-pick contract as tool_07 — say it when the panel opens.
+            extras = dict(extras or {})
+            extras["fill_notice"] = rp.range_picker_notice(name)
         return self._finish_interaction(ctx, extras)
 
     def interact_fill_in(

@@ -39,6 +39,7 @@ from .classify import (
     is_date_picker_input,
     is_searchable_typeahead,
     is_widget_trigger_input,
+    picker_range_position,
 )
 from .registry import NameRegistry
 
@@ -1621,17 +1622,31 @@ class DOMSerializer:
         as two bare ``<可输入元素 e80>（空）</>`` with the field name only in a
         separate ``[文本]`` line, so the model had to guess which field it was
         addressing (and whether the range was start or end).
+
+        A **range** control's two inputs additionally carry ``[区间 i/n]``: they are
+        *one* widget with *one* panel that only commits after two candidate picks
+        inside the same overlay session (the widget sorts the pair, and a single
+        pick followed by a blur rolls both ends back). Without the marker the two
+        entries read as two independent fields.
         """
         prefix = self._associated_field_label(node)
         value = self._input_value(node)
         if value:
             if prefix and prefix not in value:
-                return f"{prefix}：{value}"
-            return value or prefix
-        empty = self._empty_input_label(node)
-        if prefix and prefix not in empty:
-            return f"{prefix}：{empty}"
-        return empty or prefix
+                label = f"{prefix}：{value}"
+            else:
+                label = value or prefix
+        else:
+            empty = self._empty_input_label(node)
+            if prefix and prefix not in empty:
+                label = f"{prefix}：{empty}"
+            else:
+                label = empty or prefix
+        position = picker_range_position(node)
+        if position is not None:
+            index, total = position
+            label = f"{label}[区间 {index + 1}/{total}]"
+        return label
 
     @staticmethod
     def _field_already_has_value(field: str, value: str) -> bool:

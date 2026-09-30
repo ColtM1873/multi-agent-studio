@@ -11,9 +11,11 @@ from .classify import (
     is_cursor_pointer_only,
     is_draggable,
     is_input,
+    is_range_picker_entry,
     is_scrollable,
     is_select,
     may_navigate,
+    picker_range_position,
 )
 from .diff import changed_lines, compute_diff, compute_lost, format_lines, format_lost
 from .registry import NameCounter, NameRegistry
@@ -35,6 +37,8 @@ __all__ = [
     "is_cursor_pointer_only",
     "is_draggable",
     "is_input",
+    "is_range_picker_entry",
+    "picker_range_position",
     "is_scrollable",
     "is_select",
     "may_navigate",
