@@ -266,11 +266,13 @@ def category_mismatch(
 # 触发条件：批量填值列表里的元素类别不是 input / select。
 # 返回时机：作为 error 字段返回（批量操作在执行前整体失败）。
 def not_fillable(name: str, category: str) -> str:
-    hint = (
-        "；可搜索下拉请改用 tool_07_searchable_dropdown 操作"
-        if category == "searchable"
-        else ""
-    )
+    hint = ""
+    if category == "searchable":
+        hint = "；可搜索下拉请改用 tool_07_searchable_dropdown 操作"
+    elif category == "clickdropdown":
+        # A click-to-open control (自绘下拉 / 只读级联 / 日期选择器) is never a fill
+        # target: the value comes from its panel, so point at the click tool.
+        hint = "；可点击下拉请改用 tool_08_click_dropdown 操作"
     return (
         f"互动元素 {name} 不是可填入元素（它是「{category_label(category)}」类）{hint}"
     )

@@ -36,7 +36,9 @@ from .classify import (
     is_control_icon,
     is_cursor_pointer_only,
     is_custom_select_input,
+    is_date_picker_input,
     is_searchable_typeahead,
+    is_widget_trigger_input,
 )
 from .registry import NameRegistry
 
@@ -181,6 +183,15 @@ def _is_click_like(category: str) -> bool:
     click handling.
     """
     return category in ("click", "clickdropdown")
+
+
+def _has_word_char(text: str) -> bool:
+    """True if ``text`` holds at least one letter / digit / CJK character.
+
+    Used to reject a range control's bare separator (``-`` / ``~``) as if it were
+    a field's current value.
+    """
+    return any(ch.isalnum() for ch in (text or ""))
 
 MAX_TEXT_LENGTH = 4000
 
@@ -1451,31 +1462,38 @@ class DOMSerializer:
                 label = self._empty_input_label(node)
         else:
             label = self._label(node)
-            # An unlabeled control icon (radio / checkbox circle) pairs with a text
-            # label; name it after that text but keep it distinguishable from the
-            # label's own clickable entry (which expands / navigates): “选择：重庆市”.
-            # A native checkbox / radio input is the same "control + text" shape
-            # without an icon, so it gets the same treatment instead of an empty tag.
-            if _is_click_like(category) and (
-                is_control_icon(node) or self._is_choice_input(node)
-            ):
-                paired = (
-                    self._adjacent_text_label(node)
-                    or self._pointer_sibling_label(node)
-                    or self._nearby_text_label(node)
-                )
-                # Prefer the visible option text over the control's ``name`` (an
-                # internal id such as ``11_20_1``): the text is what the user (and
-                # the LLM) reads. A real accessible name is left untouched.
-                if paired and (not label or self._is_machine_token(label)):
-                    label = f"选择：{paired}"
-            # A composite control (e.g. a select box) often shows only its value or
-            # placeholder (“请选择”). Prefix the associated field label so the LLM
-            # can tell which field it is: “政治面貌：请选择”.
-            if _is_click_like(category) and self._has_field_input_descendant(node):
-                prefix = self._associated_field_label(node)
-                if prefix and prefix not in label:
-                    label = f"{prefix}：{label}" if label else prefix
+            if is_widget_trigger_input(node):
+                # The text face of a *click-to-open* widget (a readonly select /
+                # cascader / date picker): its own value / placeholder is all it
+                # shows, and without the field name two such fields in one row are
+                # indistinguishable.
+                label = self._picker_entry_label(node)
+            else:
+                # An unlabeled control icon (radio / checkbox circle) pairs with a text
+                # label; name it after that text but keep it distinguishable from the
+                # label's own clickable entry (which expands / navigates): “选择：重庆市”.
+                # A native checkbox / radio input is the same "control + text" shape
+                # without an icon, so it gets the same treatment instead of an empty tag.
+                if _is_click_like(category) and (
+                    is_control_icon(node) or self._is_choice_input(node)
+                ):
+                    paired = (
+                        self._adjacent_text_label(node)
+                        or self._pointer_sibling_label(node)
+                        or self._nearby_text_label(node)
+                    )
+                    # Prefer the visible option text over the control's ``name`` (an
+                    # internal id such as ``11_20_1``): the text is what the user (and
+                    # the LLM) reads. A real accessible name is left untouched.
+                    if paired and (not label or self._is_machine_token(label)):
+                        label = f"选择：{paired}"
+                # A composite control (e.g. a select box) often shows only its value or
+                # placeholder (“请选择”). Prefix the associated field label so the LLM
+                # can tell which field it is: “政治面貌：请选择”.
+                if _is_click_like(category) and self._has_field_input_descendant(node):
+                    prefix = self._associated_field_label(node)
+                    if prefix and prefix not in label:
+                        label = f"{prefix}：{label}" if label else prefix
         # Drop icon-font private-use glyphs / invisible marks first: a label that
         # was *only* a glyph (``\ue76e``) must fall through to the human fallback
         # below instead of being emitted as a content-free clickable.
@@ -1490,7 +1508,7 @@ class DOMSerializer:
         # not tell which field it belonged to (and one appeared next to an already
         # filled field). Attaching it (``… [校验：必填项未填写]``) makes the state
         # unambiguous; the node is consumed so it is not emitted twice.
-        if category in ("input", "select", "searchable"):
+        if category in ("input", "select", "searchable", "clickdropdown"):
             error = self._inline_error_text(node)
             if error and error not in label:
                 label = f"{label} [校验：{error}]"
@@ -1562,12 +1580,22 @@ class DOMSerializer:
         ``is_custom_select_input`` so every other site's searchable label is
         unchanged.
         """
+        if is_date_picker_input(node):
+            # A date / time picker's text entry holds its *own* value (unlike a
+            # searchable select, whose value lives in a sibling element), so the
+            # label has to be built from the input itself.
+            return self._picker_entry_label(node)
         if is_custom_select_input(node):
             prefix = self._searchable_field_label(node)
             current = self._searchable_value_text(node)
         else:
             prefix = self._associated_field_label(node)
             current = self._nearby_text_label(node)
+        if current and not _has_word_char(current):
+            # A range control renders a bare separator ("-", "~") between its two
+            # inputs; treating it as the "current value" produced the nonsense
+            # label ``起止年月：-``.
+            current = ""
         if prefix and current:
             if prefix in current:
                 # ``current`` already contains the field name (e.g. the nearby
@@ -1582,6 +1610,28 @@ class DOMSerializer:
         if current and current in label:
             self._consume_nearby_label_source(node, current)
         return label
+
+    def _picker_entry_label(self, node: EnhancedNode) -> str:
+        """Label a picker / widget text entry as ``字段：值`` or ``字段：（空…）``.
+
+        Used for the text face of a date / time picker (``<可搜索下拉元素>``) and of
+        a readonly select / cascader (``<可点击下拉元素>``). Both hold their value
+        in the input itself, so the value must be read from the input — not from a
+        sibling. The field name is essential: the 4399 简历 form rendered 起止年月
+        as two bare ``<可输入元素 e80>（空）</>`` with the field name only in a
+        separate ``[文本]`` line, so the model had to guess which field it was
+        addressing (and whether the range was start or end).
+        """
+        prefix = self._associated_field_label(node)
+        value = self._input_value(node)
+        if value:
+            if prefix and prefix not in value:
+                return f"{prefix}：{value}"
+            return value or prefix
+        empty = self._empty_input_label(node)
+        if prefix and prefix not in empty:
+            return f"{prefix}：{empty}"
+        return empty or prefix
 
     @staticmethod
     def _field_already_has_value(field: str, value: str) -> bool:
@@ -1768,19 +1818,41 @@ class DOMSerializer:
         so the class token (``ant-picker-header-prev-btn`` trimmed to
         ``prev-btn``) is the *only* clue. Inside a date/calendar widget the step
         size differs (month vs year); elsewhere it is a generic page step.
+
+        A bare direction arrow (``d-arrow-left`` / ``arrow-right``, the Element Plus
+        picker header buttons) is also translated *inside a picker context only*:
+        ``d-``/``double`` prefixes step a year and a single arrow a month, so the
+        panel's nav reads ``上一年`` / ``上一月`` instead of the bare ``向左``
+        (which the model had to reverse-engineer by clicking and diffing the year).
+        Outside a picker, ``向左`` / ``向右`` stays as-is.
         """
+        raw_parts = [part for part in trimmed.split("-") if part]
         words = [
-            part
-            for part in trimmed.split("-")
-            if part and part not in _GENERIC_STRUCTURE_WORDS
+            part for part in raw_parts if part not in _GENERIC_STRUCTURE_WORDS
         ]
-        if not words or words[-1] not in ("prev", "previous", "next"):
+        if not raw_parts:
             return ""
-        key = words[-1]
-        if len(words) >= 2 and words[-2] in _QUALIFIER_HINTS:
-            key = f"{words[-2]}-{words[-1]}"
+        last = raw_parts[-1]
         classes = node.attributes.get("class", "").lower()
-        if any(hint in classes for hint in _CALENDAR_CONTEXT_HINTS):
+        in_calendar = any(hint in classes for hint in _CALENDAR_CONTEXT_HINTS)
+        if last in ("left", "right") and in_calendar:
+            # NOTE: "left"/"right" are *generic structure words* and were filtered
+            # out of ``words`` — read the direction off ``raw_parts`` instead.
+            double = any(part in ("d", "double", "super") for part in raw_parts[:-1])
+            if last == "left":
+                key = "super-prev" if double else "prev"
+            else:
+                key = "super-next" if double else "next"
+            return _CALENDAR_NAV_LABELS.get(key, "")
+        if not words:
+            return ""
+        last = words[-1]
+        if last not in ("prev", "previous", "next"):
+            return ""
+        key = last
+        if len(words) >= 2 and words[-2] in _QUALIFIER_HINTS:
+            key = f"{words[-2]}-{last}"
+        if in_calendar:
             return _CALENDAR_NAV_LABELS.get(key, "")
         return _GENERAL_NAV_LABELS.get(key, "")
 
@@ -2046,8 +2118,27 @@ class DOMSerializer:
            ancestors (custom components: ``phoenix-radio--checked``,
            ``ant-radio-checked``, ``is-checked`` …).
 
+        Grid *cells* (a calendar / month picker's ``<td>``) are special-cased: a
+        cell's ``aria-selected`` is frequently set by the component just to mark
+        the *active / on-screen* cell, so ``Element Plus`` marked 9 月 in BOTH year
+        panels of an empty month-range picker as selected (two ``[已选]`` months
+        while the field held nothing), which sent the model into a long wrong
+        deduction about an already-set range. For a cell the claim is only
+        believed when a selection *class* corroborates it.
+
         Only ``True`` is ever rendered; ``None`` / ``False`` mean "no marker".
         """
+        if self._is_grid_cell(node):
+            if "checked" in node.attributes or "selected" in node.attributes:
+                return True
+            branch: Optional[EnhancedNode] = node
+            hops = 0
+            while branch is not None and hops < 4:
+                if self._cell_class_has_selection_token(branch):
+                    return True
+                branch = branch.parent
+                hops += 1
+            return None
         if node.selected is not None:
             return node.selected
         for attr in ("aria-checked", "aria-selected", "aria-pressed"):
@@ -2085,6 +2176,44 @@ class DOMSerializer:
             if self._class_has_selection_token(child):
                 return True
             if self._subtree_has_selection(child, depth - 1):
+                return True
+        return False
+
+    @staticmethod
+    def _is_grid_cell(node: EnhancedNode) -> bool:
+        """True for a table / grid *cell* (a calendar or month picker cell)."""
+        if not node.is_element:
+            return False
+        if node.tag in ("td", "th"):
+            return True
+        return (node.role or "").lower() in ("gridcell", "cell")
+
+    # Selection *class* tokens used by date / month pickers on their cells
+    # (``el-date-table-cell``'s ``current`` / ``start-date`` / ``end-date`` /
+    # ``in-range``, ``ant-picker-cell-selected``, ``is-selected`` …). Kept apart
+    # from ``_class_has_selection_token`` because a bare ``current`` on a nav /
+    # carousel item is not a form selection, while on a *cell* it is.
+    _CELL_SELECTION_TOKENS = (
+        "current",
+        "start-date",
+        "end-date",
+        "in-range",
+        "selected",
+        "checked",
+    )
+
+    @classmethod
+    def _cell_class_has_selection_token(cls, node: EnhancedNode) -> bool:
+        """True if a *cell*'s class encodes the committed selection."""
+        classes = node.attributes.get("class", "").lower()
+        if not classes:
+            return False
+        for token in classes.split():
+            if token in cls._CELL_SELECTION_TOKENS:
+                return True
+            if token.endswith(("-selected", "-checked", "-current")):
+                return True
+            if token.endswith("selected") and not token.endswith("unselected"):
                 return True
         return False
 

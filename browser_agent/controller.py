@@ -993,7 +993,15 @@ class BrowserController:
             if overlay_before
             else False
         )
-        popup_trigger = executor.is_popup_trigger(node.backend_node_id)
+        popup_trigger = (
+            executor.is_popup_trigger(node.backend_node_id)
+            # Every ``clickdropdown`` is *by contract* a click that opens a panel
+            # (tool_08's whole purpose), and a readonly select / cascader / picker
+            # face often has no ``aria-haspopup`` at all. Neutralising (blur/park)
+            # after such a click dismissed the panel the click had just opened, so
+            # the returned diff said "no candidates" while the panel was painted.
+            or classify(node) == "clickdropdown"
+        )
         if not inside_overlay and not popup_trigger:
             executor.blur_active()
             executor.park_mouse()

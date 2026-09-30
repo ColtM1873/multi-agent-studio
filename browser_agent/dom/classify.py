@@ -563,7 +563,7 @@ def may_navigate(node: EnhancedNode) -> bool:
 #   * 非输入的可点击触发器              → ``clickdropdown``（点击展开候选/菜单）
 # ---------------------------------------------------------------------------
 
-_SELECT_TOKENS = ("select", "combobox")
+_SELECT_TOKENS = ("select", "combobox", "cascader")
 _MENU_TOKENS = ("dropdown", "menu")
 # A dropdown-*menu* trigger is a small control (a caret button), never a container
 # that merely wraps the menu's items (a sidebar of links). Requiring an explicit
@@ -672,6 +672,251 @@ def _descendant_has_dropdown_indicator(node: EnhancedNode) -> bool:
     return False
 
 
+# ---------------------------------------------------------------------------
+# 日期 / 时间选择器（date|month|time picker）的文本输入框
+#
+# 日历/年月面板与自绘下拉是同一类交互语义：**输入只用于导航或筛选，必须点面板里的
+# 单元格才真正作数**（Element Plus 的 ``.el-date-editor``、Ant 的 ``.ant-picker``、
+# Moka / Beisen / 飞书的 ``*-date-picker`` 都是这个形状）。所以它的文本输入框与
+# 「可搜索下拉」共用 ``searchable`` 类别；只读的那种（不能打字，只能点开面板）与
+# 「可点击下拉」共用 ``clickdropdown`` 类别。
+#
+# 识别信号是**外壳的 class/id**（组件库把这些控件命名得很明确），而不是输入框自身：
+#   * 明确写了组件名 → 直接认定（``el-date-editor`` / ``ant-picker`` / ``date-picker`` …）
+#   * 只是「日期词 + 容器词」的普通组合 → 还要有弹层契约（``aria-haspopup`` 等）
+#     ＋ 同壳里的指示图标，避免把「名字里带 date 的普通文本框」当成选择器而
+#     封掉它唯一正确的操作（直接键入日期）。
+# ---------------------------------------------------------------------------
+_PICKER_COMPONENT_MARKERS = (
+    "date-editor",
+    "dateeditor",
+    "date-picker",
+    "datepicker",
+    "date_picker",
+    "datetime-picker",
+    "datetimepicker",
+    "time-picker",
+    "timepicker",
+    "time-select",
+    "month-picker",
+    "year-picker",
+    "calendar-picker",
+    "calendar-panel",
+    "ant-picker",
+    "ant-calendar",
+    "rc-picker",
+    "el-date",
+    "el-range-editor",
+    "el-time",
+    "sd-date",
+    "phoenix-date",
+    "atsx-date",
+    "moka-date",
+    "flatpickr",
+    "react-datepicker",
+    "v-calendar",
+    "pikaday",
+    "litepicker",
+    "duet-date",
+)
+# 「日期感」的词。``month`` / ``year`` / ``day`` 单独出现太泛（``day_info`` 只是「这块
+# 是某字段」的布局类名，实测把 Moka 表单的 ``apply-field-… day_info-…`` 误判成日期外壳），
+# 所以只保留日期语义明确的写法；连写形式（``daterange`` / ``monthrange``）直接放进来。
+_DATE_WIDGET_TOKENS = (
+    "date",
+    "datetime",
+    "calendar",
+    "time",
+    "daterange",
+    "datetimerange",
+    "monthrange",
+    "yearrange",
+)
+# 容器词同样只收「真选择器外壳」的写法；``box`` / ``field`` 这类布局词会把
+# 「日期字段的整块容器」也算进来，故剔除。
+_DATE_CONTAINER_TOKENS = (
+    "picker",
+    "editor",
+    "selector",
+    "range",
+    "select",
+    "panel",
+)
+# 指示图标（同壳里的兄弟元素）上的词：下拉箭头 / 日历 / 时钟。刻意不收 ``picker`` /
+# ``date`` / ``time`` 这类「名字里带日期」的普通类名（``sd-picker-addon`` 只是加号槽），
+# 只有真正的指示图形才算。
+_PICKER_INDICATOR_TOKENS = (
+    "calendar",
+    "clock",
+    "caret",
+    "chevron",
+    "arrow",
+    "icon-down",
+    "down-icon",
+)
+
+
+def _raw_class_id(node: EnhancedNode) -> str:
+    """Lower-cased ``class`` + ``id`` of ``node`` (empty for non-elements)."""
+    if not node.is_element:
+        return ""
+    return f"{node.attributes.get('class', '')} {node.attributes.get('id', '')}".lower()
+
+
+def _is_named_picker_shell(node: EnhancedNode) -> bool:
+    """True if ``node``'s class/id spells out a known date/time picker component."""
+    raw = _raw_class_id(node)
+    if not raw.strip():
+        return False
+    return any(marker in raw for marker in _PICKER_COMPONENT_MARKERS)
+
+
+def _is_generic_picker_shell(node: EnhancedNode) -> bool:
+    """True if ``node``'s class/id is a ``date|calendar|time`` + container combo.
+
+    Deliberately loose (it catches pickers of libraries we have never seen), so
+    callers must additionally require a popup signal before trusting it.
+    """
+    raw = _raw_class_id(node)
+    if not raw.strip():
+        return False
+    tokens = set(re.split(r"[^a-z0-9]+", raw))
+    return bool(tokens & set(_DATE_WIDGET_TOKENS)) and bool(
+        tokens & set(_DATE_CONTAINER_TOKENS)
+    )
+
+
+def _has_popup_contract(node: EnhancedNode) -> bool:
+    """True if ``node`` declares the ARIA popup contract (opens a panel)."""
+    if not node.is_element:
+        return False
+    if node.attributes.get("aria-haspopup"):
+        return True
+    if node.attributes.get("aria-expanded") is not None:
+        return True
+    return (node.role or "").lower() in ("combobox", "button")
+
+
+def _subtree_has_picker_indicator(node: EnhancedNode, depth: int = 2) -> bool:
+    """True if ``node`` (or a shallow descendant) is an indicator icon.
+
+    The marker is the class/id token *or* an ``aria-label`` / ``title`` (Ant
+    Design's ``<span role="img" aria-label="calendar">`` carries the calendar only
+    in the attribute).
+    """
+    if not node.is_element or depth < 0:
+        return False
+    if _has_token(_raw_class_id(node), _PICKER_INDICATOR_TOKENS):
+        return True
+    hint = " ".join(
+        (node.attributes.get(key) or "")
+        for key in ("aria-label", "title", "data-icon", "data-name")
+    ).lower()
+    if hint.strip() and _has_token(hint, _PICKER_INDICATOR_TOKENS):
+        return True
+    for child in node.children:
+        if child.is_element and _subtree_has_picker_indicator(child, depth - 1):
+            return True
+    return False
+
+
+def _has_picker_indicator_in_shell(node: EnhancedNode, max_hops: int = 2) -> bool:
+    """True if an indicator icon sits beside ``node`` (or its wrapper's) siblings.
+
+    Looks for a sibling that is not the branch itself and that carries (or shallowly
+    contains) a dropdown arrow / calendar / clock icon — ``<span class="el-input__suffix">
+    <i class="icon-arrow-down">`` and ``<i class="el-range__icon">`` are both this
+    shape.
+    """
+    branch = node
+    ancestor = node.parent
+    hops = 0
+    while ancestor is not None and hops < max_hops:
+        for sibling in ancestor.children:
+            if sibling is branch or sibling.is_text or not sibling.is_element:
+                continue
+            if _subtree_has_picker_indicator(sibling, depth=2):
+                return True
+        branch = ancestor
+        ancestor = ancestor.parent
+        hops += 1
+    return False
+
+
+def _iter_picker_shells(node: EnhancedNode, max_hops: int = 4):
+    """Yield ``(ancestor, branch)`` pairs up the tree, nearest first."""
+    branch = node
+    ancestor = node.parent
+    hops = 0
+    while ancestor is not None and hops < max_hops:
+        yield ancestor, branch
+        branch = ancestor
+        ancestor = ancestor.parent
+        hops += 1
+
+
+def _picker_shell(node: EnhancedNode, max_hops: int = 4) -> bool:
+    """True if a date/time picker shell wraps ``node`` (≤ ``max_hops`` up)."""
+    if _is_named_picker_shell(node):
+        return True
+    for ancestor, branch in _iter_picker_shells(node, max_hops):
+        if not ancestor.is_element:
+            continue
+        if _is_named_picker_shell(ancestor):
+            return True
+        if _is_generic_picker_shell(ancestor) and (
+            _has_popup_contract(ancestor)
+            or _has_picker_indicator_in_shell(branch)
+        ):
+            return True
+    return False
+
+
+def is_date_picker_input(node: EnhancedNode) -> bool:
+    """True for the *editable* text entry of a date / time picker widget.
+
+    Its value can be typed but only *commits* when a cell in the popped-up
+    panel is clicked, which is exactly the ``searchable`` contract (typing only
+    filters/navigates). Native ``<input type=date|month|time>`` is deliberately
+    excluded: its panel is drawn by the browser, so no candidate can ever be
+    clicked and plain typing stays the correct operation.
+    """
+    if node.tag != "input" or "readonly" in node.attributes:
+        return False
+    if _input_type(node) not in ("", "text", "search", "email"):
+        return False
+    return _picker_shell(node)
+
+
+def is_widget_trigger_input(node: EnhancedNode) -> bool:
+    """True for a ``readonly`` text input that is a click-to-open widget's face.
+
+    A non-searchable select / cascader / readonly date picker only *shows* the
+    value: the widget commits it from a popped-up panel, so the input cannot be
+    filled at all. Clicking it is the one and only way in — which the model must
+    be able to do, so the node is given the ``clickdropdown`` category instead of
+    ``input`` (the ``input`` category refuses clicks as well as readonly fills,
+    which used to leave such fields completely un-operable).
+
+    Requires a marker that the widget really is one: a select / cascader / picker
+    shell (by class token) or a date-picker shell, plus a dropdown / calendar
+    indicator in the same shell. Without them a plain readonly field keeps its
+    ``input`` category (``fill`` then reports the honest readonly error).
+    """
+    if node.tag != "input" or "readonly" not in node.attributes:
+        return False
+    if _input_type(node) not in ("", "text", "search"):
+        return False
+    for ancestor, branch in _iter_picker_shells(node, 4):
+        if not ancestor.is_element:
+            continue
+        if _is_named_picker_shell(ancestor) or _marks_select_control(ancestor):
+            return True
+        if _is_generic_picker_shell(ancestor) and _has_picker_indicator_in_shell(branch):
+            return True
+    return False
+
+
 def _has_searchable_input(node: EnhancedNode) -> bool:
     """True if ``node``'s subtree contains a searchable-select filter input."""
     for child in node.children:
@@ -698,14 +943,19 @@ def is_searchable_typeahead(node: EnhancedNode) -> bool:
     1. the input itself is an ARIA combobox (``role=combobox``);
     2. an ``aria-autocomplete`` lives on the input or an ancestor (Ant Design's
        ``show-search`` select puts it on the wrapping ``.atsx-select-selection``);
-    3. a *custom select control* (class/id token ``select`` / ``combobox``)
-       wraps the input together with a down-arrow addon, and the input is
-       editable. Moka's ``sd-Select`` is exactly this shape and carries no ARIA
-       at all. The arrow must be a *sibling* of the input (inside the same
+    3. a *custom select control* (class/id token ``select`` / ``combobox`` /
+       ``cascader``) wraps the input together with a down-arrow addon, and the
+       input is editable. Moka's ``sd-Select`` is exactly this shape and carries
+       no ARIA at all. The arrow must be a *sibling* of the input (inside the same
        control box) and must not itself be a composite control, which is what
        separates a search box (Moka) from a value-bearing custom select whose
        arrow lives outside the input wrapper (Beisen ``.phoenix-select`` — that
        one is a ``clickdropdown``, see ``is_click_dropdown``).
+
+    A fourth family is a *date / time picker's* text entry (``is_date_picker_input``):
+    same contract (typing only navigates the panel, the value commits on a click
+    on a cell), so it shares this category instead of being offered to the plain
+    fill tool — which silently loses the typed text on blur (see ``ID122``).
     """
     if node.tag != "input":
         return False
@@ -725,7 +975,10 @@ def is_searchable_typeahead(node: EnhancedNode) -> bool:
         ancestor = ancestor.parent
         hops += 1
     # Family 3: a custom select control wrapping this input.
-    return is_custom_select_input(node)
+    if is_custom_select_input(node):
+        return True
+    # Family 4: a date / time picker's editable text entry.
+    return is_date_picker_input(node)
 
 
 def is_custom_select_input(node: EnhancedNode) -> bool:
@@ -821,6 +1074,12 @@ def classify(node: EnhancedNode) -> str:
         # narrows the candidate list, so it must not be routed to the plain
         # fill-in tool (``tool_02``).
         result = "searchable"
+    elif is_widget_trigger_input(node) and not _is_disabled(node):
+        # A readonly select / cascader / picker face: it cannot be filled at all
+        # and clicking it is the only way to open its panel. Giving it its own
+        # click-open category (instead of ``input``) is what makes it operable;
+        # ``input`` refuses both the fill (readonly) and the click (wrong class).
+        result = "clickdropdown"
     elif is_input(node):
         result = "input"
     elif is_select(node):
