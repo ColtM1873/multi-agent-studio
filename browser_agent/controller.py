@@ -32,6 +32,7 @@ from .dom import (
     compute_lost,
     format_lines,
     format_lost,
+    has_text,
     is_control_icon,
     is_cursor_pointer_only,
     may_navigate,
@@ -334,6 +335,11 @@ class BrowserController:
         self._prev_trees: dict[str, EnhancedTree] = {}
         self._tab_registry = TabRegistry()
         self._last_error: str = ""
+        # 连续「死点击」计数：key=(doc_token, frame_id, backend_node_id) → 连续
+        # 点击后前后 DOM 逐字节一致的次数。用于在 LLM 反复点击同一个非功能性元素
+        # （如只有 ``cursor:pointer`` 的步骤指示/装饰文字）时升级提示措辞，避免它
+        # 无限重试。点击成功即清零；元素被重渲染换 key 后自然从 0 重新计。
+        self._noop_counts: dict[tuple[str, str, int], int] = {}
         # 串行化「抓取/互动」类浏览器操作：只有一个浏览器 / 一条 CDP 连接，多个
         # 入口并发（前端「提示接管」轮询 viewport-dom、图内浏览器工具）同时抓取会
         # 让 CDP 连接排队，单条命令拖到 30s 超时并触发断线重连。
@@ -726,6 +732,45 @@ class BrowserController:
                 return sibling.backend_node_id
         return None
 
+    def _label_descendant_target(self, node: EnhancedNode) -> Optional[int]:
+        """The inner node that actually carries ``node``'s visible label.
+
+        Some libraries render a clickable wrapper ``[icon][text span]`` where the
+        wrapper is what gets *named* (its label is the span's text) but the action
+        handler is bound to the span, or the wrapper's center point falls on
+        padding that misses the span. After a physical click on the wrapper is
+        confirmed a no-op, retrying on this label-bearing descendant recovers the
+        real control.
+
+        Only a passive, ``cursor:pointer`` label node is returned — never a real
+        ``<button>``/``<a>``/input descendant, whose click would be a *different*,
+        separately-named action. The caller gates this on the wrapper itself being
+        cursor-only, so normal controls never enter here.
+        """
+        if not is_cursor_pointer_only(node):
+            return None
+        queue = list(node.children)
+        hops = 0
+        while queue and hops < 200:
+            hops += 1
+            child = queue.pop(0)
+            if not child.is_element:
+                continue
+            queue.extend(child.children)
+            if child.hidden or not child.visible or not child.bbox:
+                continue
+            if child.backend_node_id == node.backend_node_id:
+                continue
+            if not is_cursor_pointer_only(child):
+                continue
+            if not (child.ax_name or has_text(child)):
+                continue
+            # Prefer a node that carries its own direct text run (the label span),
+            # not an intermediate wrapper that merely contains it.
+            if any(c.is_text and c.text for c in child.children):
+                return child.backend_node_id
+        return None
+
     # ------------------------------------------------------------------ #
     # interaction, split by function
     #
@@ -907,8 +952,26 @@ class BrowserController:
                                 executor.click(retry_id)
                                 self._settle_navigation(session, nav_state)
                         elif is_cursor_pointer_only(node) or is_control_icon(node):
-                            executor.js_click(node.backend_node_id)
-                            self._stabilize(target_id)
+                            # A cursor-only wrapper's own center may fall on
+                            # padding that misses its label, or the handler may
+                            # live on the label node itself (left step-lists
+                            # render a named wrapper whose inner text span owns
+                            # the click). Retry on the label-bearing descendant
+                            # before falling back to a wrapper-level JS click.
+                            child_id = self._label_descendant_target(node)
+                            if child_id is not None:
+                                with self._watch_navigation(session) as nav_state:
+                                    executor.click(child_id)
+                                    self._settle_navigation(session, nav_state)
+                                executor.blur_active()
+                                executor.park_mouse()
+                                child_sig = executor.dom_signature()
+                                if not (child_sig and child_sig != before_sig):
+                                    executor.js_click(child_id)
+                                    self._stabilize(target_id)
+                            else:
+                                executor.js_click(node.backend_node_id)
+                                self._stabilize(target_id)
                         else:
                             click_noop = True
                         if not click_noop:
@@ -1065,6 +1128,12 @@ class BrowserController:
         before_sig = extras.get("before_sig", "")
         after_sig = extras.get("after_sig", "")
 
+        # 点击（非零变化）成功 → 该元素不是死链，清零连续死点击计数。亦在聚焦标签页
+        # 切换（下面提前返回）之前处理。仅当 extras 带 click_noop 键（即本次是点击类
+        # 互动）时才算，fill / scroll 不重置。
+        if "click_noop" in extras and not click_noop:
+            self._noop_counts.pop(ctx.node.key, None)
+
         new_focus = self._resolve_focused_target()
         if new_focus and new_focus != target_id:
             new_tree = self.capture_tree(new_focus)
@@ -1100,7 +1169,10 @@ class BrowserController:
             if not opened_names:
                 new_lines = self.serialize_lines_tree(new_tree, target_id)
                 if not _lines_have_new_text(old_lines, new_lines):
-                    content = rp.CLICK_NOOP_NOTICE + "\n\n" + content
+                    key = ctx.node.key
+                    count = self._noop_counts.get(key, 0) + 1
+                    self._noop_counts[key] = count
+                    content = rp.click_noop_notice(ctx.name, count) + "\n\n" + content
 
         # A click that closes a popup / clears a selection removes content; the
         # diff only reports additions, so say so explicitly rather than a

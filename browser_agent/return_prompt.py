@@ -117,6 +117,21 @@ CLICK_NOOP_NOTICE = (
     "请勿据此认为操作已生效；可换一个元素重试，或改用其它方式。"
 )
 
+
+# 作用：同一元素被连续多次点击且每次都零变化时的升级提示，阻止 LLM 无限重试
+#       （真实会话里 LLM 对一个只有 cursor:pointer 的步骤指示元素连点 5 次）。
+# 触发条件：控制器按元素 key 统计到连续 no-op 次数 >= 2。
+# 返回时机：_finish_interaction 判定为 click_noop 时，作为 content 前缀返回给 LLM。
+# 入参：name 为元素名（eN）；count 为连续零变化次数。
+def click_noop_notice(name: str, count: int) -> str:
+    if count < 2:
+        return CLICK_NOOP_NOTICE
+    return (
+        f"[提示] 元素 {name} 已被连续点击 {count} 次，每次前后 DOM 均完全一致（零变化）。"
+        "它极可能不是真实控件（如步骤指示 / 纯装饰文字），或需要先满足某个前置条件；"
+        "请不要再点击它，改用其它元素或换一种思路。"
+    )
+
 # 作用：提示页面结构确实变了、只是没有「新增」的可见文本/互动元素（diff 只报新增，会显示
 #       「页面无变化」而误导 LLM）。
 # 触发条件：点击后页面无可见新增，但原始 outerHTML 签名发生了变化（如关闭浮层 / 取消选中）。

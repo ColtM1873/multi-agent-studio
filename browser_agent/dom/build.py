@@ -18,6 +18,66 @@ PAGE_SCROLL_TAG = "#page"
 # Media hosts whose user-agent shadow root is pure browser chrome (see ``_walk``).
 _MEDIA_TAGS = {"video", "audio"}
 
+# Component libraries animate an overlay *out* (Vue / Element-Plus / Ant's "leave"
+# hooks) before detaching it. The leave-hook class (e.g. ``phoenix-popover-zoom-leave``)
+# lives on a still-mounted node whose computed ``display``/``visibility`` remain
+# visible and whose ``opacity`` may still be > 0, so ``_apply_visibility`` used to
+# serialize a *dismissed* dialog for as long as the hook stayed mounted. In a real
+# session a popconfirm lingered in ``zoom-leave`` for ~2 minutes and kept
+# re-injecting its stale prompt ("是否继续上传？") into every snapshot. An *overlay*
+# carrying a leave/closing hook class is conceptually gone, so treat it as hidden.
+_OVERLAY_CLASS_HINTS = (
+    "popover", "dropdown", "popup", "popper", "overlay", "tooltip",
+    "modal", "dialog", "drawer", "toast", "notification", "messagebox",
+    "message-box", "listbox", "autocomplete", "suggestion",
+)
+_OVERLAY_ROLES = {
+    "dialog", "alertdialog", "tooltip", "menu", "menubar", "listbox",
+    "combobox", "tree", "grid", "tablist", "radiogroup",
+}
+# ``...-leave`` / ``...-leaving`` / ``...-closing`` / ``...-exit`` and their
+# animation-hook tails (``-leave-active``, ``-leave-to``, ``-exit-from`` …).
+_LEAVE_MARKERS = ("leave", "leaving", "closing", "exit", "exiting")
+_LEAVE_HOOK_TAILS = ("-active", "-to", "-from", "-start", "-end")
+
+
+def _class_marks_leaving(node: "EnhancedNode") -> bool:
+    """True if ``node`` is a floating overlay carrying a leave/closing hook class.
+
+    Deliberately narrow, to avoid hiding unrelated pages:
+
+    * only the *overlay* shape qualifies (an overlay role, or a known overlay class
+      hint), so a random element that happens to carry a ``*-leave`` token is not
+      touched;
+    * the leave token must be a suffix (``foo-leave`` / ``foo-leave-active``), not a
+      mere substring (``leave-request`` / ``overflow-hidden`` never match).
+
+    Enter hooks (``*-enter`` / ``*-enter-active``) are intentionally *not* matched:
+    a popup mid-appearance is real content and stays handled by the existing
+    ``opacity: 0`` rescue in the serializer.
+    """
+    if not node.is_element:
+        return False
+    classes = (node.attributes.get("class") or "").lower()
+    role = (node.role or "").lower()
+    is_overlay = role in _OVERLAY_ROLES or any(
+        hint in classes for hint in _OVERLAY_CLASS_HINTS
+    )
+    if not is_overlay:
+        return False
+    for raw in classes.split():
+        token = raw.rstrip(".!#*")
+        base = token
+        for tail in _LEAVE_HOOK_TAILS:
+            if token.endswith(tail):
+                base = token[: -len(tail)]
+                break
+        if base in _LEAVE_MARKERS or base.endswith(
+            tuple("-" + marker for marker in _LEAVE_MARKERS)
+        ):
+            return True
+    return False
+
 
 @dataclass
 class EnhancedNode:
@@ -472,7 +532,11 @@ def _apply_visibility(
     node: EnhancedNode, viewport: dict, has_layout: bool = True
 ) -> None:
     styles = node.styles
-    hidden = styles.get("display") == "none" or styles.get("visibility") in ("hidden", "collapse")
+    hidden = (
+        styles.get("display") == "none"
+        or styles.get("visibility") in ("hidden", "collapse")
+        or _class_marks_leaving(node)
+    )
     node.hidden = hidden
     if not has_layout:
         # No layout row at all: ``display:none`` (whose computed styles are
