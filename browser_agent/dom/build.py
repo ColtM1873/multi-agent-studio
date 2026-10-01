@@ -130,6 +130,9 @@ class EnhancedNode:
     # ——两者都要扫子树，故同上一组一样按节点惰性缓存（见 inner_docs/ID123）。
     cache_usable_text_input: Optional[bool] = None
     cache_picker_shell: Optional[bool] = None
+    # 「自己在不在一个被折叠/隐藏的浮层挂载点里」（见 ``in_collapsed_overlay_portal``）。
+    # 同样是祖先链扫描，按节点缓存。
+    cache_in_collapsed_portal: Optional[bool] = None
 
     @property
     def key(self) -> tuple[str, str, int]:
@@ -574,3 +577,80 @@ def _intersects_viewport(
     right = viewport["scroll_x"] + viewport["width"] + _VIEWPORT_MARGIN
     bottom = viewport["scroll_y"] + viewport["height"] + _VIEWPORT_MARGIN
     return not (x + w < left or x > right or y + h < top or y > bottom)
+
+
+def in_collapsed_overlay_portal(node: "EnhancedNode", max_hops: int = 14) -> bool:
+    """True if an **ancestor floating-overlay wrapper is collapsed / hidden**.
+
+    Component libraries mount every dropdown / picker / popover panel of a form
+    into a portal and keep it there forever, toggling a *hidden* state instead of
+    detaching it. The two shapes seen in the wild:
+
+    * the wrapper gets ``display: none`` (Feishu ``…-dropdown-hidden`` together
+      with a ``display:none`` rule) — then ``_apply_visibility`` already marks the
+      whole subtree ``hidden`` and nothing leaks;
+    * the wrapper keeps ``display: block`` and is merely collapsed / visually
+      hidden (it carries a ``*-hidden`` state class, or sits behind
+      ``display:none`` the snapshot does not resolve) — here the panel **inside**
+      keeps a real box and ``visible=True`` by its own styles, so it was
+      serialized as if it were on screen. In the 2026-10-01 session a *closed*
+      award-year picker surfaced as bare ``[文本]`` rows through the zero-area text
+      rescue, and each closed 起止时间 picker contributed its 127 year candidates as
+      ``<可点击元素>`` rows (``debug_folder/20261001-17-18``).
+
+    The signal is the explicit collapse marker only, so a *painted* dropdown is
+    never touched: a zero-height wrapper alone is normal (a portal wrapper around
+    an absolutely positioned panel collapses to ``height: 0`` while the panel is
+    visibly on screen — see the Feishu Jobs form, where both portal divs measure
+    ``0 × 1905`` even with the picker open). Only ``…-hidden`` state classes count.
+
+    Returns ``True`` ("no own content") for ``<br>``, which self-closes.
+    """
+    cached = node.cache_in_collapsed_portal
+    if cached is not None:
+        return cached
+    result = False
+    if node.tag == "br":
+        node.cache_in_collapsed_portal = True
+        return True
+    current = node.parent
+    hops = 0
+    while current is not None and hops < max_hops:
+        if current.is_element and _class_marks_collapsed_overlay(current):
+            result = True
+            break
+        current = current.parent
+        hops += 1
+    node.cache_in_collapsed_portal = result
+    return result
+
+
+# ``…-hidden`` / ``…--hidden`` / ``is-hidden`` state tokens used by component
+# libraries to collapse a mounted floating overlay (Feishu ``atsx-select-dropdown
+# -hidden``, Ant ``ant-select-dropdown-hidden``, Element ``is-hidden``).
+_COLLAPSED_OVERLAY_TAILS = ("-hidden", "--hidden", "_hidden", "-collapse", "-closed")
+_COLLAPSED_OVERLAY_TOKENS = ("hidden", "is-hidden", "invisible", "collapsed", "closed")
+
+
+def _class_marks_collapsed_overlay(node: "EnhancedNode") -> bool:
+    """True if ``node``'s own class/id marks a collapsed floating overlay.
+
+    Only **overlay-ish** containers qualify (see ``_OVERLAY_CLASS_HINTS`` /
+    ``_OVERLAY_ROLES``), which keeps an unrelated ``…-hidden`` utility class on
+    ordinary content from hiding a visible subtree.
+    """
+    if not node.is_element:
+        return False
+    raw = f"{node.attributes.get('class', '')} {node.attributes.get('id', '')}".lower()
+    if not raw.strip():
+        return False
+    role = (node.role or "").lower()
+    is_overlay = role in _OVERLAY_ROLES or any(
+        hint in raw for hint in _OVERLAY_CLASS_HINTS
+    )
+    if not is_overlay:
+        return False
+    for token in raw.split():
+        if token in _COLLAPSED_OVERLAY_TOKENS or token.endswith(_COLLAPSED_OVERLAY_TAILS):
+            return True
+    return False

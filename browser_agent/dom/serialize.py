@@ -25,7 +25,12 @@ import re
 from dataclasses import dataclass
 from typing import Optional
 
-from .build import PAGE_SCROLL_TAG, EnhancedNode, EnhancedTree
+from .build import (
+    PAGE_SCROLL_TAG,
+    EnhancedNode,
+    EnhancedTree,
+    in_collapsed_overlay_portal,
+)
 from .classify import (
     CLICKABLE_INPUT_TYPES,
     CLICKABLE_ROLES,
@@ -205,6 +210,24 @@ def _has_word_char(text: str) -> bool:
     return any(ch.isalnum() for ch in (text or ""))
 
 MAX_TEXT_LENGTH = 4000
+
+# A scroll container holding at least this many option-like text leaves is treated
+# as a *candidate column* of an open picker panel and rendered compactly (head
+# sample + total count + selected value) instead of option by option. Kept well
+# above the option count of normal selects / menus (5~30), so ordinary dropdowns
+# keep listing their options.
+_OPTION_COLUMN_MIN = 40
+_OPTION_COLUMN_SAMPLE = 6
+
+# Returned by ``_overlay_centerpiece_span`` for content that is a *duplicate* of an
+# overlay centrepiece's describing line (its own ``2018 - 2026`` header title), so
+# the renderer drops it instead of emitting the same fact twice.
+_SUPPRESS_CENTERPIECE = "\x00suppress"
+
+# A text run that is nothing but a year/month span ("2018 - 2026", "2026年").
+_SPAN_ONLY_TEXT_RE = re.compile(
+    r"(?:\d{4}|\d{1,2})\s*\u5e74?\s*[-\u2013\u2014~\uff5e]\s*(?:\d{4}|\d{1,2})\s*\u5e74?"
+)
 
 # Computed ``white-space`` values where a literal ``\n`` in the text really is a
 # line break in the rendered page. For every other value (``normal``/``nowrap``)
@@ -698,6 +721,24 @@ class DOMSerializer:
                 self._render_child(grand, depth, clip)
             return
 
+        if in_collapsed_overlay_portal(child):
+            # A closed dropdown / picker / popover panel that is still mounted
+            # inside a **collapsed portal** looks visible by its own styles (its
+            # box is real; only the zero-height portal ancestor clips it away).
+            # Serializing it flooded the LLM with hundreds of off-screen options
+            # (137 year candidates of a *closed* 起止时间 picker on the Feishu Jobs
+            # apply form) and, when the panel's cells have no pointer cursor, its
+            # text leaked as bare ``[文本]`` rows through the zero-area rescue.
+            # See ``build.in_collapsed_overlay_portal``.
+            return
+
+        if child.is_element and self._overlay_centerpiece_span(child) == _SUPPRESS_CENTERPIECE:
+            # The overlay centrepiece's own header title ("2018 - 2026"): the
+            # describing line emitted for the centrepiece carries the same span, so
+            # this duplicate is dropped wherever it is reached from (the title is
+            # not always inside the centrepiece's scroll container).
+            return
+
         # A ``<br>`` is a rendered line break; it is in ``SKIP_TAGS`` (it has no
         # box of its own), so handle it here before the skip check.
         if child.tag == "br":
@@ -905,7 +946,31 @@ class DOMSerializer:
         category = classify(child)
         if category == "scroll":
             self._flush(depth)
-            if (child.tag == "li" or child.role == "listitem") and self._has_blockish_descendant(child):
+            centerpiece = self._overlay_centerpiece_span(child)
+            suppression = centerpiece == _SUPPRESS_CENTERPIECE
+            option_kind = "" if centerpiece else self._option_column_kind(child)
+            if suppression:
+                # Duplicate fact (the panel header's own ``2018 - 2026`` title): the
+                # centrepiece line already carries it, so emit nothing here.
+                pass
+            elif centerpiece:
+                # The overlay's **non-interactive centrepiece** (a picker panel's
+                # header, e.g. a year-range table reading ``2018-2026``): it is a
+                # scroll container with overflowing content, but nothing inside it
+                # is a control. Serializing its children produced ~20 lines of
+                # ``[表格]`` / ``[文本] 2019 | 2020`` scaffolding that looked like
+                # options the model could not click (2026-10-01 session: it read the
+                # award picker's header years as "candidates without marks"). Say
+                # what the block is instead, and keep the panel structure.
+                self._group_overlay_centerpiece(child, depth, centerpiece, clip)
+            elif option_kind:
+                # A long *option column* of an open picker panel (year / month /
+                # day lists, an Ant ``virtual-list`` of 130 years …): keep the
+                # column boundary and say what it is and how many options it
+                # holds, but do not dump every option — the raw list is 127 items
+                # on the Feishu 起止时间 picker and would swamp the form itself.
+                self._group_option_column(child, depth, option_kind, clip)
+            elif (child.tag == "li" or child.role == "listitem") and self._has_blockish_descendant(child):
                 # A scrollable rich list item wraps the scroll element around its
                 # ``[列表项]`` boundary.
                 self._group_or_interact(child, depth, "[列表项]", clip)
@@ -1151,6 +1216,200 @@ class DOMSerializer:
         self._stack.pop()
         self._emit_close(depth, closing)
 
+    # ------------------------------------------------------------------ #
+    # long option columns (open picker panels / long select lists)
+    # ------------------------------------------------------------------ #
+    def _option_column_kind(self, node: EnhancedNode) -> str:
+        """``"year"`` / ``"month"`` / ``""`` for a long list of option cells.
+
+        A picker panel's candidate columns are ordinary scroll containers whose
+        items are ``<可点击元素>``; dumping all of them (Feishu 起止时间 offers 127
+        years + 12 months, and the year list scrolls) buries the form the model is
+        filling. Classification needs no library knowledge: a column is a scroll
+        container holding at least ``_OPTION_COLUMN_MIN`` option-like leaves, and
+        whether it is the year or the month column is read off the values
+        themselves. Anything shorter (a 5-item select, a nav list) is left alone.
+        """
+        if not node.is_element or node.tag == PAGE_SCROLL_TAG:
+            return ""
+        items = [c for c in node.children if c.is_element and classify(c)]
+        if not items:
+            return ""
+        if not all(self._is_short_text_leaf(c) for c in items[:40]):
+            return ""
+        # Special entries ("至今" / "不限制") sit inside the numeric column and must
+        # not defeat the year/month recognition — filter them out before matching.
+        texts = []
+        for c in items[:60]:
+            raw = self._collect_text(c).strip()
+            if self._is_special_option_text(raw):
+                continue
+            texts.append(raw)
+        # A picker column renders its numbers as plain "01"~"12"; some libraries
+        # append the unit ("01 月"), which must not defeat the recognition.
+        def _monthish(value: str) -> bool:
+            return bool(re.fullmatch(r"\d{1,2}\s*\u6708?", value or ""))
+        # A purely numeric column IS a calendar-y option column whatever its length
+        # (the month column only holds 12 entries) — grouping it is what tells the
+        # model "type a year / pick a month" instead of leaving 12 bare numbers.
+        numeric = bool(texts) and all(
+            re.fullmatch(r"\d{4}|\d{1,2}\s*\u6708?", t or "") for t in texts
+        )
+        if not numeric and len(items) < _OPTION_COLUMN_MIN:
+            return ""
+        if texts and all(re.fullmatch(r"\d{4}", t or "") for t in texts):
+            return "year"
+        if texts and all(_monthish(t) for t in texts):
+            return "month"
+        return ""
+
+    # A picker column's non-numeric entries: "至今" (open-ended end), "不限制".
+    _SPECIAL_OPTION_TOKENS = ("至今", "至今为止", "不限制", "不限", "现在", "present", "now")
+
+    @classmethod
+    def _is_special_option_text(cls, text: str) -> bool:
+        """True for a non-numeric sentinel entry inside an option column."""
+        stripped = (text or "").strip()
+        if not stripped:
+            return True
+        if stripped.lower() in cls._SPECIAL_OPTION_TOKENS:
+            return True
+        return not re.search(r"\d", stripped)
+
+    @staticmethod
+    def _is_short_text_leaf(node: EnhancedNode) -> bool:
+        """True if ``node`` is an option cell: text only, no nested controls."""
+        for child in node.children:
+            if child.is_text:
+                continue
+            if not child.is_element:
+                continue
+            if classify(child):
+                return False
+        return True
+
+    def _overlay_centerpiece_span(self, node: EnhancedNode) -> str:
+        """The year/date span of an overlay's non-interactive **centrepiece**, else "".
+
+        A picker panel's header is a real, scrollable block inside the open overlay
+        (Feishu's year picker renders ``<table>`` of ``2018…2026`` cells under a
+        ``2018 - 2026`` title) but holds **no control at all** — its cells only take
+        a pointer cursor on ``:hover``, so every other rule here sees plain text and
+        the model read them as un-clickable candidates. Recognising it lets the
+        serializer state what the block is instead of dumping its cells.
+
+        Deliberately narrow: the subtree must be free of controls *and* look like a
+        year/date table (4-digit year cells, or a ``…-2026`` style span in the
+        text), so an ordinary scrollable data table is never swallowed.
+        """
+        if not node.is_element or not node.bbox:
+            return ""
+        if self._has_rescuable_interactive_descendant(node) or self._iter_has_control(node):
+            return ""
+        if node.tag in ("table",):
+            return ""
+        # A bare year/month span ("2018 - 2026") is the panel's own header title: it
+        # is real text, but the centrepiece line below already states the span, so
+        # this one is a duplicate of the same fact.
+        if _SPAN_ONLY_TEXT_RE.fullmatch(self._collect_text(node).strip()):
+            return _SUPPRESS_CENTERPIECE
+        # Collect from **leaf runs**, not the concatenated subtree text:
+        # ``_collect_text`` joins adjacent cells ("201820192020…") and any
+        # ``\b``-style anchor then fails to see individual years.
+        years: list[str] = []
+        stack = [node]
+        seen = 0
+        while stack and seen < 400:
+            cur = stack.pop(0)
+            seen += 1
+            for child in cur.children:
+                if child.is_text:
+                    years.extend(re.findall(r"(?<!\d)(1[89]\d{2}|2[01]\d{2})(?!\d)", child.text))
+                    continue
+                if child.is_element:
+                    stack.append(child)
+        if len(years) < 3:
+            return ""
+        ordered = sorted(set(years))
+        return f"{ordered[0]}-{ordered[-1]}"
+
+    def _iter_has_control(self, node: EnhancedNode, depth: int = 4) -> bool:
+        """True if ``node`` or a bounded descendant classifies as interactive."""
+        if depth < 0:
+            return False
+        for child in node.children:
+            if child.is_text or not child.is_element or child.hidden:
+                continue
+            if classify(child):
+                return True
+            if self._iter_has_control(child, depth - 1):
+                return True
+        return False
+
+    def _group_overlay_centerpiece(
+        self, node: EnhancedNode, depth: int, span: str, clip: Optional[BBox]
+    ) -> None:
+        """Render a panel's non-interactive centrepiece as one describing line."""
+        name = self.registry.get_or_create(node)
+        opening = f"<可滚动元素 {name}>"
+        closing = f"</可滚动元素 {name}>"
+        self._emit_header(depth, opening, (name,), closing)
+        self._emit_content(
+            depth + 1,
+            f"\uff08\u9762\u677f\u6807\u9898\u533a\uff1a{span} \u5e74\u4efd\u8303\u56f4\uff0c"
+            "\u6b64\u5904\u65e0\u53ef\u70b9\u5143\u7d20\uff1b\u9009\u9879\u5728\u5019\u9009\u5217\u91cc\uff09",
+        )
+        self._emit_close(depth, closing)
+
+    def _group_option_column(
+        self, node: EnhancedNode, depth: int, kind: str, clip: Optional[BBox]
+    ) -> None:
+        """Render a long option column compactly, keeping the column boundary.
+
+        The output keeps (a) the scrollable boundary so the model knows it can
+        scroll this specific column rather than the page, and (b) a head/tail
+        sample plus the total count — enough to recognise "this is the year
+        column, 2026 is at the top", without listing 127 entries.
+        """
+        name = self.registry.get_or_create(node)
+        opening = f"<可滚动元素 {name}>"
+        closing = f"</可滚动元素 {name}>"
+        kind_label = {"year": "\u5e74\u4efd", "month": "\u6708\u4efd"}.get(kind, "\u5019\u9009")
+        options = [
+            c
+            for c in node.children
+            if c.is_element and classify(c) and self._is_short_text_leaf(c)
+        ]
+        samples = [self._collect_text(c).strip() for c in options[:_OPTION_COLUMN_SAMPLE]]
+        selected = [
+            self._collect_text(c).strip()
+            for c in options
+            if self._selection_state(c) is True
+        ]
+        specials = [
+            self._collect_text(c).strip()
+            for c in options
+            if self._is_special_option_text(self._collect_text(c))
+        ]
+        parts = [f"{kind_label}候选 {len(options)} 项"]
+        if specials:
+            # "至今" is the one entry the model most needs to find and cannot reach
+            # by scrolling to a number, so name it explicitly.
+            parts.append(f"含特殊项：{'、'.join(dict.fromkeys(specials))[:40]}")
+        if samples:
+            shown = "、".join(samples)
+            if len(options) > len(samples):
+                shown += f"、…（还有 {len(options) - len(samples)} 项，可向下滚动该列查看）"
+            parts.append(f"顶部：{shown}")
+        if selected:
+            parts.append(f"当前已选：{'、'.join(selected[:2])}")
+        self._emit_header(depth, opening, (name,), closing)
+        self._emit_content(depth + 1, "；".join(parts))
+        self._scroll_reports.append(
+            (depth, name, node.tag == PAGE_SCROLL_TAG) + self._scroll_position(node)
+        )
+        self._emit_close(depth, closing)
+
     def _group_click(
         self, node: EnhancedNode, depth: int, header: str, clip: Optional[BBox]
     ) -> None:
@@ -1361,6 +1620,12 @@ class DOMSerializer:
         LLM can never pick a date.
         """
         if cell.tag in SKIP_TAGS or cell.hidden:
+            return False
+        if in_collapsed_overlay_portal(cell):
+            # A cell of a closed picker panel still mounted in a collapsed portal
+            # (see ``build.in_collapsed_overlay_portal``): its own box is real, so
+            # this method would happily claim it — but the model must not see the
+            # options of a panel nobody has open.
             return False
         if cell.visible and cell.in_viewport:
             return True
@@ -1772,6 +2037,16 @@ class DOMSerializer:
             label = prefix or current or self._empty_input_label(node)
         if current and current in label:
             self._consume_nearby_label_source(node, current)
+        typed = (self._input_value(node) or "").strip()
+        if typed and typed not in label:
+            # The typeahead holds a *typed* run that is not part of the presented
+            # value: say so explicitly. A searchable select shows filter text in the
+            # same box it will later show the chosen value in, and the model read
+            # ``获奖时间：2025`` as "already 2025" purely because it had typed the
+            # digits itself (2026-10-01 session, where it then spent a long turn
+            # asking whether the value had committed). Naming the pending filter
+            # removes that ambiguity without changing the value read-out.
+            label = f"{label}（筛选词：{self._truncate(typed, 20)}，尚未点选候选）"
         return label
 
     def _picker_shell_label(self, node: EnhancedNode) -> str:
@@ -1784,20 +2059,159 @@ class DOMSerializer:
         ``2017-09 ~ 2021-06``). Report emptiness honestly — the previous output
         claimed ``（空）`` for a range that was plainly filled, which is what made
         the model re-open and re-pick a field that was already correct.
+
+        Values are read from the widget's **own labelled parts** when it has them
+        (Feishu renders each end as ``<span …-label-year>2026</span>`` +
+        ``<span …-label-month>05</span>``), because a generic "first two text
+        runs" harvest loses half of a half-filled endpoint: with 年=2026 月=MM the
+        harvest saw ``["2026", "YYYY-MM"]``, dropped the format hint and reported
+        ``起止时间：至今`` / ``（空，占位提示：YYYY-MM）`` — a *false empty* that made the
+        2026-10-01 session re-open the picker four times and finally give up.
         """
         prefix = self._associated_field_label(node)
-        parts = self._shell_value_parts(node)
-        values = [text for text in parts if not self._is_format_placeholder(text)]
-        if values:
-            value = " ~ ".join(values) if len(parts) > 1 else values[0]
+        raw_units = self._labelled_value_units(node)
+        if raw_units is None:
+            raw_units = self._shell_value_parts(node)
+        # Values are the widget's *own* value parts; anything that is only a format
+        # skeleton (``YYYY-MM``) is not a value.
+        filled = [u for u in raw_units if not self._is_format_placeholder(u)]
+        if filled:
+            # Show every end, keeping the format skeleton for the one still empty:
+            # ``2026-05 ~ YYYY-MM`` states exactly what is missing, whereas dropping
+            # the empty end made a half-filled range look like a single value.
+            value = " ~ ".join(raw_units)
             label = f"{prefix}：{value}" if prefix and prefix not in value else value
         else:
-            hint = parts[0] if parts else ""
+            hint = raw_units[0] if raw_units else ""
             empty = f"（空，占位提示：{self._truncate(hint, 40)}）" if hint else "（空）"
             label = f"{prefix}：{empty}" if prefix and prefix not in empty else empty
         if is_range_picker_shell(node):
             label += RANGE_SHELL_MARK
+        # A two-end widget shows both ends in one control; marking which end the
+        # widget itself currently considers active (its own focus class) tells the
+        # model whether its last pick landed on 起 or 止, without inventing a
+        # position the page never states.
+        position = self._range_focus_position(node)
+        if position:
+            label += f"[当前焦点：{position}]"
         return label
+
+    def _range_focus_position(self, node: EnhancedNode) -> str:
+        """``"起"`` / ``"止"`` when the widget marks one end as focused, else ``""``.
+
+        Feishu's period control moves a ``…-focus`` class onto the active end's
+        label wrapper; reading it costs one bounded subtree scan and answers the
+        question the LLM otherwise has to guess ("did my pick go to 起 or 止?").
+        """
+        wrappers: list[EnhancedNode] = []
+        stack = [node]
+        seen = 0
+        while stack and seen < 200:
+            cur = stack.pop(0)
+            seen += 1
+            for child in cur.children:
+                if not child.is_element:
+                    continue
+                if self._value_part_tokens(child):
+                    wrappers.append(child)
+                    continue
+                stack.append(child)
+        if len(wrappers) < 2:
+            return ""
+        wrappers.sort(key=lambda n: self._document_order(n))
+        classes = [
+            (w.attributes.get("class") or "") for w in wrappers
+        ]
+        if not any("focus" in c for c in classes):
+            return ""
+        # The first value part is the range's start (the widget renders 起 then 止),
+        # so the focused index tells which end the last interaction landed on.
+        return "起" if "focus" in classes[0] else "止"
+
+    def _labelled_value_units(self, node: EnhancedNode) -> Optional[list]:
+        """Value of each *labelled* end of a picker shell, or ``None``.
+
+        A picker that marks its value parts with the component's own tokens
+        (``*-label-year`` / ``*-label-month`` / ``data-cy="year"``) can be read
+        exactly: each *label wrapper* becomes one value ("2026" + "05" →
+        ``2026-05``), and an unset half keeps its format placeholder
+        (``2026`` + ``MM`` → ``2026-MM``) instead of silently disappearing.
+        Returns ``None`` when the widget has no such markers, so callers fall back
+        to the generic text harvest.
+        """
+        labels: list[EnhancedNode] = []
+        stack = [node]
+        seen = 0
+        while stack and seen < 400:
+            cur = stack.pop(0)
+            seen += 1
+            for child in cur.children:
+                if not child.is_element:
+                    continue
+                tokens = self._value_part_tokens(child)
+                if tokens:
+                    labels.append(child)
+                    seen += 1
+                    continue
+                stack.append(child)
+        if not labels:
+            return None
+        # Keep document order (the BFS above is order-preserving per level).
+        labels.sort(key=lambda n: self._document_order(n))
+        # Merge: a widget renders one end either as **one** wrapper that owns both
+        # halves (``<div …-label><span …-year>2026</span>-<span …-month>05</span>
+        # </div>``) or as **consecutive** single-half siblings. Accumulate until an
+        # end is complete (holds both a year and a month, or is a lone 「至今」).
+        units: list[str] = []
+        pending = ""
+        for label in labels:
+            tokens = self._value_part_tokens(label)
+            pending += self._join_label_parts(label)
+            # An end is complete when this part closes it: both year+month in one
+            # wrapper, a month/day closing a pending year, a lone 「至今」, or any
+            # unmarked value part (nothing left to pair with).
+            closes = (
+                ("year" in tokens and "month" in tokens)
+                or "month" in tokens
+                or "day" in tokens
+                or "today" in tokens
+                or not (tokens & {"year", "month", "day"})
+            )
+            if closes:
+                units.append(pending)
+                pending = ""
+        if pending:
+            units.append(pending)
+        return [u for u in units if u]
+
+    def _value_part_tokens(self, node: EnhancedNode) -> set:
+        """Token set that marks ``node`` as a picker *value part* (or empty)."""
+        raw = node.attributes.get("class") or ""
+        cy = (node.attributes.get("data-cy") or "").lower()
+        tokens = set()
+        for token in raw.replace("--", "-").replace("_", "-").split("-"):
+            if token in ("year", "month", "day", "date", "today", "totoday"):
+                tokens.add(token)
+        if cy in ("year", "month", "day"):
+            tokens.add(cy)
+        return tokens
+
+    def _join_label_parts(self, label: EnhancedNode) -> str:
+        """Text of one value part, with its own halves/separators preserved."""
+        chunks: list[str] = []
+        for child in label.children:
+            if child.is_text and (child.text or "").strip():
+                chunks.append(child.text.strip())
+            elif child.is_element:
+                text = self._collect_text(child).strip()
+                if text:
+                    chunks.append(text)
+        joined = "".join(chunks).strip()
+        return joined or self._collect_text(label).strip()
+
+    @staticmethod
+    def _document_order(node: EnhancedNode) -> int:
+        return node.node_id
 
     def _shell_value_parts(self, node: EnhancedNode) -> list:
         """The visible value runs of a div-based picker, in document order.

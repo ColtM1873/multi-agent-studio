@@ -1,6 +1,12 @@
 """DOM capture / build / classify / serialize / registry / diff."""
 
-from .build import PAGE_SCROLL_TAG, EnhancedNode, EnhancedTree, build_enhanced_tree
+from .build import (
+    PAGE_SCROLL_TAG,
+    EnhancedNode,
+    EnhancedTree,
+    build_enhanced_tree,
+    in_collapsed_overlay_portal,
+)
 from .capture import capture_raw, read_outer_html, viewport_from_metrics
 from .classify import (
     classify,
@@ -26,6 +32,7 @@ __all__ = [
     "EnhancedNode",
     "EnhancedTree",
     "build_enhanced_tree",
+    "in_collapsed_overlay_portal",
     "capture_raw",
     "read_outer_html",
     "viewport_from_metrics",

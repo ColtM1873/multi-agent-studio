@@ -262,6 +262,21 @@ def is_scrollable(node: EnhancedNode) -> bool:
     vertical = styles.get("overflow-y") in ("auto", "scroll")
     horizontal = styles.get("overflow-x") in ("auto", "scroll")
     if not (vertical or horizontal):
+        # ``overflow: hidden`` **with content that overflows** is a scroll container
+        # too — it is what every JS scrollbar library uses (perfect-scrollbar
+        # ``.scrollbar-container``, Element's ``el-scrollbar``, Ant's
+        # ``rc-virtual-list``): native ``overflow`` is hidden because the library
+        # draws its own bar, while the content inside is really scrollable (the
+        # wheel handler moves it). Without this, a long candidate column of a
+        # dropdown (Feishu 起止时间: 127 year options, content 4842px in a 333px
+        # box) was invisible to the LLM as a scrollable, so it could not reach an
+        # option below the fold — only the page scrollbar was offered. ``clip`` is
+        # deliberately excluded: it forbids programmatic scrolling, so naming it
+        # would only invite an honest "cannot scroll". ``_has_overflowing_child``
+        # is the real gate (a ``hidden`` box whose content fits stays unclassified).
+        vertical = styles.get("overflow-y") == "hidden"
+        horizontal = styles.get("overflow-x") == "hidden"
+    if not (vertical or horizontal):
         return False
     return _has_overflowing_child(node)
 
@@ -1354,14 +1369,29 @@ def _has_overflowing_child(node: EnhancedNode) -> bool:
     return result
 
 
-def _iter_unclipped_descendants(node: EnhancedNode):
+def _iter_unclipped_descendants(node: EnhancedNode, positioned: bool = False):
     """Descendants whose layout box can actually overflow ``node``.
 
-    Yields every child (its own bbox is compared), but does not descend into a
-    child that clips its own overflow (see ``_clips_overflow``): that child's
-    inner content is contained by the child, not by ``node``.
+    Yields every child (its own bbox is compared), but stops at two shapes that
+    cannot make ``node`` scrollable:
+
+    * a child that clips its own overflow (see ``_clips_overflow``) — its inner
+      content is contained by the child, not by ``node``;
+    * an **out-of-flow** subtree (``position: absolute`` / ``fixed``, or anything
+      inside one). An absolutely positioned descendant is placed against its own
+      containing block, so it can hang far outside ``node`` while ``node`` has
+      nothing to scroll. Without this, every portal wrapper (``height: 0``)
+      around a floating panel made its ancestors look scrollable: on the Feishu
+      Jobs apply form the whole apply section was then wrapped in one giant
+      ``<可滚动元素>`` (and the picker's ``起止时间`` label stopped resolving).
     """
+    if positioned:
+        return
     for child in node.children:
+        if not child.is_element:
+            continue
+        if child.styles.get("position") in ("absolute", "fixed"):
+            continue
         yield child
-        if child.is_element and not _clips_overflow(child):
+        if not _clips_overflow(child):
             yield from _iter_unclipped_descendants(child)

@@ -37,6 +37,7 @@ from .dom import (
     is_cursor_pointer_only,
     is_range_picker_entry,
     may_navigate,
+    picker_range_position,
     read_outer_html,
 )
 from .launcher import BrowserLauncher, BrowserLaunchError
@@ -60,6 +61,32 @@ NOT_CALLED = rp.NOT_CALLED
 # whose React re-render swapped backend node ids produces a diff made *only* of
 # renamed tags, which must not be mistaken for real content.
 _ELEMENT_NAME_RE = re.compile(r"\be\d+\b")
+
+
+def _range_entry_notice(node, name: str) -> str:
+    """The correct "how this date/range widget commits" hint for one entry.
+
+    Two **structurally different** shapes both render the field name「起止时间」and
+    both used to get the very same notice — which is factually wrong for the
+    second (verified on the live Feishu Jobs form 2026-10-01):
+
+    * **one shell, two typeable text inputs** (Element Plus ``monthrange`` / Ant
+      ``RangePicker``): genuinely one widget driven by one panel, committing only
+      after two candidate picks in the *same* overlay session
+      (``picker_range_position`` returns a position);
+    * **one shell whose two ends have no usable input** (Feishu
+      ``atsx-date-picker-period-month``: two value labels + a 0×0 hidden input,
+      one shared panel with a year column and a month column): each end is filled
+      on its own — one year + one month *for that end* — and the other end is not
+      involved at all. Telling the model the two ends were coupled made it re-open
+      the same panel over and over and burn ~10k reasoning tokens before the user
+      aborted (debug session 2026-10-01, ``debug_folder/20261001-17-18``).
+    """
+    if not is_range_picker_entry(node):
+        return ""
+    if picker_range_position(node) is not None:
+        return rp.range_picker_notice(name)
+    return rp.independent_ends_picker_notice(name)
 
 
 def _lines_have_new_text(old_lines: list[OutLine], new_lines: list[OutLine]) -> bool:
@@ -1218,12 +1245,10 @@ class BrowserController:
         # A dropdown mounts on focus/typing and paints a frame or two later;
         # give it a bounded moment so its candidates are captured.
         self._wait_overlay_open(ctx.session)
-        # A *range* control (``从 __ 到 __``) is one widget whose value commits
-        # only after TWO candidate picks inside this same overlay session; the
-        # widget sorts the pair and a single pick followed by a blur rolls both
-        # ends back. Say so here, at the moment the panel is opened — the model
-        # otherwise treats the two ends as independent fields.
-        fill_notice = rp.range_picker_notice(ctx.name) if is_range_picker_entry(node) else ""
+        # A date/range widget needs its own "how this commits" contract stated at
+        # the moment the panel opens — see ``_range_entry_notice`` for why the two
+        # shapes must not share one wording.
+        fill_notice = _range_entry_notice(node, ctx.name)
         return {
             "fill_error": "",
             "fill_notice": fill_notice,
@@ -1377,10 +1402,10 @@ class BrowserController:
         except (ActionError, CDPError) as exc:
             return self._base_result(INCREMENTAL, FAIL, rp.EMPTY_CONTENT, str(exc), include_tabs=False)
         if is_range_picker_entry(ctx.node):
-            # A readonly range picker (readonly date range / non-searchable select
-            # pair): same two-pick contract as tool_07 — say it when the panel opens.
+            # Same "how this commits" contract as tool_07 — but worded per shape:
+            # two independent single-end shells are NOT one coupled widget.
             extras = dict(extras or {})
-            extras["fill_notice"] = rp.range_picker_notice(name)
+            extras["fill_notice"] = _range_entry_notice(ctx.node, name)
         return self._finish_interaction(ctx, extras)
 
     def interact_fill_in(
