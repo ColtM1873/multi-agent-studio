@@ -3890,7 +3890,7 @@ class DOMSerializer:
         if report is None:
             return "滚动：无（内容已全部可见）"
         _depth, name, is_page, can_up, can_down = report
-        target = "整页" if is_page else f"<可滚动元素 {name}>"
+        target = "整页" if is_page else f"[可滚动元素 {name}]"
         return "滚动：%s %s、%s" % (
             target,
             "未到顶" if can_up else "已到顶",
