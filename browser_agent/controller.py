@@ -35,6 +35,7 @@ from .dom import (
     has_text,
     is_control_icon,
     is_cursor_pointer_only,
+    is_range_picker_end,
     is_range_picker_entry,
     may_navigate,
     picker_range_position,
@@ -82,11 +83,16 @@ def _range_entry_notice(node, name: str) -> str:
       the same panel over and over and burn ~10k reasoning tokens before the user
       aborted (debug session 2026-10-01, ``debug_folder/20261001-17-18``).
     """
-    if not is_range_picker_entry(node):
-        return ""
-    if picker_range_position(node) is not None:
-        return rp.range_picker_notice(name)
-    return rp.independent_ends_picker_notice(name)
+    if is_range_picker_entry(node):
+        if picker_range_position(node) is not None:
+            return rp.range_picker_notice(name)
+        return rp.independent_ends_picker_notice(name)
+    if is_range_picker_end(node):
+        # A single end of a div-based range shell that the serializer exposed as
+        # its own entry (``range_picker_ends``). Clicking it opens the shared
+        # panel focused on that end; the two ends are independent.
+        return rp.range_end_entry_notice(name)
+    return ""
 
 
 def _lines_have_new_text(old_lines: list[OutLine], new_lines: list[OutLine]) -> bool:
@@ -1401,11 +1407,13 @@ class BrowserController:
             extras = self._run_click(ctx)
         except (ActionError, CDPError) as exc:
             return self._base_result(INCREMENTAL, FAIL, rp.EMPTY_CONTENT, str(exc), include_tabs=False)
-        if is_range_picker_entry(ctx.node):
-            # Same "how this commits" contract as tool_07 — but worded per shape:
-            # two independent single-end shells are NOT one coupled widget.
+        # Same "how this commits" contract as tool_07 — worded per shape:
+        # input-based ranges, one-end-per-entry div shells, and an unidentified
+        # div shell each get their own wording (empty for a plain dropdown).
+        notice = _range_entry_notice(ctx.node, name)
+        if notice:
             extras = dict(extras or {})
-            extras["fill_notice"] = _range_entry_notice(ctx.node, name)
+            extras["fill_notice"] = notice
         return self._finish_interaction(ctx, extras)
 
     def interact_fill_in(

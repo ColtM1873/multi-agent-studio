@@ -45,6 +45,7 @@ from .classify import (
     is_picker_shell_trigger,
     is_range_picker_shell,
     is_searchable_typeahead,
+    range_picker_ends,
     is_widget_trigger_input,
     picker_range_position,
     _is_generic_picker_shell,
@@ -219,16 +220,6 @@ MAX_TEXT_LENGTH = 4000
 # is *off-screen*, not to hide the options that are on screen. Kept well above the
 # option count of normal selects / menus (5~30).
 _OPTION_COLUMN_MIN = 40
-
-# Returned by ``_overlay_centerpiece_span`` for content that is a *duplicate* of an
-# overlay centrepiece's describing line (its own ``2018 - 2026`` header title), so
-# the renderer drops it instead of emitting the same fact twice.
-_SUPPRESS_CENTERPIECE = "\x00suppress"
-
-# A text run that is nothing but a year/month span ("2018 - 2026", "2026年").
-_SPAN_ONLY_TEXT_RE = re.compile(
-    r"(?:\d{4}|\d{1,2})\s*\u5e74?\s*[-\u2013\u2014~\uff5e]\s*(?:\d{4}|\d{1,2})\s*\u5e74?"
-)
 
 # Computed ``white-space`` values where a literal ``\n`` in the text really is a
 # line break in the rendered page. For every other value (``normal``/``nowrap``)
@@ -733,13 +724,6 @@ class DOMSerializer:
             # See ``build.in_collapsed_overlay_portal``.
             return
 
-        if child.is_element and self._overlay_centerpiece_span(child) == _SUPPRESS_CENTERPIECE:
-            # The overlay centrepiece's own header title ("2018 - 2026"): the
-            # describing line emitted for the centrepiece carries the same span, so
-            # this duplicate is dropped wherever it is reached from (the title is
-            # not always inside the centrepiece's scroll container).
-            return
-
         # A ``<br>`` is a rendered line break; it is in ``SKIP_TAGS`` (it has no
         # box of its own), so handle it here before the skip check.
         if child.tag == "br":
@@ -947,24 +931,8 @@ class DOMSerializer:
         category = classify(child)
         if category == "scroll":
             self._flush(depth)
-            centerpiece = self._overlay_centerpiece_span(child)
-            suppression = centerpiece == _SUPPRESS_CENTERPIECE
-            option_kind = "" if centerpiece else self._option_column_kind(child)
-            if suppression:
-                # Duplicate fact (the panel header's own ``2018 - 2026`` title): the
-                # centrepiece line already carries it, so emit nothing here.
-                pass
-            elif centerpiece:
-                # The overlay's **non-interactive centrepiece** (a picker panel's
-                # header, e.g. a year-range table reading ``2018-2026``): it is a
-                # scroll container with overflowing content, but nothing inside it
-                # is a control. Serializing its children produced ~20 lines of
-                # ``[表格]`` / ``[文本] 2019 | 2020`` scaffolding that looked like
-                # options the model could not click (2026-10-01 session: it read the
-                # award picker's header years as "candidates without marks"). Say
-                # what the block is instead, and keep the panel structure.
-                self._group_overlay_centerpiece(child, depth, centerpiece, clip)
-            elif option_kind:
+            option_kind = self._option_column_kind(child)
+            if option_kind:
                 # A long *option column* of an open picker panel (year / month /
                 # day lists, an Ant ``virtual-list`` of 130 years …): keep the
                 # column boundary and say what it is and how many options it
@@ -988,11 +956,23 @@ class DOMSerializer:
                 # parts used to be emitted as a bare ``2021-06`` text line and as
                 # the bogus field name of the hidden input (``2017-09：（空）``),
                 # which left the model unable to tell whether the range was filled.
+                #
+                # Exception: a **two-end** shell (Feishu 起止时间) renders each end
+                # as its own click target. Expose both as separate entries so the
+                # model can choose which end to edit (see
+                # ``classify.range_picker_ends``); fall back to the single line when
+                # the two ends cannot be identified.
                 self._flush(depth)
-                label = self._picker_shell_label(child)
-                name = self.registry.get_or_create(child)
-                tag, _ = CATEGORY_TAGS[category]
-                self._emit_content(depth, f"<{tag} {name}>{label}</{tag} {name}>", (name,))
+                ends = range_picker_ends(child)
+                if len(ends) == 2:
+                    self._emit_range_ends(child, ends, depth)
+                else:
+                    label = self._picker_shell_label(child)
+                    name = self.registry.get_or_create(child)
+                    tag, _ = CATEGORY_TAGS[category]
+                    self._emit_content(
+                        depth, f"<{tag} {name}>{label}</{tag} {name}>", (name,)
+                    )
                 return
             if _is_click_like(category) and self._is_searchable_display_value(child):
                 # The passive "display value" of a searchable select (Moka
@@ -1041,6 +1021,18 @@ class DOMSerializer:
                 text = self._collect_text(child)
                 if text:
                     self._emit_content(depth, text)
+            elif _is_click_like(category) and self._has_multiple_action_leaves(child):
+                # A clickable card that wraps **two or more** per-item action
+                # words ("更新 / 删除" beside an uploaded file) is a composite:
+                # naming the card flattens both actions into one unaddressable
+                # blob (``附件简历：…docx … 更新 删除``). Prune it and render the
+                # actions as their own controls. Gated on ≥2 such leaves so a
+                # single generic action button ("教育经历·添加") keeps its existing
+                # section-qualified label — pruning that wrapper changed
+                # "教育经历·添加" into a bare "添加" (regression caught 2026-10-01).
+                self._flush(depth)
+                for grand in child.children:
+                    self._render_child(grand, depth, clip)
             elif _is_click_like(category) and self._has_separate_interactive_descendant(child):
                 # A clickable wrapper around *separate* controls (e.g. a
                 # media-control bar, a clickable card holding links) is noise:
@@ -1288,79 +1280,6 @@ class DOMSerializer:
             if classify(child):
                 return False
         return True
-
-    def _overlay_centerpiece_span(self, node: EnhancedNode) -> str:
-        """The year/date span of an overlay's non-interactive **centrepiece**, else "".
-
-        A picker panel's header is a real, scrollable block inside the open overlay
-        (Feishu's year picker renders ``<table>`` of ``2018…2026`` cells under a
-        ``2018 - 2026`` title) but holds **no control at all** — its cells only take
-        a pointer cursor on ``:hover``, so every other rule here sees plain text and
-        the model read them as un-clickable candidates. Recognising it lets the
-        serializer state what the block is instead of dumping its cells.
-
-        Deliberately narrow: the subtree must be free of controls *and* look like a
-        year/date table (4-digit year cells, or a ``…-2026`` style span in the
-        text), so an ordinary scrollable data table is never swallowed.
-        """
-        if not node.is_element or not node.bbox:
-            return ""
-        if self._has_rescuable_interactive_descendant(node) or self._iter_has_control(node):
-            return ""
-        if node.tag in ("table",):
-            return ""
-        # A bare year/month span ("2018 - 2026") is the panel's own header title: it
-        # is real text, but the centrepiece line below already states the span, so
-        # this one is a duplicate of the same fact.
-        if _SPAN_ONLY_TEXT_RE.fullmatch(self._collect_text(node).strip()):
-            return _SUPPRESS_CENTERPIECE
-        # Collect from **leaf runs**, not the concatenated subtree text:
-        # ``_collect_text`` joins adjacent cells ("201820192020…") and any
-        # ``\b``-style anchor then fails to see individual years.
-        years: list[str] = []
-        stack = [node]
-        seen = 0
-        while stack and seen < 400:
-            cur = stack.pop(0)
-            seen += 1
-            for child in cur.children:
-                if child.is_text:
-                    years.extend(re.findall(r"(?<!\d)(1[89]\d{2}|2[01]\d{2})(?!\d)", child.text))
-                    continue
-                if child.is_element:
-                    stack.append(child)
-        if len(years) < 3:
-            return ""
-        ordered = sorted(set(years))
-        return f"{ordered[0]}-{ordered[-1]}"
-
-    def _iter_has_control(self, node: EnhancedNode, depth: int = 4) -> bool:
-        """True if ``node`` or a bounded descendant classifies as interactive."""
-        if depth < 0:
-            return False
-        for child in node.children:
-            if child.is_text or not child.is_element or child.hidden:
-                continue
-            if classify(child):
-                return True
-            if self._iter_has_control(child, depth - 1):
-                return True
-        return False
-
-    def _group_overlay_centerpiece(
-        self, node: EnhancedNode, depth: int, span: str, clip: Optional[BBox]
-    ) -> None:
-        """Render a panel's non-interactive centrepiece as one describing line."""
-        name = self.registry.get_or_create(node)
-        opening = f"<可滚动元素 {name}>"
-        closing = f"</可滚动元素 {name}>"
-        self._emit_header(depth, opening, (name,), closing)
-        self._emit_content(
-            depth + 1,
-            f"\uff08\u9762\u677f\u6807\u9898\u533a\uff1a{span} \u5e74\u4efd\u8303\u56f4\uff0c"
-            "\u6b64\u5904\u65e0\u53ef\u70b9\u5143\u7d20\uff1b\u9009\u9879\u5728\u5019\u9009\u5217\u91cc\uff09",
-        )
-        self._emit_close(depth, closing)
 
     def _group_option_column(
         self, node: EnhancedNode, depth: int, kind: str, clip: Optional[BBox]
@@ -1885,6 +1804,7 @@ class DOMSerializer:
         "新增",
         "新建",
         "删除",
+        "更新",
         "移除",
         "编辑",
         "修改",
@@ -2090,6 +2010,40 @@ class DOMSerializer:
             label = f"{label}（筛选词：{self._truncate(typed, 20)}，尚未点选候选）"
         return label
 
+    def _emit_range_ends(
+        self, shell: EnhancedNode, ends: list, depth: int
+    ) -> None:
+        """Emit one entry per end of a div-based two-end picker shell.
+
+        Each end becomes its own ``<可点击下拉元素>`` so the model can address the
+        start or the end explicitly; clicking the entry opens the shared panel
+        with the focus on that end. The label carries the field name, which end it
+        is (起 / 止), the current value (with a format skeleton kept for an empty
+        half) and — when the widget marks one — which end currently holds focus.
+        """
+        field = self._associated_field_label(shell)
+        focus = self._range_focus_position(shell)
+        positions = ("起", "止")
+        tag = CATEGORY_TAGS["clickdropdown"][0]
+        for index, end in enumerate(ends):
+            position = positions[index] if index < len(positions) else ""
+            value = self._join_label_parts(end).strip()
+            if not value:
+                shown = "（空）"
+            elif self._is_format_placeholder(value):
+                shown = f"（空，占位提示：{self._truncate(value, 40)}）"
+            else:
+                shown = value
+            head = f"{field}（{position}）" if field else f"（{position}）"
+            label = f"{head}：{shown}"
+            if position and focus == position:
+                label += "[当前焦点]"
+            label += RANGE_SHELL_MARK
+            name = self.registry.get_or_create(end)
+            self._emit_content(
+                depth, f"<{tag} {name}>{label}</{tag} {name}>", (name,)
+            )
+
     def _picker_shell_label(self, node: EnhancedNode) -> str:
         """Label the whole div-based picker shell: ``字段：值`` / ``字段：（空…）``.
 
@@ -2284,10 +2238,18 @@ class DOMSerializer:
         stripped = (text or "").strip()
         if not stripped or len(stripped) > 12:
             return False
+        # A *format* hint carries no real value; a half-filled end written as
+        # ``2026-MM`` (year picked, month pending) does. The old test matched
+        # ``MM`` anywhere and so reported a half-filled range as empty
+        # (``（空，占位提示：2026-MM）`` on the task [区间控件]), which made the model
+        # re-open the picker believing nothing was set. Only treat an end as a
+        # placeholder when it has **no digits at all**.
+        if re.search(r"\d", stripped):
+            return False
         if re.search(r"YYYY|yyyy|MM|DD|HH|mm|ss", stripped):
             return True
         # ``年-月`` / ``----`` style hints carry no digits at all; a real value
-        # ("至今", "2026-05") always does or is not pure punctuation.
+        # ("至今") is not pure punctuation.
         return bool(re.fullmatch(r"[\s\-/.年月日：:]+", stripped))
 
     def _picker_entry_label(self, node: EnhancedNode) -> str:
@@ -2397,6 +2359,21 @@ class DOMSerializer:
         accepted; obfuscated style hashes (``sc-gIDmLj``) and ids are ignored so
         the caller falls back to a generic label instead of noise.
         """
+        # A calendar / picker navigation arrow may be named only by its test hook
+        # (Feishu's year-picker header chevrons carry ``data-cy="prev"`` / ``"next"``
+        # but no ``prev``/``next`` class token). Inside a date/calendar widget the
+        # hook is the only clue to the step direction, so translate it; elsewhere
+        # ``data-cy`` is a framework test id and must stay ignored (see ID99).
+        classes = node.attributes.get("class", "").lower()
+        if any(hint in classes for hint in _CALENDAR_CONTEXT_HINTS):
+            for attr in ("data-cy", "data-testid", "data-test", "data-name"):
+                hint = (node.attributes.get(attr) or "").strip().lower()
+                if hint in _GENERAL_NAV_LABELS:
+                    # The hook only tells us the direction, not the step unit
+                    # (a year picker pages a range, a date picker a month), so use
+                    # the honest generic "上一页 / 下一页" rather than claiming a
+                    # month.
+                    return _GENERAL_NAV_LABELS[hint]
         for attr in (
             "data-testid",
             "data-test",
@@ -3321,11 +3298,68 @@ class DOMSerializer:
             return False
         if len(self._collect_text(node)) >= 60:
             return True
+        if self._is_action_word_control(node):
+            # A short action-verb leaf ("更新" / "删除") is a real control even
+            # though it carries only ``cursor:pointer`` — do not demote it.
+            return False
         # A short ``cursor:pointer`` text node that sits inside a clickable
         # container which already owns a real control (an upload dropzone's
         # "支持…格式…" hint next to its button) is descriptive copy, not a
         # control: naming it produced a no-op ``<可点击元素>``.
         return is_cursor_pointer_only(node) and self._ancestor_owns_control(node)
+
+    def _is_action_word_control(self, node: EnhancedNode) -> bool:
+        """True for a short ``cursor:pointer`` leaf whose text is an action verb.
+
+        Some component libraries render a per-item action as a bare
+        ``<span class="…-operate">更新 / 删除</span>`` with only
+        ``cursor:pointer`` and no semantic tag / role / tabindex. They are real,
+        separately-callable controls, but ``_is_separate_control`` (semantic
+        signals only) and ``_is_textual_click_only`` (which demotes short pointer
+        text) both ignored them, so a clickable upload card swallowed the two
+        actions into one blob (``附件简历：…docx … 更新 删除``) and neither could be
+        addressed. Gated on the bounded ``_GENERIC_ACTION_LABELS`` set so a
+        placeholder ("请选择") is never mistaken for a control.
+        """
+        if not node.is_element or node.hidden or not node.visible or not node.rendered:
+            return False
+        if node.tag in ("a", "button", "select", "textarea", "input", "summary"):
+            return False
+        if not is_cursor_pointer_only(node):
+            return False
+        if self._has_strong_descendant(node) or has_svg_descendant(node):
+            return False
+        text = self._collect_text(node).strip()
+        return bool(text) and len(text) <= 6 and text in self._GENERIC_ACTION_LABELS
+
+    def _has_multiple_action_leaves(self, node: EnhancedNode, limit: int = 3) -> bool:
+        """True if ``node``'s subtree holds ≥2 per-item action-word leaves.
+
+        See the prune branch in ``_render_child``: this is the narrow signal that
+        separates a composite "item + actions" card (uploaded file with 更新 /
+        删除) from a single generic action button, so only the former is pruned.
+        """
+        return len(self._collect_action_leaves(node, limit)) >= 2
+
+    def _collect_action_leaves(
+        self, node: EnhancedNode, limit: int, found: Optional[list] = None
+    ) -> list:
+        if found is None:
+            found = []
+        if len(found) >= limit:
+            return found
+        for child in node.children:
+            if child.is_text or not child.is_element:
+                continue
+            if self._is_action_word_control(child):
+                found.append(child)
+                if len(found) >= limit:
+                    return found
+                continue
+            self._collect_action_leaves(child, limit, found)
+            if len(found) >= limit:
+                return found
+        return found
 
     def _is_contentless_clickable(self, node: EnhancedNode, label: str) -> bool:
         """True for a clickable whose only name is a generic filler.

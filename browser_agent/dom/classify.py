@@ -249,12 +249,52 @@ def is_draggable(node: EnhancedNode) -> bool:
     return False
 
 
+# Class/id signatures of JS scrollbar libraries. These libraries set native
+# ``overflow: hidden`` and draw their own bar, so the ``overflow == hidden`` shape
+# is the *only* signal that a scroll capability exists — but that shape also
+# matches ordinary layout containers and clipped notices (Feishu
+# ``resumeFormPage`` / ``ud__notice``) whose children merely overflow the box by
+# layout, which are **not** scrollable and whose ``<可滚动元素>`` only invited a
+# wasted "scrolled to top, no new content" call (session 2026-10-01, ``e57``).
+# Requiring the library's own class token keeps the real candidate columns
+# (perfect-scrollbar ``.scrollbar-container``, Element ``el-scrollbar``, Ant
+# ``rc-virtual-list``) while dropping the layout-container false positives.
+_SCROLL_LIBRARY_TOKENS = (
+    "scrollbar",
+    "scroll-view",
+    "scrollview",
+    "scroll-container",
+    "overflow-scroll",
+    "virtual-list",
+    "virtual-scroll",
+    "rc-virtual",
+    "el-scrollbar",
+    "perfect-scrollbar",
+    "ps-container",
+    "nicescroll",
+    "nice-scroll",
+    "mcustomscrollbar",
+    "simplebar",
+    "i-scroll",
+)
+
+
+def _has_scroll_library_signature(node: EnhancedNode) -> bool:
+    raw = _raw_class_id(node)
+    return bool(raw.strip()) and any(tok in raw for tok in _SCROLL_LIBRARY_TOKENS)
+
+
 def is_scrollable(node: EnhancedNode) -> bool:
     if not node.is_element:
         return False
     if node.tag == PAGE_SCROLL_TAG:
         return True
     if not node.bbox:
+        return False
+    if node.bbox[2] <= 1 or node.bbox[3] <= 1:
+        # A zero / one-pixel box can never be scrolled by a user; DOMSnapshot also
+        # reports 0×0 for ``<svg>``/``<symbol>`` which carry ``overflow:hidden``
+        # and previously passed as bogus ``<可滚动元素>``.
         return False
     if node.tag in ("html", "body"):
         return False
@@ -270,12 +310,16 @@ def is_scrollable(node: EnhancedNode) -> bool:
         # wheel handler moves it). Without this, a long candidate column of a
         # dropdown (Feishu 起止时间: 127 year options, content 4842px in a 333px
         # box) was invisible to the LLM as a scrollable, so it could not reach an
-        # option below the fold — only the page scrollbar was offered. ``clip`` is
-        # deliberately excluded: it forbids programmatic scrolling, so naming it
-        # would only invite an honest "cannot scroll". ``_has_overflowing_child``
-        # is the real gate (a ``hidden`` box whose content fits stays unclassified).
-        vertical = styles.get("overflow-y") == "hidden"
-        horizontal = styles.get("overflow-x") == "hidden"
+        # option below the fold — only the page scrollbar was offered. This branch
+        # is gated on the library class token (see ``_SCROLL_LIBRARY_TOKENS``)
+        # because bbox overflow alone also matches non-scrollable layout boxes.
+        # ``clip`` is deliberately excluded: it forbids programmatic scrolling, so
+        # naming it would only invite an honest "cannot scroll".
+        # ``_has_overflowing_child`` remains the real "is there anything to
+        # scroll" gate.
+        if _has_scroll_library_signature(node):
+            vertical = styles.get("overflow-y") == "hidden"
+            horizontal = styles.get("overflow-x") == "hidden"
     if not (vertical or horizontal):
         return False
     return _has_overflowing_child(node)
@@ -437,7 +481,15 @@ def is_clickable(node: EnhancedNode) -> bool:
                 if _has_label_element(node) and not _has_interactive_descendant(node):
                     return False
                 return True
+    if is_picker_panel_cell(node):
+        # A date / calendar picker's year / month / day cell: a real option that
+        # only takes ``cursor:pointer`` on ``:hover`` (see the predicate).
+        return True
     if is_hover_action_control(node):
+        return True
+    if is_picker_panel_nav(node):
+        # The prev / next chevron of an open picker panel: a cursor:pointer,
+        # label-less icon that no other branch recognises.
         return True
     if is_control_icon(node):
         return True
@@ -1094,6 +1146,76 @@ def is_range_picker_shell(node: EnhancedNode) -> bool:
     return any(tok in _class_id_text(node) for tok in _RANGE_SHELL_TOKENS)
 
 
+# Value-part markers that name an *end* of a div-based range shell. ``date`` is
+# deliberately excluded even though ``serialize._value_part_tokens`` keeps it:
+# every part of ``atsx-date-picker-period-…`` carries ``date`` in its component
+# name (including the ``-line`` separator and the hidden input), so using it
+# would count non-end children as ends.
+_RANGE_END_TOKENS = ("year", "month", "day", "today", "totoday")
+
+
+def _raw_attr_text(node: EnhancedNode) -> str:
+    return (
+        f"{node.attributes.get('class', '')} "
+        f"{node.attributes.get('id', '')} "
+        f"{node.attributes.get('data-cy', '')}"
+    ).lower()
+
+
+def _has_range_end_token(node: EnhancedNode) -> bool:
+    tokens = set(re.split(r"[^a-z0-9]+", _raw_attr_text(node)))
+    return bool(tokens & set(_RANGE_END_TOKENS))
+
+
+def range_picker_ends(shell: EnhancedNode) -> list:
+    """The two clickable value wrappers of a div-based range picker shell.
+
+    Feishu ``atsx-date-picker-period-month`` renders each end as one
+    ``…-period-month-label`` wrapper (holding that end's year + month parts),
+    while the whole shell is a single click-to-open control. Each wrapper is an
+    **independent click target**: clicking the left one opens the shared year /
+    month panel with its focus on the start end, the right one on the end end
+    (verified on the live form 2026-10-01). Collapsing the shell into one entry
+    hid that choice, so the model could not move the focus off whichever end the
+    shell-centre click happened to land on and burned ~10k reasoning tokens
+    before the user aborted. Exposing the two wrappers restores the page's real
+    structure — exactly as the two inputs of an Element Plus / Ant range already
+    are two addressable entries.
+    """
+    if not is_range_picker_shell(shell):
+        return []
+    ends = []
+    for child in shell.children:
+        if (
+            child.is_element
+            and not child.hidden
+            and child.visible
+            and _has_range_end_token(child)
+        ):
+            ends.append(child)
+    return ends
+
+
+def is_range_picker_end(node: EnhancedNode) -> bool:
+    """True for one clickable end wrapper of a div-based range picker shell."""
+    if not node.is_element or node.tag in ("input", "select", "textarea"):
+        return False
+    if node.hidden or not node.visible or not node.rendered:
+        return False
+    if not _has_range_end_token(node):
+        # Cheap gate: only a handful of nodes carry year/month/day tokens, so the
+        # ancestor walk below never runs across the whole tree.
+        return False
+    current = node.parent
+    hops = 0
+    while current is not None and hops < 4:
+        if is_range_picker_shell(current):
+            return node in range_picker_ends(current)
+        current = current.parent
+        hops += 1
+    return False
+
+
 def is_date_picker_input(node: EnhancedNode) -> bool:
     """True for the *editable* text entry of a date / time picker widget.
 
@@ -1108,6 +1230,143 @@ def is_date_picker_input(node: EnhancedNode) -> bool:
     if _input_type(node) not in ("", "text", "search", "email"):
         return False
     return _picker_shell(node)
+
+
+def _in_picker_panel(node: EnhancedNode, max_hops: int = 8) -> bool:
+    """True if an ancestor within ``max_hops`` is a picker's popped-up *panel*.
+
+    A picker panel is the **content** that floats open under a date / calendar
+    widget: it is a known picker component *and* a panel-ish part (``…-panel`` /
+    ``…-dropdown`` / ``…-table`` …). The trigger shell never carries a panel
+    token, so this deliberately excludes the control itself.
+    """
+    for ancestor, _branch in _iter_picker_shells(node, max_hops):
+        if not ancestor.is_element:
+            continue
+        raw = _class_id_text(ancestor)
+        # Check the cheap "panel" token first so the (larger) component-marker
+        # scan only runs on candidates that can possibly be a panel.
+        if _has_token(raw, _PICKER_PANEL_TOKENS) and any(
+            marker in raw for marker in _PICKER_COMPONENT_MARKERS
+        ):
+            return True
+    return False
+
+
+def _subtree_marks_disabled(node: EnhancedNode, max_depth: int = 2) -> bool:
+    """True if ``node`` or a shallow descendant carries a disabled marker.
+
+    Component libraries put the disabled state on the *cell content* child
+    (``…-panel-body-cell-content-disabled``) while the ``<td>`` itself looks
+    normal, so a plain ancestor walk (``_is_disabled``) misses it. Bounded to a
+    couple of hops so a disabled sub-widget far below does not disable a whole
+    table cell.
+    """
+    if max_depth < 0 or not node.is_element:
+        return False
+    if _node_marks_disabled(node):
+        return True
+    for child in node.children:
+        if child.is_element and _subtree_marks_disabled(child, max_depth - 1):
+            return True
+    return False
+
+
+# A picker cell's own value: a number ("2018", "15", "1 月"), a Chinese
+# month/year/day ("一月" / "2026 年"), or a relative sentinel ("今天" / "至今").
+# Used to tell a real option cell apart from a non-interactive weekday header
+# ("日 一 二 …") or a decorative blank cell.
+_PICKER_CELL_RELATIVE = {"今天", "今日", "此刻", "现在", "至今", "不限", "不限制", "本月", "今年"}
+_OPTION_VALUE_RE = re.compile(r"\d|[年月日]")
+
+
+def _node_value_text(node: EnhancedNode, max_nodes: int = 60) -> str:
+    """A bounded text sample of ``node``: ax name / title / own text, then leaves."""
+    pieces: list[str] = []
+    for attr in ("title", "aria-label"):
+        value = node.attributes.get(attr)
+        if value:
+            pieces.append(value)
+    if node.ax_name:
+        pieces.append(node.ax_name)
+    if node.text:
+        pieces.append(node.text)
+    seen = 0
+    stack = list(node.children)
+    while stack and seen < max_nodes:
+        cur = stack.pop(0)
+        seen += 1
+        if cur.is_text:
+            if cur.text:
+                pieces.append(cur.text)
+            continue
+        if cur.is_element:
+            stack.extend(cur.children)
+    return " ".join(pieces)
+
+
+def _looks_like_option_value(text: str) -> bool:
+    stripped = (text or "").strip()
+    if not stripped:
+        return False
+    if stripped in _PICKER_CELL_RELATIVE:
+        return True
+    return bool(_OPTION_VALUE_RE.search(stripped))
+
+
+def is_picker_panel_cell(node: EnhancedNode) -> bool:
+    """True for a selectable cell (year / month / day) of a picker panel.
+
+    Date / calendar panels render their options as **table cells** whose
+    ``cursor:pointer`` is set only on ``:hover`` and whose handler is bound by
+    framework delegation (no inline ``on*``, no ARIA role). The static computed
+    cursor is therefore ``auto`` and every other clickability branch misses them,
+    so the model saw a year grid as plain ``[文本]`` and could not pick a year
+    (Feishu ATSX ``.atsx-date-picker-panel-body-cell``, AntD ``.ant-picker-cell``,
+    Element ``.el-date-table-cell`` are all this shape).
+
+    Guard rails: only ``<td>`` (never ``<th>``, which holds the non-interactive
+    weekday header row), only inside a picker *panel*, must not be disabled (own
+    or shallow content), must not already contain an interactive descendant (so a
+    cell wrapping a real control is not double-named), and its label must look
+    like an option value (a digit / 年月日 / a relative sentinel) so decorative or
+    header cells are not named.
+    """
+    if not node.is_element or node.tag != "td":
+        return False
+    if node.hidden or not node.visible or not node.bbox:
+        return False
+    if _is_disabled(node) or _subtree_marks_disabled(node):
+        return False
+    if _has_interactive_descendant(node):
+        return False
+    if not _in_picker_panel(node):
+        return False
+    return _looks_like_option_value(_node_value_text(node))
+
+
+def is_picker_panel_nav(node: EnhancedNode) -> bool:
+    """True for an icon-only navigation control inside a picker panel.
+
+    A picker header's prev / next chevron is an ``<i>`` wrapping an ``<svg>`` with
+    a real ``cursor:pointer`` but **no** text and **no** accessible name, so the
+    ``cursor:pointer`` branch of ``is_clickable`` (which needs a label) and
+    ``is_control_icon`` (which needs a following labeled pointer sibling) both
+    skip it. Naming it is what lets the model page the year / month grid.
+    """
+    if not node.is_element or _is_disabled(node):
+        return False
+    if node.hidden or not node.visible or not node.bbox:
+        return False
+    if node.styles.get("cursor") != "pointer":
+        return False
+    if node.ax_name or _has_text(node):
+        return False
+    if not has_svg_descendant(node):
+        return False
+    if _has_interactive_descendant(node):
+        return False
+    return _in_picker_panel(node)
 
 
 def is_widget_trigger_input(node: EnhancedNode) -> bool:
@@ -1312,6 +1571,13 @@ def classify(node: EnhancedNode) -> str:
         # routed to ``clickdropdown`` so the tool prompt says "click to open the
         # panel, then click a cell" instead of "type to filter" (which sent the
         # model into an unwinnable ``tool_07`` loop in the Feishu Jobs session).
+        result = "clickdropdown"
+    elif is_range_picker_end(node):
+        # One of the two ends of a div-based range shell (see
+        # ``range_picker_ends``). It is a real click target that opens the shared
+        # panel focused on that end, so it shares ``clickdropdown`` and must be
+        # checked before ``is_clickable`` (a bare ``cursor:pointer`` would
+        # otherwise mark it as a plain click).
         result = "clickdropdown"
     elif is_select(node):
         result = "select"
