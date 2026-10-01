@@ -212,12 +212,13 @@ def _has_word_char(text: str) -> bool:
 MAX_TEXT_LENGTH = 4000
 
 # A scroll container holding at least this many option-like text leaves is treated
-# as a *candidate column* of an open picker panel and rendered compactly (head
-# sample + total count + selected value) instead of option by option. Kept well
-# above the option count of normal selects / menus (5~30), so ordinary dropdowns
-# keep listing their options.
+# as a *candidate column* of an open picker panel. It is still rendered like a
+# normal scroll container (only the candidates inside the column's own clip are
+# emitted, as ``<可点击元素>``) and gets one extra summary line; the point is to
+# keep the column boundary and avoid dumping every option of a 236-item list that
+# is *off-screen*, not to hide the options that are on screen. Kept well above the
+# option count of normal selects / menus (5~30).
 _OPTION_COLUMN_MIN = 40
-_OPTION_COLUMN_SAMPLE = 6
 
 # Returned by ``_overlay_centerpiece_span`` for content that is a *duplicate* of an
 # overlay centrepiece's describing line (its own ``2018 - 2026`` header title), so
@@ -1364,51 +1365,91 @@ class DOMSerializer:
     def _group_option_column(
         self, node: EnhancedNode, depth: int, kind: str, clip: Optional[BBox]
     ) -> None:
-        """Render a long option column compactly, keeping the column boundary.
+        """Render a long option column: its *visible* window, plus one summary.
 
-        The output keeps (a) the scrollable boundary so the model knows it can
-        scroll this specific column rather than the page, and (b) a head/tail
-        sample plus the total count — enough to recognise "this is the year
-        column, 2026 is at the top", without listing 127 entries.
+        The column is rendered exactly like an ordinary scroll container
+        (:meth:`_group_scroll`) so the clip prunes the off-screen bulk: only the
+        candidates currently inside the column's box are emitted, as
+        ``<可点击元素>``. That is what makes scrolling incremental — as the column
+        scrolls, candidates enter and leave the clip and the line diff reports the
+        newly revealed ones.
+
+        Compacting the whole column into a fixed head sample (the previous
+        behaviour) produced a line that never changed with ``scrollTop``: every
+        scroll returned "（页面无变化）" and the model could neither see what
+        scrolling revealed nor click a candidate. Worse, the sample listed
+        *DOM-first* children, which are not the visible ones when a picker opens
+        already scrolled to the current value (the Feishu year column opened at
+        year 2026 while the sample still said "顶部：2134").
+
+        One summary line is still emitted: it carries the total count, the visible
+        span, the non-numeric sentinels ("至今") and the current selection — the
+        context that the windowed options alone cannot convey.
         """
         name = self.registry.get_or_create(node)
         opening = f"<可滚动元素 {name}>"
         closing = f"</可滚动元素 {name}>"
-        kind_label = {"year": "\u5e74\u4efd", "month": "\u6708\u4efd"}.get(kind, "\u5019\u9009")
         options = [
             c
             for c in node.children
             if c.is_element and classify(c) and self._is_short_text_leaf(c)
         ]
-        samples = [self._collect_text(c).strip() for c in options[:_OPTION_COLUMN_SAMPLE]]
-        selected = [
-            self._collect_text(c).strip()
-            for c in options
-            if self._selection_state(c) is True
-        ]
+        self._emit_header(depth, opening, (name,), closing)
+        self._stack.append((depth, opening, closing))
+        self._scroll_reports.append(
+            (depth, name, node.tag == PAGE_SCROLL_TAG) + self._scroll_position(node)
+        )
+        prev_escapes = self._clip_escapes
+        self._clip_escapes = node.styles.get("position") not in (
+            "relative",
+            "absolute",
+            "fixed",
+            "sticky",
+        )
+        try:
+            self._render_children(node, depth + 1, node.bbox)
+        finally:
+            self._clip_escapes = prev_escapes
+        self._emit_content(depth + 1, self._option_column_summary(node, kind, options))
+        self._stack.pop()
+        self._emit_close(depth, closing)
+
+    def _option_column_summary(
+        self, node: EnhancedNode, kind: str, options: list
+    ) -> str:
+        """One-line orientation for an option column (see _group_option_column)."""
+        kind_label = {"year": "\u5e74\u4efd", "month": "\u6708\u4efd"}.get(
+            kind, "\u5019\u9009"
+        )
+        total = len(options)
+        visible = [c for c in options if self._in_clip(c, node.bbox)]
+        parts = [f"\u672c\u5217\u4e3a{kind_label}\u5019\u9009\uff0c\u5171 {total} \u9879"]
+        if visible and len(visible) < total:
+            first = self._collect_text(visible[0]).strip()
+            last = self._collect_text(visible[-1]).strip()
+            if first and last:
+                parts.append(f"\u5f53\u524d\u53ef\u89c1\uff1a{first}\u2013{last}")
+        if total > len(visible):
+            parts.append(
+                "\u53ef\u7528 scroll_delta \u6eda\u52a8\u672c\u5217\u67e5\u770b\u5176\u4f59"
+            )
         specials = [
             self._collect_text(c).strip()
             for c in options
             if self._is_special_option_text(self._collect_text(c))
         ]
-        parts = [f"{kind_label}候选 {len(options)} 项"]
         if specials:
             # "至今" is the one entry the model most needs to find and cannot reach
             # by scrolling to a number, so name it explicitly.
-            parts.append(f"含特殊项：{'、'.join(dict.fromkeys(specials))[:40]}")
-        if samples:
-            shown = "、".join(samples)
-            if len(options) > len(samples):
-                shown += f"、…（还有 {len(options) - len(samples)} 项，可向下滚动该列查看）"
-            parts.append(f"顶部：{shown}")
+            parts.append(f"\u542b\u7279\u6b8a\u9879\uff1a{'、'.join(dict.fromkeys(specials))[:40]}")
+        selected = [
+            self._collect_text(c).strip()
+            for c in options
+            if self._selection_state(c) is True
+        ]
         if selected:
-            parts.append(f"当前已选：{'、'.join(selected[:2])}")
-        self._emit_header(depth, opening, (name,), closing)
-        self._emit_content(depth + 1, "；".join(parts))
-        self._scroll_reports.append(
-            (depth, name, node.tag == PAGE_SCROLL_TAG) + self._scroll_position(node)
-        )
-        self._emit_close(depth, closing)
+            parts.append(f"\u5f53\u524d\u5df2\u9009\uff1a{'、'.join(selected[:2])}")
+        return "\uff1b".join(parts)
 
     def _group_click(
         self, node: EnhancedNode, depth: int, header: str, clip: Optional[BBox]

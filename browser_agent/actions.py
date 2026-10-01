@@ -747,6 +747,17 @@ class ActionExecutor:
         it bypasses the swallowed wheel and restores the ability. It is a no-op
         for a container that really cannot scroll, keeping the honest
         "not scrollable" report.
+
+        The wheel distance is also *normalised*: ``scroll_delta`` promises that
+        one step is a fixed fraction (``0.7``) of the exposed height, but a
+        synthetic wheel is not guaranteed to move that many CSS pixels — platform
+        wheel acceleration, smooth-scroll easing and pages that turn a wheel into
+        a different distance all made the same request move wildly different
+        amounts (the Feishu year column moved 233 px on one call but 349 and 272
+        px on others, versus the promised 233). When the wheel lands far from the
+        requested distance the missing/extra pixels are driven natively via
+        :meth:`scroll_by` (a scrollbar drag), so every step is deterministic. A
+        small tolerance leaves a genuinely 1:1 wheel byte-for-byte unchanged.
         """
         center = self._node_center(backend_node_id)
         if not center:
@@ -758,8 +769,13 @@ class ActionExecutor:
         before = self.scroll_top(backend_node_id)
         self._dispatch_mouse("mouseWheel", cx, cy, delta_x=0, delta_y=delta_y)
         after = self._settle_node_scroll(backend_node_id)
-        if before is not None and after is not None and abs(after - before) < 1:
-            after = self.scroll_by(backend_node_id, delta_y)
+        if before is None or after is None:
+            return after
+        requested = float(delta_y)
+        moved = after - before
+        tolerance = max(2.0, abs(requested) * 0.15)
+        if abs(moved) < 1 or abs(moved - requested) > tolerance:
+            after = self.scroll_by(backend_node_id, (before + requested) - after)
         return after
 
     def scroll_by(self, backend_node_id: int, delta_y: float) -> Optional[float]:
