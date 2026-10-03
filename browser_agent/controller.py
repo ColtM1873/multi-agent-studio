@@ -2078,7 +2078,15 @@ class BrowserController:
         也不看候选行 tag，能认出 ``common-unmodeled-layer`` 这类清单外、候选又非
         li/td 的自绘面板）。任一为真即视为已打开。
         指纹每 50ms 重取一次，兼顾入场动画首帧。这样「点后确实画出了面板」就不会被
-        误判成死点击、进而触发会把 panel 再关掉的补偿点击（BID067）。"""
+        误判成死点击、进而触发会把 panel 再关掉的补偿点击（BID067）。
+
+        页面不可见时的兜底（BID072）：标签页被切走/窗口被遮挡/最小化时 rAF 冻结，
+        组件库基于 ``<transition>`` 的入场动画永远停在首帧（``opacity:0``、``bbox`` 塌成
+        0×0），任何「可见性」判据都必然为假。此时**无法观测**，绝不能做破坏性重试——
+        第二次点击会把刚打开的面板关掉（实测顺丰证件类型/民族：首点已打开、被补偿重试
+        关闭后报「没有检测到面板打开」，LLM 永远点不动）。故超时后只要是「页面不可见」
+        就按「已打开（不可验证）」返回，交给序列化（BID030 透明子树兜底）呈现候选，
+        由返回的 diff 说明真相（BID072）。"""
         deadline = time.time() + timeout  # BID067
         while True:  # BID067
             if self._overlay_open(session):  # BID067
@@ -2088,8 +2096,30 @@ class BrowserController:
             ):  # BID067
                 return True  # BID067
             if time.time() >= deadline:  # BID067
-                return False  # BID067
+                return self._page_hidden(session)  # BID072
             time.sleep(0.05)  # BID067
+
+    # 本函数于BID072引入
+    def _page_hidden(self, session: str) -> bool:  # BID072
+        """当前标签页是否不可见（``document.hidden``）。
+
+        不可见时浏览器冻结 ``requestAnimationFrame``，页面自身的入场动画/CSS 过渡不会
+        推进；依赖「渲染可见」的探测（浮层盒子、几何尺寸）全部失真。调用方据此切换到
+        「不做破坏性重试 / 放宽浮层成员判据」的兜底路径（BID072）。"""
+        assert self.client is not None  # BID072
+        try:  # BID072
+            result = self.client.send(  # BID072
+                "Runtime.evaluate",  # BID072
+                {  # BID072
+                    "expression": "document.hidden === true",  # BID072
+                    "returnByValue": True,  # BID072
+                },  # BID072
+                session_id=session,  # BID072
+                timeout=timing.get().cdp.probe_timeout,  # BID072
+            )  # BID072
+            return bool((result.get("result") or {}).get("value"))  # BID072
+        except Exception:  # BID072
+            return False  # BID072
 
     def _stabilize(self, target_id: str) -> None:
         assert self.client is not None

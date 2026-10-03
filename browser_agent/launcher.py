@@ -62,7 +62,13 @@ class BrowserLauncher:
             "--disable-background-networking",
             "--disable-background-timer-throttling",
             "--disable-renderer-backgrounding",
-            "--disable-features=Translate,BackForwardCache,AcceptCHFrame,MediaRouter",
+            # 窗口被其它窗口完全遮挡时 Chrome 的 Windows 原生遮挡检测会把页面标成
+            # ``document.hidden``，rAF 随之冻结：组件库的浮层入场过渡会永久停在首帧
+            # （opacity 0 / 0×0），导致「可点击下拉」点不开、候选抓不到（BID072 实测）。
+            # 关掉遮挡后台化 + 遮挡计算，使页面在仅被遮挡时仍保持可见/可渲染。
+            "--disable-backgrounding-occluded-windows",  # BID072
+            "--disable-features=Translate,BackForwardCache,AcceptCHFrame,MediaRouter,"  # BID072
+            "CalculateNativeWinOcclusion",  # BID072
             "--disable-popup-blocking",
             "--disable-prompt-on-repost",
             "--disable-sync",

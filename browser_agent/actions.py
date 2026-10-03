@@ -65,6 +65,8 @@ _OVERLAY_VISIBLE_JS = (
 
 # 结构性「可见浮层」判据（不看 class 名）：出文档流（absolute/fixed）、可见、有尺寸、
 # 与视口相交，且具备浮层形态（overlay role，或至少两行候选；刻意不单独认输入框）。
+# 页面不可见（rAF 冻结、入场过渡停在 0 尺寸/透明首帧）时放宽「有尺寸/不透明/在视口」，
+# 只保留「出文档流 + display 未 none + 浮层形态」，见下方 BID072 注释。
 # 组件库的自绘浮层常挂着本工具不认识的 class（实测 Beisen ``common-unmodeled-layer``
 # 面板既无 overlay role、class 也不含 dropdown/popup，``OVERLAY_ELEMENT_SELECTOR``
 # 完全命中不到），只靠 class 清单会漏判「面板已打开」，进而触发有界重试把这种
@@ -75,10 +77,18 @@ _FLOATING_PANEL_JS = (  # BID067
     "var pos=cs.position;"  # BID067
     "if(pos!=='absolute'&&pos!=='fixed') return false;"  # BID067
     "if(cs.display==='none'||cs.visibility==='hidden') return false;"  # BID067
+    # 页面不可见时（标签页被切走/窗口被遮挡/最小化）rAF 冻结，组件库基于 <transition> 的
+    # 入场过渡永远停在首帧：浮层 box 塌成 0 尺寸且 opacity=0（实测 Element UI
+    # el-select-dropdown 卡在 el-zoom-in-top-enter-active）。此时若仍要求「有尺寸 + 不透明」，
+    # 面板内候选项就会被判「不在浮层内」，点击前先 blur 把刚打开的面板关掉（BID072）。
+    # 故仅在页面可见时保留尺寸/透明/视口判据；不可见时只认「出文档流 + 未隐藏 + 浮层形态」，
+    # 候选行判据（下面 rows/overlayRole）不受可见性影响，照常兜底（BID072）。
+    "if(!document.hidden){"  # BID072
     "if(parseFloat(cs.opacity||'1')<=0.01) return false;"  # BID067
     "var r=el.getBoundingClientRect();"  # BID067
     "if(r.width<40||r.height<24) return false;"  # BID067
     "if(r.bottom<=0||r.top>=innerHeight||r.right<=0||r.left>=innerWidth) return false;"  # BID067
+    "}"  # BID072
     "var role=(el.getAttribute('role')||'').toLowerCase();"  # BID067
     "var overlayRole=(role==='listbox'||role==='menu'||role==='tree'||role==='grid'"  # BID067
     "||role==='dialog'||role==='alertdialog'||role==='tooltip');"  # BID067
@@ -107,6 +117,8 @@ _FLOATING_PANEL_JS = (  # BID067
 #   * 差分对常驻盒子（固定顶栏/侧栏）天然免疫——点前点后都在集合里；
 #   * 只要本次点击**新出现任意浮动盒子**，就说明点击产生了可观察效果，
 #     绝不能对它做补偿性重试点击（toggle 型触发器会被第二次点击关掉）。
+# 页面不可见时放宽「有尺寸/不透明/在视口」要求（rAF 冻结下新浮层停在 0 尺寸首帧），
+# 见下方 BID072 注释；只要 display 由 none 变非 none 即视为「有打开证据」。
 # 为什么不能沿用 ``_FLOATING_PANEL_JS``（带行数门槛）做差分：那是**成员判定**用的精确
 # 判据（要区分「普通顶栏」与「真面板」）；差分不需要精确，需要**覆盖所有形态**。二者
 # 混用会导致「行数判不出来 ⇒ 认为没打开 ⇒ 破坏性重试」——BID068 实测 Beisen 民族
@@ -118,10 +130,16 @@ _FLOATING_BOX_JS = (  # BID068
     "var pos=cs.position;"  # BID068
     "if(pos!=='absolute'&&pos!=='fixed') return false;"  # BID068
     "if(cs.display==='none'||cs.visibility==='hidden') return false;"  # BID068
+    # 页面不可见时 rAF 冻结，新挂载的浮层停在入场首帧（0 尺寸 + opacity 0），若仍要求
+    # 「有尺寸 + 不透明」，差分看不到它 ⇒ 误判「没打开」⇒ 有界重试把刚打开的面板点关。
+    # 故不可见时只认「出文档流 + display 未 none」（display none→block 的切换即已打开证据），
+    # 可见时保留原有尺寸/透明/视口判据（BID072）。
+    "if(!document.hidden){"  # BID072
     "if(parseFloat(cs.opacity||'1')<=0.01) return false;"  # BID068
     "var r=el.getBoundingClientRect();"  # BID068
     "if(r.width<40||r.height<24) return false;"  # BID068
     "if(r.bottom<=0||r.top>=innerHeight||r.right<=0||r.left>=innerWidth) return false;"  # BID068
+    "}"  # BID072
     "return true;}catch(e){return false;}}"  # BID068
 )  # BID068
 
