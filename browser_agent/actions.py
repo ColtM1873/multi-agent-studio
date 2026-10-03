@@ -63,6 +63,35 @@ _OVERLAY_VISIBLE_JS = (
     "return true;}catch(e){return false;}}"
 )
 
+# 结构性「可见浮层」判据（不看 class 名）：出文档流（absolute/fixed）、可见、有尺寸、
+# 与视口相交，且具备浮层形态（overlay role，或至少两行候选；刻意不单独认输入框）。
+# 组件库的自绘浮层常挂着本工具不认识的 class（实测 Beisen ``common-unmodeled-layer``
+# 面板既无 overlay role、class 也不含 dropdown/popup，``OVERLAY_ELEMENT_SELECTOR``
+# 完全命中不到），只靠 class 清单会漏判「面板已打开」，进而触发有界重试把这种
+# **toggle 型**触发器又点一次、把刚打开的面板关掉（BID067）。
+_FLOATING_PANEL_JS = (  # BID067
+    "function(el){try{"  # BID067
+    "var cs=getComputedStyle(el);"  # BID067
+    "var pos=cs.position;"  # BID067
+    "if(pos!=='absolute'&&pos!=='fixed') return false;"  # BID067
+    "if(cs.display==='none'||cs.visibility==='hidden') return false;"  # BID067
+    "if(parseFloat(cs.opacity||'1')<=0.01) return false;"  # BID067
+    "var r=el.getBoundingClientRect();"  # BID067
+    "if(r.width<40||r.height<24) return false;"  # BID067
+    "if(r.bottom<=0||r.top>=innerHeight||r.right<=0||r.left>=innerWidth) return false;"  # BID067
+    "var role=(el.getAttribute('role')||'').toLowerCase();"  # BID067
+    "var overlayRole=(role==='listbox'||role==='menu'||role==='tree'||role==='grid'"  # BID067
+    "||role==='dialog'||role==='alertdialog'||role==='tooltip');"  # BID067
+    "var rows=el.querySelectorAll('li,[role=\"option\"],[role=\"menuitem\"],"  # BID067
+    "[role=\"treeitem\"],[role=\"row\"],[role=\"gridcell\"],td');"  # BID067
+    # 只认「浮层形态」：overlay role，或至少两行候选。刻意**不**以「含输入框」
+    # 单独作为依据——页面常驻的固定顶栏（如本站带搜索框的 header）也有输入框，
+    # 却绝不该被当成浮层（否则 element_inside_overlay 会把顶栏内的普通点击误判为
+    # 「浮层内互动」，跳过 blur/park 中和）（BID067）。
+    "if(!overlayRole&&rows.length<2) return false;"  # BID067
+    "return true;}catch(e){return false;}}"  # BID067
+)
+
 
 def overlay_probe_expression() -> str:
     """Self-contained in-page expression: is a visible interactive popup open?
@@ -80,6 +109,31 @@ def overlay_probe_expression() -> str:
         "for (const el of document.querySelectorAll(sel)) { if (ok(el)) return true; }"
         "return false; } catch (e) { return false; } })()"
     )
+
+
+def floating_panel_probe_expression() -> str:  # BID067
+    """自包含表达式：返回「当前可见浮层」的指纹（数量 + class@rect 列表）。
+
+    与 :func:`overlay_probe_expression` 不同，这里不看 class 名，纯按形态找浮层，
+    因此能看见组件库自定义 class 的面板（如 Beisen ``common-unmodeled-layer``）。
+    控制器在点击触发器**前后各取一次**：指纹变化即「面板真的开了」，据此避免对
+    toggle 型触发器做破坏性的重试点击（BID067）。"""
+    return (  # BID067
+        "(() => { try {"  # BID067
+        "const ok=" + _FLOATING_PANEL_JS + ";"  # BID067
+        "const out=[];"  # BID067
+        "const all=document.body?document.body.getElementsByTagName('*'):[];"  # BID067
+        "for(let i=0;i<all.length;i++){"  # BID067
+        "const el=all[i];"  # BID067
+        "if(el.children.length===0) continue;"  # BID067
+        "if(!ok(el)) continue;"  # BID067
+        "const r=el.getBoundingClientRect();"  # BID067
+        "const cn=(typeof el.className==='string')?el.className:((el.className&&el.className.baseVal)||'');"  # BID067
+        "out.push(cn.slice(0,40)+'@'+Math.round(r.left)+','+Math.round(r.top)+','+Math.round(r.width)+','+Math.round(r.height));"  # BID067
+        "}"  # BID067
+        "return out.length+'|'+out.sort().join(';');"  # BID067
+        "} catch (e) { return ''; } })()"  # BID067
+    )  # BID067
 
 
 class ActionError(RuntimeError):
@@ -373,6 +427,12 @@ class ActionExecutor:
         option click would miss its (now hidden) target and be misreported as a
         no-op. When the target is inside a live popup the caller skips that
         neutralisation so the option stays clickable.
+
+        Membership is decided two ways along the ancestor chain: the class-name
+        ``OVERLAY_ELEMENT_SELECTOR``, and the class-agnostic structural
+        ``_FLOATING_PANEL_JS`` (BID067). The latter catches component libraries
+        whose panel class the list does not know (Beisen ``common-unmodeled-layer``),
+        without which the option's panel would be blurred shut before the click.
         """
         object_id = self._resolve(backend_node_id)
         if not object_id:
@@ -380,9 +440,16 @@ class ActionExecutor:
         script = (
             "function(sel){try{"
             "var ok=" + _OVERLAY_VISIBLE_JS + ";"
+            # 除 class 清单外，再沿祖先链做**结构性**浮层判定：组件库自定义 class
+            # 的面板（Beisen ``common-unmodeled-layer``）不在清单里，但它自身的
+            # 形态满足 ``_FLOATING_PANEL_JS``。缺了这一步，点击面板内的候选项之前
+            # 会先 blur（列表为空 ⇒ 该候选被视为「不在浮层内」），把面板关掉，
+            # 导致点空（BID067）。
+            "var panel=" + _FLOATING_PANEL_JS + ";"  # BID067
             "var el=this;"
             "while(el&&el!==document){"
             "if(el.matches&&el.matches(sel)&&ok(el)) return true;"
+            "if(panel(el)) return true;"  # BID067
             "el=el.parentElement;}"
             "return false;}catch(e){return false;}}"
         )
@@ -394,6 +461,17 @@ class ActionExecutor:
             )
         except Exception:
             return False
+
+    def floating_panel_fingerprint(self) -> str:  # BID067
+        """可见浮层的结构指纹（数量 + class@rect），用于「点前/点后」差分。
+
+        与 :meth:`element_inside_overlay` 共用 :data:`_FLOATING_PANEL_JS` 的形态
+        判据，不看 class 名，故能感知自定义 class 面板的打开/关闭（BID067）。"""
+        try:  # BID067
+            value = self._eval(floating_panel_probe_expression())  # BID067
+        except Exception:  # BID067
+            return ""  # BID067
+        return str(value) if value is not None else ""  # BID067
 
     def is_popup_trigger(self, backend_node_id: int) -> bool:
         """True if the click target opens a self-drawn popup (combobox/haspopup).
@@ -795,7 +873,13 @@ class ActionExecutor:
         try:
             self._call_on_node(
                 object_id,
-                "function(d){this.scrollTop += d;}",
+                # 赋值 ``scrollTop`` 后，部分 JS 虚拟列表（Beisen ``phoenix-selectList``）
+                # 不理会由此触发的原生 ``scroll`` 事件，只对显式派发的 ``scroll`` 事件
+                # 重算渲染窗口（实测：仅赋值 scrollTop，内容不动；补派发一个不冒泡的
+                # scroll 事件后，候选窗口立即滚动）。原生 ``scroll`` 不冒泡，故用默认
+                # 不冒泡的 ``Event``，对普通滚动容器无害（幂等）（BID067）。
+                "function(d){this.scrollTop += d;"  # BID067
+                "try{this.dispatchEvent(new Event('scroll'));}catch(e){}}",  # BID067
                 [{"value": float(delta_y)}],
             )
         except Exception:  # noqa: BLE001 - best effort; caller re-reads

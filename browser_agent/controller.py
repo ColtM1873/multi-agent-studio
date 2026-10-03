@@ -1065,11 +1065,11 @@ class BrowserController:
         # self-drawn popup (``aria-haspopup`` / ``role=combobox``): blurring
         # would dismiss it before the capture.
         overlay_before = self._overlay_open(session)
-        inside_overlay = (
-            executor.element_inside_overlay(node.backend_node_id)
-            if overlay_before
-            else False
-        )
+        # 结构性判定（不依赖 class 清单）必须**无条件**计算：class 探针不认识组件库
+        # 自定义 class 的面板（Beisen ``common-unmodeled-layer``），若仍沿用
+        # 「仅当 ``overlay_before`` 才判定」，则面板内候选项被当成「不在浮层内」，
+        # 点前先 blur 会把面板关掉、候选项点空（BID067）。
+        inside_overlay = executor.element_inside_overlay(node.backend_node_id)  # BID067
         popup_trigger = (
             executor.is_popup_trigger(node.backend_node_id)
             # Every ``clickdropdown`` is *by contract* a click that opens a panel
@@ -1083,6 +1083,12 @@ class BrowserController:
             executor.blur_active()
             executor.park_mouse()
         before_sig = executor.dom_signature()
+        # 点击**前**的可见浮层结构指纹：用于把「真的打开了（但 class 探针不认识）的
+        # 面板」与「真死点击」区分开，避免对 toggle 型触发器做有界重试时把刚打开的
+        # 面板又点一次关掉（BID067）。
+        panels_before = (
+            executor.floating_panel_fingerprint() if popup_trigger else ""
+        )  # BID067
         # A same-document link (active nav item / in-page hash) must not pay the
         # full navigation grace: it either fires a soft event or does nothing.
         click_may_nav = may_navigate(node)
@@ -1098,8 +1104,13 @@ class BrowserController:
                 click_noop = False
             elif popup_trigger:
                 # Keep the just-opened popup alive (no blur/park) and let it
-                # paint before the capture.
-                opened = self._wait_overlay_open(session)
+                # paint before the capture. ``_wait_popup_opened`` accepts either
+                # evidence: the class-name overlay probe, or a structural
+                # fingerprint change that catches a custom-class panel our probe
+                # does not know (BID067).
+                opened = self._wait_popup_opened(  # BID067
+                    executor, session, panels_before
+                )  # BID067
                 if not opened:
                     # The contract of this category is "clicking opens a panel".
                     # When nothing opened, one bounded retry on the same target is
@@ -1110,10 +1121,15 @@ class BrowserController:
                     # unrelated diff. Retrying here makes the common transient
                     # case (focus/entry-animation race) disappear, and when the
                     # retry also fails the result says so explicitly.
+                    #
+                    # 注意：只有「首点后连结构指纹都没变」才允许重试——否则 toggle
+                    # 型触发器会被第二次点击关掉刚打开的面板（BID067）。
                     with self._watch_navigation(session) as retry_nav:
                         executor.click(node.backend_node_id)
                         self._settle_navigation(session, retry_nav, click_may_nav)
-                    opened = self._wait_overlay_open(session)
+                    opened = self._wait_popup_opened(  # BID067
+                        executor, session, panels_before
+                    )  # BID067
                 if not opened:
                     popup_missing = True
                 click_noop = False
@@ -2042,6 +2058,28 @@ class BrowserController:
             if time.time() >= deadline:
                 return False
             time.sleep(0.05)
+
+    def _wait_popup_opened(  # BID067
+        self, executor, session: str, panels_before: str, timeout: float = 0.6
+    ) -> bool:  # BID067
+        """触发器点击后，有界轮询「弹层是否打开」——双证据，覆盖自定义 class。
+
+        证据一：:meth:`_overlay_open`（class 清单，快且保守）；
+        证据二：可见浮层**结构指纹变化**（:data:`_FLOATING_PANEL_JS`，不看 class 名，
+        能认出 ``common-unmodeled-layer`` 这类清单外的面板）。任一为真即视为已打开。
+        指纹每 50ms 重取一次，兼顾入场动画首帧。这样「点后确实画出了面板」就不会被
+        误判成死点击、进而触发会把 panel 再关掉的补偿点击（BID067）。"""
+        deadline = time.time() + timeout  # BID067
+        while True:  # BID067
+            if self._overlay_open(session):  # BID067
+                return True  # BID067
+            if panels_before and (  # BID067
+                executor.floating_panel_fingerprint() != panels_before  # BID067
+            ):  # BID067
+                return True  # BID067
+            if time.time() >= deadline:  # BID067
+                return False  # BID067
+            time.sleep(0.05)  # BID067
 
     def _stabilize(self, target_id: str) -> None:
         assert self.client is not None
