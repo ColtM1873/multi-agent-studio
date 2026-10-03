@@ -83,7 +83,16 @@ _FLOATING_PANEL_JS = (  # BID067
     "var overlayRole=(role==='listbox'||role==='menu'||role==='tree'||role==='grid'"  # BID067
     "||role==='dialog'||role==='alertdialog'||role==='tooltip');"  # BID067
     "var rows=el.querySelectorAll('li,[role=\"option\"],[role=\"menuitem\"],"  # BID067
-    "[role=\"treeitem\"],[role=\"row\"],[role=\"gridcell\"],td');"  # BID067
+    "[role=\"treeitem\"],[role=\"row\"],[role=\"gridcell\"],td,"  # BID068
+    # 候选行不应以「tag/role 白名单」定义：组件库普遍把候选项渲染成带语义类名的
+    # <div>/<span>（Beisen 民族选择器：div.list-item-container）。旧白名单漏掉它们后，
+    # 「面板已打开」被误判为「没打开」，进而对 toggle 触发器做补偿性重试、把刚打开的
+    # 面板又点关（BID068 实测）。补上跨库通用类名族，使其与「浮层形态」判据同样脱离
+    # 具体组件库（BID068）。刻意只收「候选/列表项」语义的类名，**不**用裸 ``item``/
+    # ``row``（顶栏的 ``nav-item``、栅格的 ``.row`` 会误判成浮层，使普通点击被当成
+    # 「浮层内互动」而跳过 blur/park 中和）（BID068）。
+    "[class*=\"list-item\"],[class*=\"listitem\"],[class*=\"option\"],"  # BID068
+    "[class*=\"candidate\"],[class*=\"choice\"],[class*=\"node\"]');"  # BID068
     # 只认「浮层形态」：overlay role，或至少两行候选。刻意**不**以「含输入框」
     # 单独作为依据——页面常驻的固定顶栏（如本站带搜索框的 header）也有输入框，
     # 却绝不该被当成浮层（否则 element_inside_overlay 会把顶栏内的普通点击误判为
@@ -91,6 +100,30 @@ _FLOATING_PANEL_JS = (  # BID067
     "if(!overlayRole&&rows.length<2) return false;"  # BID067
     "return true;}catch(e){return false;}}"  # BID067
 )
+
+# 本常量于BID068引入
+# 结构性「浮层盒子」判据：只要求「出文档流(absolute/fixed) + 可见 + 有尺寸 + 与视口相交」，
+# **不要求能识别出候选行**。它只用于「点击前/后浮层集合差分」：
+#   * 差分对常驻盒子（固定顶栏/侧栏）天然免疫——点前点后都在集合里；
+#   * 只要本次点击**新出现任意浮动盒子**，就说明点击产生了可观察效果，
+#     绝不能对它做补偿性重试点击（toggle 型触发器会被第二次点击关掉）。
+# 为什么不能沿用 ``_FLOATING_PANEL_JS``（带行数门槛）做差分：那是**成员判定**用的精确
+# 判据（要区分「普通顶栏」与「真面板」）；差分不需要精确，需要**覆盖所有形态**。二者
+# 混用会导致「行数判不出来 ⇒ 认为没打开 ⇒ 破坏性重试」——BID068 实测 Beisen 民族
+# 选择器的候选是 ``div.list-item-container``，且面板里可能只有搜索框/单选点，任何
+# tag/role/类名白名单都会漏。放宽到「盒子形态」后，这类面板一出现指纹就变。
+_FLOATING_BOX_JS = (  # BID068
+    "function(el){try{"  # BID068
+    "var cs=getComputedStyle(el);"  # BID068
+    "var pos=cs.position;"  # BID068
+    "if(pos!=='absolute'&&pos!=='fixed') return false;"  # BID068
+    "if(cs.display==='none'||cs.visibility==='hidden') return false;"  # BID068
+    "if(parseFloat(cs.opacity||'1')<=0.01) return false;"  # BID068
+    "var r=el.getBoundingClientRect();"  # BID068
+    "if(r.width<40||r.height<24) return false;"  # BID068
+    "if(r.bottom<=0||r.top>=innerHeight||r.right<=0||r.left>=innerWidth) return false;"  # BID068
+    "return true;}catch(e){return false;}}"  # BID068
+)  # BID068
 
 
 def overlay_probe_expression() -> str:
@@ -112,15 +145,19 @@ def overlay_probe_expression() -> str:
 
 
 def floating_panel_probe_expression() -> str:  # BID067
-    """自包含表达式：返回「当前可见浮层」的指纹（数量 + class@rect 列表）。
+    """自包含表达式：返回「当前可见浮层盒子」的指纹（数量 + class@rect 列表）。
 
     与 :func:`overlay_probe_expression` 不同，这里不看 class 名，纯按形态找浮层，
     因此能看见组件库自定义 class 的面板（如 Beisen ``common-unmodeled-layer``）。
     控制器在点击触发器**前后各取一次**：指纹变化即「面板真的开了」，据此避免对
-    toggle 型触发器做破坏性的重试点击（BID067）。"""
+    toggle 型触发器做破坏性的重试点击（BID067）。
+
+    注意：这里用 :data:`_FLOATING_BOX_JS`（不看候选行）而非 :data:`_FLOATING_PANEL_JS`
+    （带行数门槛）——差分要的是「有没有新盒子出现」，行识别是成员判定才需要的精确度；
+    带行门槛会漏掉候选项不是 li/td 的自绘面板并触发破坏性重试（BID068）。"""
     return (  # BID067
         "(() => { try {"  # BID067
-        "const ok=" + _FLOATING_PANEL_JS + ";"  # BID067
+        "const ok=" + _FLOATING_BOX_JS + ";"  # BID068
         "const out=[];"  # BID067
         "const all=document.body?document.body.getElementsByTagName('*'):[];"  # BID067
         "for(let i=0;i<all.length;i++){"  # BID067
@@ -343,6 +380,17 @@ class ActionExecutor:
         x, y, w, h = box
         return (x + w / 2.0, y + h / 2.0)
 
+    # 本函数于BID068引入
+    def scroll_into_view(self, backend_node_id: int) -> None:  # BID068
+        """把节点滚入视口并等其几何稳定（不点击、不移动鼠标）。  # BID068
+
+        浮层「点前/点后」指纹是**视口坐标**（``getBoundingClientRect``）拼出来的；若点击
+        自身会把页面滚动（触发者在折叠区时 ``click`` 内部会先 scrollIntoView），那么滚动
+        会让大量常驻盒子的 rect 整体位移，指纹凭空变化，被误判成「浮层已打开」。在取
+        ``panels_before`` 之前先调用本方法把视口稳定下来，之后 ``click`` 的滚动即为空操作，
+        指纹只会因「真的新出现了浮层」而变化（BID068）。"""  # BID068
+        self._node_box(backend_node_id)  # BID068
+
     # ------------------------------------------------------------------ #
     # human-like mouse
     # ------------------------------------------------------------------ #
@@ -465,8 +513,8 @@ class ActionExecutor:
     def floating_panel_fingerprint(self) -> str:  # BID067
         """可见浮层的结构指纹（数量 + class@rect），用于「点前/点后」差分。
 
-        与 :meth:`element_inside_overlay` 共用 :data:`_FLOATING_PANEL_JS` 的形态
-        判据，不看 class 名，故能感知自定义 class 面板的打开/关闭（BID067）。"""
+        使用 :data:`_FLOATING_BOX_JS`（盒子形态，不看候选行）做「点前/点后」差分，
+        不看 class 名，故能感知任意自定义 class 面板的打开/关闭（BID067/BID068）。"""
         try:  # BID067
             value = self._eval(floating_panel_probe_expression())  # BID067
         except Exception:  # BID067

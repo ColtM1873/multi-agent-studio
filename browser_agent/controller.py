@@ -1086,6 +1086,15 @@ class BrowserController:
         # 点击**前**的可见浮层结构指纹：用于把「真的打开了（但 class 探针不认识）的
         # 面板」与「真死点击」区分开，避免对 toggle 型触发器做有界重试时把刚打开的
         # 面板又点一次关掉（BID067）。
+        #
+        # 指纹是视口坐标拼的，而 ``click`` 内部可能先 scrollIntoView；先显式把节点滚入
+        # 视口，消除「点击自身滚动」造成的 rect 位移假差异，指纹才只反映浮层的真实出现
+        # （BID068）。
+        if popup_trigger:  # BID068
+            try:  # BID068
+                executor.scroll_into_view(node.backend_node_id)  # BID068
+            except Exception:  # BID068
+                pass  # BID068
         panels_before = (
             executor.floating_panel_fingerprint() if popup_trigger else ""
         )  # BID067
@@ -2065,8 +2074,9 @@ class BrowserController:
         """触发器点击后，有界轮询「弹层是否打开」——双证据，覆盖自定义 class。
 
         证据一：:meth:`_overlay_open`（class 清单，快且保守）；
-        证据二：可见浮层**结构指纹变化**（:data:`_FLOATING_PANEL_JS`，不看 class 名，
-        能认出 ``common-unmodeled-layer`` 这类清单外的面板）。任一为真即视为已打开。
+        证据二：可见浮层**结构指纹变化**（:data:`_FLOATING_BOX_JS`，不看 class 名、
+        也不看候选行 tag，能认出 ``common-unmodeled-layer`` 这类清单外、候选又非
+        li/td 的自绘面板）。任一为真即视为已打开。
         指纹每 50ms 重取一次，兼顾入场动画首帧。这样「点后确实画出了面板」就不会被
         误判成死点击、进而触发会把 panel 再关掉的补偿点击（BID067）。"""
         deadline = time.time() + timeout  # BID067
