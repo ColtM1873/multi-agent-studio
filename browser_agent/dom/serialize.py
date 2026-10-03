@@ -3436,6 +3436,15 @@ class DOMSerializer:
             # ``<td onclick="day_Click(...)">``). Demoting it to plain text
             # silently deleted every day from the calendar's interactable grid.
             return False
+        if self._is_separate_control(node):  # BID073
+            # 本节点自身就是一个可独立寻址的真控件时，绝不能把它降级为描述性纯文本。 # BID073
+            # 否则「上层 clickable 包装器因它而剪枝让路」与「它自己被本函数删掉」会   # BID073
+            # 同时发生，控件彻底消失——这正是 Element 年月表格                            # BID073
+            # ``<td><div><a class="cell">一月</a></div></td>`` 的 ``<a>`` 一直落到裸   # BID073
+            # ``[文本]`` 的原因（BID022 把内层 ``<a>`` 认定为独立控件后遗漏的收尾）。      # BID073
+            # 只看 ``is_cursor_pointer_only`` 的 ``span``/``div`` 部件不受影响，仍按     # BID073
+            # 原有「旁边已有真控件」逻辑降级。                                            # BID073
+            return False  # BID073
         if self._has_strong_descendant(node):
             return False
         if has_svg_descendant(node):
