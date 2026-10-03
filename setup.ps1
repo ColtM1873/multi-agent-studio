@@ -54,6 +54,22 @@ try {
 }
 Write-Host '       长路径支持已启用。'
 
+# ---------- 2.5 修复「低完整性」标签（环境自愈）----------
+# 某些下载器/网盘客户端/沙箱解压工具会把项目文件夹打成 Windows「低完整性(Low)」，
+# 并被整棵目录树继承；此后 venv 与 exe 都以低完整性运行，无法写入 %TEMP%、%LOCALAPPDATA%
+# 等中完整性位置，导致 PyInstaller 打包失败、MultiAgentStudio.exe 启动报
+# "Could not create temporary directory!"。此处统一重置为「中完整性(Medium)」。
+try {
+    $icacls = Join-Path $env:SystemRoot 'System32\icacls.exe'
+    if ((& $icacls $PSScriptRoot 2>$null | Out-String) -match 'Mandatory Label\\Low') {
+        Write-Host '       检测到项目文件夹为「低完整性」，正在修复...'
+        & $icacls $PSScriptRoot /setintegritylevel (OI)(CI)M /T /C | Out-Null
+        Write-Host '       已重置为「中完整性」。'
+    }
+} catch {
+    Write-Host "       [警告] 完整性标签检查/修复失败：$($_.Exception.Message)"
+}
+
 # ---------- 3. 创建虚拟环境 ----------
 Write-Host '[3/6] 创建虚拟环境 venv...'
 if (-not (Test-Path "$PSScriptRoot\venv")) {
