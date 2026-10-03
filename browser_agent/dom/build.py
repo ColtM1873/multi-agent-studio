@@ -41,6 +41,28 @@ _LEAVE_MARKERS = ("leave", "leaving", "closing", "exit", "exiting")
 _LEAVE_HOOK_TAILS = ("-active", "-to", "-from", "-start", "-end")
 
 
+# 本函数于BID071引入
+def _is_document_root(node: "EnhancedNode") -> bool:
+    """``<html>`` / ``<body>`` 恒为文档根，永远不是浮动浮层。
+
+    文档根的 ``class`` 是**全局状态**（滚动锁、布局态），不是「浮动浮层」的
+    折叠/离场标记；而组件库恰恰把滚动锁加在 ``<body>`` 上：Element/Element-Plus
+    的 ``el-popup-parent--hidden``（同时含 overlay 词 ``popup`` 与折叠后缀
+    ``--hidden``）、Bootstrap 的 ``modal-open``、各种 ``body.collapsed``。若让根
+    元素满足 ``_class_marks_collapsed_overlay`` / ``_class_marks_leaving``，整个
+    文档都会被当成「闭合浮层挂载点」而剪光（见 ``in_collapsed_overlay_portal``）。
+
+    2026-10-04 顺丰校招简历页实测：``<body class="el-popup-parent--hidden">`` 让
+    ``in_collapsed_overlay_portal(#app)`` 返回 True，整页 358 个可见可交互元素
+    被剪到只剩合成的整页滚动条（工具只报「可互动元素 1 个」）；豁免根元素后恢复
+    到 122 个（视口差异），「城市选择」对话框与「出生日期」日历均正常暴露。全历史
+    1696 份日志扫描还发现 ``body.collapsed … modal-open__generic-modal-block``
+    同属此族。根元素永远不可能是浮动浮层，故所有「按 class 判折叠/离场浮层」的
+    谓词都必须先排除它。
+    """
+    return node.tag in ("html", "body")
+
+
 def _class_marks_leaving(node: "EnhancedNode") -> bool:
     """True if ``node`` is a floating overlay carrying a leave/closing hook class.
 
@@ -58,6 +80,8 @@ def _class_marks_leaving(node: "EnhancedNode") -> bool:
     """
     if not node.is_element:
         return False
+    if _is_document_root(node):  # BID071 文档根是全局状态（滚动锁/布局态），不是浮层
+        return False  # BID071
     classes = (node.attributes.get("class") or "").lower()
     role = (node.role or "").lower()
     is_overlay = role in _OVERLAY_ROLES or any(
@@ -641,6 +665,8 @@ def _class_marks_collapsed_overlay(node: "EnhancedNode") -> bool:
     """
     if not node.is_element:
         return False
+    if _is_document_root(node):  # BID071 文档根是全局状态（滚动锁/布局态），不是浮层
+        return False  # BID071
     raw = f"{node.attributes.get('class', '')} {node.attributes.get('id', '')}".lower()
     if not raw.strip():
         return False
