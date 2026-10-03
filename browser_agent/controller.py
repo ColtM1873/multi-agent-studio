@@ -453,7 +453,9 @@ class BrowserController:
         # 一段正在进行的 DOM 抓取/序列化之后被饿死（而抓取本身又是慢的根源）。
         if self.client is not None:
             try:
-                self.client.refresh_targets()
+                self.client.refresh_targets(timeout=timing.get().cdp.probe_timeout)  # BID066
+                # 上面用「短超时」探测连接健康：陈旧/半开连接最多卡 probe_timeout 就重连，  # BID066
+                # 而不是沿用 command_timeout（30s）导致空闲后首个浏览器工具卡满 30s。  # BID066
                 bid065_trace.mark_elapsed("controller.ensure_connected 快速路径", _bid065_t0)  # BID065
                 return
             except Exception:
@@ -468,7 +470,7 @@ class BrowserController:
             # 双重检查：等锁期间别的线程可能已经建好了连接。
             if self.client is not None:
                 try:
-                    self.client.refresh_targets()
+                    self.client.refresh_targets(timeout=timing.get().cdp.probe_timeout)  # BID066
                     bid065_trace.mark_elapsed("controller.ensure_connected 锁内快速路径", _bid065_t0)  # BID065
                     return
                 except Exception:
@@ -478,8 +480,9 @@ class BrowserController:
                         pass
                     self.client = None
 
+            _bid065_ensure_t0 = bid065_trace.perf()  # BID066: ensure_browser 单独计时，避免把前置健康探测耗时刻进来造成误判
             info = self.launcher.ensure_browser()
-            bid065_trace.mark_elapsed("controller.ensure_connected ensure_browser", _bid065_t0)  # BID065
+            bid065_trace.mark_elapsed("controller.ensure_connected ensure_browser", _bid065_ensure_t0)  # BID066
             self.client = CDPClient(
                 info["ws_url"], command_timeout=timing.get().cdp.command_timeout
             )

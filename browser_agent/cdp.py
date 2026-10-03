@@ -126,8 +126,8 @@ class CDPClient:
     # ------------------------------------------------------------------ #
     # targets / sessions
     # ------------------------------------------------------------------ #
-    def refresh_targets(self) -> dict[str, dict]:
-        result = self.send("Target.getTargets")
+    def refresh_targets(self, timeout: Optional[float] = None) -> dict[str, dict]:
+        result = self.send("Target.getTargets", timeout=timeout)  # BID066
         for info in result.get("targetInfos", []):
             self._targets[info["targetId"]] = info
         return dict(self._targets)
@@ -225,6 +225,11 @@ class CDPClient:
         while not self._closed:
             try:
                 raw = self._ws.recv()
+            except websocket.WebSocketTimeoutException:  # BID066
+                # 空闲期没有 CDP 事件时 recv 会按 socket 超时抛错；这不代表连接已断。  # BID066
+                # 若在此退出读线程，之后第一个命令会无人应答并阻塞满 command_timeout  # BID066
+                # （曾表现为「空闲后首个浏览器工具卡 ~30s」），故超时后继续等待。  # BID066
+                continue  # BID066
             except Exception:
                 if not self._closed:
                     self._closed = True
