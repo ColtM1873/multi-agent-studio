@@ -1093,6 +1093,13 @@ class DOMSerializer:
             return
 
         if self._is_text_block(child):
+            if self._is_placeholder_text_block(child):  # BID070
+                # 一个表单控件的占位文本（``请选择`` / ``Select`` …）在该控件被禁用
+                # / 状态改变后会被组件库渲染成独立文本。把它当裸 ``[文本]`` 输出会
+                # 与现实状态自相矛盾——勾选好的「至今」旁紧挨一行「请选择」，让人
+                # 以为结束时间未设置（BID070）。控件本身（或其同族状态元素）已用
+                # ``<可点击元素>`` 标注，这里直接丢弃这段占位文本。
+                return  # BID070
             self._flush(depth)
             self._group(child, depth, "[文本]", clip)
             return
@@ -1660,6 +1667,53 @@ class DOMSerializer:
         if self._has_blockish_descendant(node):
             return False
         return True
+
+    # 本函数于BID070引入
+    @staticmethod
+    def _has_placeholder_token(node: EnhancedNode) -> bool:
+        """节点自身的 class/id 是否表明它是一个「占位」元素。"""
+        raw = (
+            f"{node.attributes.get('class', '')} {node.attributes.get('id', '')}"
+        ).lower()
+        raw = raw.replace("_", "").replace("-", "")
+        return "placeholder" in raw
+
+    # 本函数于BID070引入
+    def _is_placeholder_text_block(self, node: EnhancedNode) -> bool:
+        """True 若该文本块的全部可见文本都来自占位元素。
+
+        被禁用的表单控件（或状态改变后的日期框）会把占位文本（``请选择`` /
+        ``Select`` …）漏成独立文本；它不代表任何真实值，且与同族状态控件相矛盾。
+        仅当本节点自身是占位元素、或除去占位子树后没有任何文本时才判定为真——
+        带真实文本的容器不受影响（BID070）。
+        """
+        if self._has_placeholder_token(node):
+            return True
+        if not self._collect_text(node):
+            return False
+        return not self._collect_text_skip_placeholder(node).strip()
+
+    # 本函数于BID070引入
+    def _collect_text_skip_placeholder(self, node: EnhancedNode) -> str:
+        """收集文本，但跳过占位元素子树（用于识别「只有占位文本」的块）。"""
+        parts: list[str] = []
+        for child in node.children:
+            if child.is_text:
+                parts.append(child.text or "")
+                continue
+            if not child.is_element:
+                nested = self._collect_text_skip_placeholder(child)
+                if nested:
+                    parts.append(nested)
+                continue
+            if child.hidden or not child.rendered:
+                continue
+            if self._has_placeholder_token(child):
+                continue
+            nested = self._collect_text_skip_placeholder(child)
+            if nested:
+                parts.append(nested)
+        return " ".join(" ".join(parts).split())
 
     def _has_blockish_descendant(self, node: EnhancedNode) -> bool:
         for child in node.children:
@@ -2818,6 +2872,16 @@ class DOMSerializer:
                 branch = branch.parent
                 hops += 1
             return None
+        # 原生 checkbox/radio：组件库常由「包装器 / 兄弟图标」渲染勾选态（Ant
+        # ``ant-checkbox-checked``、Element ``is-checked``、Beisen
+        # ``phoenix-checkbox__realInput--checked``），而无障碍树的 ``checked``
+        # 实测会滞后一帧（BID070：同一帧 DOM 已是 ``--checked``，AX 仍为 False，
+        # 于是勾选好的「至今」没打上 ``[已选]``）。因此先看同帧 DOM 的明确信号；
+        # 无法从 DOM 判定时才回退到 AX。
+        if self._is_choice_input(node):  # BID070
+            dom_state = self._choice_input_dom_state(node)  # BID070
+            if dom_state is not None:  # BID070
+                return dom_state  # BID070
         if node.selected is not None:
             return node.selected
         for attr in ("aria-checked", "aria-selected", "aria-pressed"):
@@ -2855,6 +2919,89 @@ class DOMSerializer:
             if self._class_has_selection_token(child):
                 return True
             if self._subtree_has_selection(child, depth - 1):
+                return True
+        return False
+
+    # 组件库把 checkbox/radio 的勾选态渲染成一个「指示器」子/兄弟元素
+    # （Ant ``…-inner``、Element ``…__inner``、Beisen ``…__realInput``）。当这个
+    # 指示器存在、却没有任何勾选 class 时，可判定为「未勾选」——因为这类控件的
+    # 状态**必然**记录在指示器的 class 上（BID070）。只对**组件自绘**的勾选包装器
+    # 成立：包装器 class 必须带 checkbox/radio/switch 语义，否则普通的
+    # ``…-inner`` 布局容器会被误判为「未勾选」。
+    _CHECK_INDICATOR_TOKENS = ("inner", "indicator", "realinput", "tick", "checkmark")
+    _CHOICE_WRAPPER_TOKENS = ("checkbox", "radio", "switch", "check", "choice")
+
+    # 本函数于BID070引入
+    def _is_choice_wrapper(self, node: EnhancedNode) -> bool:
+        """节点是否是组件自绘的 checkbox/radio 包装器（决定 DOM 状态是否权威）。"""
+        classes = (node.attributes.get("class") or "").lower()
+        if any(tok in classes for tok in self._CHOICE_WRAPPER_TOKENS):
+            return True
+        return (node.role or "").lower() in ("checkbox", "radio", "switch")
+
+    # 本函数于BID070引入
+    def _choice_input_dom_state(self, node: EnhancedNode) -> Optional[bool]:
+        """从同帧 DOM（class / ``checked`` 属性）判定原生 checkbox/radio 状态。
+
+        返回 ``True``（勾选）/``False``（未勾选）/``None``（DOM 无状态表示，交回
+        AX）。沿祖先链（≤3 跳）找勾选 class 或指示器，覆盖状态挂在包装器自身
+        （Ant/Element）或挂在兄弟图标（Beisen）两类形态。只看 DOM、不读 AX，
+        以避开无障碍树的滞后（BID070）。
+        """
+        if "checked" in node.attributes:
+            return True
+        # 只扫描「直接包装器」的子树：勾选态要么挂在包装器自身、要么挂在它的
+        # 兄弟指示器上。往上放宽到兄弟组会误把「同组另一个已勾选控件」当成自己
+        # 已勾选，所以更高层只看祖先自身的 class（Ant ``…-wrapper-checked``）。
+        parent = node.parent
+        if parent is not None and parent.is_element:
+            if self._class_has_selection_token(parent) or self._dom_subtree_has_selection(
+                parent, depth=3
+            ):
+                return True
+            if self._is_choice_wrapper(parent) and self._dom_subtree_has_check_indicator(
+                parent, exclude=node, depth=3
+            ):
+                return False
+        branch = parent.parent if parent is not None else None
+        hops = 0
+        while branch is not None and branch.is_element and hops < 3:
+            if self._class_has_selection_token(branch):
+                return True
+            branch = branch.parent
+            hops += 1
+        return None
+
+    # 本函数于BID070引入
+    def _dom_subtree_has_selection(self, node: EnhancedNode, depth: int) -> bool:
+        """DOM-only: 子树内是否存在勾选 class 或 ``checked`` 属性（不读 AX）。"""
+        if depth < 0:
+            return False
+        for child in node.children:
+            if child.is_text or not child.is_element:
+                continue
+            if child.tag == "input" and "checked" in child.attributes:
+                return True
+            if self._class_has_selection_token(child):
+                return True
+            if self._dom_subtree_has_selection(child, depth - 1):
+                return True
+        return False
+
+    # 本函数于BID070引入
+    def _dom_subtree_has_check_indicator(
+        self, node: EnhancedNode, exclude: EnhancedNode, depth: int
+    ) -> bool:
+        """DOM-only: 子树内是否存在勾选「指示器」元素（排除该 input 自身）。"""
+        if depth < 0:
+            return False
+        for child in node.children:
+            if child is exclude or child.is_text or not child.is_element:
+                continue
+            classes = (child.attributes.get("class") or "").lower()
+            if any(tok in classes for tok in self._CHECK_INDICATOR_TOKENS):
+                return True
+            if self._dom_subtree_has_check_indicator(child, exclude, depth - 1):
                 return True
         return False
 
