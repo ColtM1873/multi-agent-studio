@@ -1088,6 +1088,51 @@ def has_usable_text_input(node: EnhancedNode) -> bool:
     return result
 
 
+#本函数于BID069引入
+def _contains_open_picker_panel(node: EnhancedNode, max_nodes: int = 800) -> bool:
+    """True if ``node`` currently holds a *visible* date / calendar picker panel.
+
+    A picker's click-to-open **trigger** (Feishu
+    ``atsx-date-picker-period-month``) carries only value parts and a hidden
+    input; the popped-up **panel** (a month / year / day grid) is mounted
+    elsewhere. Some libraries instead nest the panel inside the component root
+    (Beisen Phoenix renders ``div.phoenix-date-picker`` → ``…-calendar-month-panel``
+    → the 4x3 month table), so that root must not be mistaken for the trigger —
+    doing so collapsed the whole grid into one opaque, un-clickable line and the
+    model could not pick a month at all.
+
+    Only **visible** element descendants count and the walk is bounded, so a
+    *closed* (hidden / not laid out) panel never disqualifies a genuine trigger.
+    A descendant qualifies as panel content when it is panel-ish (a panel /
+    dropdown / overlay token, a ``role=grid`` or a ``<table>``) **and** is part
+    of a recognised picker component (named marker or generic
+    date/calendar + container combo).
+    """
+    stack = list(node.children)
+    seen = 0
+    while stack and seen < max_nodes:
+        cur = stack.pop()
+        seen += 1
+        if not cur.is_element or cur.hidden or not cur.visible:
+            continue
+        if not cur.bbox or cur.bbox[2] <= 1 or cur.bbox[3] <= 1:
+            continue
+        raw = _class_id_text(cur)
+        # Strong panel shapes only: a bare "list" / "menu" token is too common to
+        # disqualify a trigger, so the weak ``_PICKER_PANEL_TOKENS`` members are
+        # deliberately excluded here; a calendar grid is a panel / dropdown /
+        # overlay container, a ``role=grid`` or a ``<table>``.
+        panelish = (
+            _has_token(raw, ("panel", "dropdown", "popup", "popper", "overlay"))
+            or (cur.role or "").lower() == "grid"
+            or cur.tag == "table"
+        )
+        if panelish and (_is_named_picker_shell(cur) or _is_generic_picker_shell(cur)):
+            return True
+        stack.extend(cur.children)
+    return False
+
+
 def is_picker_shell_trigger(node: EnhancedNode) -> bool:
     """True for a click-to-open picker shell that has **no usable text entry**.
 
@@ -1119,6 +1164,15 @@ def is_picker_shell_trigger(node: EnhancedNode) -> bool:
             _is_generic_picker_shell(node) and _has_picker_indicator_in_shell(node)
         ):
             return False
+        if _contains_open_picker_panel(node):  # BID069
+            # A date / month / year picker's popped-up **panel** is the open
+            # content itself, not the click-to-open trigger. Beisen Phoenix nests
+            # the whole month grid inside ``div.phoenix-date-picker`` whose only
+            # input is a *disabled* helper; when that helper has no laid-out box
+            # (``has_usable_text_input`` flips false on the first frame) this root
+            # was taken for a trigger and the serializer collapsed the entire
+            # panel into one opaque line — no month cell / arrow / 本月 to click.
+            return False  # BID069
         # Only the **outermost** element that spells a picker component is the
         # widget: Ant Design names every part ``ant-picker-…``, so ``-input`` /
         # ``-suffix`` / ``-separator`` / ``-header`` / ``-body`` / ``-panel`` all
@@ -1232,24 +1286,34 @@ def is_date_picker_input(node: EnhancedNode) -> bool:
     return _picker_shell(node)
 
 
-def _in_picker_panel(node: EnhancedNode, max_hops: int = 8) -> bool:
+def _in_picker_panel(node: EnhancedNode, max_hops: int = 12) -> bool:  # BID069
     """True if an ancestor within ``max_hops`` is a picker's popped-up *panel*.
 
     A picker panel is the **content** that floats open under a date / calendar
     widget: it is a known picker component *and* a panel-ish part (``…-panel`` /
     ``…-dropdown`` / ``…-table`` …). The trigger shell never carries a panel
     token, so this deliberately excludes the control itself.
+
+    The component marker and the panel token need **not** sit on the same
+    ancestor: Beisen Phoenix renders ``div.phoenix-date-picker`` (marker
+    ``phoenix-date`` / ``date-picker``) wrapping ``…-calendar-month-panel``
+    (token ``panel``), so both are collected independently anywhere along the
+    chain — otherwise every Phoenix month cell / nav arrow was missed and only
+    survived by accident through the ``cursor:pointer`` branch. #BID069
     """
+    panelish = False  # BID069
+    component_seen = False  # BID069
     for ancestor, _branch in _iter_picker_shells(node, max_hops):
         if not ancestor.is_element:
             continue
         raw = _class_id_text(ancestor)
-        # Check the cheap "panel" token first so the (larger) component-marker
-        # scan only runs on candidates that can possibly be a panel.
-        if _has_token(raw, _PICKER_PANEL_TOKENS) and any(
-            marker in raw for marker in _PICKER_COMPONENT_MARKERS
-        ):
-            return True
+        # Cheap "panel" token first; the (larger) component scan stays bounded.
+        if _has_token(raw, _PICKER_PANEL_TOKENS):
+            panelish = True  # BID069
+        if _is_named_picker_shell(ancestor) or _is_generic_picker_shell(ancestor):  # BID069
+            component_seen = True  # BID069
+        if panelish and component_seen:  # BID069
+            return True  # BID069
     return False
 
 

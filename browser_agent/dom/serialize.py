@@ -2514,17 +2514,26 @@ class DOMSerializer:
             else:
                 key = "super-next" if double else "next"
             return _CALENDAR_NAV_LABELS.get(key, "")
-        if not words:
-            return ""
-        last = words[-1]
-        if last not in ("prev", "previous", "next"):
-            return ""
-        key = last
-        if len(words) >= 2 and words[-2] in _QUALIFIER_HINTS:
-            key = f"{words[-2]}-{last}"
-        if in_calendar:
-            return _CALENDAR_NAV_LABELS.get(key, "")
-        return _GENERAL_NAV_LABELS.get(key, "")
+        # ``prev`` / ``next`` may appear *before* the step unit (Beisen Phoenix
+        # ``phoenix-calendar-prev-year-btn`` → trimmed ``prev-year-btn``) as well
+        # as after it (AntD ``super-prev-btn``). Read the direction and its unit
+        # independently so the panel nav reads ``上一年`` / ``下一月`` instead of
+        # leaking the raw class token (``prev-year-btn``). #BID069
+        direction = next(  # BID069
+            (word for word in words if word in ("prev", "previous", "next")),  # BID069
+            None,  # BID069
+        )  # BID069
+        if direction is None:  # BID069
+            return ""  # BID069
+        key = "prev" if direction in ("prev", "previous") else "next"  # BID069
+        year_step = any(word == "year" for word in words) or any(  # BID069
+            part in ("super", "double", "d", "decade") for part in raw_parts  # BID069
+        )  # BID069
+        if year_step:  # BID069
+            key = f"super-{key}"  # BID069
+        if in_calendar:  # BID069
+            return _CALENDAR_NAV_LABELS.get(key, "")  # BID069
+        return _GENERAL_NAV_LABELS.get(key, "")  # BID069
 
     @staticmethod
     def _is_semantic_token(token: str) -> bool:
