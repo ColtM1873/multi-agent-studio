@@ -13,6 +13,8 @@ from typing import Any
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.types import Command
 
+from browser_agent import bid065_trace  # BID065
+
 Emit = Callable[[dict[str, Any]], Awaitable[None]]
 InterruptHandler = Callable[[str], Awaitable[str]]
 
@@ -252,6 +254,7 @@ async def _consume_values(
                         elif block.get("type") == "reasoning":
                             parts.append(f"[reasoning: {str(block.get('reasoning', ''))[:200]}...]")
                 content = "\n\n".join(parts)
+            bid065_trace.mark(f"emit tool_result name={getattr(last, 'name', 'unknown')}")  # BID065
             await emit(
                 {
                     "type": "tool_result",
@@ -271,6 +274,7 @@ async def _consume_values(
                 tid = tc.get("id", "")
                 if tid and tid not in seen_tool_ids:
                     seen_tool_ids.add(tid)
+                    bid065_trace.mark(f"emit tool_call name={tc.get('name', '?')}")  # BID065
                     await emit(
                         {
                             "type": "tool_call",

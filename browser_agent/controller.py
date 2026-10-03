@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from . import debug, timing
+from . import bid065_trace  # BID065
 from .actions import (
     ActionError,
     ActionExecutor,
@@ -446,11 +447,14 @@ class BrowserController:
     # connection
     # ------------------------------------------------------------------ #
     def ensure_connected(self) -> None:
+        _bid065_t0 = bid065_trace.perf()  # BID065
+        bid065_trace.mark("controller.ensure_connected START")  # BID065
         # 快速路径：已连接且健康。**不参与 _op_lock**——否则「打开浏览器」会排队在
         # 一段正在进行的 DOM 抓取/序列化之后被饿死（而抓取本身又是慢的根源）。
         if self.client is not None:
             try:
                 self.client.refresh_targets()
+                bid065_trace.mark_elapsed("controller.ensure_connected 快速路径", _bid065_t0)  # BID065
                 return
             except Exception:
                 try:
@@ -465,6 +469,7 @@ class BrowserController:
             if self.client is not None:
                 try:
                     self.client.refresh_targets()
+                    bid065_trace.mark_elapsed("controller.ensure_connected 锁内快速路径", _bid065_t0)  # BID065
                     return
                 except Exception:
                     try:
@@ -474,6 +479,7 @@ class BrowserController:
                     self.client = None
 
             info = self.launcher.ensure_browser()
+            bid065_trace.mark_elapsed("controller.ensure_connected ensure_browser", _bid065_t0)  # BID065
             self.client = CDPClient(
                 info["ws_url"], command_timeout=timing.get().cdp.command_timeout
             )
@@ -482,6 +488,7 @@ class BrowserController:
             except CDPError:
                 pass
             self.client.refresh_targets()
+            bid065_trace.mark_elapsed("controller.ensure_connected TOTAL(重建)", _bid065_t0)  # BID065
 
     # ------------------------------------------------------------------ #
     # tabs
@@ -493,8 +500,10 @@ class BrowserController:
 
     def _live_targets(self) -> list[dict]:
         """Page targets, with the tab registry reconciled against them."""
+        _bid065_t0 = bid065_trace.perf()  # BID065
         targets = self._page_targets()
         self._tab_registry.reconcile(targets)
+        bid065_trace.mark_elapsed("controller._live_targets", _bid065_t0)  # BID065
         return targets
 
     def _name_for_target(self, target_id: str) -> str:
@@ -507,11 +516,16 @@ class BrowserController:
         return self._tab_registry.names(self._live_targets())
 
     def tab_url_map(self) -> dict:
+        _bid065_t0 = bid065_trace.perf()  # BID065
+        bid065_trace.mark("controller.tab_url_map START")  # BID065
         try:
             self.ensure_connected()
+            bid065_trace.mark_elapsed("controller.tab_url_map ensure_connected", _bid065_t0)  # BID065
+            result = self._tab_registry.url_map(self._live_targets())
         except (BrowserLaunchError, CDPError):
-            return {}
-        return self._tab_registry.url_map(self._live_targets())
+            result = {}
+        bid065_trace.mark_elapsed("controller.tab_url_map TOTAL", _bid065_t0)  # BID065
+        return result
 
     def focused_tab_label(self) -> str:
         target_id = self._resolve_focused_target()
@@ -573,10 +587,13 @@ class BrowserController:
         selection is authoritative and this probe is never used to override it.
         """
         assert self.client is not None
+        _bid065_t0 = bid065_trace.perf()  # BID065
+        bid065_trace.mark("controller._probe_focused_target START")  # BID065
         visible: list[str] = []
         focused: list[str] = []
         for target in self._page_targets():
             target_id = target["targetId"]
+            _bid065_pt = bid065_trace.perf()  # BID065
             try:
                 session = self.client.attach(target_id)
                 self.client.enable_page_domains(session)
@@ -591,17 +608,22 @@ class BrowserController:
                 )
                 value = str((result.get("result") or {}).get("value") or "")
             except Exception:
+                bid065_trace.mark_elapsed(f"controller._probe_focused_target probe异常 {target_id}", _bid065_pt)  # BID065
                 continue
+            bid065_trace.mark_elapsed(f"controller._probe_focused_target probe {target_id}", _bid065_pt)  # BID065
             state, _, focus = value.partition("|")
             if state == "visible":
                 visible.append(target_id)
             if focus == "true":
                 focused.append(target_id)
         if focused:
-            return focused[0]
-        if visible:
-            return visible[0]
-        return None
+            result = focused[0]
+        elif visible:
+            result = visible[0]
+        else:
+            result = None
+        bid065_trace.mark_elapsed("controller._probe_focused_target TOTAL", _bid065_t0)  # BID065
+        return result
 
     def _await_opened_tabs(self, old_target_ids: set, timeout: Optional[float] = None) -> list:
         """Poll briefly for page tabs opened since ``old_target_ids``.
@@ -635,18 +657,24 @@ class BrowserController:
         Only when there is no live explicit selection do we adopt the human's
         active tab, then fall back to the first target.
         """
+        _bid065_t0 = bid065_trace.perf()  # BID065
+        bid065_trace.mark("controller._resolve_focused_target START")  # BID065
         targets = self._page_targets()
         if not targets:
+            bid065_trace.mark_elapsed("controller._resolve_focused_target 无标签页", _bid065_t0)  # BID065
             return None
         if self.focused_target_id and any(
             t["targetId"] == self.focused_target_id for t in targets
         ):
+            bid065_trace.mark_elapsed("controller._resolve_focused_target 命中已选", _bid065_t0)  # BID065
             return self.focused_target_id
         probed = self._probe_focused_target()
         if probed is not None:
             self.focused_target_id = probed
+            bid065_trace.mark_elapsed("controller._resolve_focused_target 探测", _bid065_t0)  # BID065
             return probed
         self.focused_target_id = targets[0]["targetId"]
+        bid065_trace.mark_elapsed("controller._resolve_focused_target 回退首个", _bid065_t0)  # BID065
         return self.focused_target_id
 
     def _activate_target(self, target_id: str) -> bool:
@@ -682,6 +710,8 @@ class BrowserController:
         return self._registries[target_id]
 
     def capture_tree(self, target_id: Optional[str] = None) -> EnhancedTree:
+        _bid065_t0 = bid065_trace.perf()  # BID065
+        bid065_trace.mark("controller.capture_tree START")  # BID065
         self.ensure_connected()
         assert self.client is not None
         if target_id is None:
@@ -690,7 +720,9 @@ class BrowserController:
             raise RuntimeError(rp.NO_TABS)
         session = self.client.attach(target_id)
         self.client.enable_page_domains(session)
+        _bid065_cap = bid065_trace.perf()  # BID065
         raw = capture_raw(self.client, session)
+        bid065_trace.mark_elapsed("controller.capture_tree capture_raw", _bid065_cap)  # BID065
         tree = build_enhanced_tree(raw)
         registry = self._registry_for(target_id)
         registry.reconcile(tree)
@@ -701,11 +733,15 @@ class BrowserController:
             raw_html = read_outer_html(self.client, session)
             processed = self.serialize_tree(tree, target_id)
             debug.record_dom(raw_html, processed, tree.url, tree.title)
+        bid065_trace.mark_elapsed("controller.capture_tree TOTAL", _bid065_t0)  # BID065
         return tree
 
     def serialize_tree(self, tree: EnhancedTree, target_id: str) -> str:
+        _bid065_t0 = bid065_trace.perf()  # BID065
         registry = self._registry_for(target_id)
-        return DOMSerializer(registry).serialize(tree)
+        result = DOMSerializer(registry).serialize(tree)
+        bid065_trace.mark_elapsed("controller.serialize_tree", _bid065_t0)  # BID065
+        return result
 
     def serialize_lines_tree(self, tree: EnhancedTree, target_id: str) -> list[OutLine]:
         registry = self._registry_for(target_id)
@@ -900,7 +936,10 @@ class BrowserController:
         self, name: str, allowed: tuple
     ) -> tuple[Optional[_InteractContext], Optional[dict]]:
         """串行化入口：所有互动工具都经此持有全局浏览器锁。"""
+        _bid065_t0 = bid065_trace.perf()  # BID065
+        bid065_trace.mark(f"controller._begin_interaction 等待锁 {name}")  # BID065
         with self._op_lock:
+            bid065_trace.mark_elapsed(f"controller._begin_interaction 获取锁 {name}", _bid065_t0)  # BID065
             return self._begin_interaction_locked(name, allowed)
 
     def _begin_interaction_locked(
@@ -2300,11 +2339,16 @@ class BrowserController:
             return self._base_result(FULL, FAIL, rp.EMPTY_CONTENT, str(exc))
 
     def list_tabs(self) -> dict:
+        _bid065_t0 = bid065_trace.perf()  # BID065
+        bid065_trace.mark("controller.list_tabs START")  # BID065
         try:
             self.ensure_connected()
-            return {"tabs": self.tab_labels()}
+            bid065_trace.mark_elapsed("controller.list_tabs ensure_connected", _bid065_t0)  # BID065
+            result = {"tabs": self.tab_labels()}
         except (BrowserLaunchError, CDPError) as exc:
-            return {"tabs": [], "error": str(exc)}
+            result = {"tabs": [], "error": str(exc)}
+        bid065_trace.mark_elapsed("controller.list_tabs TOTAL", _bid065_t0)  # BID065
+        return result
 
     # ------------------------------------------------------------------ #
     # navigation / tab tools ( tool-3x)

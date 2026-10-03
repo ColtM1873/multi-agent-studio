@@ -30,6 +30,8 @@ from app.runtime.prompts import MEMORY_ATTACH_MARKER, USER_MSG_PREFIX, ReAct_sys
 from app.runtime.state_factory import make_main_state, make_sub_agent_state
 from app.services import snapshot as snapshot_service
 
+from browser_agent import bid065_trace  # BID065
+
 logger = logging.getLogger(__name__)
 
 SEARCH_MEMORY_THRESHOLD = 0.5
@@ -778,11 +780,14 @@ async def build_world(
         return {"messages": result}
 
     async def call_main_llm(state):
+        _bid065_t0 = bid065_trace.perf()  # BID065
+        bid065_trace.mark("node call_main_llm START")  # BID065
         existing = state.get("messages", [])
         subagent_call_prompt_here = subagent_call_prompt if sub_agent_dict else ""
         react_prompt = ReAct_system_prompt if main_spec.react_prompt else ""
         concate_sys_messages = [SystemMessage(content=main_system_prompt + "\n" + subagent_call_prompt_here + react_prompt)] + existing
         response = await main_model_with_tools.ainvoke(concate_sys_messages)
+        bid065_trace.mark_elapsed("node call_main_llm LLM调用", _bid065_t0)  # BID065
         return {"messages": [response]}
     
     async def query_to_proactive_summary(state):
@@ -930,6 +935,8 @@ async def build_world(
     )
 
     async def delegate_instructions(state):
+        _bid065_t0 = bid065_trace.perf()  # BID065
+        bid065_trace.mark("node delegate_instructions START")  # BID065
         instructions_for_subagents = {}
         instructions_ids = {}
         for agent_call in state["messages"][-1].tool_calls:
@@ -940,6 +947,7 @@ async def build_world(
             instructions_for_subagents[agent_name]["args"] = agent_call["args"]
             instructions_for_subagents[agent_name]["proactive_summary"] = False
             instructions_ids[agent_name] = agent_call["id"]
+        bid065_trace.mark_elapsed("node delegate_instructions END", _bid065_t0)  # BID065
         return {
             "instructions_for_subagents": instructions_for_subagents,
             "instructions_ids": instructions_ids,
@@ -1006,14 +1014,19 @@ async def build_world(
         return Command(goto=END)
 
     async def produce_html_call_llm(state):
+        _bid065_t0 = bid065_trace.perf()  # BID065
+        bid065_trace.mark("node produce_html_call_llm START")  # BID065
         existing = state.get("messages", [])
         subagent_call_prompt_here = subagent_call_prompt if sub_agent_dict else ""
         react_prompt = ReAct_system_prompt if main_spec.react_prompt else ""
         concate_sys_messages = [SystemMessage(content=main_system_prompt + "\n" + subagent_call_prompt_here + react_prompt)] + existing
         response = await main_model_with_tools.ainvoke(concate_sys_messages)
+        bid065_trace.mark_elapsed("node produce_html_call_llm LLM调用", _bid065_t0)  # BID065
         return {"messages": [response]}
 
     async def tool_node_front(state):
+        _bid065_node_t0 = bid065_trace.perf()  # BID065
+        bid065_trace.mark("node tool_node_front START")  # BID065
         result = []
         for tool_call in state["messages"][-1].tool_calls:
             tool_name = tool_call["name"]
@@ -1029,14 +1042,20 @@ async def build_world(
                 )
                 continue
             tool = main_nonagent_tools_by_name[tool_name]
+            _bid065_tc0 = bid065_trace.perf()  # BID065
+            bid065_trace.mark(f"tool START {tool_name}")  # BID065
             try:
                 observation = await tool.ainvoke(tool_call["args"])
                 result.append(ToolMessage(content=observation, tool_call_id=tool_call["id"], name=tool_name))
             except Exception as e:
                 result.append(ToolMessage(content=str(e), tool_call_id=tool_call["id"], name=tool_name))
+            bid065_trace.mark_elapsed(f"tool END {tool_name}", _bid065_tc0)  # BID065
+        bid065_trace.mark_elapsed("node tool_node_front END", _bid065_node_t0)  # BID065
         return {"messages": result}
 
     async def tool_node(state):
+        _bid065_node_t0 = bid065_trace.perf()  # BID065
+        bid065_trace.mark("node tool_node START")  # BID065
         result = []
         for tool_call in state["messages"][-1].tool_calls:
             tool_name = tool_call["name"]
@@ -1050,11 +1069,15 @@ async def build_world(
                 )
                 continue
             tool = main_nonagent_tools_by_name[tool_name]
+            _bid065_tc0 = bid065_trace.perf()  # BID065
+            bid065_trace.mark(f"tool START {tool_name}")  # BID065
             try:
                 observation = await tool.ainvoke(tool_call["args"])
                 result.append(ToolMessage(content=observation, tool_call_id=tool_call["id"], name=tool_name))
             except Exception as e:
                 result.append(ToolMessage(content=str(e), tool_call_id=tool_call["id"], name=tool_name))
+            bid065_trace.mark_elapsed(f"tool END {tool_name}", _bid065_tc0)  # BID065
+        bid065_trace.mark_elapsed("node tool_node END", _bid065_node_t0)  # BID065
         return {"messages": result}
 
     async def should_continue_main(state):

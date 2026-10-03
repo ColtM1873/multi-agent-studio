@@ -48,6 +48,16 @@ try:
 except Exception:
     pass
 
+# BID065: 浏览器工具 debug 开关下的细粒度时间戳探针（只在「浏览器工具debug」打开时写
+# browser_tools_timing.log）。发行版删除：连同所有行末 # BID065 的行一起移除。
+try:
+    from browser_agent import bid065_trace as _bid065_trace
+    from app.runtime.browser_tools_debug_log import _debug_enabled as _bid065_debug_enabled
+
+    _bid065_trace.set_provider(_bid065_debug_enabled)  # BID065
+except Exception:
+    pass
+
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
