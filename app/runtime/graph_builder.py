@@ -26,7 +26,12 @@ from app.runtime.file_tools import build_file_tools
 from app.runtime.deepseek_reasoning_fix import apply_deepseek_reasoning_fix, is_deepseek_config
 from app.runtime.browser_tools import return_browser_tools
 
-from app.runtime.prompts import MEMORY_ATTACH_MARKER, USER_MSG_PREFIX, ReAct_system_prompt, summary_prompt_generator, subagent_call_prompt, summary_prompt_prefix,trimmed_summary_prompt
+from app.runtime.prompts import (
+    MEMORY_ATTACH_MARKER, USER_MSG_PREFIX, 
+    ReAct_system_prompt, summary_prompt_generator, 
+    subagent_call_prompt, summary_prompt_prefix,trimmed_summary_prompt,
+    browser_tools_debug_phrase_prompt,
+)
 from app.runtime.state_factory import make_main_state, make_sub_agent_state
 from app.services import snapshot as snapshot_service
 
@@ -785,7 +790,8 @@ async def build_world(
         existing = state.get("messages", [])
         subagent_call_prompt_here = subagent_call_prompt if sub_agent_dict else ""
         react_prompt = ReAct_system_prompt if main_spec.react_prompt else ""
-        concate_sys_messages = [SystemMessage(content=main_system_prompt + "\n" + subagent_call_prompt_here + react_prompt)] + existing
+        browser_tools_debug_phrase_prompt_here = browser_tools_debug_phrase_prompt if main_spec.browser_takeover else ""
+        concate_sys_messages = [SystemMessage(content=main_system_prompt + "\n" + subagent_call_prompt_here + react_prompt + browser_tools_debug_phrase_prompt_here)] + existing
         response = await main_model_with_tools.ainvoke(concate_sys_messages)
         bid065_trace.mark_elapsed("node call_main_llm LLM调用", _bid065_t0)  # BID065
         return {"messages": [response]}
@@ -1019,7 +1025,8 @@ async def build_world(
         existing = state.get("messages", [])
         subagent_call_prompt_here = subagent_call_prompt if sub_agent_dict else ""
         react_prompt = ReAct_system_prompt if main_spec.react_prompt else ""
-        concate_sys_messages = [SystemMessage(content=main_system_prompt + "\n" + subagent_call_prompt_here + react_prompt)] + existing
+        browser_tools_debug_phrase_prompt_here = browser_tools_debug_phrase_prompt if main_spec.browser_takeover else ""
+        concate_sys_messages = [SystemMessage(content=main_system_prompt + "\n" + subagent_call_prompt_here + react_prompt + browser_tools_debug_phrase_prompt_here)] + existing
         response = await main_model_with_tools.ainvoke(concate_sys_messages)
         bid065_trace.mark_elapsed("node produce_html_call_llm LLM调用", _bid065_t0)  # BID065
         return {"messages": [response]}

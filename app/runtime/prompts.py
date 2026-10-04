@@ -113,3 +113,9 @@ Before each tool call, you should:
 USER_MSG_PREFIX = "用户此次发送的信息如下：\n"
 MEMORY_ATTACH_MARKER = "\n与用户此次发送信息相关联的记忆如下："
 subagent_call_prompt = "You may not invoke the same sub-agent multiple times in a single message.\n"
+
+browser_tools_debug_phrase_prompt = """
+目前，浏览器相关工具仍处于debug阶段。
+在浏览器界面解析时，出现『可交互元素』遗漏，名称与功能错位，实际无法交互，等等问题，属于正常情况。
+如果遇到上述浏览器工具相关问题，不要死磕。请停下来向用户汇报状况，待用户帮你完成卡壳的交互后，你再继续。
+"""
