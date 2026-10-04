@@ -110,6 +110,35 @@ if ($missingDeps) {
     }
 }
 
+# 校验桌面应用窗口运行时依赖（pywebview / pythonnet）；缺失会回退到默认浏览器
+$missingWebview = & "$PSScriptRoot\venv\Scripts\python.exe" -c "import importlib.util as u; print(','.join(m for m in ['webview','pythonnet'] if u.find_spec(m) is None))" 2>$null
+if ($missingWebview) {
+    Write-Host "       检测到缺失桌面窗口依赖 [$missingWebview]，正在补装..."
+    & "$PSScriptRoot\venv\Scripts\python.exe" -m pip install -r "$PSScriptRoot\requirements.txt" -i https://pypi.tuna.tsinghua.edu.cn/simple
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host '[警告] 桌面窗口依赖安装失败，程序将回退到默认浏览器。'
+    }
+}
+
+# 检测 Microsoft Edge WebView2 运行时（独立窗口的渲染内核）；缺失则回退默认浏览器
+$wv2 = @'
+import winreg, sys
+p = r"SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+for h in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+    try:
+        winreg.OpenKey(h, p)
+        print("1")
+        sys.exit()
+    except OSError:
+        pass
+print("0")
+'@ | & "$PSScriptRoot\venv\Scripts\python.exe" -
+if ($wv2 -ne '1') {
+    Write-Host '       [提示] 未检测到 Microsoft Edge WebView2 运行时，界面将回退到默认浏览器。'
+    Write-Host '             如需独立应用窗口，请安装 WebView2 Runtime：'
+    Write-Host '             https://developer.microsoft.com/microsoft-edge/webview2/'
+}
+
 # 系统级「停止/继续」悬浮按钮依赖标准库 tkinter（无法用 pip 安装）；缺失时仅警告
 & "$PSScriptRoot\venv\Scripts\python.exe" -c "import tkinter" 2>$null
 if ($LASTEXITCODE -ne 0) {

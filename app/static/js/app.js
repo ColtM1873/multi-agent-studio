@@ -134,6 +134,7 @@ const I18N_EN = {
   "发送键": "Send key",
   "发送，": "to send, ",
   "取消": "Cancel",
+  "返回": "Back",
   "本次Agent循环失败/被中断，是否将 原发送信息回填？": "This agent run failed or was interrupted. Restore the original sent message?",
   "回填": "Restore",
   "丢弃": "Discard",
@@ -260,6 +261,10 @@ const I18N_EN = {
   "显示隐藏multi-agent配置": "Show hidden multi-agent configs",
   "所有 multi-agent 配置均已隐藏": "All multi-agent configs are hidden",
   "Multi-Agent配置卡片 设置": "Multi-agent config card settings",
+  "导入本机设置": "Import local settings",
+  "已导入本机设置": "Local settings imported",
+  "导入失败：设置桥接未加载": "Import failed: settings bridge not loaded",
+  "将当前界面的本机设置（隐藏列表、卡片外观等）上传到后端保存，用于从旧浏览器迁移。确定继续？": "Upload this interface's local settings (hidden lists, card appearance, etc.) to the backend, for migrating from an old browser. Continue?",
   "调整主界面 multi-agent 卡片的按钮配色 / 样式、绶带与背景，仅本机生效。": "Adjust button colors/styles, ribbon and background of the home-screen multi-agent cards. Applies to this machine only.",
   "显示绶带": "Show ribbon",
   "按钮颜色": "Button colors",
@@ -2146,6 +2151,7 @@ async function openSettings() {
         <button class="btn small" id="setHtmlConfig" style="${s.export_html ? "" : "display:none;"}">${t("HTML 转换配置表")}</button>
         <button class="btn small" id="setBrowserDelay">${t("浏览器交互延迟设置")}</button>
         <button class="btn small" id="setToolResultDisplay">${t("工具调用结果显示设置")}</button>
+        <button class="btn small" id="setImportPrefs">${t("导入本机设置")}</button>
       </div>
       <div class="modal-actions" style="margin-top:10px;">
         <div class="spacer" style="flex:1;"></div>
@@ -2190,6 +2196,12 @@ async function openSettings() {
   mask.querySelector("#setHtmlConfig").onclick = () => { mask.remove(); openHtmlConfigSettings(); };
   mask.querySelector("#setBrowserDelay").onclick = () => { mask.remove(); openBrowserDelaySettings(); };
   mask.querySelector("#setToolResultDisplay").onclick = () => { mask.remove(); openToolResultDisplaySettings(); };
+  mask.querySelector("#setImportPrefs").onclick = async () => {
+    mask.remove();
+    if (typeof window.__importLocalPrefs !== "function") { toast(t("导入失败：设置桥接未加载"), true); return; }
+    if ((await askConfirm(t("将当前界面的本机设置（隐藏列表、卡片外观等）上传到后端保存，用于从旧浏览器迁移。确定继续？"))) !== "yes") return;
+    try { await window.__importLocalPrefs(); toast(t("已导入本机设置")); } catch (e) { toast(e.message, true); }
+  };
   mask.querySelector("#setSave").onclick = async () => {
     try {
       await saveSettings({
@@ -2503,12 +2515,12 @@ async function openAdvancedSettings() {
         <span class="sw-inline"><input type="number" id="adv_attach_threshold" min="0" max="1" step="0.05" value="${s.attach_memory_threshold ?? 0.7}"></span>
       </div>
       <div class="modal-actions">
-        <button class="btn" id="advCancel">${t("取消")}</button>
+        <button class="btn" id="advCancel">${t("返回")}</button>
         <button class="btn primary" id="advSave">${t("保存")}</button>
       </div>
     </div>`;
   document.body.appendChild(mask);
-  mask.querySelector("#advCancel").onclick = () => mask.remove();
+  mask.querySelector("#advCancel").onclick = () => { mask.remove(); openSettings(); };
   mask.querySelector("#advSave").onclick = async () => {
     try {
       const clamp01 = (v, def) => { const n = parseFloat(v); return Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : def; };
@@ -2566,7 +2578,7 @@ async function openGlobalPostgresSettings() {
       <div class="modal-actions">
         <button class="btn" id="gpClear">${t("清除全局设置")}</button>
         <div class="spacer" style="flex:1;"></div>
-        <button class="btn" id="gpCancel">${t("取消")}</button>
+        <button class="btn" id="gpCancel">${t("返回")}</button>
         <button class="btn primary" id="gpSave">${t("保存")}</button>
       </div>
     </div>`;
@@ -2665,11 +2677,11 @@ async function openGlobalPostgresSettings() {
   refreshGpExample();
 
   const close = () => mask.remove();
-  mask.querySelector("#gpCancel").onclick = close;
+  mask.querySelector("#gpCancel").onclick = () => { mask.remove(); openSettings(); };
   mask.addEventListener("click", (e) => { if (e.target === mask) close(); });
 
   mask.querySelector("#gpClear").onclick = async () => {
-    if (!(await askConfirm(t("确定清除全局 postgres 连接设置吗？清除后各 multi-agent 将恢复为单独填写的界面。")))) return;
+    if ((await askConfirm(t("确定清除全局 postgres 连接设置吗？清除后各 multi-agent 将恢复为单独填写的界面。"))) !== "yes") return;
     try {
       await saveSettings({ ...s, global_postgres_prefix: "", global_postgres_suffix: "", global_postgres_configured: true });
       close();
@@ -2744,7 +2756,7 @@ async function openGlobalEmbeddingSettings() {
       <div class="modal-actions">
         <button class="btn" id="gembClear">${t("清除全局设置")}</button>
         <div class="spacer" style="flex:1;"></div>
-        <button class="btn" id="gembCancel">${t("取消")}</button>
+        <button class="btn" id="gembCancel">${t("返回")}</button>
         <button class="btn primary" id="gembSave">${t("保存")}</button>
       </div>
     </div>`;
@@ -2756,7 +2768,7 @@ async function openGlobalEmbeddingSettings() {
   hfSel.onchange = () => { hfCustom.style.display = hfSel.value === "__custom__" ? "" : "none"; };
 
   const close = () => mask.remove();
-  mask.querySelector("#gembCancel").onclick = close;
+  mask.querySelector("#gembCancel").onclick = () => { mask.remove(); openSettings(); };
   mask.addEventListener("click", (e) => { if (e.target === mask) close(); });
 
   const collect = () => {
@@ -2774,7 +2786,7 @@ async function openGlobalEmbeddingSettings() {
   };
 
   mask.querySelector("#gembClear").onclick = async () => {
-    if (!(await askConfirm(t("确定清除全局 embedding 模型设置吗？清除后各 multi-agent 将恢复为单独填写的界面。")))) return;
+    if ((await askConfirm(t("确定清除全局 embedding 模型设置吗？清除后各 multi-agent 将恢复为单独填写的界面。"))) !== "yes") return;
     try {
       await saveSettings({ ...s, global_embedding: {}, global_embedding_configured: true });
       close();
@@ -2829,18 +2841,18 @@ async function openGlobalSummarySettings() {
       <div class="modal-actions">
         <button class="btn" id="gsumClear">${t("清除全局设置")}</button>
         <div class="spacer" style="flex:1;"></div>
-        <button class="btn" id="gsumCancel">${t("取消")}</button>
+        <button class="btn" id="gsumCancel">${t("返回")}</button>
         <button class="btn primary" id="gsumSave">${t("保存")}</button>
       </div>
     </div>`;
   document.body.appendChild(mask);
 
   const close = () => mask.remove();
-  mask.querySelector("#gsumCancel").onclick = close;
+  mask.querySelector("#gsumCancel").onclick = () => { mask.remove(); openSettings(); };
   mask.addEventListener("click", (e) => { if (e.target === mask) close(); });
 
   mask.querySelector("#gsumClear").onclick = async () => {
-    if (!(await askConfirm(t("确定清除全局总结设置吗？清除后各 multi-agent 将恢复为单独填写的界面。")))) return;
+    if ((await askConfirm(t("确定清除全局总结设置吗？清除后各 multi-agent 将恢复为单独填写的界面。"))) !== "yes") return;
     try {
       await saveSettings({
         ...s,
@@ -2892,13 +2904,13 @@ async function openColorSettings() {
       <div class="modal-actions">
         <button class="btn" id="colorReset">${t("恢复默认")}</button>
         <div class="spacer" style="flex:1;"></div>
-        <button class="btn" id="colorCancel">${t("取消")}</button>
+        <button class="btn" id="colorCancel">${t("返回")}</button>
         <button class="btn primary" id="colorSave">${t("保存")}</button>
       </div>
     </div>`;
   document.body.appendChild(mask);
 
-  mask.querySelector("#colorCancel").onclick = () => mask.remove();
+  mask.querySelector("#colorCancel").onclick = () => { mask.remove(); openSettings(); };
   mask.querySelector("#colorReset").onclick = () => {
     for (const f of COLOR_FIELDS) {
       localStorage.removeItem(f.key);
@@ -2979,12 +2991,12 @@ async function openCardSettings() {
         </div>
       </div>
       <div class="modal-actions">
-        <button class="btn" id="cardCancel">${t("取消")}</button>
+        <button class="btn" id="cardCancel">${t("返回")}</button>
         <button class="btn primary" id="cardSave">${t("保存")}</button>
       </div>
     </div>`;
   document.body.appendChild(mask);
-  mask.querySelector("#cardCancel").onclick = () => mask.remove();
+  mask.querySelector("#cardCancel").onclick = () => { mask.remove(); openSettings(); };
   mask.querySelectorAll("[data-reset]").forEach(btn => {
     btn.onclick = () => {
       const el = mask.querySelector("#" + btn.dataset.reset);
@@ -3037,7 +3049,7 @@ async function openHtmlConfigSettings() {
       <div class="modal-actions">
         <button class="btn" id="cfgReset">${t("恢复默认")}</button>
         <div class="spacer" style="flex:1;"></div>
-        <button class="btn" id="cfgCancel">${t("取消")}</button>
+        <button class="btn" id="cfgCancel">${t("返回")}</button>
         <button class="btn primary" id="cfgSave">${t("保存")}</button>
       </div>
     </div>`;
@@ -3052,7 +3064,7 @@ async function openHtmlConfigSettings() {
     return out;
   };
 
-  mask.querySelector("#cfgCancel").onclick = () => mask.remove();
+  mask.querySelector("#cfgCancel").onclick = () => { mask.remove(); openSettings(); };
   mask.querySelector("#cfgReset").onclick = () => {
     HTML_CFG_SCHEMA.forEach(sec => sec.items.forEach(it => {
       const el = mask.querySelector("#" + fid(it.p));
@@ -3113,7 +3125,7 @@ async function openBrowserDelaySettings() {
       <div class="modal-actions">
         <button class="btn" id="btReset">${t("恢复默认")}</button>
         <div class="spacer" style="flex:1;"></div>
-        <button class="btn" id="btCancel">${t("取消")}</button>
+        <button class="btn" id="btCancel">${t("返回")}</button>
         <button class="btn primary" id="btSave">${t("保存")}</button>
       </div>
     </div>`;
@@ -3138,7 +3150,7 @@ async function openBrowserDelaySettings() {
     return out;
   };
 
-  mask.querySelector("#btCancel").onclick = () => mask.remove();
+  mask.querySelector("#btCancel").onclick = () => { mask.remove(); openSettings(); };
   mask.querySelector("#btReset").onclick = () => {
     BROWSER_DELAY_SCHEMA.forEach(sec => sec.items.forEach(it => {
       const id = fid(it.p);
@@ -3195,7 +3207,7 @@ async function openToolResultDisplaySettings() {
       ${section("流式输出", "tool_result_stream_full", "tool_result_stream_max_lines", "tool_result_stream_max_chars", true, 0, 0)}
       ${section("查看历史消息", "tool_result_history_full", "tool_result_history_max_lines", "tool_result_history_max_chars", false, 50, 0)}
       <div class="modal-actions">
-        <button class="btn" id="trCancel">${t("取消")}</button>
+        <button class="btn" id="trCancel">${t("返回")}</button>
         <button class="btn primary" id="trSave">${t("保存")}</button>
       </div>
     </div>`;
@@ -3217,7 +3229,7 @@ async function openToolResultDisplaySettings() {
     return Number.isFinite(n) && n > 0 ? n : 0;
   };
 
-  mask.querySelector("#trCancel").onclick = () => mask.remove();
+  mask.querySelector("#trCancel").onclick = () => { mask.remove(); openSettings(); };
   mask.querySelector("#trSave").onclick = async () => {
     try {
       await saveSettings({

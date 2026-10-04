@@ -19,7 +19,7 @@ if sys.platform == "win32":
     except Exception:
         pass
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -36,6 +36,7 @@ from app.api import (
     settings,
     snapshots,
     threads,
+    ui_prefs,
 )
 from app.config.settings import (
     seed_global_embedding,
@@ -114,12 +115,33 @@ app.include_router(downloads.router)
 app.include_router(export_html.router)
 app.include_router(drafts.router)
 app.include_router(common_prompts.router)
+app.include_router(ui_prefs.router)
 app.include_router(browser.router)
 
 
 @app.get("/api/health")
 def health():
     return {"ok": True}
+
+
+@app.post("/api/focus")
+def focus(request: Request):
+    """把已运行的桌面窗口唤到前台（供重复双击 exe 的第二实例调用）。"""
+    shown = False
+    try:
+        import desktop_app
+
+        shown = desktop_app.show_window()
+    except Exception:
+        shown = False
+    if not shown:
+        try:
+            import webbrowser
+
+            webbrowser.open(str(request.base_url))
+        except Exception:
+            pass
+    return {"ok": shown, "app": "Multi-Agent Studio"}
 
 
 STATIC_DIR = __import__("pathlib").Path(__file__).resolve().parent / "static"

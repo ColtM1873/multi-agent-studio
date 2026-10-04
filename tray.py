@@ -3,12 +3,15 @@
 启动（无控制台）： pythonw tray.py
 或（有控制台调试）： python tray.py
 
-主线程跑 pystray（Windows 需主线程消息循环），uvicorn 跑在后台 daemon 线程。
+主线程跑桌面应用窗口（Edge WebView2 / pywebview 要求主线程 GUI 循环），
+pystray 以 detached 方式跑在后台线程，uvicorn 也跑在后台 daemon 线程。
+若 WebView2 / pywebview 不可用，则回退为「托盘 + 默认浏览器标签页」的旧模式。
 """
 
 from __future__ import annotations
 
 import asyncio
+import ctypes
 import os
 import selectors
 import sys
@@ -24,11 +27,14 @@ from uvicorn import Config, Server
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
+import desktop_app
+
 HOST = "127.0.0.1"
 PORT = 8000
 URL = f"http://{HOST}:{PORT}"
 
 _server: Server | None = None
+_stopped = threading.Event()
 
 
 def _redirect_std_streams() -> None:
@@ -61,16 +67,31 @@ def _run_server() -> None:
 
 
 def _open(_icon, _item) -> None:
+    if desktop_app.available() and desktop_app.show_window():
+        return
     webbrowser.open(URL)
 
 
 def _status(_icon, _item) -> None:
-    webbrowser.open(f"{URL}/api/health")
+    def _worker() -> None:
+        ok = _wait_for_server(URL, 1.5)
+        text = f"服务运行中：{URL}" if ok else f"服务未响应：{URL}"
+        try:
+            ctypes.windll.user32.MessageBoxW(0, text, "Multi-Agent Studio", 0x40 if ok else 0x30)
+        except Exception:
+            webbrowser.open(f"{URL}/api/health")
+
+    threading.Thread(target=_worker, daemon=True).start()
 
 
 def _quit(icon, _item) -> None:
     if _server is not None:
         _server.should_exit = True
+    try:
+        desktop_app.quit()
+    except Exception:
+        pass
+    _stopped.set()
     icon.stop()
 
 
@@ -112,17 +133,19 @@ def _open_browser_later(url: str, timeout: float = 30.0) -> None:
 
     def _open() -> None:
         _wait_for_server(url, timeout)
+        if _stopped.is_set():
+            return
         webbrowser.open(url)
 
     threading.Thread(target=_open, daemon=True).start()
 
 
 def _wait_for_server(url: str, timeout: float = 30.0) -> bool:
-    """轮询 /api/health 直到服务就绪或超时。"""
+    """轮询 /api/health 直到服务就绪、超时或用户已退出。"""
     import urllib.request
 
     deadline = time.time() + timeout
-    while time.time() < deadline:
+    while time.time() < deadline and not _stopped.is_set():
         try:
             with urllib.request.urlopen(f"{url}/api/health", timeout=1.0) as resp:
                 if resp.status == 200:
@@ -139,8 +162,6 @@ def main() -> None:
     server_thread = threading.Thread(target=_run_server, daemon=True, name="uvicorn")
     server_thread.start()
 
-    _open_browser_later(URL, 30.0)
-
     download_item = pystray.MenuItem("下载模型：就绪", None, enabled=False)
     icon = pystray.Icon(
         "multi_agent_studio",
@@ -155,7 +176,29 @@ def main() -> None:
     )
 
     threading.Thread(target=_update_download_menu, args=(icon, download_item), daemon=True).start()
-    icon.run()
+
+    if not desktop_app.available():
+        _open_browser_later(URL, 30.0)
+        icon.run()
+        return
+
+    icon.run_detached()
+    _wait_for_server(URL, 30.0)
+    if _stopped.is_set():
+        return
+    try:
+        desktop_app.create_main_window(URL)
+        desktop_app.start()
+    except Exception as exc:
+        print(f"[tray] 桌面窗口启动失败，回退到默认浏览器：{exc}", flush=True)
+        if not _stopped.is_set():
+            webbrowser.open(URL)
+        _stopped.wait()
+    finally:
+        try:
+            icon.stop()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
