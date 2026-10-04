@@ -149,10 +149,20 @@ html[data-style-danger="solid"] .card-btn-danger:hover { filter: brightness(.92)
   box-shadow: var(--shadow);
 }
 .form-card h4 { margin: 0 0 16px; font-size: 16px; display: flex; align-items: center; gap: 8px; }
-.form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
+.form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); gap: 14px; }
 .field { display: flex; flex-direction: column; gap: 5px; }
 .field.full { grid-column: 1 / -1; }
-.field label { font-size: 13px; color: var(--text-muted); font-weight: 500; }
+.field label {
+  font-size: 13px; color: var(--text-muted); font-weight: 500;
+  /* 标题较长换行时：信息图标仍固定在同一行（不单独换到下一行），
+     且标题吸收本网格行的多余高度，使同一行内各字段的控件底部对齐，
+     避免「标题换行 → 输入框下沉一格」。 */
+  flex: 1 1 auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+.field label > .info-icon { margin-top: 2px; }
 .field input, .field textarea, .field select {
   border: 1px solid var(--border);
   border-radius: 9px;
@@ -414,6 +424,21 @@ html[data-style-danger="solid"] .card-btn-danger:hover { filter: brightness(.92)
 }
 .info-icon .tip.tip-left { left: auto; right: calc(100% + 16px); }
 .info-icon.show .tip { display: block; }
+
+/* ── 全局设置「使用全局…」行 + 展开说明小三角 ─ */
+.global-toggle-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.global-toggle-row label { margin: 0; flex: 0 0 auto; }
+.exp-tri {
+  width: 0; height: 0;
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+  border-left: 8px solid #000;
+  display: inline-block; flex-shrink: 0; cursor: pointer;
+  vertical-align: middle;
+  transition: transform .15s ease;
+  transform-origin: 50% 50%;
+}
+.exp-tri.open { transform: rotate(90deg); }
 
 /* ── 状态点 ─────────────────────────────── */
 .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex-shrink: 0; cursor: pointer; }

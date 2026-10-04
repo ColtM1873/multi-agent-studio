@@ -110,6 +110,29 @@ class Settings(BaseModel):
     tool_result_history_full: bool = False
     tool_result_history_max_lines: int = 50
     tool_result_history_max_chars: int = 0
+    # 全局 PostgreSQL 连接设置：只存「连接前缀 + 连接后缀」（主机/凭据/SSL），
+    # 库名仍每个 multi-agent 各自填写。它只是配置界面的一个「显示捷径」：
+    # 勾选「使用全局连接」的 multi-agent 在保存时把当前全局值写回自己的配置，
+    # 因此运行时后端完全不用感知全局设置（每个 agent 仍只用自己那份 prefix/suffix）。
+    global_postgres_prefix: str = ""
+    global_postgres_suffix: str = ""
+    # 是否已经初始化过全局连接（首次启动从已有 agent 提取，或用户在设置里保存/清空过）。
+    # 用它区分「从未配置」与「用户主动清空」，避免清空后被再次自动提取。
+    global_postgres_configured: bool = False
+    # 全局 embedding 模型设置：与「全局 postgres 连接设置」同构——同样只是配置界面的
+    # 「显示捷径」，勾选「使用全局」的 multi-agent 在保存时把全局值写回自己的配置，
+    # 运行时后端只读 agent 自己那份。存 model_name/cache_folder/dims/hf_endpoint/
+    # local_files_only/device/encode_normalize 等字段的字典；空字典表示未设置。
+    global_embedding: dict = Field(default_factory=dict)
+    # 是否已经初始化过全局 embedding（首次启动从已有 agent 提取，或用户保存/清空过）。
+    global_embedding_configured: bool = False
+    # 全局自动（及主动）总结设置：同样是配置界面的「显示捷径」。主 agent 与子 agent
+    # 各保留一套（子 agent 只有 flush_history_tokenwise / reserve_message_round）；
+    # 空字典表示未设置。这些阈值影响图编译，但每个 agent 仍只读自己那份 summary。
+    global_summary: dict = Field(default_factory=dict)
+    global_summary_configured: bool = False
+    global_sub_summary: dict = Field(default_factory=dict)
+    global_sub_summary_configured: bool = False
 
 
 def settings_path(config_dir: Path | str) -> Path:
@@ -133,3 +156,112 @@ def save_settings(config_dir: Path | str, settings: Settings) -> None:
         json.dumps(settings.model_dump(), ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+
+
+def seed_global_postgres(config_dir: Path | str, configs: list) -> Settings:
+    """首次运行时，把已有 multi-agent 中第一个非空连接前缀的配置提取为全局连接设置。
+
+    - 只在「从未初始化」时执行一次；用户主动清空后不会被再次提取。
+    - 没有任何带前缀的 agent 时不写入，留待下次（例如新建首个 agent）再提取。
+    - 仅作为配置界面的默认值来源，不改动任何 agent 自己的配置。
+    """
+    settings = load_settings(config_dir)
+    if settings.global_postgres_configured:
+        return settings
+    for cfg in configs or []:
+        try:
+            prefix = (cfg.postgres.prefix or "").strip()
+        except Exception:  # noqa: BLE001
+            continue
+        if not prefix:
+            continue
+        settings.global_postgres_prefix = cfg.postgres.prefix
+        settings.global_postgres_suffix = cfg.postgres.suffix
+        settings.global_postgres_configured = True
+        save_settings(config_dir, settings)
+        return settings
+    return settings
+
+
+def seed_global_embedding(config_dir: Path | str, configs: list) -> Settings:
+    """首次运行时，把已有 multi-agent 中第一个的 embedding 配置提取为全局 embedding 设置。
+
+    - 只在「从未初始化」时执行一次；用户主动清空后不会被再次提取。
+    - 没有任何 agent 时不写入，留待下次（例如新建首个 agent）再提取。
+    - 仅作为配置界面的默认值来源，不改动任何 agent 自己的配置。
+    """
+    settings = load_settings(config_dir)
+    if settings.global_embedding_configured:
+        return settings
+    for cfg in configs or []:
+        try:
+            emb = cfg.main_agent.embedding
+            settings.global_embedding = {
+                "model_name": emb.model_name,
+                "cache_folder": emb.cache_folder,
+                "dims": emb.dims,
+                "hf_endpoint": emb.hf_endpoint,
+                "local_files_only": emb.local_files_only,
+                "device": emb.device,
+                "encode_normalize": emb.encode_normalize,
+            }
+        except Exception:  # noqa: BLE001
+            continue
+        settings.global_embedding_configured = True
+        save_settings(config_dir, settings)
+        return settings
+    return settings
+
+
+def seed_global_summary(config_dir: Path | str, configs: list) -> Settings:
+    """首次运行时，把已有 multi-agent 中第一个的总结设置提取为全局总结设置。
+
+    - 只在「从未初始化」时执行一次；用户主动清空后不会被再次提取。
+    - 没有任何 agent 时不写入，留待下次（例如新建首个 agent）再提取。
+    - 仅作为配置界面的默认值来源，不改动任何 agent 自己的配置。
+    """
+    settings = load_settings(config_dir)
+    if settings.global_summary_configured:
+        return settings
+    for cfg in configs or []:
+        try:
+            summ = cfg.main_agent.summary
+            settings.global_summary = {
+                "summarize_gap_tokenwise": summ.summarize_gap_tokenwise,
+                "flush_history_tokenwise": summ.flush_history_tokenwise,
+                "reserve_message_round": summ.reserve_message_round,
+            }
+        except Exception:  # noqa: BLE001
+            continue
+        settings.global_summary_configured = True
+        save_settings(config_dir, settings)
+        return settings
+    return settings
+
+
+def seed_global_sub_summary(config_dir: Path | str, configs: list) -> Settings:
+    """首次运行时，把第一个含子 agent 的 multi-agent 的子 agent 总结设置提取为全局子 agent 总结设置。
+
+    - 只在「从未初始化」时执行一次；用户主动清空后不会被再次提取。
+    - 没有任何子 agent 时不写入，留待下次（例如新建首个子 agent）再提取。
+    - 仅作为配置界面的默认值来源，不改动任何 agent 自己的配置。
+    """
+    settings = load_settings(config_dir)
+    if settings.global_sub_summary_configured:
+        return settings
+    for cfg in configs or []:
+        subs = getattr(cfg, "sub_agents", None) or []
+        if not subs:
+            continue
+        try:
+            summ = subs[0].summary
+            settings.global_sub_summary = {
+                "flush_history_tokenwise": summ.flush_history_tokenwise,
+                "reserve_message_round": summ.reserve_message_round,
+            }
+        except Exception:  # noqa: BLE001
+            continue
+        settings.global_sub_summary_configured = True
+        save_settings(config_dir, settings)
+        return settings
+    return settings

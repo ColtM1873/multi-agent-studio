@@ -12,6 +12,12 @@ from pydantic import BaseModel, Field
 
 from app.config.edits import EditRuleViolation, apply_edits
 from app.config.models import MultiAgentConfig
+from app.config.settings import (
+    seed_global_embedding,
+    seed_global_postgres,
+    seed_global_sub_summary,
+    seed_global_summary,
+)
 from app.config.store import slugify
 from app.deps import chat_manager, config_store
 from app.runtime.graph_builder import describe_mcp_error
@@ -94,6 +100,15 @@ async def create_agent(cfg: MultiAgentConfig):
 
     await chat_manager.invalidate(cfg.agent_id)
     config_store.save(cfg)
+    # 全新安装时首次创建 agent：顺手把它提取为全局连接 / 全局 embedding 设置（若尚未初始化）。
+    try:
+        configs = config_store.list()
+        seed_global_postgres(config_store._dir, configs)
+        seed_global_embedding(config_store._dir, configs)
+        seed_global_summary(config_store._dir, configs)
+        seed_global_sub_summary(config_store._dir, configs)
+    except Exception:  # noqa: BLE001
+        pass
     return cfg.model_dump()
 
 

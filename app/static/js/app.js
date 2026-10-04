@@ -115,7 +115,6 @@ const I18N_EN = {
   "例如：你是一名联网搜索子 agent，负责为主 agent 检索网页信息，最终输出检索到的原文或相关片段。": "e.g. You are a web search sub-agent that retrieves web information for the main agent and outputs the original text or relevant excerpts.",
   "例如：负责联网搜索，将需要查询的内容与注意事项告知它，它会返回检索到的原文片段。": "e.g. Handles web search; tell it what to search and any caveats, and it returns the retrieved excerpts.",
   "保存": "Save",
-  "保留轮数": "Keep turns",
   "修改未保存时提醒": "Warn on unsaved changes",
   "停止": "Stop",
   "共": "Total",
@@ -352,8 +351,6 @@ const I18N_EN = {
   "添加 MCP": "Add MCP",
   "添加子 agent": "Add sub-agent",
   "清空历史时保留最近几轮对话。": "Keep the most recent turns when clearing history.",
-  "清空历史阈值": "Clear-history threshold",
-  "清空时保留轮数": "Turns to keep when clearing",
   "点": "Click",
   "点击检测健康状态": "Click to check health",
   "用户": "User",
@@ -429,10 +426,59 @@ const I18N_EN = {
   "连接串缺少数据库名，格式应为 …/<数据库名>": "The connection string is missing the database name; format should be …/<database name>",
   "连接串缺少主机地址": "The connection string is missing the host address",
   "连接串里的数据库名与已绑定的 checkpoint 库不一致，创建后不可更换。": "The database name in the connection string differs from the bound checkpoint database, which cannot be changed after creation.",
+  "全局postgres连接设置": "Global PostgreSQL connection settings",
+  "使用全局 postgres 连接设置": "Use global PostgreSQL connection settings",
+  "勾选后，本 multi-agent 直接使用主界面「系统设置 → 全局postgres连接设置」里的连接前缀与连接后缀（主机 / 账号 / 密码 / SSL）；你仍可单独填写自己的数据库名。取消勾选可为本 multi-agent 单独设置连接。": "When checked, this multi-agent uses the connection prefix and suffix (host / account / password / SSL) configured under Settings → Global PostgreSQL connection settings on the main screen; you can still fill in your own database name. Uncheck to set the connection separately for this multi-agent.",
+  "当前使用的全局连接（密码已脱敏）：": "Current global connection in use (password masked):",
+  "如需修改全局连接，请到主界面齿轮设置 →「全局postgres连接设置」。": "To change the global connection, go to the main screen gear settings → 'Global PostgreSQL connection settings'.",
+  "用途：让所有 multi-agent 共用同一套数据库连接（主机、账号、密码、SSL），每个 multi-agent 只需各自填写自己的数据库名。": "Purpose: let all multi-agents share the same database connection (host, account, password, SSL), while each multi-agent only fills in its own database name.",
+  "什么是「完整连接串」（conn string）：数据库厂商提供的一整条连接地址，长这样：": "What is a 'full connection string' (conn string): the complete connection address provided by the database vendor, like this:",
+  "我们自造的「连接前缀 / 连接后缀」是什么意思：把上面这条连接串从「数据库名」处切成两半——数据库名前面的一段（协议、账号密码、主机端口）叫连接前缀，数据库名后面的一段（? 开头的 SSL 等参数）叫连接后缀。": "What our custom 'connection prefix / suffix' means: split the connection string above into two halves at the database name — the part before the database name (protocol, account/password, host/port) is the connection prefix, and the part after it (parameters starting with ?, such as SSL) is the connection suffix.",
+  "所以这里只需填「前缀 + 后缀」即可，数据库名由每个 multi-agent 各自填写；也可以直接粘贴整条连接串，程序会自动帮你切出前缀与后缀（其中的数据库名会被忽略）。": "So you only need to fill in 'prefix + suffix' here; the database name is filled in by each multi-agent. Alternatively, paste the whole connection string and the app will extract the prefix and suffix automatically (the database name in it is ignored).",
+  "填写方式": "Fill-in method",
+  "这里粘贴的完整串只用于提取「连接前缀 / 连接后缀」，其中的数据库名会被忽略（各 multi-agent 各自填写库名）。": "The full string pasted here is only used to extract the connection prefix / suffix; its database name is ignored (each multi-agent fills in its own database name).",
+  "预览（密码已脱敏）": "Preview (password masked)",
+  "清除全局设置": "Clear global settings",
+  "确定清除全局 postgres 连接设置吗？清除后各 multi-agent 将恢复为单独填写的界面。": "Clear the global PostgreSQL connection settings? After clearing, each multi-agent returns to the individually-filled interface.",
+  "已清除全局连接设置": "Global connection settings cleared",
+  "请填写连接前缀": "Please fill in the connection prefix",
+  "全局连接设置已保存": "Global connection settings saved",
+  "全局embedding模型设置": "Global embedding model settings",
+  "使用全局 embedding 模型设置": "Use global embedding model settings",
+  "勾选后，本 multi-agent 直接使用主界面「系统设置 → 全局embedding模型设置」里的 embedding 模型、维度、镜像、缓存目录与离线模式；取消勾选可为本 multi-agent 单独设置。": "When checked, this multi-agent uses the embedding model, dimension, mirror, cache directory and offline mode configured under Settings → Global embedding model settings on the main screen. Uncheck to set them separately for this multi-agent.",
+  "当前使用的全局 embedding 配置：": "Current global embedding configuration in use:",
+  "如需修改，请到主界面齿轮设置 →「全局embedding模型设置」。": "To change it, go to the main screen gear settings → 'Global embedding model settings'.",
+  "用途：让所有 multi-agent 共用同一套 embedding（向量化）模型配置，multi-agent 配置页勾选「使用全局 embedding 模型设置」即可，无需每个都重复填写。": "Purpose: let all multi-agents share the same embedding (vectorization) model configuration; just check 'Use global embedding model settings' on each multi-agent page instead of filling it in repeatedly.",
+  "embedding 模型用于把文字转成向量、做长期记忆的语义检索。换模型时必须同步修改「embedding 维度」，否则检索会出错；首次使用会自动下载模型。": "The embedding model turns text into vectors for semantic retrieval of long-term memory. When changing models you must update the 'embedding dimension' accordingly, otherwise retrieval will fail; the model is downloaded automatically on first use.",
+  "确定清除全局 embedding 模型设置吗？清除后各 multi-agent 将恢复为单独填写的界面。": "Clear the global embedding model settings? After clearing, each multi-agent returns to the individually-filled interface.",
+  "已清除全局 embedding 设置": "Global embedding settings cleared",
+  "请填写 embedding 模型名": "Please fill in the embedding model name",
+  "全局 embedding 设置已保存": "Global embedding settings saved",
+  "展开 / 收起说明": "Expand / collapse description",
+  "自动阶段性总结阈值": "Auto stage-summary threshold",
+  "自动全量总结阈值": "Auto full-summary threshold",
+  "自动以及主动全量总结后，需要保留的会话轮数": "Turns to keep after automatic and proactive full summaries",
+  "累计 token 达到该值时触发一次阶段性总结。": "A stage summary is triggered once accumulated tokens reach this value.",
+  "累计 token 达到该值时清空历史（只保留最近几轮）。": "History is cleared once accumulated tokens reach this value (only the most recent turns are kept).",
+  "全局自动（及主动）总结设置": "Global automatic (& proactive) summary settings",
+  "使用全局自动（及主动）总结设置": "Use global automatic (& proactive) summary settings",
+  "勾选后，本 multi-agent 直接使用主界面「系统设置 → 全局自动（及主动）总结设置」里的自动阶段性总结阈值、自动全量总结阈值与保留轮数；取消勾选可为本 multi-agent 单独设置。": "When checked, this multi-agent uses the auto stage-summary threshold, auto full-summary threshold and turns-to-keep configured under Settings → Global automatic (& proactive) summary settings on the main screen. Uncheck to set them separately for this multi-agent.",
+  "当前使用的全局总结配置：": "Current global summary configuration in use:",
+  "如需修改，请到主界面齿轮设置 →「全局自动（及主动）总结设置」。": "To change it, go to the main screen gear settings → 'Global automatic (& proactive) summary settings'.",
+  "用途：让所有 multi-agent 共用同一套「自动阶段性总结 / 自动全量总结」阈值，multi-agent 配置页勾选「使用全局自动（及主动）总结设置」即可，无需每个都重复填写。": "Purpose: let all multi-agents share the same 'auto stage-summary / auto full-summary' thresholds; just check 'Use global automatic (& proactive) summary settings' on each multi-agent page instead of filling them in repeatedly.",
+  "注意：这些阈值会影响图编译；修改后请保存对应的 multi-agent 才会真正生效。": "Note: these thresholds affect graph compilation; after changing them, save the corresponding multi-agent for the change to take effect.",
+  "确定清除全局总结设置吗？清除后各 multi-agent 将恢复为单独填写的界面。": "Clear the global summary settings? After clearing, each multi-agent returns to the individually-filled interface.",
+  "已清除全局总结设置": "Global summary settings cleared",
+  "全局总结设置已保存": "Global summary settings saved",
+  "子 agent 累计 token 达到该值时清空历史（只保留最近几轮）。": "The sub-agent clears its history once accumulated tokens reach this value (only the most recent turns are kept).",
+  "子 agent 清空历史时保留最近几轮对话。": "Keep the most recent turns when the sub-agent clears history.",
+  "使用全局子 agent 总结设置": "Use global sub-agent summary settings",
+  "勾选后，本子 agent 直接使用主界面「系统设置 → 全局自动（及主动）总结设置 → 子 agent」里的清空历史阈值与保留轮数；取消勾选可为本子 agent 单独设置。": "When checked, this sub-agent uses the clear-history threshold and turns-to-keep configured under Settings → Global automatic (& proactive) summary settings → Sub-agent on the main screen. Uncheck to set them separately for this sub-agent.",
+  "当前使用的全局子 agent 总结配置：": "Current global sub-agent summary configuration in use:",
+  "主 agent 与子 agent 各自保留一套：主 agent 用下面「主 agent」三个阈值，子 agent 用「子 agent」两个阈值。注意：这些阈值会影响图编译；修改后请保存对应的 multi-agent 才会真正生效。": "Main agent and sub-agent each keep their own set: the main agent uses the three thresholds under 'Main agent' below, and sub-agents use the two under 'Sub-agent'. Note: these thresholds affect graph compilation; after changing them, save the corresponding multi-agent for the change to take effect.",
   "读取 PDF 时，用基于框线的检测把表格转成 Markdown 并嵌回正文；关闭后只返回正文文本。": "When reading PDFs, use ruled-line detection to convert tables to Markdown and embed them back into the body; when disabled, only the body text is returned.",
   "行": "lines",
   "长期记忆存储的库名，可与 checkpoint 库相同或不同。": "Database for long-term memory; can be the same as or different from the checkpoint database.",
-  "阶段性总结阈值": "Stage summary threshold",
   "除发送键外，其余 Enter 组合均换行。": "All Enter combos except the send key insert a newline.",
   "需先在 pgAdmin 建库": "Create the database in pgAdmin first",
   "默认配置已保存": "Default configuration saved",
@@ -1414,6 +1460,15 @@ function parseConnString(raw) {
 function composeConnString(prefix, database, suffix) {
   return String(prefix || "") + String(database || "") + String(suffix || "");
 }
+/* 连接后缀控件（本地 → readonly 固定 sslmode=disable；远端 → SSL 下拉）。
+ * 抽成顶层函数，供 multi-agent 编辑器与「全局连接设置」弹窗共用。
+ * suffixId 默认 "f_suffix"（编排器），全局弹窗传自己的 id 以免冲突。 */
+function pgSuffixCtrlHTML(local, value, suffixId) {
+  const id = suffixId || "f_suffix";
+  return local
+    ? `<input id="${id}" value="${esc(value || "?sslmode=disable")}" readonly><span class="hint">${t("本地连接，自动使用 sslmode=disable")}</span>`
+    : `<select id="${id}">${SSL_OPTIONS.map(o => `<option value="${esc(o.v)}" ${(value || "") === o.v ? "selected" : ""}>${esc(t(o.label))}</option>`).join("")}${SSL_OPTIONS.some(o => o.v === (value || "")) ? "" : `<option value="${esc(value || "")}" selected>${esc(value || t("（无）"))}</option>`}</select><span class="hint">${t("云端/企业库请选择 SSL 模式")}</span>`;
+}
 function currentPgMode() {
   const r = document.querySelector('input[name="pg_conn_mode"]:checked');
   return r ? r.value : "split";
@@ -2083,6 +2138,9 @@ async function openSettings() {
       </div>
       <div class="modal-actions" style="justify-content:flex-start; flex-wrap:wrap;">
         <button class="btn small" id="setAdvanced">${t("进阶设置")}</button>
+        <button class="btn small" id="setGlobalPg">${t("全局postgres连接设置")}</button>
+        <button class="btn small" id="setGlobalEmb">${t("全局embedding模型设置")}</button>
+        <button class="btn small" id="setGlobalSum">${t("全局自动（及主动）总结设置")}</button>
         <button class="btn small" id="setColors">${t("字体颜色设置")}</button>
         <button class="btn small" id="setCard">${t("Multi-Agent配置卡片 设置")}</button>
         <button class="btn small" id="setHtmlConfig" style="${s.export_html ? "" : "display:none;"}">${t("HTML 转换配置表")}</button>
@@ -2124,6 +2182,9 @@ async function openSettings() {
 
   mask.querySelector("#setCancel").onclick = () => mask.remove();
   mask.querySelector("#setAdvanced").onclick = () => { mask.remove(); openAdvancedSettings(); };
+  mask.querySelector("#setGlobalPg").onclick = () => { mask.remove(); openGlobalPostgresSettings(); };
+  mask.querySelector("#setGlobalEmb").onclick = () => { mask.remove(); openGlobalEmbeddingSettings(); };
+  mask.querySelector("#setGlobalSum").onclick = () => { mask.remove(); openGlobalSummarySettings(); };
   mask.querySelector("#setColors").onclick = () => { mask.remove(); openColorSettings(); };
   mask.querySelector("#setCard").onclick = () => { mask.remove(); openCardSettings(); };
   mask.querySelector("#setHtmlConfig").onclick = () => { mask.remove(); openHtmlConfigSettings(); };
@@ -2465,6 +2526,350 @@ async function openAdvancedSettings() {
       });
       mask.remove();
       toast(t("设置已保存"));
+    } catch (e) { toast(e.message, true); }
+  };
+}
+
+async function openGlobalPostgresSettings() {
+  let s;
+  try { s = await getSettings(); } catch (e) { toast(e.message, true); return; }
+  const gpPrefix = s.global_postgres_prefix || "";
+  const gpSuffix = s.global_postgres_suffix || "";
+  let suffixLocal = isLocalPrefix(gpPrefix);
+
+  const mask = document.createElement("div");
+  mask.className = "modal-mask";
+  mask.innerHTML = `
+    <div class="modal" style="width:580px;max-height:84vh;overflow:auto;">
+      <h3>🌐 ${t("全局postgres连接设置")}</h3>
+      <div class="muted" style="margin-bottom:10px;line-height:1.65;">
+        <p style="margin:0 0 6px;">${t("用途：让所有 multi-agent 共用同一套数据库连接（主机、账号、密码、SSL），每个 multi-agent 只需各自填写自己的数据库名。")}</p>
+        <p style="margin:0 0 6px;">${t("什么是「完整连接串」（conn string）：数据库厂商提供的一整条连接地址，长这样：")}<code>postgresql://user:passwd@localhost:5432/mydb?sslmode=disable</code></p>
+        <p style="margin:0 0 6px;">${t("我们自造的「连接前缀 / 连接后缀」是什么意思：把上面这条连接串从「数据库名」处切成两半——数据库名前面的一段（协议、账号密码、主机端口）叫连接前缀，数据库名后面的一段（? 开头的 SSL 等参数）叫连接后缀。")}</p>
+        <p style="margin:0;">${t("所以这里只需填「前缀 + 后缀」即可，数据库名由每个 multi-agent 各自填写；也可以直接粘贴整条连接串，程序会自动帮你切出前缀与后缀（其中的数据库名会被忽略）。")}</p>
+      </div>
+      <div class="field full">
+        <label>${t("填写方式")}</label>
+        <div class="radio-list" style="flex-direction:row;gap:22px;flex-wrap:wrap;">
+          <label class="radio-item"><input type="radio" name="gp_conn_mode" value="split" checked> ${t("分步填写（连接前缀 / 连接后缀）")}</label>
+          <label class="radio-item"><input type="radio" name="gp_conn_mode" value="full"> ${t("直接填写完整连接串")}</label>
+        </div>
+      </div>
+      <div id="gpSplitBlock">
+        <div class="field full"><label>${t("连接前缀")} prefix</label><input id="gp_prefix" value="${esc(gpPrefix)}" placeholder="postgresql://user:passwd@localhost:5432/"><span class="hint">${t("格式：postgresql://用户名:密码@主机:端口/（以斜杠 / 结尾）")}</span></div>
+        <div class="field"><label>${t("连接后缀")} suffix</label><div id="gpSuffixWrap" style="display:flex;flex-direction:column;gap:5px;">${pgSuffixCtrlHTML(suffixLocal, gpSuffix, "gp_suffix")}</div></div>
+      </div>
+      <div id="gpFullBlock" style="display:none;">
+        <div class="field full"><label>${t("完整连接串")}</label><textarea id="gp_conn_full" rows="3" placeholder="postgresql://user:passwd@localhost:5432/mydb?sslmode=disable"></textarea><span class="hint" id="gpFullHint"></span><span class="hint">${t("这里粘贴的完整串只用于提取「连接前缀 / 连接后缀」，其中的数据库名会被忽略（各 multi-agent 各自填写库名）。")}</span></div>
+      </div>
+      <div class="field full"><label>${t("预览（密码已脱敏）")}</label><div class="conn-example" id="gpExample"></div></div>
+      <div class="modal-actions">
+        <button class="btn" id="gpClear">${t("清除全局设置")}</button>
+        <div class="spacer" style="flex:1;"></div>
+        <button class="btn" id="gpCancel">${t("取消")}</button>
+        <button class="btn primary" id="gpSave">${t("保存")}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(mask);
+
+  const splitBlock = mask.querySelector("#gpSplitBlock");
+  const fullBlock = mask.querySelector("#gpFullBlock");
+  const prefixInput = mask.querySelector("#gp_prefix");
+  const suffixWrap = mask.querySelector("#gpSuffixWrap");
+  const fullInput = mask.querySelector("#gp_conn_full");
+  const fullHint = mask.querySelector("#gpFullHint");
+  const exampleEl = mask.querySelector("#gpExample");
+  let gpMode = "split";
+
+  const bindSuffix = () => {
+    const el = mask.querySelector("#gp_suffix");
+    if (el) el.addEventListener("input", refreshGpExample);
+  };
+  const setGpSuffix = (value) => {
+    const el = mask.querySelector("#gp_suffix");
+    if (!el) return;
+    if (el.tagName === "SELECT") {
+      if (!Array.from(el.options).some(o => o.value === value)) {
+        const opt = document.createElement("option");
+        opt.value = value;
+        opt.textContent = value || t("（无）");
+        el.appendChild(opt);
+      }
+      el.value = value;
+    } else {
+      el.value = value;
+    }
+  };
+  const currentGp = () => {
+    if (gpMode === "full") {
+      const parsed = parseConnString(fullInput.value);
+      if (parsed.ok) {
+        let suffix = parsed.suffix;
+        if (!suffix && isLocalPrefix(parsed.prefix)) suffix = "?sslmode=disable";
+        return { ok: true, prefix: parsed.prefix, suffix };
+      }
+      return { ok: false, error: parsed.error };
+    }
+    const el = mask.querySelector("#gp_suffix");
+    let suffix = el ? (el.value || "") : "";
+    if (!suffix && isLocalPrefix(prefixInput.value)) suffix = "?sslmode=disable";
+    return { ok: true, prefix: prefixInput.value, suffix };
+  };
+  const refreshGpExample = () => {
+    const cur = currentGp();
+    const p = cur.ok ? (cur.prefix || "") : "";
+    const sfx = cur.ok ? (cur.suffix || "") : "";
+    exampleEl.innerHTML = `<code>${esc(maskedPrefix(p))}${esc(p && !p.endsWith("/") ? "/" : "")}<span class="muted">${t("<数据库名>")}</span>${esc(sfx)}</code>`;
+  };
+  const updateGpFullHint = () => {
+    const parsed = parseConnString(fullInput.value);
+    if (parsed.empty) { fullHint.innerHTML = ""; return; }
+    if (!parsed.ok) { fullHint.innerHTML = `<span class="err-hint">⚠ ${esc(parsed.error)}</span>`; return; }
+    let suffix = parsed.suffix;
+    if (!suffix && isLocalPrefix(parsed.prefix)) suffix = "?sslmode=disable";
+    fullHint.innerHTML = `<span class="ok-hint">✓ ${t("已识别")}</span> ${t("连接前缀")} <code>${esc(maskedPrefix(parsed.prefix))}</code> · ${t("连接后缀")} <code>${esc(suffix || t("（无）"))}</code>`;
+  };
+  const setGpMode = (mode) => {
+    gpMode = mode === "full" ? "full" : "split";
+    splitBlock.style.display = gpMode === "split" ? "" : "none";
+    fullBlock.style.display = gpMode === "full" ? "" : "none";
+    if (gpMode === "full") {
+      const el = mask.querySelector("#gp_suffix");
+      const sfx = el ? (el.value || "") : "";
+      if ((prefixInput.value || "").trim()) fullInput.value = composeConnString(prefixInput.value, "mydb", sfx);
+      updateGpFullHint();
+    } else {
+      const parsed = parseConnString(fullInput.value);
+      if (parsed.ok) {
+        prefixInput.value = parsed.prefix;
+        let suffix = parsed.suffix;
+        if (!suffix && isLocalPrefix(parsed.prefix)) suffix = "?sslmode=disable";
+        if (isLocalPrefix(parsed.prefix) !== suffixLocal) {
+          suffixLocal = isLocalPrefix(parsed.prefix);
+          suffixWrap.innerHTML = pgSuffixCtrlHTML(suffixLocal, suffix, "gp_suffix");
+          bindSuffix();
+        } else {
+          setGpSuffix(suffix);
+        }
+      }
+    }
+    refreshGpExample();
+  };
+
+  mask.querySelectorAll('input[name="gp_conn_mode"]').forEach(r =>
+    r.addEventListener("change", () => setGpMode(r.value)));
+  prefixInput.addEventListener("input", refreshGpExample);
+  const suffixEl0 = mask.querySelector("#gp_suffix");
+  if (suffixEl0) suffixEl0.addEventListener("input", refreshGpExample);
+  fullInput.addEventListener("input", () => { updateGpFullHint(); refreshGpExample(); });
+  refreshGpExample();
+
+  const close = () => mask.remove();
+  mask.querySelector("#gpCancel").onclick = close;
+  mask.addEventListener("click", (e) => { if (e.target === mask) close(); });
+
+  mask.querySelector("#gpClear").onclick = async () => {
+    if (!(await askConfirm(t("确定清除全局 postgres 连接设置吗？清除后各 multi-agent 将恢复为单独填写的界面。")))) return;
+    try {
+      await saveSettings({ ...s, global_postgres_prefix: "", global_postgres_suffix: "", global_postgres_configured: true });
+      close();
+      toast(t("已清除全局连接设置"));
+    } catch (e) { toast(e.message, true); }
+  };
+
+  mask.querySelector("#gpSave").onclick = async () => {
+    let prefix, suffix;
+    if (gpMode === "full") {
+      const parsed = parseConnString(fullInput.value);
+      if (!parsed.ok) { toast(parsed.error || t("请粘贴完整连接串"), true); return; }
+      prefix = parsed.prefix;
+      suffix = parsed.suffix;
+      if (!suffix && isLocalPrefix(prefix)) suffix = "?sslmode=disable";
+    } else {
+      const el = mask.querySelector("#gp_suffix");
+      prefix = prefixInput.value;
+      suffix = el ? (el.value || "") : "";
+      if (!suffix && isLocalPrefix(prefix)) suffix = "?sslmode=disable";
+    }
+    if (!String(prefix || "").trim()) { toast(t("请填写连接前缀"), true); return; }
+    try {
+      await saveSettings({ ...s, global_postgres_prefix: prefix, global_postgres_suffix: suffix, global_postgres_configured: true });
+      close();
+      toast(t("全局连接设置已保存"));
+    } catch (e) { toast(e.message, true); }
+  };
+}
+
+async function openGlobalEmbeddingSettings() {
+  let s;
+  try { s = await getSettings(); } catch (e) { toast(e.message, true); return; }
+  const g = s.global_embedding || {};
+  const curModel = String(g.model_name || EMB_OPTIONS[0]);
+  const curCache = String(g.cache_folder || "");
+  const curDims = (g.dims != null && g.dims !== "") ? g.dims : 1024;
+  const curHf = String(g.hf_endpoint != null ? g.hf_endpoint : "");
+  const curOffline = !!g.local_files_only;
+  const modelInOptions = EMB_OPTIONS.includes(curModel);
+  const hfInOptions = HF_OPTIONS.some(o => o.v === curHf);
+
+  const mask = document.createElement("div");
+  mask.className = "modal-mask";
+  mask.innerHTML = `
+    <div class="modal" style="width:560px;max-height:84vh;overflow:auto;">
+      <h3>🧬 ${t("全局embedding模型设置")}</h3>
+      <div class="muted" style="margin-bottom:10px;line-height:1.65;">
+        <p style="margin:0 0 6px;">${t("用途：让所有 multi-agent 共用同一套 embedding（向量化）模型配置，multi-agent 配置页勾选「使用全局 embedding 模型设置」即可，无需每个都重复填写。")}</p>
+        <p style="margin:0;">${t("embedding 模型用于把文字转成向量、做长期记忆的语义检索。换模型时必须同步修改「embedding 维度」，否则检索会出错；首次使用会自动下载模型。")}</p>
+      </div>
+      <div class="field full"><label>${t("embedding 模型")} <i class="info-icon">!<span class="tip">${t("无需提前下载，首次配置会自动下载（需连接 Hugging Face Hub，国内网络可能连不上）。若已离线缓存过，可在下方缓存目录直接使用。")}</span></i></label>
+        <select id="gemb_model_sel" style="width:100%;">
+          ${EMB_OPTIONS.map(m => `<option value="${esc(m)}" ${m === curModel ? "selected" : ""}>${esc(m)}</option>`).join("")}
+          <option value="__custom__" ${!modelInOptions ? "selected" : ""}>${t("自定义…")}</option>
+        </select>
+        <input id="gemb_model_custom" placeholder="${t("自定义模型名")}" value="${modelInOptions ? "" : esc(curModel)}" style="${modelInOptions ? "display:none;" : ""} margin-top:6px;">
+      </div>
+      <div class="field"><label>${t("embedding 缓存目录")} ${info("本地模型缓存路径，留空用 Hugging Face 默认缓存。")}</label><input id="gemb_cache" value="${esc(curCache)}"></div>
+      <div class="field"><label>${t("embedding 维度")} ${info("向量维度；bge-m3 为 1024，换模型需对应调整。")}</label><input id="gemb_dims" value="${esc(curDims)}" type="number"></div>
+      <div class="field full"><label>${t("embedding 镜像")} ${info("下载 embedding 模型时使用的 HuggingFace 镜像源；国内推荐 hf-mirror。")}</label>
+        <select id="gemb_hf_sel" style="width:100%;">
+          ${HF_OPTIONS.map(o => `<option value="${esc(o.v)}" ${curHf === o.v ? "selected" : ""}>${esc(t(o.label))}</option>`).join("")}
+          <option value="__custom__" ${!hfInOptions ? "selected" : ""}>${t("自定义…")}</option>
+        </select>
+        <input id="gemb_hf_custom" placeholder="${t("自定义镜像地址")}" value="${hfInOptions ? "" : esc(curHf)}" style="${hfInOptions ? "display:none;" : ""} margin-top:6px;">
+      </div>
+      <div class="field full">
+        <label style="flex-direction:row;align-items:center;gap:8px;"><input type="checkbox" id="gemb_offline" ${curOffline ? "checked" : ""}> ${t("Embedding 模型离线模式")} ${info("离线模式 = 只从本地缓存加载 embedding 模型、不联网校验。没有缓存时请勿开启（会报错）；已有缓存时建议开启，跳过每次联网校验。")}</label>
+        <span class="hint">${t("没有缓存时请勿开启；已有缓存时建议开启，跳过每次联网校验。")}</span>
+      </div>
+      <div class="modal-actions">
+        <button class="btn" id="gembClear">${t("清除全局设置")}</button>
+        <div class="spacer" style="flex:1;"></div>
+        <button class="btn" id="gembCancel">${t("取消")}</button>
+        <button class="btn primary" id="gembSave">${t("保存")}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(mask);
+
+  const modelSel = mask.querySelector("#gemb_model_sel"), modelCustom = mask.querySelector("#gemb_model_custom");
+  modelSel.onchange = () => { modelCustom.style.display = modelSel.value === "__custom__" ? "" : "none"; };
+  const hfSel = mask.querySelector("#gemb_hf_sel"), hfCustom = mask.querySelector("#gemb_hf_custom");
+  hfSel.onchange = () => { hfCustom.style.display = hfSel.value === "__custom__" ? "" : "none"; };
+
+  const close = () => mask.remove();
+  mask.querySelector("#gembCancel").onclick = close;
+  mask.addEventListener("click", (e) => { if (e.target === mask) close(); });
+
+  const collect = () => {
+    const model_name = modelSel.value === "__custom__" ? modelCustom.value.trim() : modelSel.value;
+    const hf_endpoint = hfSel.value === "__custom__" ? hfCustom.value.trim() : hfSel.value;
+    return {
+      model_name,
+      cache_folder: mask.querySelector("#gemb_cache").value.trim(),
+      dims: +mask.querySelector("#gemb_dims").value || 1024,
+      hf_endpoint,
+      local_files_only: mask.querySelector("#gemb_offline").checked,
+      device: (g.device != null ? g.device : "cpu"),
+      encode_normalize: (g.encode_normalize != null ? g.encode_normalize : true),
+    };
+  };
+
+  mask.querySelector("#gembClear").onclick = async () => {
+    if (!(await askConfirm(t("确定清除全局 embedding 模型设置吗？清除后各 multi-agent 将恢复为单独填写的界面。")))) return;
+    try {
+      await saveSettings({ ...s, global_embedding: {}, global_embedding_configured: true });
+      close();
+      toast(t("已清除全局 embedding 设置"));
+    } catch (e) { toast(e.message, true); }
+  };
+
+  mask.querySelector("#gembSave").onclick = async () => {
+    const emb = collect();
+    if (!emb.model_name) { toast(t("请填写 embedding 模型名"), true); return; }
+    try {
+      await saveSettings({ ...s, global_embedding: emb, global_embedding_configured: true });
+      close();
+      toast(t("全局 embedding 设置已保存"));
+    } catch (e) { toast(e.message, true); }
+  };
+}
+
+async function openGlobalSummarySettings() {
+  let s;
+  try { s = await getSettings(); } catch (e) { toast(e.message, true); return; }
+  const g = s.global_summary || {};
+  const gap = tokToUnit(g.summarize_gap_tokenwise != null ? g.summarize_gap_tokenwise : 80000);
+  const flush = tokToUnit(g.flush_history_tokenwise != null ? g.flush_history_tokenwise : 600000);
+  const reserve = (g.reserve_message_round != null ? g.reserve_message_round : 0);
+  const gs = s.global_sub_summary || {};
+  const subFlush = tokToUnit(gs.flush_history_tokenwise != null ? gs.flush_history_tokenwise : 200000);
+  const subReserve = (gs.reserve_message_round != null ? gs.reserve_message_round : 4);
+
+  const unitRow = (id, v, u) => `
+    <div class="unit-row">
+      <input id="${id}" value="${esc(v)}" type="number">
+      <select id="${id}_unit"><option value="万" ${u === "万" ? "selected" : ""}>${t("万")}</option><option value="千" ${u === "千" ? "selected" : ""}>${t("千")}</option></select>
+    </div>`;
+
+  const mask = document.createElement("div");
+  mask.className = "modal-mask";
+  mask.innerHTML = `
+    <div class="modal" style="width:540px;max-height:84vh;overflow:auto;">
+      <h3>📉 ${t("全局自动（及主动）总结设置")}</h3>
+      <div class="muted" style="margin-bottom:10px;line-height:1.65;">
+        <p style="margin:0 0 6px;">${t("用途：让所有 multi-agent 共用同一套「自动阶段性总结 / 自动全量总结」阈值，multi-agent 配置页勾选「使用全局自动（及主动）总结设置」即可，无需每个都重复填写。")}</p>
+        <p style="margin:0;">${t("主 agent 与子 agent 各自保留一套：主 agent 用下面「主 agent」三个阈值，子 agent 用「子 agent」两个阈值。注意：这些阈值会影响图编译；修改后请保存对应的 multi-agent 才会真正生效。")}</p>
+      </div>
+      <div class="muted" style="margin:12px 0 2px;font-weight:700;">${t("主 agent")}</div>
+      <div class="field"><label>${t("自动阶段性总结阈值")} ${info("累计 token 达到该值时触发一次阶段性总结。")}</label>${unitRow("gsum_gap", gap.v, gap.u)}</div>
+      <div class="field"><label>${t("自动全量总结阈值")} ${info("累计 token 达到该值时清空历史（只保留最近几轮）。")}</label>${unitRow("gsum_flush", flush.v, flush.u)}</div>
+      <div class="field"><label>${t("自动以及主动全量总结后，需要保留的会话轮数")} ${info("清空历史时保留最近几轮对话。")}</label><input id="gsum_reserve" value="${esc(reserve)}" type="number"></div>
+      <div class="muted" style="margin:12px 0 2px;font-weight:700;">${t("子 agent")}</div>
+      <div class="field"><label>${t("自动全量总结阈值")} ${info("子 agent 累计 token 达到该值时清空历史（只保留最近几轮）。")}</label>${unitRow("gsum_sub_flush", subFlush.v, subFlush.u)}</div>
+      <div class="field"><label>${t("自动以及主动全量总结后，需要保留的会话轮数")} ${info("子 agent 清空历史时保留最近几轮对话。")}</label><input id="gsum_sub_reserve" value="${esc(subReserve)}" type="number"></div>
+      <div class="modal-actions">
+        <button class="btn" id="gsumClear">${t("清除全局设置")}</button>
+        <div class="spacer" style="flex:1;"></div>
+        <button class="btn" id="gsumCancel">${t("取消")}</button>
+        <button class="btn primary" id="gsumSave">${t("保存")}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(mask);
+
+  const close = () => mask.remove();
+  mask.querySelector("#gsumCancel").onclick = close;
+  mask.addEventListener("click", (e) => { if (e.target === mask) close(); });
+
+  mask.querySelector("#gsumClear").onclick = async () => {
+    if (!(await askConfirm(t("确定清除全局总结设置吗？清除后各 multi-agent 将恢复为单独填写的界面。")))) return;
+    try {
+      await saveSettings({
+        ...s,
+        global_summary: {}, global_summary_configured: true,
+        global_sub_summary: {}, global_sub_summary_configured: true,
+      });
+      close();
+      toast(t("已清除全局总结设置"));
+    } catch (e) { toast(e.message, true); }
+  };
+
+  mask.querySelector("#gsumSave").onclick = async () => {
+    try {
+      const summary = {
+        summarize_gap_tokenwise: unitToTok(mask.querySelector("#gsum_gap").value, mask.querySelector("#gsum_gap_unit").value),
+        flush_history_tokenwise: unitToTok(mask.querySelector("#gsum_flush").value, mask.querySelector("#gsum_flush_unit").value),
+        reserve_message_round: +mask.querySelector("#gsum_reserve").value || 0,
+      };
+      const subSummary = {
+        flush_history_tokenwise: unitToTok(mask.querySelector("#gsum_sub_flush").value, mask.querySelector("#gsum_sub_flush_unit").value),
+        reserve_message_round: +mask.querySelector("#gsum_sub_reserve").value || 0,
+      };
+      await saveSettings({
+        ...s,
+        global_summary: summary, global_summary_configured: true,
+        global_sub_summary: subSummary, global_sub_summary_configured: true,
+      });
+      close();
+      toast(t("全局总结设置已保存"));
     } catch (e) { toast(e.message, true); }
   };
 }
@@ -3079,10 +3484,41 @@ function buildForm(cfg, canEditSubs) {
   const gap = tokToUnit(sum.summarize_gap_tokenwise);
   const flush = tokToUnit(sum.flush_history_tokenwise);
 
-  const suffixCtrlHTML = (local, value) => local
-    ? `<input id="f_suffix" value="${esc(value || "?sslmode=disable")}" readonly><span class="hint">${t("本地连接，自动使用 sslmode=disable")}</span>`
-    : `<select id="f_suffix">${SSL_OPTIONS.map(o => `<option value="${esc(o.v)}" ${(value || "") === o.v ? "selected" : ""}>${esc(t(o.label))}</option>`).join("")}${SSL_OPTIONS.some(o => o.v === (value || "")) ? "" : `<option value="${esc(value || "")}" selected>${esc(value || t("（无）"))}</option>`}</select><span class="hint">${t("云端/企业库请选择 SSL 模式")}</span>`;
-  const suffixCtrl = suffixCtrlHTML(isLocal, pg.suffix);
+  const suffixCtrl = pgSuffixCtrlHTML(isLocal, pg.suffix);
+
+  // 全局连接设置（只存前缀+后缀）：全局非空时，把「连接前缀/后缀」折叠成
+  // 一个「使用全局设置」开关；是否默认勾选 = 本 agent 的连接是否与全局一致。
+  const gpPrefix = (settingsCache && settingsCache.global_postgres_prefix) || "";
+  const gpSuffix = (settingsCache && settingsCache.global_postgres_suffix) || "";
+  const globalSet = !!String(gpPrefix).trim();
+  const isNewCfg = !cfg.agent_id;
+  const useGlobalInit = globalSet && (
+    isNewCfg || (String(pg.prefix || "") === gpPrefix && String(pg.suffix || "") === gpSuffix)
+  );
+
+  // 全局 embedding 设置（与 postgres 同构：显示捷径；与全局一致则默认勾选）。
+  const gEmb = (settingsCache && settingsCache.global_embedding) || {};
+  const globalEmbSet = !!(settingsCache && settingsCache.global_embedding_configured) && Object.keys(gEmb).length > 0;
+  const embEqual = globalEmbSet && (
+    String(emb.model_name || "") === String(gEmb.model_name || "") &&
+    String(emb.cache_folder || "") === String(gEmb.cache_folder || "") &&
+    String(emb.hf_endpoint || "") === String(gEmb.hf_endpoint || "") &&
+    (!!emb.local_files_only) === (!!gEmb.local_files_only) &&
+    Number(emb.dims || 0) === Number(gEmb.dims || 0)
+  );
+  const useGlobalEmbInit = globalEmbSet && (isNewCfg || embEqual);
+
+  // 全局自动（及主动）总结设置（与 postgres / embedding 同构：显示捷径；与全局一致则默认勾选）。
+  const gSum = (settingsCache && settingsCache.global_summary) || {};
+  const globalSumSet = !!(settingsCache && settingsCache.global_summary_configured) && Object.keys(gSum).length > 0;
+  const sumEqual = globalSumSet && (
+    Number(sum.summarize_gap_tokenwise || 0) === Number(gSum.summarize_gap_tokenwise || 0) &&
+    Number(sum.flush_history_tokenwise || 0) === Number(gSum.flush_history_tokenwise || 0) &&
+    Number(sum.reserve_message_round || 0) === Number(gSum.reserve_message_round || 0)
+  );
+  const useGlobalSumInit = globalSumSet && (isNewCfg || sumEqual);
+  const gGap = tokToUnit(gSum.summarize_gap_tokenwise != null ? gSum.summarize_gap_tokenwise : 0);
+  const gFlush = tokToUnit(gSum.flush_history_tokenwise != null ? gSum.flush_history_tokenwise : 0);
 
   const pgMode = pgConnMode === "full" ? "full" : "split";
   const fullConnInit = (pg.prefix || "").trim()
@@ -3119,6 +3555,22 @@ function buildForm(cfg, canEditSubs) {
       <div class="field full"><details class="db-help"><summary>${t("📖 不会建数据库？点这里看步骤")}</summary><ol><li>${t("打开")} <b>pgAdmin 4</b>${t("（在开始菜单里搜索「pgAdmin」）。")}</li><li>${t("左侧展开")} <b>Servers → PostgreSQL</b>${t("，双击连接，输入安装 PostgreSQL 时设置的密码。")}</li><li>${t("右键")} <b>Databases → Create → Database…</b>${t("。")}</li><li>${t("在")} <b>Database</b> ${t("一栏填库名（与上面填的 checkpoint 库名保持一致）。")}</li><li>${t("点")} <b>Save</b>${t("。")}</li><li>${t("记忆库（store 数据库）还需启用 pgvector：选中刚建的库 → 点上方「Query Tool」图标 → 粘贴下面这句 → 点执行（或按 F5）：")}<pre>CREATE EXTENSION IF NOT EXISTS vector;</pre></li><li>${t("回到本页，点「保存」。")}</li></ol></details></div>
       <div class="field"><label>${t("store 数据库")} ${info("长期记忆存储的库名，可与 checkpoint 库相同或不同。")}</label><input id="f_sdb" value="${esc(pg.store_database)}"></div>
       <div class="field"><label>${t("store_namespace（逗号分隔）")} ${info("记忆存储命名空间，逗号分隔多个层级。")}</label><input id="f_ns" value="${esc(ns)}"></div>
+      ${globalSet ? `
+      <div class="field full">
+        <div class="global-toggle-row">
+          <label style="display:flex;flex-direction:row;align-items:center;gap:8px;margin:0;"><input type="checkbox" id="f_pg_use_global" ${useGlobalInit ? "checked" : ""}> ${t("使用全局 postgres 连接设置")}</label>
+          ${info("勾选后，本 multi-agent 直接使用主界面「系统设置 → 全局postgres连接设置」里的连接前缀与连接后缀（主机 / 账号 / 密码 / SSL）；你仍可单独填写自己的数据库名。取消勾选可为本 multi-agent 单独设置连接。")}
+          <span class="exp-tri" id="pgExpTri" title="${t("展开 / 收起说明")}"></span>
+        </div>
+      </div>
+      <div class="field full" id="pgGlobalBlock" style="display:none;">
+        <div class="conn-example">
+          <div>${t("当前使用的全局连接（密码已脱敏）：")}</div>
+          <div style="margin-top:4px;"><code>${esc(maskedPrefix(gpPrefix))}${esc(gpPrefix.endsWith("/") ? "" : "/")}<span class="muted">${t("<数据库名>")}</span>${esc(gpSuffix || "")}</code></div>
+          <div class="muted" style="margin-top:6px;font-size:11px;">${t("如需修改全局连接，请到主界面齿轮设置 →「全局postgres连接设置」。")}</div>
+        </div>
+      </div>` : ""}
+      <div id="pgManualBlock" style="${globalSet && useGlobalInit ? "display:none;" : "display:contents;"}">
       <div class="field full">
         <label>${t("数据库连接填写方式")} ${info("两种方式二选一：不熟悉「连接前缀/连接后缀」时，可直接粘贴一条完整的连接串，程序会自动拆分。")}</label>
         <div class="radio-list" style="flex-direction:row;gap:22px;flex-wrap:wrap;">
@@ -3136,6 +3588,7 @@ function buildForm(cfg, canEditSubs) {
         <span class="hint" id="connFullHint"></span>
       </div>
       <div class="field full"><label>${t("完整连接串示例")} ${info("按当前填写内容实时拼出的完整连接串（密码已脱敏）。")}</label><div class="conn-example" id="connExample"></div></div>
+      </div>
     </div></div>
 
     <div class="form-card"><h4>${t("主 agent")}</h4><div class="form-grid">
@@ -3145,6 +3598,22 @@ function buildForm(cfg, canEditSubs) {
       ${modelBlockHTML(main.llm_provider_name, main.model, "main_mode")}
       <div class="field"><label>API Key ${info("该模型供应商的 API 密钥（明文存本地配置）。")}</label><input id="f_apikey" value="${esc(main.api_key)}" type="password"${ph("main_api_key")}></div>
       <div class="field"><label>${t("文件工具根目录")} ${info("主 agent 文件工具读写文件的根目录。")}</label><input id="f_rootdir" value="${esc(ft.root_dir)}"${ph("root_dir")}></div>
+      ${globalEmbSet ? `
+      <div class="field full">
+        <div class="global-toggle-row">
+          <label style="display:flex;flex-direction:row;align-items:center;gap:8px;margin:0;"><input type="checkbox" id="f_emb_use_global" ${useGlobalEmbInit ? "checked" : ""}> ${t("使用全局 embedding 模型设置")}</label>
+          ${info("勾选后，本 multi-agent 直接使用主界面「系统设置 → 全局embedding模型设置」里的 embedding 模型、维度、镜像、缓存目录与离线模式；取消勾选可为本 multi-agent 单独设置。")}
+          <span class="exp-tri" id="embExpTri" title="${t("展开 / 收起说明")}"></span>
+        </div>
+      </div>
+      <div class="field full" id="embGlobalBlock" style="display:none;">
+        <div class="conn-example">
+          <div>${t("当前使用的全局 embedding 配置：")}</div>
+          <div style="margin-top:4px;"><code>${esc(gEmb.model_name || "")}</code> · ${t("embedding 维度")} <code>${esc(String(gEmb.dims || ""))}</code> · ${t("embedding 镜像")} <code>${esc(gEmb.hf_endpoint || t("官方 huggingface.co"))}</code> · ${t("Embedding 模型离线模式")} <code>${gEmb.local_files_only ? t("是") : t("否")}</code></div>
+          <div class="muted" style="margin-top:6px;font-size:11px;">${t("如需修改，请到主界面齿轮设置 →「全局embedding模型设置」。")}</div>
+        </div>
+      </div>` : ""}
+      <div id="embManualBlock" style="${globalEmbSet && useGlobalEmbInit ? "display:none;" : "display:contents;"}">
       <div class="field"><label>${t("embedding 模型")} <i class="info-icon">!<span class="tip">${t("无需提前下载，首次配置会自动下载（需连接 Hugging Face Hub，国内网络可能连不上）。若已离线缓存过，可在下方缓存目录直接使用。")}</span></i></label>${embSelect}</div>
       <div class="field"><label>${t("embedding 缓存目录")} ${info("本地模型缓存路径，留空用 Hugging Face 默认缓存。")}</label><input id="f_emb_cache" value="${esc(emb.cache_folder)}"${ph("emb_cache")}></div>
       <div class="field"><label>${t("embedding 维度")} ${info("向量维度；bge-m3 为 1024，换模型需对应调整。")}</label><input id="f_emb_dims" value="${esc(emb.dims)}" type="number"></div>
@@ -3153,9 +3622,27 @@ function buildForm(cfg, canEditSubs) {
         <label style="flex-direction:row;align-items:center;gap:8px;"><input type="checkbox" id="f_emb_offline" ${emb.local_files_only ? "checked" : ""}> ${t("Embedding 模型离线模式")} ${info("离线模式 = 只从本地缓存加载 embedding 模型、不联网校验。没有缓存时请勿开启（会报错）；已有缓存时建议开启，跳过每次联网校验。")}</label>
         <span class="hint">${t("没有缓存时请勿开启；已有缓存时建议开启，跳过每次联网校验。")}</span>
       </div>
-      ${unitField("f_sum_gap", gap.v, gap.u, t("阶段性总结阈值"), "累计 token 达到该值时触发一次阶段性总结。")}
-      ${unitField("f_sum_flush", flush.v, flush.u, t("清空历史阈值"), "累计 token 达到该值时清空历史（只保留最近几轮）。")}
-      <div class="field"><label>${t("清空时保留轮数")} ${info("清空历史时保留最近几轮对话。")}</label><input id="f_sum_reserve" value="${esc(sum.reserve_message_round)}" type="number"></div>
+      </div>
+      ${globalSumSet ? `
+      <div class="field full">
+        <div class="global-toggle-row">
+          <label style="display:flex;flex-direction:row;align-items:center;gap:8px;margin:0;"><input type="checkbox" id="f_sum_use_global" ${useGlobalSumInit ? "checked" : ""}> ${t("使用全局自动（及主动）总结设置")}</label>
+          ${info("勾选后，本 multi-agent 直接使用主界面「系统设置 → 全局自动（及主动）总结设置」里的自动阶段性总结阈值、自动全量总结阈值与保留轮数；取消勾选可为本 multi-agent 单独设置。")}
+          <span class="exp-tri" id="sumExpTri" title="${t("展开 / 收起说明")}"></span>
+        </div>
+      </div>
+      <div class="field full" id="sumGlobalBlock" style="display:none;">
+        <div class="conn-example">
+          <div>${t("当前使用的全局总结配置：")}</div>
+          <div style="margin-top:4px;">${t("自动阶段性总结阈值")} <code>${esc(String(gGap.v))}${esc(t(gGap.u))}</code> · ${t("自动全量总结阈值")} <code>${esc(String(gFlush.v))}${esc(t(gFlush.u))}</code> · ${t("自动以及主动全量总结后，需要保留的会话轮数")} <code>${esc(String(gSum.reserve_message_round != null ? gSum.reserve_message_round : 0))}</code></div>
+          <div class="muted" style="margin-top:6px;font-size:11px;">${t("如需修改，请到主界面齿轮设置 →「全局自动（及主动）总结设置」。")}</div>
+        </div>
+      </div>` : ""}
+      <div id="sumManualBlock" style="${globalSumSet && useGlobalSumInit ? "display:none;" : "display:contents;"}">
+      ${unitField("f_sum_gap", gap.v, gap.u, t("自动阶段性总结阈值"), "累计 token 达到该值时触发一次阶段性总结。")}
+      ${unitField("f_sum_flush", flush.v, flush.u, t("自动全量总结阈值"), "累计 token 达到该值时清空历史（只保留最近几轮）。")}
+      <div class="field"><label>${t("自动以及主动全量总结后，需要保留的会话轮数")} ${info("清空历史时保留最近几轮对话。")}</label><input id="f_sum_reserve" value="${esc(sum.reserve_message_round)}" type="number"></div>
+      </div>
       <div class="field full"><label>System Prompt ${info("主 agent 的系统提示词，定义其角色与行为。")}</label><textarea id="f_prompt" rows="8"${ph("main_system_prompt")}>${esc(main.system_prompt)}</textarea></div>
       <div class="field full">
         <label style="flex-direction:row;align-items:center;gap:8px;"><input type="checkbox" id="f_react_prompt" ${reactPrompt ? "checked" : ""}> ${t("开启 ReAct Prompt")} ${info("用于长程多工具调用的严肃任务处理场景；日常聊天可关闭以节省 token 并加快响应。")}</label>
@@ -3163,7 +3650,7 @@ function buildForm(cfg, canEditSubs) {
       <div class="field full" style="border-top:1px solid var(--border);padding-top:14px;">
         <label style="flex-direction:row;align-items:center;gap:8px;"><input type="checkbox" id="f_html_report" ${htmlReport ? "checked" : ""}> ${t("启用 HTML 报告")} ${info("主 agent 输出完后，询问是否将结果生成 HTML 报告。")}</label>
       </div>
-      <div class="field full"><label>${t("HTML 报告生成 prompt")} ${info("确认生成后注入给主 agent 的提示词（可恢复默认）。")} <button class="btn small" id="resetHtmlBtn" type="button">${t("恢复默认")}</button></label><textarea id="f_html_prompt" rows="3">${esc(htmlPrompt)}</textarea></div>
+      <div class="field full" id="htmlPromptField" style="${htmlReport ? "" : "display:none;"}"><label>${t("HTML 报告生成 prompt")} ${info("确认生成后注入给主 agent 的提示词（可恢复默认）。")} <button class="btn small" id="resetHtmlBtn" type="button">${t("恢复默认")}</button></label><textarea id="f_html_prompt" rows="3">${esc(htmlPrompt)}</textarea></div>
     </div></div>
 
     <div class="form-card"><h4>${t("子 agent")}（${canEditSubs ? t("可增删") : t("创建后不可增删改名")}）</h4>
@@ -3254,7 +3741,7 @@ function buildForm(cfg, canEditSubs) {
         let suffix = parsed.suffix;
         if (!suffix && isLocalPrefix(parsed.prefix)) suffix = "?sslmode=disable";
         if (isLocalPrefix(parsed.prefix) !== isLocal) {
-          suffixWrap.innerHTML = suffixCtrlHTML(isLocalPrefix(parsed.prefix), suffix);
+          suffixWrap.innerHTML = pgSuffixCtrlHTML(isLocalPrefix(parsed.prefix), suffix);
           bindSuffixEvents();
         } else {
           setSuffixValue(suffix);
@@ -3270,6 +3757,26 @@ function buildForm(cfg, canEditSubs) {
   fullInput.addEventListener("input", () => { updateFullHint(); refreshExample(); });
   updateFullHint();
   refreshExample();
+
+  // 全局连接开关：勾选时隐藏手动填写区；全局摘要默认折叠，点小三角才展开。
+  const pgUseGlobal = $("#f_pg_use_global");
+  const pgManualBlock = $("#pgManualBlock");
+  const pgGlobalBlock = $("#pgGlobalBlock");
+  const pgExpTri = $("#pgExpTri");
+  let pgExpanded = false;
+  const applyPgUseGlobal = () => {
+    if (!pgUseGlobal) return;
+    const on = pgUseGlobal.checked;
+    if (!on) pgExpanded = false;
+    if (pgManualBlock) pgManualBlock.style.display = on ? "none" : "contents";
+    if (pgGlobalBlock) pgGlobalBlock.style.display = (on && pgExpanded) ? "" : "none";
+    if (pgExpTri) pgExpTri.classList.toggle("open", !!pgExpanded);
+  };
+  if (pgExpTri) pgExpTri.onclick = () => { pgExpanded = !pgExpanded; applyPgUseGlobal(); };
+  if (pgUseGlobal) {
+    pgUseGlobal.addEventListener("change", applyPgUseGlobal);
+    applyPgUseGlobal();
+  }
 
   // embedding 下拉 ↔ 自定义
   const embSel = $("#f_emb_model_sel"), embCustom = $("#f_emb_model_custom");
@@ -3287,7 +3794,56 @@ function buildForm(cfg, canEditSubs) {
     }
   };
 
+  // 全局 embedding 开关：勾选时隐藏手动填写区；全局摘要默认折叠，点小三角才展开。
+  const embUseGlobal = $("#f_emb_use_global");
+  const embManualBlock = $("#embManualBlock");
+  const embGlobalBlock = $("#embGlobalBlock");
+  const embExpTri = $("#embExpTri");
+  let embExpanded = false;
+  const applyEmbUseGlobal = () => {
+    if (!embUseGlobal) return;
+    const on = embUseGlobal.checked;
+    if (!on) embExpanded = false;
+    if (embManualBlock) embManualBlock.style.display = on ? "none" : "contents";
+    if (embGlobalBlock) embGlobalBlock.style.display = (on && embExpanded) ? "" : "none";
+    if (embExpTri) embExpTri.classList.toggle("open", !!embExpanded);
+  };
+  if (embExpTri) embExpTri.onclick = () => { embExpanded = !embExpanded; applyEmbUseGlobal(); };
+  if (embUseGlobal) {
+    embUseGlobal.addEventListener("change", applyEmbUseGlobal);
+    applyEmbUseGlobal();
+  }
+
+  // 全局总结开关：勾选时隐藏手动填写区；全局摘要默认折叠，点小三角才展开。
+  const sumUseGlobal = $("#f_sum_use_global");
+  const sumManualBlock = $("#sumManualBlock");
+  const sumGlobalBlock = $("#sumGlobalBlock");
+  const sumExpTri = $("#sumExpTri");
+  let sumExpanded = false;
+  const applySumUseGlobal = () => {
+    if (!sumUseGlobal) return;
+    const on = sumUseGlobal.checked;
+    if (!on) sumExpanded = false;
+    if (sumManualBlock) sumManualBlock.style.display = on ? "none" : "contents";
+    if (sumGlobalBlock) sumGlobalBlock.style.display = (on && sumExpanded) ? "" : "none";
+    if (sumExpTri) sumExpTri.classList.toggle("open", !!sumExpanded);
+  };
+  if (sumExpTri) sumExpTri.onclick = () => { sumExpanded = !sumExpanded; applySumUseGlobal(); };
+  if (sumUseGlobal) {
+    sumUseGlobal.addEventListener("change", applySumUseGlobal);
+    applySumUseGlobal();
+  }
+
   $("#resetHtmlBtn").onclick = () => { $("#f_html_prompt").value = DEFAULT_HTML_PROMPT; };
+
+  // 未启用 HTML 报告时，隐藏「HTML 报告生成 prompt」设置项。
+  const htmlReportChk = $("#f_html_report");
+  const htmlPromptField = $("#htmlPromptField");
+  if (htmlReportChk && htmlPromptField) {
+    htmlReportChk.addEventListener("change", () => {
+      htmlPromptField.style.display = htmlReportChk.checked ? "" : "none";
+    });
+  }
 
   const subsBox = $("#subs");
   (cfg.sub_agents || []).forEach((s, i) => subsBox.appendChild(subAgentBox(s, i, canEditSubs)));
@@ -3298,8 +3854,18 @@ function buildForm(cfg, canEditSubs) {
 }
 
 function subAgentBox(s, key, canEdit) {
+  const isNewSub = !s;
   s = s || { name: "", description: "", system_prompt: "", api_key: "", llm_provider_name: "deepseek:deepseek-v4-pro", mcp_servers: [], summary: { flush_history_tokenwise: 200000, reserve_message_round: 4 }, react_prompt: true };
   const flush = tokToUnit((s.summary || {}).flush_history_tokenwise);
+  // 全局子 agent 总结设置（与主 agent 那套分开；同样是与全局一致则默认勾选）。
+  const gSub = (settingsCache && settingsCache.global_sub_summary) || {};
+  const globalSubSet = !!(settingsCache && settingsCache.global_sub_summary_configured) && Object.keys(gSub).length > 0;
+  const subEqual = globalSubSet && (
+    Number((s.summary || {}).flush_history_tokenwise || 0) === Number(gSub.flush_history_tokenwise || 0) &&
+    Number((s.summary || {}).reserve_message_round || 0) === Number(gSub.reserve_message_round || 0)
+  );
+  const useGlobalSubInit = globalSubSet && (isNewSub || subEqual);
+  const gSubFlush = tokToUnit(gSub.flush_history_tokenwise != null ? gSub.flush_history_tokenwise : 0);
   const div = document.createElement("div");
   div.className = "subagent-box";
   div.dataset.key = key;
@@ -3309,8 +3875,25 @@ function subAgentBox(s, key, canEdit) {
       <div class="field"><label>${t("名称")} name ${info("子 agent 标识，会作为工具名呈现给主 agent，创建后不可改。")}</label><input data-f="name" value="${esc(s.name)}" ${canEdit ? "" : "readonly"}${ph("sub_name")}></div>
       ${modelBlockHTML(s.llm_provider_name, s.model, `sub_${key}_mode`)}
       <div class="field"><label>API Key ${info("该子 agent 所用模型的 API 密钥（明文存本地配置）。")}</label><input data-f="api_key" value="${esc(s.api_key)}" type="password"${ph("sub_api_key")}></div>
-      <div class="field"><label>${t("清空历史阈值")} ${info("该子 agent 累计 token 达到该值时清空历史（只保留最近几轮）。")}</label><div class="unit-row"><input data-f="flush" value="${esc(flush.v)}" type="number"><select data-f="flush_unit"><option value="万" ${flush.u === "万" ? "selected" : ""}>${t("万")}</option><option value="千" ${flush.u === "千" ? "selected" : ""}>${t("千")}</option></select></div></div>
-      <div class="field"><label>${t("保留轮数")} ${info("清空历史时保留最近几轮对话。")}</label><input data-f="reserve" value="${esc((s.summary || {}).reserve_message_round)}" type="number"></div>
+      ${globalSubSet ? `
+      <div class="field full">
+        <div class="global-toggle-row">
+          <label style="display:flex;flex-direction:row;align-items:center;gap:8px;margin:0;"><input type="checkbox" data-f="sum_use_global" ${useGlobalSubInit ? "checked" : ""}> ${t("使用全局子 agent 总结设置")}</label>
+          ${info("勾选后，本子 agent 直接使用主界面「系统设置 → 全局自动（及主动）总结设置 → 子 agent」里的清空历史阈值与保留轮数；取消勾选可为本子 agent 单独设置。")}
+          <span class="exp-tri" data-f="sum_tri" title="${t("展开 / 收起说明")}"></span>
+        </div>
+      </div>
+      <div class="field full" data-f="sum_global" style="display:none;">
+        <div class="conn-example">
+          <div>${t("当前使用的全局子 agent 总结配置：")}</div>
+          <div style="margin-top:4px;">${t("自动全量总结阈值")} <code>${esc(String(gSubFlush.v))}${esc(t(gSubFlush.u))}</code> · ${t("自动以及主动全量总结后，需要保留的会话轮数")} <code>${esc(String(gSub.reserve_message_round != null ? gSub.reserve_message_round : 0))}</code></div>
+          <div class="muted" style="margin-top:6px;font-size:11px;">${t("如需修改，请到主界面齿轮设置 →「全局自动（及主动）总结设置」。")}</div>
+        </div>
+      </div>` : ""}
+      <div data-f="sum_manual" style="${globalSubSet && useGlobalSubInit ? "display:none;" : "display:contents;"}">
+      <div class="field"><label>${t("自动全量总结阈值")} ${info("该子 agent 累计 token 达到该值时清空历史（只保留最近几轮）。")}</label><div class="unit-row"><input data-f="flush" value="${esc(flush.v)}" type="number"><select data-f="flush_unit"><option value="万" ${flush.u === "万" ? "selected" : ""}>${t("万")}</option><option value="千" ${flush.u === "千" ? "selected" : ""}>${t("千")}</option></select></div></div>
+      <div class="field"><label>${t("自动以及主动全量总结后，需要保留的会话轮数")} ${info("清空历史时保留最近几轮对话。")}</label><input data-f="reserve" value="${esc((s.summary || {}).reserve_message_round)}" type="number"></div>
+      </div>
       <div class="field full"><label>Description ${info("描述该子 agent 能力，作为工具描述呈现给主 agent。")}</label><textarea data-f="description" rows="3"${ph("sub_description")}>${esc(s.description)}</textarea></div>
       <div class="field full"><label>System Prompt ${info("该子 agent 的系统提示词。")}</label><textarea data-f="system_prompt" rows="6"${ph("sub_system_prompt")}>${esc(s.system_prompt)}</textarea></div>
       <div class="field full">
@@ -3327,6 +3910,25 @@ function subAgentBox(s, key, canEdit) {
   addM.className = "btn small add-mcp"; addM.type = "button"; addM.textContent = "+ " + t("添加 MCP");
   addM.onclick = () => mcpBox.insertBefore(mcpRow(null, Date.now()), addM);
   mcpBox.appendChild(addM);
+
+  // 全局子 agent 总结开关：勾选时隐藏手动填写区；摘要默认折叠，点小三角才展开。
+  const subSumUseGlobal = div.querySelector('[data-f="sum_use_global"]');
+  if (subSumUseGlobal) {
+    const subSumManual = div.querySelector('[data-f="sum_manual"]');
+    const subSumGlobal = div.querySelector('[data-f="sum_global"]');
+    const subSumTri = div.querySelector('[data-f="sum_tri"]');
+    let subSumExpanded = false;
+    const applySubSum = () => {
+      const on = subSumUseGlobal.checked;
+      if (!on) subSumExpanded = false;
+      if (subSumManual) subSumManual.style.display = on ? "none" : "contents";
+      if (subSumGlobal) subSumGlobal.style.display = (on && subSumExpanded) ? "" : "none";
+      if (subSumTri) subSumTri.classList.toggle("open", !!subSumExpanded);
+    };
+    if (subSumTri) subSumTri.onclick = () => { subSumExpanded = !subSumExpanded; applySubSum(); };
+    subSumUseGlobal.addEventListener("change", applySubSum);
+    applySubSum();
+  }
 
   bindModelBlock(div);
   return div;
@@ -3391,6 +3993,21 @@ function collectSubAgent(box) {
     command: r.querySelector('[data-m="command"]').value || null,
     args: r.querySelector('[data-m="args"]').value ? r.querySelector('[data-m="args"]').value.split(",").map(x => x.trim()).filter(Boolean) : [],
   }));
+  const subUseGlobal = box.querySelector('[data-f="sum_use_global"]');
+  let summary;
+  if (subUseGlobal && subUseGlobal.checked) {
+    // 使用全局子 agent 总结设置：把当前全局值写回本子 agent。
+    const gs = (settingsCache && settingsCache.global_sub_summary) || {};
+    summary = {
+      flush_history_tokenwise: +(gs.flush_history_tokenwise != null ? gs.flush_history_tokenwise : unitToTok(box.querySelector('[data-f="flush"]').value, box.querySelector('[data-f="flush_unit"]').value)),
+      reserve_message_round: +(gs.reserve_message_round != null ? gs.reserve_message_round : +get("reserve")),
+    };
+  } else {
+    summary = {
+      flush_history_tokenwise: unitToTok(box.querySelector('[data-f="flush"]').value, box.querySelector('[data-f="flush_unit"]').value),
+      reserve_message_round: +get("reserve"),
+    };
+  }
   return {
     name: get("name"),
     description: get("description"),
@@ -3399,10 +4016,7 @@ function collectSubAgent(box) {
     llm_provider_name: box.querySelector('[data-mf="llm_provider_name"]').value,
     model: collectModelCfg(box),
     mcp_servers: mcp,
-    summary: {
-      flush_history_tokenwise: unitToTok(box.querySelector('[data-f="flush"]').value, box.querySelector('[data-f="flush_unit"]').value),
-      reserve_message_round: +get("reserve"),
-    },
+    summary,
     react_prompt: box.querySelector('[data-f="react_prompt"]').checked,
   };
 }
@@ -3419,8 +4033,62 @@ function hfEndpointValue() {
 
 function buildPayload(cfg) {
   const val = id => $(`#${id}`).value;
-  const conn = collectPgConn();
+  const pgUseGlobal = $("#f_pg_use_global");
+  let conn;
+  if (pgUseGlobal && pgUseGlobal.checked) {
+    // 使用全局连接设置：把当前全局前缀/后缀写回本 agent（运行时后端仍只读 agent 自己这份）。
+    const gp = settingsCache || {};
+    const prefix = gp.global_postgres_prefix || "";
+    let suffix = gp.global_postgres_suffix || "";
+    if (!suffix && isLocalPrefix(prefix)) suffix = "?sslmode=disable";
+    conn = { ok: true, prefix, database: val("f_cpdb"), suffix };
+  } else {
+    conn = collectPgConn();
+  }
   if (!conn.ok) throw new Error(conn.error);
+  const embUseGlobalEl = $("#f_emb_use_global");
+  let embedding;
+  if (embUseGlobalEl && embUseGlobalEl.checked) {
+    // 使用全局 embedding 设置：把当前全局值写回本 agent（运行时后端仍只读 agent 自己这份）。
+    const ge = (settingsCache && settingsCache.global_embedding) || {};
+    const cfgEmb = cfg.main_agent.embedding || {};
+    embedding = {
+      model_name: ge.model_name || embModelValue(),
+      cache_folder: ge.cache_folder || "",
+      dims: +(ge.dims != null ? ge.dims : val("f_emb_dims")),
+      device: ge.device != null ? ge.device : (cfgEmb.device || "cpu"),
+      encode_normalize: ge.encode_normalize != null ? ge.encode_normalize : (cfgEmb.encode_normalize ?? true),
+      local_files_only: !!ge.local_files_only,
+      hf_endpoint: ge.hf_endpoint || "",
+    };
+  } else {
+    embedding = {
+      model_name: embModelValue(),
+      cache_folder: val("f_emb_cache"),
+      dims: +val("f_emb_dims"),
+      device: (cfg.main_agent.embedding || {}).device || "cpu",
+      encode_normalize: (cfg.main_agent.embedding || {}).encode_normalize ?? true,
+      local_files_only: $("#f_emb_offline").checked,
+      hf_endpoint: hfEndpointValue(),
+    };
+  }
+  const sumUseGlobalEl = $("#f_sum_use_global");
+  let summary;
+  if (sumUseGlobalEl && sumUseGlobalEl.checked) {
+    // 使用全局总结设置：把当前全局值写回本 agent（运行时后端仍只读 agent 自己这份）。
+    const gs = (settingsCache && settingsCache.global_summary) || {};
+    summary = {
+      summarize_gap_tokenwise: +(gs.summarize_gap_tokenwise != null ? gs.summarize_gap_tokenwise : unitToTok(val("f_sum_gap"), val("f_sum_gap_unit"))),
+      flush_history_tokenwise: +(gs.flush_history_tokenwise != null ? gs.flush_history_tokenwise : unitToTok(val("f_sum_flush"), val("f_sum_flush_unit"))),
+      reserve_message_round: +(gs.reserve_message_round != null ? gs.reserve_message_round : +val("f_sum_reserve")),
+    };
+  } else {
+    summary = {
+      summarize_gap_tokenwise: unitToTok(val("f_sum_gap"), val("f_sum_gap_unit")),
+      flush_history_tokenwise: unitToTok(val("f_sum_flush"), val("f_sum_flush_unit")),
+      reserve_message_round: +val("f_sum_reserve"),
+    };
+  }
   return {
     agent_id: val("f_agent_id") || slugify(val("f_name")),
     name: val("f_name"),
@@ -3437,20 +4105,8 @@ function buildPayload(cfg) {
       llm_provider_name: $("#editorForm").querySelector('[data-mf="llm_provider_name"]').value,
       model: collectModelCfg($("#editorForm")),
       file_tools: { root_dir: val("f_rootdir") },
-      embedding: {
-        model_name: embModelValue(),
-        cache_folder: val("f_emb_cache"),
-        dims: +val("f_emb_dims"),
-        device: (cfg.main_agent.embedding || {}).device || "cpu",
-        encode_normalize: (cfg.main_agent.embedding || {}).encode_normalize ?? true,
-        local_files_only: $("#f_emb_offline").checked,
-        hf_endpoint: hfEndpointValue(),
-      },
-      summary: {
-        summarize_gap_tokenwise: unitToTok(val("f_sum_gap"), val("f_sum_gap_unit")),
-        flush_history_tokenwise: unitToTok(val("f_sum_flush"), val("f_sum_flush_unit")),
-        reserve_message_round: +val("f_sum_reserve"),
-      },
+      embedding,
+      summary,
       html_report: $("#f_html_report").checked,
       html_report_prompt: val("f_html_prompt"),
       react_prompt: $("#f_react_prompt").checked,
@@ -3469,7 +4125,13 @@ async function saveConfig(cfg, isNew, isDefault) {
     if (payload.sub_agents.some(s => !(s.name || "").trim())) return toast(t("子 agent 名称不能为空"), true);
 
     if (isDefault) { await api("/api/default", { method: "PUT", body: JSON.stringify(payload) }); toast(t("默认配置已保存")); goAgents(); }
-    else if (isNew) { await api("/api/agents", { method: "POST", body: JSON.stringify(payload) }); toast(t("已创建")); goAgents(); }
+    else if (isNew) {
+      await api("/api/agents", { method: "POST", body: JSON.stringify(payload) });
+      // 后端可能在首次创建 agent 时顺带初始化「全局 postgres 连接设置」，清掉前端缓存以便下次重新拉取。
+      settingsCache = null;
+      toast(t("已创建"));
+      goAgents();
+    }
     else { payload.agent_id = S.agentId; await api("/api/agents/" + encodeURIComponent(S.agentId), { method: "PUT", body: JSON.stringify(payload) }); toast(t("已保存")); goAgents(); }
   } catch (e) { toast(e.message, true); }
 }

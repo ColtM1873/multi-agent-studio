@@ -37,7 +37,13 @@ from app.api import (
     snapshots,
     threads,
 )
-from app.deps import common_prompt_store, draft_store
+from app.config.settings import (
+    seed_global_embedding,
+    seed_global_postgres,
+    seed_global_sub_summary,
+    seed_global_summary,
+)
+from app.deps import common_prompt_store, config_store, draft_store
 
 # 可选的浏览器工具计时 / 卡死看门狗探针（仅当设置 BROWSER_TOOL_TIMING=1 时安装，
 # 未设置时零开销、不改变任何行为）。见 browser_agent/diagnostics.py。
@@ -61,6 +67,16 @@ except Exception:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    # 首次启动：若有已存在的 multi-agent，把第一个带连接前缀的配置提取为全局连接设置，
+    # 供各 agent 配置界面的「使用全局连接」开关使用（见 app/config/settings.py）。
+    try:
+        agents = config_store.list()
+        seed_global_postgres(config_store._dir, agents)
+        seed_global_embedding(config_store._dir, agents)
+        seed_global_summary(config_store._dir, agents)
+        seed_global_sub_summary(config_store._dir, agents)
+    except Exception:  # noqa: BLE001
+        pass
     yield
     # 退出托盘程序时兜底把未发送消息缓存 / 会话常用 prompt 再落盘一次
     for store in (draft_store, common_prompt_store):
