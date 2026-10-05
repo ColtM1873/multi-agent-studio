@@ -4413,6 +4413,17 @@ function toggleMsgDrawer(e) {
     });
   }
   btn.appendChild(panel);
+  // 顶栏按钮换行到下一行时，面板可能横向超出视口；append 后按视口做一次校正
+  const margin = 8;
+  const br = btn.getBoundingClientRect();
+  const pr = panel.getBoundingClientRect();
+  if (pr.left < margin) {
+    panel.style.right = "auto";
+    panel.style.left = `${margin - br.left}px`;
+  } else if (pr.right > window.innerWidth - margin) {
+    panel.style.left = "auto";
+    panel.style.right = `${br.right - (window.innerWidth - margin)}px`;
+  }
 }
 
 /* ================= 未发送消息缓存（draft） ================= */
@@ -4465,9 +4476,11 @@ async function renderChatView() {
 
   view.innerHTML = `
     <div class="chat-head">
-      <span class="thread-name">🧵 ${esc(S.threadId)}</span>
-      <span class="muted">（${esc(S.agentName)}）</span>
-      <div class="spacer" style="flex:1;"></div>
+      <div class="chat-head-left">
+        <span class="thread-name">🧵 ${esc(S.threadId)}</span>
+        <span class="muted">（${esc(S.agentName)}）</span>
+      </div>
+      <div class="chat-head-right">
       <span class="status-indicator" id="statusInd"></span>
       <span class="edit-mode-badge" id="editModeBadge" style="display:none;">✏️ ${t("编辑模式")}</span>
       <button class="btn small" id="editSessionPromptBtn" style="display:none;">📝 ${t("编辑会话常用prompt")}</button>
@@ -4489,6 +4502,7 @@ async function renderChatView() {
       </div>
       <button class="btn small" id="msgDirBtn" style="position:relative;">☰ ${t("消息目录")}</button>
       <select id="subgraphSel" class="btn small" style="max-width:220px;"><option value="">${t("主会话")}</option></select>
+      </div>
     </div>
     <div class="chat-body" id="chatBody">
       <div class="history-pane" id="historyPane"><div class="md-body markdown-body" id="historyMd"><div class="muted">${t("加载历史中…")}</div></div></div>
@@ -5884,9 +5898,11 @@ async function renderSnapshotView() {
 
   view.innerHTML = `
     <div class="chat-head">
-      <span class="thread-name">📸 ${esc(snap.thread_id)}</span>
-      <span class="muted">${esc(snap.created_at || "")}</span>
-      <div class="spacer" style="flex:1;"></div>
+      <div class="chat-head-left">
+        <span class="thread-name">📸 ${esc(snap.thread_id)}</span>
+        <span class="muted">${esc(snap.created_at || "")}</span>
+      </div>
+      <div class="chat-head-right">
       <div class="zoom-controls">
         <span class="zoom-btn" id="rZoomOut" title="${t("思考字号减小")}">−</span>
         <span class="zoom-label" id="rZoomLabel" title="${t("思考字号（相对正文）")}">🧠</span>
@@ -5901,6 +5917,7 @@ async function renderSnapshotView() {
       </div>
       <button class="btn small" id="msgDirBtn" style="position:relative;">☰ ${t("消息目录")}</button>
       <select id="subgraphSel" class="btn small" style="max-width:220px;"><option value="">${t("主会话")}</option></select>
+      </div>
     </div>
     <div class="chat-body" id="chatBody">
       <div class="history-pane" id="historyPane"><div class="md-body markdown-body" id="historyMd"><div class="muted">${t("加载历史中…")}</div></div></div>

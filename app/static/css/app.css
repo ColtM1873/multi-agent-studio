@@ -205,8 +205,13 @@ html[data-style-danger="solid"] .card-btn-danger:hover { filter: brightness(.92)
 /* ── 聊天视图 ──────────────────────────── */
 .chat-view { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
 .chat-head {
-  height: 52px; background: var(--surface); border-bottom: 1px solid var(--border);
-  display: flex; align-items: center; gap: 12px; padding: 0 18px; flex-shrink: 0;
+  min-height: 52px; background: var(--surface); border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 8px 12px; padding: 7px 18px; flex-shrink: 0;
+}
+.chat-head-left { display: flex; align-items: center; gap: 12px; min-width: 0; flex: 0 1 auto; }
+.chat-head-right {
+  display: flex; align-items: center; align-content: center; flex-wrap: wrap;
+  justify-content: flex-end; gap: 8px 12px; flex: 1 1 0; min-width: 0;
 }
 .chat-head .thread-name { font-weight: 700; font-size: 16px; }
 .chat-body { flex: 1; display: flex; flex-direction: column; overflow: hidden; position: relative; }
@@ -587,7 +592,7 @@ html[data-style-danger="solid"] .card-btn-danger:hover { filter: brightness(.92)
 .pin-btn.active { background: var(--primary); border-color: var(--primary); box-shadow: 0 2px 8px rgba(79,70,229,.35); }
 
 /* ── 消息抽屉 ───────────────────────────── */
-.msg-drawer-panel { position: absolute; right: 0; top: 110%; width: 300px; max-height: 360px; overflow: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow-lg); z-index: 100; padding: 6px; }
+.msg-drawer-panel { position: absolute; right: 0; top: 110%; width: 300px; max-width: calc(100vw - 16px); max-height: 360px; overflow: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow-lg); z-index: 100; padding: 6px; }
 .msg-drawer-item { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-radius: 8px; cursor: pointer; font-size: 13px; }
 .msg-drawer-item:hover { background: #eef2ff; }
 .msg-drawer-caret { flex: 0 0 auto; width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center; color: var(--text-muted); font-size: 13px; line-height: 1; user-select: none; cursor: pointer; border-radius: 5px; }
