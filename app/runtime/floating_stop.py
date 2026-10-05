@@ -68,6 +68,7 @@ class FloatingStop:
         self._name = "agent"
         self._pos_path: Optional[Path] = None
         self._available: Optional[bool] = None
+        self._atexit_done = False
 
     # ------------------------------------------------------------------ #
     # public API
@@ -98,6 +99,17 @@ class FloatingStop:
             return
         self._q.put(("hide", None))
 
+    def shutdown(self) -> None:
+        """主动销毁悬浮窗并结束 Tk 线程（供托盘退出 / ``atexit`` 调用）。
+
+        不做这一步时：Tk 守护线程会在解释器关闭阶段继续存活，进程可能卡住、悬浮球
+        残留；且此时点击球体或轮询里的 ``import`` 会失败（Python is shutting down）。
+        """
+        self._q.put(("quit", None))
+        thread = self._thread
+        if thread is not None and thread.is_alive():
+            thread.join(timeout=2.0)
+
     # ------------------------------------------------------------------ #
     # internals
     # ------------------------------------------------------------------ #
@@ -105,6 +117,11 @@ class FloatingStop:
         if self._thread and self._thread.is_alive():
             return
         self._started.clear()
+        if not self._atexit_done:
+            self._atexit_done = True
+            import atexit
+
+            atexit.register(self.shutdown)
         self._thread = threading.Thread(target=self._run, name="floating-stop", daemon=True)
         self._thread.start()
         self._started.wait(timeout=5.0)
@@ -155,33 +172,53 @@ class FloatingStop:
             pass
         root.configure(bg=KEY)
 
+        # 进程若被提为 DPI 感知（桌面版 pywebview 会调 ``SetProcessDPIAware``），
+        # Tk 会按真实 DPI 渲染字体，但固定像素的窗口不会随之放大 → 球视觉上「缩小」、
+        # 文字溢出球体。故按 Tk 报告的 DPI 缩放所有几何尺寸；字体用点数，已随 DPI 自动放大。
+        try:
+            scale = root.winfo_fpixels("1i") / 96.0
+        except Exception:  # noqa: BLE001
+            scale = 1.0
+        if not (scale and scale > 0):
+            scale = 1.0
+
+        def _s(v: float) -> int:
+            return max(1, int(round(v * scale)))
+
+        ball_w, ball_h = _s(BALL_W), _s(BALL_H)
+        gap = _s(GAP)
+        handle_size = _s(HANDLE_SIZE)
+        win_w = ball_w + gap + handle_size
+        win_h = ball_h
+
         canvas = tk.Canvas(
-            root, width=WIN_W, height=WIN_H, bg=KEY, highlightthickness=0, bd=0
+            root, width=win_w, height=win_h, bg=KEY, highlightthickness=0, bd=0
         )
         canvas.pack()
 
         # 球体（圆角）+ 两行文字
         ball = _round_rect(
-            canvas, 1, 1, BALL_W - 1, BALL_H - 1, BALL_R, fill=RED, outline=RED
+            canvas, _s(1), _s(1), ball_w - _s(1), ball_h - _s(1), _s(BALL_R),
+            fill=RED, outline=RED,
         )
         name_id = canvas.create_text(
-            BALL_W / 2, 23, text="@agent", fill="white",
+            ball_w / 2, _s(23), text="@agent", fill="white",
             font=("Microsoft YaHei", 9),
         )
         action_id = canvas.create_text(
-            BALL_W / 2, 48, text="停止", fill="white",
+            ball_w / 2, _s(48), text="停止", fill="white",
             font=("Microsoft YaHei", 20, "bold"),
         )
 
         # 拖动把手（圆角，和球体之间留透明间隙）
-        hx = BALL_W + GAP
-        hy = (WIN_H - HANDLE_SIZE) // 2
+        hx = ball_w + gap
+        hy = (win_h - handle_size) // 2
         handle = _round_rect(
-            canvas, hx, hy, hx + HANDLE_SIZE, hy + HANDLE_SIZE, HANDLE_R,
+            canvas, hx, hy, hx + handle_size, hy + handle_size, _s(HANDLE_R),
             fill=HANDLE_BG, outline=HANDLE_BG,
         )
         handle_txt = canvas.create_text(
-            hx + HANDLE_SIZE / 2, WIN_H / 2, text="✥", fill="white",
+            hx + handle_size / 2, win_h / 2, text="✥", fill="white",
             font=("Segoe UI", 14),
         )
 
@@ -198,6 +235,15 @@ class FloatingStop:
             except Exception:  # noqa: BLE001
                 return True
 
+        def safe_paused() -> bool:
+            """读取暂停状态；模块不可导入（如解释器正在关闭）时回退本地状态，绝不抛出。"""
+            try:
+                from app.runtime.browser_tools_wrap_up import is_paused
+
+                return bool(is_paused())
+            except Exception:  # noqa: BLE001
+                return state["paused"]
+
         def apply_state(paused: bool) -> None:
             state["paused"] = paused
             color = GREEN if paused else RED
@@ -205,10 +251,14 @@ class FloatingStop:
             canvas.itemconfigure(action_id, text="继续" if paused else "停止")
 
         def on_ball_click(_evt=None) -> None:
-            from app.runtime.browser_tools_wrap_up import is_paused, set_paused
+            try:
+                from app.runtime.browser_tools_wrap_up import is_paused, set_paused
 
-            set_paused(not is_paused())
-            apply_state(is_paused())
+                set_paused(not is_paused())
+                apply_state(is_paused())
+            except Exception:  # noqa: BLE001
+                # 退出阶段模块可能已不可导入，忽略（此时窗口通常已被 shutdown 销毁）。
+                logger.debug("悬浮球点击被忽略", exc_info=True)
 
         for item in (ball, name_id, action_id):
             canvas.tag_bind(item, "<Button-1>", on_ball_click)
@@ -238,19 +288,18 @@ class FloatingStop:
         if pos:
             x, y = pos
         else:
-            x, y = max(0, root.winfo_screenwidth() - WIN_W - 40), 80
-        root.geometry(f"{WIN_W}x{WIN_H}+{x}+{y}")
+            x, y = max(0, root.winfo_screenwidth() - win_w - _s(40)), _s(80)
+        root.geometry(f"{win_w}x{win_h}+{x}+{y}")
 
         def drain() -> None:
-            from app.runtime.browser_tools_wrap_up import is_paused, set_paused
-
+            # 先处理命令队列（含 quit）：即便业务模块此刻不可导入也必须能干净退出。
             try:
                 while True:
                     cmd, arg = self._q.get_nowait()
                     if cmd == "show":
                         self._name = str(arg or "agent")
                         canvas.itemconfigure(name_id, text=f"@{self._name} agent")
-                        apply_state(is_paused())
+                        apply_state(safe_paused())
                         state["shown"] = True
                         conn["miss"] = 0
                         root.deiconify()
@@ -262,10 +311,14 @@ class FloatingStop:
                     elif cmd == "hide":
                         state["shown"] = False
                         root.withdraw()
+                    elif cmd == "quit":
+                        state["shown"] = False
+                        root.quit()  # 退出 mainloop；不再 root.after，避免线程续命
+                        return
             except queue.Empty:
                 pass
 
-            paused = is_paused()
+            paused = safe_paused()
             if paused != state["paused"]:
                 apply_state(paused)
             try:
@@ -287,11 +340,34 @@ class FloatingStop:
                             state["shown"] = False
                             root.withdraw()
                             # 浏览器已关闭：暂停状态随之复位为「停止」，避免重开后仍被短路。
-                            set_paused(False)
+                            try:
+                                from app.runtime.browser_tools_wrap_up import set_paused
+
+                                set_paused(False)
+                            except Exception:  # noqa: BLE001
+                                pass
                             apply_state(False)
 
             root.after(250, drain)
 
         self._started.set()
         root.after(50, drain)
-        root.mainloop()
+        try:
+            root.mainloop()
+        finally:
+            try:
+                root.destroy()
+            except Exception:  # noqa: BLE001
+                pass
+            # 在创建 Tcl 解释器的线程内回收 Tk 对象。否则解释器会拖到解释器关闭时在
+            # 主线程被 GC，触发 "Tcl_AsyncDelete: async handler deleted by the wrong thread"。
+            try:
+                del root, canvas, ball, name_id, action_id, handle, handle_txt
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                import gc
+
+                gc.collect()
+            except Exception:  # noqa: BLE001
+                pass

@@ -87,6 +87,14 @@ def _status(_icon, _item) -> None:
 def _quit(icon, _item) -> None:
     if _server is not None:
         _server.should_exit = True
+    # 先主动销毁桌面级「停止/继续」悬浮球：否则浏览器未关闭时它会残留，
+    # 且 Tk 守护线程在解释器关闭阶段响应点击会报 "Python is shutting down"。
+    try:
+        from app.runtime.floating_stop import FloatingStop
+
+        FloatingStop.instance().shutdown()
+    except Exception:
+        pass
     try:
         desktop_app.quit()
     except Exception:
