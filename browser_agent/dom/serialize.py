@@ -38,6 +38,7 @@ from .classify import (
     has_inline_click_handler,
     has_svg_descendant,
     is_clickable,
+    is_choice_control_icon,
     is_control_icon,
     is_cursor_pointer_only,
     is_custom_select_input,
@@ -1798,7 +1799,9 @@ class DOMSerializer:
                 # A native checkbox / radio input is the same "control + text" shape
                 # without an icon, so it gets the same treatment instead of an empty tag.
                 if _is_click_like(category) and (
-                    is_control_icon(node) or self._is_choice_input(node)
+                    is_control_icon(node)
+                    or is_choice_control_icon(node)  # BID074
+                    or self._is_choice_input(node)
                 ):
                     paired = (
                         self._adjacent_text_label(node)
@@ -1810,6 +1813,12 @@ class DOMSerializer:
                     # the LLM) reads. A real accessible name is left untouched.
                     if paired and (not label or self._is_machine_token(label)):
                         label = f"选择：{paired}"
+                    if paired and is_choice_control_icon(node):  # BID074
+                        # The option text is a plain (non-pointer) sibling element.
+                        # It is not itself clickable, so it would otherwise leak as a
+                        # duplicate bare ``[文本] 男`` next to ``选择：男``. Consume the
+                        # source element (the icon is the only real control).  # BID074
+                        self._consume_nearby_label_source(node, paired)  # BID074
                 # A composite control (e.g. a select box) often shows only its value or
                 # placeholder (“请选择”). Prefix the associated field label so the LLM
                 # can tell which field it is: “政治面貌：请选择”.
@@ -2882,6 +2891,15 @@ class DOMSerializer:
             dom_state = self._choice_input_dom_state(node)  # BID070
             if dom_state is not None:  # BID070
                 return dom_state  # BID070
+        if is_choice_control_icon(node):  # BID074
+            # 组件自绘单选项的勾选态挂在图标自身的 class 上（TP-LINK ``.icon`` →
+            # ``icon active``）。通用勾选词表不认 ``active``（怕误伤导航态），
+            # 但这里已被 is_choice_control_icon 严格限定为「选择组内的选项指示器」，
+            # 故可信：命中选中词即 [已选]，否则交给后面的通用链（不判 False）。  # BID074
+            for token in (node.attributes.get("class") or "").lower().split():  # BID074
+                if token in ("active", "checked", "selected", "current"):  # BID074
+                    return True  # BID074
+            return None  # BID074
         if node.selected is not None:
             return node.selected
         for attr in ("aria-checked", "aria-selected", "aria-pressed"):
@@ -3561,19 +3579,29 @@ class DOMSerializer:
         return False
 
     def _ancestor_owns_control(self, node: EnhancedNode, max_hops: int = 6) -> bool:
-        """True if a clickable ancestor of ``node`` already contains a real control."""
-        current = node.parent
-        hops = 0
-        while current is not None and hops < max_hops:
-            if (
-                current.is_element
-                and _is_click_like(classify(current))
-                and self._has_separate_interactive_descendant(current)
-            ):
-                return True
-            current = current.parent
-            hops += 1
-        return False
+        """True if a clickable ancestor of ``node`` already contains a real control.
+
+        排除 ``node`` 自己的分支（BID074）：判据的语义是「祖先里**另有**一个真控件」，
+        若把「当前节点所在的那条子树」也算进去，就会出现自指——例如选择器候选列
+        ``<selection><list(滚动)><p.item>1999</p></list></selection>`` 里的 ``.item``：
+        祖先 ``.selection`` 的「独立控件」正是包着它的滚动列 ``.list`` 自己，于是候选
+        项被误判成「祖先已有控件」而全部降级为纯文本，年份/月份候选一个都点不到
+        （与 BID073 的 ``<a class="cell">`` 自指同源）。被判定者所在的子树必须排除。
+        """
+        branch = node  # BID074
+        current = node.parent  # BID074
+        hops = 0  # BID074
+        while current is not None and hops < max_hops:  # BID074
+            if (  # BID074
+                current.is_element  # BID074
+                and _is_click_like(classify(current))  # BID074
+                and self._has_separate_interactive_descendant(current, exclude=branch)  # BID074
+            ):  # BID074
+                return True  # BID074
+            branch = current  # BID074
+            current = current.parent  # BID074
+            hops += 1  # BID074
+        return False  # BID074
 
     def _has_strong_descendant(self, node: EnhancedNode) -> bool:
         """True if ``node`` wraps a descendant with an intrinsic control signal.
@@ -4458,16 +4486,22 @@ class DOMSerializer:
         return False
 
     def _has_separate_interactive_descendant(
-        self, node: EnhancedNode, root: Optional[EnhancedNode] = None
+        self, node: EnhancedNode, root: Optional[EnhancedNode] = None,
+        exclude: Optional[EnhancedNode] = None,
     ) -> bool:
         if root is None:
             root = node
         for child in node.children:
             if child.is_text:
                 continue
+            if exclude is not None and child is exclude:  # BID074
+                # Skip the branch that leads to the node being judged, so an
+                # "ancestor already owns a control" test is never self-referential
+                # (see ``_ancestor_owns_control``).  # BID074
+                continue  # BID074
             if self._is_separate_control(child, root):
                 return True
-            if self._has_separate_interactive_descendant(child, root):
+            if self._has_separate_interactive_descendant(child, root, exclude):
                 return True
         return False
 

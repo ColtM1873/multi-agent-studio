@@ -422,6 +422,87 @@ def is_control_icon(node: EnhancedNode) -> bool:
     return _has_following_pointer_labeled_sibling(node)
 
 
+# 本函数于BID074引入
+# 组件库自绘的单选/复选「指示器」常常既不是 <svg>、也没有 pointer 文字兄弟：
+#   <radio-box class="select-sex"><ul class="choose">
+#     <li class="item"><div class="icon active"></div><p class="content">男</p></li>…
+# 真正参与点击的只有那个无文字、cursor:pointer 的 .icon（文字 .content 是
+# cursor:auto，点它没有任何反应）。``is_control_icon`` 要求「含 <svg> + 后随
+# cursor:pointer 的文字兄弟」，两条都不满足，于是整个单选项在输出里只剩一行
+# 裸 ``[文本] 男``，LLM 无法选中（2026-10-05 TP-LINK 表单实测）。
+_CHOICE_GROUP_TOKENS = ("radio", "checkbox", "check", "choose", "choice", "switch")  # BID074
+
+
+# 本函数于BID074引入
+def _in_choice_group(node: EnhancedNode, max_hops: int = 5) -> bool:
+    """True if ``node`` sits inside a custom radio / checkbox / switch group.
+
+    只在祖先的 **tag** 或 **class/id** 里出现选择组语义词时才成立（``radio-box``
+    这样的自定义标签也算），避免把任何无文字的 pointer 装饰元素都当成单选项。
+    """
+    current = node.parent  # BID074
+    hops = 0  # BID074
+    while current is not None and hops < max_hops:  # BID074
+        if current.is_element:  # BID074
+            tag = (current.tag or "").lower()  # BID074
+            raw = _class_id_text(current)  # BID074
+            if any(tok in tag for tok in _CHOICE_GROUP_TOKENS) or any(  # BID074
+                tok in raw for tok in _CHOICE_GROUP_TOKENS  # BID074
+            ):  # BID074
+                return True  # BID074
+        current = current.parent  # BID074
+        hops += 1  # BID074
+    return False  # BID074
+
+
+# 本函数于BID074引入
+def _has_following_labeled_sibling(node: EnhancedNode) -> bool:
+    """True if the nearest following element sibling of ``node`` carries a label.
+
+    只认**紧随其后**的第一个可见元素兄弟（跳过文本节点）：单选项的图标之后就是
+    它的文字标签；再往后可能已是另一个选项，不能借用。
+    """
+    parent = node.parent  # BID074
+    if parent is None:  # BID074
+        return False  # BID074
+    seen = False  # BID074
+    for sibling in parent.children:  # BID074
+        if sibling is node:  # BID074
+            seen = True  # BID074
+            continue  # BID074
+        if not seen or not sibling.is_element:  # BID074
+            continue  # BID074
+        if sibling.hidden or not sibling.visible:  # BID074
+            continue  # BID074
+        return bool(sibling.ax_name or _has_text(sibling))  # BID074
+    return False  # BID074
+
+
+# 本函数于BID074引入
+def is_choice_control_icon(node: EnhancedNode) -> bool:
+    """True for the unlabeled indicator of a custom radio / checkbox option.
+
+    形态：``<li class="item"><div class="icon active"></div><p class="content">男</p>``
+    ——图标是唯一 ``cursor:pointer`` 的节点，也是唯一真实点击目标；文字是普通的
+    非 pointer 兄弟。给它命名后，模型才能选中该项，而不是只看到一行裸文本。
+    """
+    if not node.is_element or _is_disabled(node):  # BID074
+        return False  # BID074
+    if node.hidden or not node.visible or not node.rendered:  # BID074
+        return False  # BID074
+    if node.styles.get("cursor") != "pointer":  # BID074
+        return False  # BID074
+    if node.ax_name or _has_text(node):  # BID074
+        return False  # BID074
+    if not node.bbox:  # BID074
+        return False  # BID074
+    if _has_interactive_descendant(node):  # BID074
+        return False  # BID074
+    if not _in_choice_group(node):  # BID074
+        return False  # BID074
+    return _has_following_labeled_sibling(node)  # BID074
+
+
 def _is_anchor_clickable(node: EnhancedNode) -> bool:
     """True if an ``<a>`` is a real link / carries a click signal.
 
@@ -493,6 +574,8 @@ def is_clickable(node: EnhancedNode) -> bool:
         return True
     if is_control_icon(node):
         return True
+    if is_choice_control_icon(node):  # BID074
+        return True  # BID074
     return False
 
 
@@ -1133,6 +1216,38 @@ def _contains_open_picker_panel(node: EnhancedNode, max_nodes: int = 800) -> boo
     return False
 
 
+# 本函数于BID074引入
+def _has_multiple_click_controls(node: EnhancedNode, limit: int = 400) -> bool:
+    """True if ``node``'s subtree holds **>=2** independently clickable controls.
+
+    一个选择器「外壳」如果只是**包着若干个各自独立可点的子控件**（Angular
+    ``<date-picker>`` 内 ``div.datePicker`` 包着年/月/日三个 ``div.selection``，
+    每个点开各自的面板），那它就不是「点一下展开」的单一触发器，而是个容器；
+    把它当成 ``is_picker_shell_trigger`` 会**整块不递归**，把三个子控件全吞掉
+    （2026-10-05 TP-LINK 出生日期/就读时间/获奖时间全部点不开）。
+    真正的单一/区间外壳（飞书 ``起止时间``：token 含 ``range``/``period``）由调用方
+    按 token 排除，不受本判据影响。只认「可见 + 有标签 + 独立可点」的节点，并跳过
+    命中控件自身的子树（其内部件不是独立控件）。
+    """
+    count = 0  # BID074
+    stack = list(node.children)  # BID074
+    seen = 0  # BID074
+    while stack and seen < limit:  # BID074
+        current = stack.pop()  # BID074
+        seen += 1  # BID074
+        if current.is_text or not current.is_element:  # BID074
+            continue  # BID074
+        if current.hidden or not current.visible:  # BID074
+            continue  # BID074
+        if is_clickable(current) and (current.ax_name or _has_text(current)):  # BID074
+            count += 1  # BID074
+            if count >= 2:  # BID074
+                return True  # BID074
+            continue  # BID074
+        stack.extend(current.children)  # BID074
+    return False  # BID074
+
+
 def is_picker_shell_trigger(node: EnhancedNode) -> bool:
     """True for a click-to-open picker shell that has **no usable text entry**.
 
@@ -1173,6 +1288,16 @@ def is_picker_shell_trigger(node: EnhancedNode) -> bool:
             # was taken for a trigger and the serializer collapsed the entire
             # panel into one opaque line — no month cell / arrow / 本月 to click.
             return False  # BID069
+        # A shell that merely *wraps* several independently clickable sub-controls
+        # (Angular ``<date-picker>``'s year / month / day ``.selection`` slots,
+        # each opening its own panel) is a container, not a single click-to-open
+        # trigger. Collapsing it made ``_render_child`` skip recursion and swallow
+        # every sub-control, so the model could not open any of them. Range shells
+        # (Feishu ``起止时间``: token ``range``/``period``) keep their existing
+        # single-line / two-end handling and are deliberately excluded here.  # BID074
+        if not any(tok in raw for tok in _RANGE_SHELL_TOKENS):  # BID074
+            if _has_multiple_click_controls(node):  # BID074
+                return False  # BID074
         # Only the **outermost** element that spells a picker component is the
         # widget: Ant Design names every part ``ant-picker-…``, so ``-input`` /
         # ``-suffix`` / ``-separator`` / ``-header`` / ``-body`` / ``-panel`` all
