@@ -3,6 +3,8 @@ from pathlib import Path
 import json
 import threading
 
+from app.runtime.browser_tools_privacy_mask import make_sensitive_masker
+
 
 # debug 日志根目录：程序根目录（app/runtime/browser_tools_debug_log.py 上溯三层）。
 _ROOT_DIR = Path(__file__).resolve().parents[2]
@@ -78,6 +80,17 @@ def _write_debug_log(tool_name: str, llm_input: dict, content: str, capture) -> 
         processed_dom = capture.processed_dom if capture is not None else ""
         url = capture.url if capture is not None else ""
         title = capture.title if capture is not None else ""
+
+        # debug 日志会被用户对外提交，故**无条件脱敏**（不依赖「隐私遮蔽模式」开关）：
+        # 两段 DOM、返回 content 以及页头 URL/标题都按敏感信息表单把真实值反向替换回 <名称>。
+        mask = make_sensitive_masker(require_enabled=False)
+        if mask:
+            raw_dom = mask(raw_dom)
+            processed_dom = mask(processed_dom)
+            url = mask(url)
+            title = mask(title)
+            if isinstance(content, str):
+                content = mask(content)
         try:
             input_text = json.dumps(llm_input, ensure_ascii=False, indent=2, default=str)
         except Exception:  # noqa: BLE001
@@ -95,12 +108,12 @@ def _write_debug_log(tool_name: str, llm_input: dict, content: str, capture) -> 
             sep,
             "",
             thin,
-            "一、整个 viewport 的原始 DOM（未处理的真实 HTML）",
+            "一、整个 viewport 的原始 DOM（未处理，已脱敏）",
             thin,
             _humanize(raw_dom) or "（本次调用没有抓取 DOM）",
             "",
             thin,
-            "二、处理后的整个 viewport DOM（已标记可互动元素等）",
+            "二、处理后的整个 viewport DOM（已标记可互动元素，已脱敏）",
             thin,
             _humanize(processed_dom) or "（本次调用没有抓取 DOM）",
             "",

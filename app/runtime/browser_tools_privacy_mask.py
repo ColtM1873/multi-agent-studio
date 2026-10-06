@@ -224,12 +224,16 @@ class _SensitiveMasker:
 def _build_masker(patterns: tuple[tuple[str, str], ...]) -> _SensitiveMasker:
     return _SensitiveMasker(patterns)
 
-def make_sensitive_masker():
-    """返回 ``mask(text) -> text``（隐私遮蔽模式开启且表单非空时），否则返回 None。
+def make_sensitive_masker(*, require_enabled: bool = True):
+    """返回 ``mask(text) -> text``（敏感信息表单非空时），否则返回 None。
+
+    ``require_enabled=True``（默认）：还要求「隐私遮蔽模式」开关开启——这是「返回 LLM 前」
+    的收口口径。``require_enabled=False``：忽略该开关，只要表单非空就构建——供 debug 落盘
+    等「无条件脱敏」的场景使用，保证提交给外部的日志不含真实值。
 
     每次调用现读设置与表单，故改表/改开关即时生效；表单不变时复用已编译的匹配器。
     """
-    if not _load_privacy_mask_enabled():
+    if require_enabled and not _load_privacy_mask_enabled():
         return None
     patterns = _load_sensitive_reverse_map()
     if not patterns:
