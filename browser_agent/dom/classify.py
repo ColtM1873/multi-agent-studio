@@ -1568,23 +1568,25 @@ def is_widget_trigger_input(node: EnhancedNode) -> bool:
     ``input`` (the ``input`` category refuses clicks as well as readonly fills,
     which used to leave such fields completely un-operable).
 
-    Requires a marker that the widget really is one: a select / cascader / picker
-    shell (by class token) or a date-picker shell, plus a dropdown / calendar
-    indicator in the same shell. Without them a plain readonly field keeps its
-    ``input`` category (``fill`` then reports the honest readonly error).
+    BID075：只读本身就是一个**充分**信号，不再要求先识别出选择器外壳。任何
+    readonly（或 ``aria-readonly``）的文本类 ``<input>`` 都无法用 fill 写入
+    （``readonly_fill_error`` 会拒绝），点击是唯一可能的入口；把它留在 ``input``
+    类会形成死锁——fill 回「请点击它」，click 又回「它是可输入类，请改用 fill」
+    （2026-10-07 中国电信招聘页的 ``dayType``/``choose-date`` 日期框实测：
+    出生日期 / 项目起止时间 / 获奖时间全部卡死）。真正没有弹层的只读字段会诚实
+    地回「点击无变化」，比永远无法操作更好。
     """
-    if node.tag != "input" or "readonly" not in node.attributes:
+    if node.tag != "input" or _is_disabled(node):  # BID075
         return False
-    if _input_type(node) not in ("", "text", "search"):
-        return False
-    for ancestor, branch in _iter_picker_shells(node, 4):
-        if not ancestor.is_element:
-            continue
-        if _is_named_picker_shell(ancestor) or _marks_select_control(ancestor):
-            return True
-        if _is_generic_picker_shell(ancestor) and _has_picker_indicator_in_shell(branch):
-            return True
-    return False
+    readonly = (  # BID075
+        "readonly" in node.attributes  # BID075
+        or node.attributes.get("aria-readonly") == "true"  # BID075
+    )  # BID075
+    if not readonly:  # BID075
+        return False  # BID075
+    if _input_type(node) not in INPUT_TYPES:  # BID075
+        return False  # BID075
+    return True  # BID075
 
 
 def _has_searchable_input(node: EnhancedNode) -> bool:

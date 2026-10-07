@@ -1687,12 +1687,21 @@ class DOMSerializer:
         ``Select`` …）漏成独立文本；它不代表任何真实值，且与同族状态控件相矛盾。
         仅当本节点自身是占位元素、或除去占位子树后没有任何文本时才判定为真——
         带真实文本的容器不受影响（BID070）。
+
+        BID075：判据必须先排除「子树里含真实独立控件」的容器。bootstrap-select
+        的空态按钮 class 是 ``bs-placeholder``（含 ``placeholder`` 令牌），承载它
+        的整块表格单元可见文本恰好只剩这个占位文本，于是整块被判成「纯占位文本」
+        丢弃——连同里面真正可点的按钮和原生 ``<select>`` 一起消失（高考生源地 /
+        户口所在地 / 就读院校所在城市 / 期望工作地点全部无控件可操作）。含真实控件
+        的块不是占位文本块，即使它的文本恰好都来自占位元素。
         """
-        if self._has_placeholder_token(node):
-            return True
-        if not self._collect_text(node):
-            return False
-        return not self._collect_text_skip_placeholder(node).strip()
+        if self._has_placeholder_token(node):  # BID070
+            return not self._has_separate_interactive_descendant(node)  # BID075
+        if not self._collect_text(node):  # BID070
+            return False  # BID070
+        if self._collect_text_skip_placeholder(node).strip():  # BID075
+            return False  # BID070
+        return not self._has_separate_interactive_descendant(node)  # BID075
 
     # 本函数于BID070引入
     def _collect_text_skip_placeholder(self, node: EnhancedNode) -> str:
@@ -3292,8 +3301,11 @@ class DOMSerializer:
             if field and field not in selected:
                 return f"{field}：{selected}"
             return selected
-        marker = self._select_placeholder(node) or "未选择"
-        if field:
+        marker = self._select_placeholder(node) or "未选择"  # BID070
+        if field and field != marker:  # BID075
+            # 空态选择器若把占位词本身当成「字段名」，会输出「请选择：请选择」，
+            # 让模型误以为已经有一个值（BID075：B 类修复后空态三级联动选择器首次
+            # 暴露，才让这个从未显示的重复标签露出来）。
             return f"{field}：{marker}"
         return marker
 
