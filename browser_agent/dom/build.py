@@ -157,6 +157,10 @@ class EnhancedNode:
     # 「自己在不在一个被折叠/隐藏的浮层挂载点里」（见 ``in_collapsed_overlay_portal``）。
     # 同样是祖先链扫描，按节点缓存。
     cache_in_collapsed_portal: Optional[bool] = None
+    # 「自身或任一祖先 ``opacity≈0``（整棵子树完全透明）」。这是祖先链扫描，见
+    # ``DOMSerializer._effective_opacity_zero``；序列化时对每个节点调用，故按节点缓存，
+    # 避免大页面退化成 O(n×深度)。 # BID076
+    cache_opacity_zero: Optional[bool] = None
 
     @property
     def key(self) -> tuple[str, str, int]:

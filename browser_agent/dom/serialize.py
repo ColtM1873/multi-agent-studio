@@ -1610,7 +1610,14 @@ class DOMSerializer:
         inherit as a computed value). A collapsed element (``height: 0`` behind
         ``overflow: hidden``) keeps ``opacity: 1`` on every ancestor, so it is
         never mistaken for transient content.
+
+        结果按节点缓存（``cache_opacity_zero``）：本函数是祖先链扫描，序列化时会对
+        多个节点调用，不缓存则大页面退化成 O(n×深度)（BID054/076）。
         """
+        cached = node.cache_opacity_zero  # BID076
+        if cached is not None:  # BID076
+            return cached  # BID076
+        result = False  # BID076
         current: Optional[EnhancedNode] = node
         hops = 0
         while current is not None and hops < 12:
@@ -1618,12 +1625,14 @@ class DOMSerializer:
             if opacity is not None:
                 try:
                     if float(opacity) <= 0.01:
-                        return True
+                        result = True  # BID076
+                        break  # BID076
                 except (TypeError, ValueError):
                     pass
             current = current.parent
             hops += 1
-        return False
+        node.cache_opacity_zero = result  # BID076
+        return result  # BID076
 
     def _heading_level(self, node: EnhancedNode) -> int:
         if node.tag in HEADING_TAGS:
@@ -3546,6 +3555,14 @@ class DOMSerializer:
         for child in node.children:
             if child.is_text or not child.is_element:
                 continue
+            if self._effective_opacity_zero(child):  # BID076
+                # 完全透明的「动作词叶子」是装饰副本（按钮内 ``.after`` 悬停文案），
+                # 不是独立动作控件。把它计成第二个叶子会让 ``_has_multiple_action_leaves``
+                # 误判：同一按钮的可见文案 + 透明副本 =「两个动作」，按钮外壳被剪掉，
+                # 动作被输出两遍（真机实测「取消/保存」各出现两次，见 BID076）。只跳过
+                # 透明叶子、不改 ``_is_action_word_control`` 本身，故 ``_is_textual_click_only``
+                # 的判定完全不受影响（避免误伤 TP-LINK 登录/注册等真实短标签按钮）。
+                continue  # BID076
             if self._is_action_word_control(child):
                 found.append(child)
                 if len(found) >= limit:
