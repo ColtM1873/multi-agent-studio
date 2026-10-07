@@ -94,7 +94,7 @@ const I18N_EN = {
   "不会删除数据库里的会话历史": "Conversation history in the database will not be deleted",
   "个": "",
   "主 agent": "main agent",
-  "主 agent 文件工具读写文件的根目录。": "Root directory for the main agent's file tool.",
+  "主Agent读写本地文件的根目录": "Root directory where the main agent reads/writes local files.",
   "主 agent 的系统提示词，定义其角色与行为。": "System prompt for the main agent, defining its role and behavior.",
   "主 agent 输出完后，询问是否将结果生成 HTML 报告。": "After the main agent finishes, ask whether to generate an HTML report from the result.",
   "主会话": "Main conversation",
@@ -174,7 +174,7 @@ const I18N_EN = {
   "描述该子 agent 能力，作为工具描述呈现给主 agent。": "Describes the sub-agent's capability, shown to the main agent as a tool description.",
   "数据库名": "Database name",
   "数据库地址": "Database address",
-  "文件工具根目录": "File tool root directory",
+  "主Agent工作目录": "Main agent working directory",
   "文件工具": "File tools",
   "PDF 表格提取": "PDF table extraction",
   "新会话名称：": "New conversation name:",
@@ -218,6 +218,8 @@ const I18N_EN = {
   "点击查看完整内容": "Click to view the full content",
   "开启浏览器接管功能": "Enable browser takeover",
   "开启后，会向主 agent 注入一组浏览器接管工具（占用上下文）。只有需要让 agent 操作浏览器时才开启。": "When enabled, a set of browser-takeover tools is injected into the main agent (consuming context). Only turn it on when the agent needs to operate a browser.",
+  "开启记忆读取/写入功能": "Enable memory read/write",
+  "开启后，会向主 agent 注入记忆读写工具（write_memory / read_memory），让 agent 能长期存取与检索信息；关闭后主 agent 不再拥有记忆读写工具。此设置影响图编译；「记忆吸附」是另一项功能，不受本开关影响。": "When enabled, memory read/write tools (write_memory / read_memory) are injected into the main agent so it can store and retrieve information long-term; when disabled the main agent no longer has memory read/write tools. This affects graph compilation; \"memory attachment\" is a separate feature and is not affected by this switch.",
   "显示浏览器接管说明弹窗": "Show the browser-takeover intro popup",
   "每次打开浏览器时，弹窗说明红色浮动按钮（停止/继续）的作用。关闭后不再弹出。": "Each time the browser is opened, show a popup explaining the red floating button (Stop/Continue). Turn off to suppress it.",
   "提示Agent开始接管浏览器": "Ask the agent to start taking over the browser",
@@ -3558,6 +3560,7 @@ function buildForm(cfg, canEditSubs) {
   const htmlPrompt = main.html_report_prompt || DEFAULT_HTML_PROMPT;
   const reactPrompt = main.react_prompt !== false;
   const browserTakeover = !!main.browser_takeover;
+  const memoryTools = main.memory_tools_enabled !== false;
 
   form.innerHTML = `
     <div class="form-card"><h4>${t("基本信息")}</h4><div class="form-grid">
@@ -3607,9 +3610,12 @@ function buildForm(cfg, canEditSubs) {
       <div class="field full takeover-switch-field">
         <label style="flex-direction:row;align-items:center;gap:8px;"><input type="checkbox" id="f_browser_takeover" ${browserTakeover ? "checked" : ""}> 🌐 ${t("开启浏览器接管功能")} ${info("开启后，会向主 agent 注入一组浏览器接管工具（占用上下文）。只有需要让 agent 操作浏览器时才开启。")}</label>
       </div>
+      <div class="field full">
+        <label style="flex-direction:row;align-items:center;gap:8px;"><input type="checkbox" id="f_memory_tools" ${memoryTools ? "checked" : ""}> 🧠 ${t("开启记忆读取/写入功能")} ${info("开启后，会向主 agent 注入记忆读写工具（write_memory / read_memory），让 agent 能长期存取与检索信息；关闭后主 agent 不再拥有记忆读写工具。此设置影响图编译；「记忆吸附」是另一项功能，不受本开关影响。")}</label>
+      </div>
       ${modelBlockHTML(main.llm_provider_name, main.model, "main_mode")}
       <div class="field"><label>API Key ${info("该模型供应商的 API 密钥（明文存本地配置）。")}</label><input id="f_apikey" value="${esc(main.api_key)}" type="password"${ph("main_api_key")}></div>
-      <div class="field"><label>${t("文件工具根目录")} ${info("主 agent 文件工具读写文件的根目录。")}</label><input id="f_rootdir" value="${esc(ft.root_dir)}"${ph("root_dir")}></div>
+      <div class="field"><label>${t("主Agent工作目录")} ${info("主Agent读写本地文件的根目录")}</label><input id="f_rootdir" value="${esc(ft.root_dir)}"${ph("root_dir")}></div>
       ${globalEmbSet ? `
       <div class="field full">
         <div class="global-toggle-row">
@@ -4123,6 +4129,7 @@ function buildPayload(cfg) {
       html_report_prompt: val("f_html_prompt"),
       react_prompt: $("#f_react_prompt").checked,
       browser_takeover: $("#f_browser_takeover").checked,
+      memory_tools_enabled: $("#f_memory_tools").checked,
     },
     sub_agents: $$(".subagent-box").map(collectSubAgent),
     output: cfg.output || { stream_output_dir: "" },

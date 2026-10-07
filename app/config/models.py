@@ -107,6 +107,9 @@ class MainAgentConfig(BaseModel):
     # 浏览器接管：开启后向主 agent 注入一组浏览器接管工具（占用上下文，按需开启）。
     # 影响图编译（工具绑定），改动后由 update_agent 的 invalidate 触发重建。
     browser_takeover: bool = False
+    # 记忆读写：开启后向主 agent 注入记忆工具（write_memory / read_memory），
+    # 让 agent 能长期存取信息。影响图编译（工具绑定），改动后由 update_agent 的 invalidate 触发重建。
+    memory_tools_enabled: bool = True
 
 
 class SubAgentConfig(BaseModel):
