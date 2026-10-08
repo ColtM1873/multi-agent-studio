@@ -4568,16 +4568,31 @@ async function renderChatView() {
     pinBtn.style.right = "auto";
     pinBtn.style.bottom = "auto";
   };
+  // 把坐标钳制在 chatBody 可视区内，避免窗口变小后按钮被 overflow:hidden 裁掉
+  const clampPinPos = (pos) => {
+    const bw = pinBtn.offsetWidth || 34, bh = pinBtn.offsetHeight || 34;
+    return {
+      left: Math.min(Math.max(0, pos.left), Math.max(0, chatBody.clientWidth - bw)),
+      top: Math.min(Math.max(0, pos.top), Math.max(0, chatBody.clientHeight - bh)),
+    };
+  };
 
   let customPos = null;
   try { customPos = JSON.parse(localStorage.getItem("pin-pos") || "null"); } catch (e) {}
-  if (customPos && typeof customPos.left === "number") applyPinPos(customPos);
-  else applyPinPos(defaultPinPos());
+  if (customPos && typeof customPos.left === "number") applyPinPos(clampPinPos(customPos));
+  else applyPinPos(clampPinPos(defaultPinPos()));
+
+  // 窗口尺寸变化时重算/钳制图钉位置（否则固定像素坐标会落到视口外而消失）
+  window.addEventListener("resize", () => {
+    if (!pinBtn.isConnected) return;
+    if (customPos && typeof customPos.left === "number") applyPinPos(clampPinPos(customPos));
+    else applyPinPos(clampPinPos(defaultPinPos()));
+  });
 
   if (window.Split) {
     Split(["#historyPane", "#inputPane"], {
       direction: "vertical", sizes: [72, 28], minSize: [100, 80], gutterSize: 8, cursor: "row-resize",
-      onDragEnd: () => { if (!customPos) applyPinPos(defaultPinPos()); },
+      onDragEnd: () => { if (!customPos) applyPinPos(clampPinPos(defaultPinPos())); },
     });
   }
 
