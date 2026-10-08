@@ -949,6 +949,17 @@ class DOMSerializer:
             return
 
         if category:
+            if self._is_option_column(child):  # BID077
+                # 候选列是否「溢出」只决定窗口化多少候选可见，绝不能决定
+                # 「候选是否被暴露」。12 个月的月份列恰好填满 max-height
+                # （内容 288px ≤ 304px）而判不出 scroll，于是外层 clickable 外壳
+                # ``.selection`` 把 12 个候选项拼成一行文本吞掉，月份下拉整列
+                # 无法交互（2026-10-08 TP-LINK 项目时间）。非溢出的候选列同样
+                # 按可见窗口逐个暴露（复用滚动分支的同一条渲染路径）。
+                option_kind = self._option_column_kind(child)  # BID077
+                self._flush(depth)  # BID077
+                self._group_option_column(child, depth, option_kind, clip)  # BID077
+                return  # BID077
             if is_picker_shell_trigger(child):
                 # A div-based picker (see ``classify.is_picker_shell_trigger``) is
                 # **one** control: its two value parts and its 0×0 hidden input are
@@ -1233,36 +1244,48 @@ class DOMSerializer:
         """
         if not node.is_element or node.tag == PAGE_SCROLL_TAG:
             return ""
-        items = [c for c in node.children if c.is_element and classify(c)]
-        if not items:
+        cached = node.cache_option_column  # BID077
+        if cached is not None:  # BID077
+            return cached  # BID077
+
+        def _compute() -> str:  # BID077
+            items = [c for c in node.children if c.is_element and classify(c)]
+            if not items:
+                return ""
+            if not all(self._is_short_text_leaf(c) for c in items[:40]):
+                return ""
+            # Special entries ("至今" / "不限制") sit inside the numeric column and must
+            # not defeat the year/month recognition — filter them out before matching.
+            texts = []
+            for c in items[:60]:
+                raw = self._collect_text(c).strip()
+                if self._is_special_option_text(raw):
+                    continue
+                texts.append(raw)
+            # A picker column renders its numbers as plain "01"~"12"; some libraries
+            # append the unit ("01 月"), which must not defeat the recognition.
+            def _monthish(value: str) -> bool:
+                return bool(re.fullmatch(r"\d{1,2}\s*\u6708?", value or ""))
+            # A purely numeric column IS a calendar-y option column whatever its length
+            # (the month column only holds 12 entries) — grouping it is what tells the
+            # model "type a year / pick a month" instead of leaving 12 bare numbers.
+            # 但至少要有 **2** 个数值条目才算「一列」：一个单独的数字只是当前选中
+            # 值的显示（如收起状态的 ``.selection`` 里那个 ``2026``），或标题里的年份
+            # （``传音校园招聘官网2026`` 的 ``2026``），不是候选列。 # BID077
+            numeric = len(texts) >= 2 and all(  # BID077
+                re.fullmatch(r"\d{4}|\d{1,2}\s*\u6708?", t or "") for t in texts
+            )
+            if not numeric and len(items) < _OPTION_COLUMN_MIN:
+                return ""
+            if texts and all(re.fullmatch(r"\d{4}", t or "") for t in texts):
+                return "year"
+            if texts and all(_monthish(t) for t in texts):
+                return "month"
             return ""
-        if not all(self._is_short_text_leaf(c) for c in items[:40]):
-            return ""
-        # Special entries ("至今" / "不限制") sit inside the numeric column and must
-        # not defeat the year/month recognition — filter them out before matching.
-        texts = []
-        for c in items[:60]:
-            raw = self._collect_text(c).strip()
-            if self._is_special_option_text(raw):
-                continue
-            texts.append(raw)
-        # A picker column renders its numbers as plain "01"~"12"; some libraries
-        # append the unit ("01 月"), which must not defeat the recognition.
-        def _monthish(value: str) -> bool:
-            return bool(re.fullmatch(r"\d{1,2}\s*\u6708?", value or ""))
-        # A purely numeric column IS a calendar-y option column whatever its length
-        # (the month column only holds 12 entries) — grouping it is what tells the
-        # model "type a year / pick a month" instead of leaving 12 bare numbers.
-        numeric = bool(texts) and all(
-            re.fullmatch(r"\d{4}|\d{1,2}\s*\u6708?", t or "") for t in texts
-        )
-        if not numeric and len(items) < _OPTION_COLUMN_MIN:
-            return ""
-        if texts and all(re.fullmatch(r"\d{4}", t or "") for t in texts):
-            return "year"
-        if texts and all(_monthish(t) for t in texts):
-            return "month"
-        return ""
+
+        result = _compute()  # BID077
+        node.cache_option_column = result  # BID077
+        return result  # BID077
 
     # A picker column's non-numeric entries: "至今" (open-ended end), "不限制".
     _SPECIAL_OPTION_TOKENS = ("至今", "至今为止", "不限制", "不限", "现在", "present", "now")
@@ -4462,7 +4485,30 @@ class DOMSerializer:
             return True
         if node.attributes.get("contenteditable") in ("", "true", "plaintext-only"):
             return True
-        return classify(node) in ("scroll", "drag")
+        # 候选列（一列可逐一选择的候选项）是一个独立的交互区域：上层 clickable
+        # 外壳（``.selection``）必须为它让路、递归暴露候选项，而不是把整列吞成
+        # 自己标签里的一串拼接文本。溢出与否只影响窗口化，不影响「是否独立」。
+        return classify(node) in ("scroll", "drag") or self._is_option_column(node)  # BID077
+
+    # 本方法于BID077引入
+    def _is_option_column(self, node: EnhancedNode) -> bool:
+        """True 若 ``node`` 是一列可逐一选择的候选项（无论是否溢出）。
+
+        复用 ``_option_column_kind`` 的语义识别（一年份/月份/长列表的数字列），
+        但**不再要求溢出**：``is_scrollable`` 把「12 个月的月份列恰好填满
+        max-height」判成不可滚动，外层 ``.selection`` 便把它当普通 click 容器、
+        连同 12 个候选项一起吞成一行拼接文本（真机 TP-LINK 项目时间「月份下拉
+        无法交互」）。这里先用 O(1) 的 overflow 门把绝大多数节点挡掉，避免在
+        递归的 ``_has_separate_interactive_descendant`` 里反复做重判据。
+        """
+        if not node.is_element or node.tag == PAGE_SCROLL_TAG:
+            return False
+        styles = node.styles
+        if styles.get("overflow-y") not in ("auto", "scroll", "hidden") and styles.get(
+            "overflow-x"
+        ) not in ("auto", "scroll", "hidden"):
+            return False
+        return bool(self._option_column_kind(node))
 
     def _is_labelled_field(self, node: EnhancedNode) -> bool:
         """True if ``node`` is an input associated with a field ``<label>``.

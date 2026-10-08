@@ -161,6 +161,10 @@ class EnhancedNode:
     # ``DOMSerializer._effective_opacity_zero``；序列化时对每个节点调用，故按节点缓存，
     # 避免大页面退化成 O(n×深度)。 # BID076
     cache_opacity_zero: Optional[bool] = None
+    # 「本节点是不是一列可逐一选择的候选项（年份/月份/长列表）」。见
+    # ``DOMSerializer._option_column_kind``；BID077 起该判据也从 ``_is_separate_control``
+    # 的递归路径被调用（判断候选列是否独立），故同样按节点缓存，避免重复扫子树。 # BID077
+    cache_option_column: Optional[str] = None
 
     @property
     def key(self) -> tuple[str, str, int]:
