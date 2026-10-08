@@ -4576,16 +4576,38 @@ async function renderChatView() {
       top: Math.min(Math.max(0, pos.top), Math.max(0, chatBody.clientHeight - bh)),
     };
   };
+  // 位置以「占 chatBody 可移动范围的比例」存储，窗口缩放前后保持相对位置不变
+  const maxPinLeft = () => Math.max(0, chatBody.clientWidth - (pinBtn.offsetWidth || 34));
+  const maxPinTop = () => Math.max(0, chatBody.clientHeight - (pinBtn.offsetHeight || 34));
+  const posFromRatio = (r) => ({
+    left: Math.round(Math.min(Math.max(0, r.rx), 1) * maxPinLeft()),
+    top: Math.round(Math.min(Math.max(0, r.ry), 1) * maxPinTop()),
+  });
+  const ratioFromPos = (pos) => {
+    const ml = maxPinLeft(), mt = maxPinTop();
+    return {
+      rx: ml ? Math.min(Math.max(0, pos.left / ml), 1) : 0,
+      ry: mt ? Math.min(Math.max(0, pos.top / mt), 1) : 0,
+    };
+  };
 
   let customPos = null;
   try { customPos = JSON.parse(localStorage.getItem("pin-pos") || "null"); } catch (e) {}
-  if (customPos && typeof customPos.left === "number") applyPinPos(clampPinPos(customPos));
-  else applyPinPos(clampPinPos(defaultPinPos()));
+  if (customPos && typeof customPos.rx === "number") {
+    applyPinPos(posFromRatio(customPos));
+  } else if (customPos && typeof customPos.left === "number") {
+    // 兼容旧格式（绝对像素）：按当前尺寸换算成比例
+    customPos = ratioFromPos(customPos);
+    applyPinPos(posFromRatio(customPos));
+  } else {
+    customPos = null;
+    applyPinPos(clampPinPos(defaultPinPos()));
+  }
 
-  // 窗口尺寸变化时重算/钳制图钉位置（否则固定像素坐标会落到视口外而消失）
+  // 窗口尺寸变化时按比例重算图钉位置（缩放前后相对位置不变）
   window.addEventListener("resize", () => {
     if (!pinBtn.isConnected) return;
-    if (customPos && typeof customPos.left === "number") applyPinPos(clampPinPos(customPos));
+    if (customPos) applyPinPos(posFromRatio(customPos));
     else applyPinPos(clampPinPos(defaultPinPos()));
   });
 
@@ -5604,7 +5626,7 @@ async function renderChatView() {
   window.addEventListener("mouseup", () => {
     if (dragState) {
       if (dragged) {
-        customPos = { left: pinBtn.offsetLeft, top: pinBtn.offsetTop };
+        customPos = ratioFromPos({ left: pinBtn.offsetLeft, top: pinBtn.offsetTop });
         localStorage.setItem("pin-pos", JSON.stringify(customPos));
       }
       dragState = null;
