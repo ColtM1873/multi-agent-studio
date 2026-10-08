@@ -97,6 +97,7 @@ def create_main_window(
         confirm_close=False,
         background_color="#0b0d12",
         maximized=maximized,
+        text_select=True,
     )
     if hide_on_close:
         window.events.closing += _closing_handler(window)
