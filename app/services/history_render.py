@@ -324,11 +324,14 @@ def _render_ai(msg, w, show_reasoning, show_tool_calls, reasoning_expanded=True,
             if btype == "reasoning" and show_reasoning:
                 r = block.get("reasoning", "")
                 open_attr = " open" if reasoning_expanded else ""
-                # 换行转成 <br>：避免 literal 换行在 markdown-it 的 HTML 块里被当成空行，
-                # 导致后续内容被包进 <p> 而出现「普通换行变空一行、空一行变空两行」的翻倍。
-                r_html = _escape_html(str(r)).replace("\r\n", "\n").replace("\n", "<br>")
+                # 思考内容按 Markdown 渲染（公式 / 加粗 / 标题），与正文共用前端 renderMd 管线
+                # （裸公式识别 / 激进公式识别在此同样生效）。用空行把 <div class="reasoning-body">
+                # 与内容隔开，markdown-it 才会把其中内容当 Markdown 解析，否则整块被当 HTML block
+                # 原样输出。标题只在思考块内以更小字号呈现（CSS .reasoning-body h1~h6）。
                 w(f'<details class="reasoning-block"{open_attr}>\n<summary>🧠 思考过程</summary>\n\n')
-                w(f'<div class="reasoning-body">{r_html}</div>\n\n')
+                w('<div class="reasoning-body reasoning-md">\n\n')
+                w(f"{str(r)}\n\n")
+                w("</div>\n\n")
                 w("</details>\n\n")
             elif btype == "text":
                 w(f"{block.get('text', '')}\n\n")

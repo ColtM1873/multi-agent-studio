@@ -4365,7 +4365,8 @@ function toggleMsgDrawer(e) {
       const headings = [];
       aiBlocks.forEach((ai, k) => {
         if (aiOwner[k] !== i) return;
-        ai.querySelectorAll("h1, h2, h3, h4, h5, h6").forEach(h => headings.push(h));
+        // 排除思考过程（.reasoning-body）里的标题：那只是 LLM 的规划，不应混进消息目录
+        ai.querySelectorAll("h1, h2, h3, h4, h5, h6").forEach(h => { if (!h.closest(".reasoning-body")) headings.push(h); });
       });
       let topLevel = 0;
       headings.forEach(h => {
@@ -5111,8 +5112,61 @@ async function renderChatView() {
     wrap.appendChild(el);
   }
 
+  // 把字段原文切成「可编辑段」：默认按行（自然段），但代码围栏 / 展示公式 / 表格
+  // 这类跨行的 markdown 结构必须保持在同一段里，否则每行单独 renderMd 会渲染不完整
+  //（`\[...\]`、``` 代码块、`|` 表格被按行拆开）。不变量：segs.join("\n") 等于原文（\r\n 归一为 \n）。
+  function splitEditableSegments(rawText) {
+    const lines = String(rawText == null ? "" : rawText).replace(/\r\n?/g, "\n").split("\n");
+    const segs = [];
+    let i = 0;
+    while (i < lines.length) {
+      const line = lines[i];
+      const t = line.replace(/^\s+/, "");
+      const fence = /^(`{3,}|~{3,})/.exec(line);
+      if (fence) {
+        const ch = fence[1][0];
+        const len = fence[1].length;
+        const closeRe = new RegExp("^\\s*" + (ch === "`" ? "`" : "~") + "{" + len + ",}\\s*$");
+        let j = i + 1;
+        while (j < lines.length && !closeRe.test(lines[j])) j++;
+        const end = j < lines.length ? j + 1 : lines.length;
+        segs.push(lines.slice(i, end).join("\n"));
+        i = end;
+        continue;
+      }
+      // 展示公式 $$...$$ / \[...\]（可能跨多行）
+      const isDollar = t.startsWith("$$");
+      const isBracket = t.length >= 2 && t.charCodeAt(0) === 92 && t[1] === "[";
+      if (isDollar || isBracket) {
+        const inlineClosed = isDollar ? t.indexOf("$$", 2) !== -1 : t.indexOf("\\]", 2) !== -1;
+        if (inlineClosed) { segs.push(line); i++; continue; }
+        let j = i + 1;
+        while (j < lines.length) {
+          const lj = lines[j];
+          const hasClose = isDollar ? lj.indexOf("$$") !== -1 : lj.replace(/\s+$/, "").endsWith("\\]");
+          j++;
+          if (hasClose) break;
+        }
+        segs.push(lines.slice(i, j).join("\n"));
+        i = j;
+        continue;
+      }
+      // 表格：连续以 | 开头的行
+      if (/^\s*\|/.test(line)) {
+        let j = i;
+        while (j < lines.length && /^\s*\|/.test(lines[j])) j++;
+        segs.push(lines.slice(i, j).join("\n"));
+        i = j;
+        continue;
+      }
+      segs.push(line);
+      i++;
+    }
+    return segs;
+  }
+
   function editableLinesHTML(rawText, field, blockIndex, toolCallIndex, msgIndice) {
-    const segs = String(rawText).split("\n");
+    const segs = splitEditableSegments(rawText);
     return segs.map((seg, pi) => {
       const b64 = utf8ToB64(seg);
       const inner = seg ? renderMd(seg) : "&nbsp;";
@@ -5150,10 +5204,11 @@ async function renderChatView() {
           if (blk.type === "reasoning") {
             const open = settings.reasoning_expanded !== false ? " open" : "";
             const r = String(blk.reasoning ?? "");
-            const body = allTypes
+            // 思考过程始终渲染（公式/加粗/标题）；是否可点击编辑仍由「所有类型可编辑」开关决定。
+            const inner = allTypes
               ? editableLinesHTML(r, "reasoning", bi, null, idx)
-              : `<div class="reasoning-body">${esc(r).replace(/\r\n/g, "\n").replace(/\n/g, "<br>")}</div>`;
-            html += `<details class="reasoning-block"${open}><summary>🧠 ${t("思考过程")}</summary>${body}</details>`;
+              : renderMd(r);
+            html += `<details class="reasoning-block"${open}><summary>🧠 ${t("思考过程")}</summary><div class="reasoning-body reasoning-md">${inner}</div></details>`;
           } else if (blk.type === "text") {
             html += editableLinesHTML(String(blk.text ?? ""), "text", bi, null, idx);
           }
@@ -5273,7 +5328,25 @@ async function renderChatView() {
   }
 
   function closeEditPopup() {
-    $$(".edit-popup").forEach(p => p.remove());
+    $$(".edit-popup").forEach(p => {
+      rememberEditPopupSize(p.offsetWidth, p.offsetHeight);
+      p.remove();
+    });
+  }
+
+  // 编辑框尺寸全局记忆（本机偏好，localStorage 会被 ui_prefs_bridge 落盘到后端，
+  // 换渲染外壳 / 清缓存都不丢）。只存宽高，位置每次按被点行重新定位。
+  const EDIT_POPUP_SIZE_KEY = "edit-popup-size";
+  function readEditPopupSize() {
+    try {
+      const v = JSON.parse(localStorage.getItem(EDIT_POPUP_SIZE_KEY) || "null");
+      if (v && v.w > 0 && v.h > 0) return v;
+    } catch (e) { /* ignore */ }
+    return null;
+  }
+  function rememberEditPopupSize(w, h) {
+    if (!(w > 0 && h > 0)) return;
+    try { localStorage.setItem(EDIT_POPUP_SIZE_KEY, JSON.stringify({ w: Math.round(w), h: Math.round(h) })); } catch (e) { /* ignore */ }
   }
 
   function positionEditPopup(popup, rect) {
@@ -5303,9 +5376,16 @@ async function renderChatView() {
     const ta = popup.querySelector("textarea");
     ta.value = raw;
     document.body.appendChild(popup);
-    // 动态宽度：一行文本（正文渲染区）宽度的 0.75 倍
-    const lineWidth = (historyEl && historyEl.clientWidth) || (window.innerWidth - 44);
-    popup.style.width = Math.max(280, Math.round(lineWidth * 0.75)) + "px";
+    const stored = readEditPopupSize();
+    if (stored) {
+      // 记忆尺寸：按当前视口夹取，避免超出屏幕
+      popup.style.width = Math.min(stored.w, window.innerWidth - 16) + "px";
+      popup.style.height = Math.min(stored.h, window.innerHeight - 16) + "px";
+    } else {
+      // 首次：动态宽度 = 一行文本（正文渲染区）宽度的 0.75 倍
+      const lineWidth = (historyEl && historyEl.clientWidth) || (window.innerWidth - 44);
+      popup.style.width = Math.max(280, Math.round(lineWidth * 0.75)) + "px";
+    }
     positionEditPopup(popup, rect);
     popup.querySelector('[data-act="apply"]').onclick = () => { applyLineEdit(line, ta.value); closeEditPopup(); };
     popup.querySelector('[data-act="cancel"]').onclick = () => closeEditPopup();
@@ -5336,7 +5416,7 @@ async function renderChatView() {
   }
 
   function applyParaEditsToText(rawText, paraEdits) {
-    const segs = String(rawText).split("\n");
+    const segs = splitEditableSegments(rawText);
     paraEdits.forEach(pe => { segs[pe.paraIndex] = pe.newText; });
     return segs.join("\n");
   }
@@ -6056,7 +6136,7 @@ function openChatWs(content, proactive = false, subAgent = null, summaryPercent 
     };
 
     const reasoningBlock = (txt) => txt
-      ? `<details class="reasoning-block" open><summary>🧠 ${t("思考过程")}</summary><div class="reasoning-body">${esc(txt)}</div></details>`
+      ? `<details class="reasoning-block" open><summary>🧠 ${t("思考过程")}</summary><div class="reasoning-body reasoning-md">${renderMd(txt)}</div></details>`
       : "";
 
     const renderBlock = (b) =>

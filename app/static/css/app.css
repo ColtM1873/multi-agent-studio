@@ -376,6 +376,18 @@ html[data-style-danger="solid"] .card-btn-danger:hover { filter: brightness(.92)
   font-size: calc(var(--md-font-size, 15px) * var(--reasoning-font-scale, 1));
   line-height: 1.65; white-space: pre-wrap;
 }
+/* 思考过程按 Markdown 渲染（.reasoning-md）：块级内容用 normal，避免 HTML 源码里的换行被当空白撑开 */
+.reasoning-body.reasoning-md { white-space: normal; overflow-wrap: anywhere; }
+/* 思考过程里的标题：只是 LLM 的规划，用比思考正文更小的字号呈现，不产生正文级标题行（无边框/大间距） */
+.reasoning-body h1,
+.reasoning-body h2,
+.reasoning-body h3,
+.reasoning-body h4,
+.reasoning-body h5,
+.reasoning-body h6 {
+  font-size: 0.92em; font-weight: 600; line-height: 1.4;
+  margin: 0.6em 0 0.2em; padding: 0; border: 0;
+}
 
 /* 工具结果正文着色 */
 .tool-result-body { color: var(--tool-result-color, #475569); }
@@ -768,14 +780,17 @@ html[data-style-danger="solid"] .card-btn-danger:hover { filter: brightness(.92)
 .edit-line.hover { background: #bbf7d0; }
 .edit-popup {
   position: fixed; z-index: 200;
+  display: flex; flex-direction: column;
   background: var(--surface); border: 1px solid var(--border);
   border-radius: 12px; box-shadow: var(--shadow-lg);
-  padding: 12px; max-width: 92vw;
+  padding: 12px; max-width: 92vw; max-height: 92vh;
+  min-width: 240px; min-height: 110px;
+  box-sizing: border-box; resize: both; overflow: hidden;
 }
-.edit-popup .edit-popup-toolbar { display: flex; gap: 8px; margin-bottom: 8px; }
+.edit-popup .edit-popup-toolbar { display: flex; gap: 8px; margin-bottom: 8px; flex: 0 0 auto; }
 .edit-popup textarea {
-  width: 100%; min-height: 60px; max-height: 40vh;
-  overflow-y: auto; resize: vertical;
+  flex: 1 1 auto; width: 100%; min-height: 60px;
+  overflow: auto; resize: none;
   font-family: inherit;
   font-size: var(--md-font-size, 15px); line-height: 1.65;
   white-space: pre-wrap;
