@@ -544,6 +544,26 @@ html[data-style-danger="solid"] .card-btn-danger:hover { filter: brightness(.92)
 .modal.memory-edit-modal input, .modal.memory-edit-modal textarea { width: 100%; box-sizing: border-box; border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 14px; font-family: inherit; color: var(--text); background: var(--surface); }
 .modal.memory-edit-modal textarea { resize: vertical; line-height: 1.6; }
 
+/* ── 浮层（弹窗）拖动调整大小 / 移动 ──────────────────────────
+   左上角把手管“上 / 左”，右下角把手管“右 / 下”；标题栏可拖动移动。
+   把手用 position:fixed 挂在浮层内部，既不被 overflow 裁切，又随浮层一起移除。 */
+.float-resize-handle {
+  position: fixed; width: 16px; height: 16px; z-index: 999;
+  transform: translate(-50%, -50%);
+  touch-action: none;
+  background: transparent;
+}
+.float-resize-tl, .float-resize-br { cursor: nwse-resize; }
+.float-resize-handle::after {
+  content: ""; position: absolute; inset: 0; opacity: .4;
+  transition: opacity .12s ease;
+}
+.float-resize-tl::after { border-left: 2px solid var(--primary); border-top: 2px solid var(--primary); border-top-left-radius: 4px; }
+.float-resize-br::after { border-right: 2px solid var(--primary); border-bottom: 2px solid var(--primary); border-bottom-right-radius: 4px; }
+.float-resize-handle:hover::after, .float-resize-handle:active::after { opacity: 1; }
+.float-drag-handle { cursor: move; user-select: none; }
+body.floating-dragging { user-select: none; cursor: grabbing; }
+
 /* ── 缩放按钮 ───────────────────────────── */
 .zoom-controls { display: inline-flex; align-items: center; gap: 3px; position: relative; }
 .zoom-btn { width: 26px; height: 26px; border: 1px solid var(--border); background: var(--surface); border-radius: 8px; cursor: pointer; font-size: 15px; line-height: 1; display: inline-flex; align-items: center; justify-content: center; }
@@ -778,7 +798,10 @@ html[data-style-danger="solid"] .card-btn-danger:hover { filter: brightness(.92)
 .edit-line { margin: 2px 0; }
 .edit-line.hover { background: #bbf7d0; }
 .edit-popup {
-  position: fixed; z-index: 200;
+  /* 绝对定位在 #historyPane（overflow:auto + position:relative）内，随内容一起滚动，
+     紧贴被编辑的那一行；这样做的好处是它不会被固定在视口上“跑来跑去”，
+     也能被滚动条自然地滚到视口之外。 */
+  position: absolute; z-index: 200;
   display: flex; flex-direction: column;
   background: var(--surface); border: 1px solid var(--border);
   border-radius: 12px; box-shadow: var(--shadow-lg);

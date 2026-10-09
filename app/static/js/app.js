@@ -227,6 +227,8 @@ const I18N_EN = {
   "浏览器已打开（当前只支持接管一个浏览器）": "Browser already open (only one browser can be taken over)",
   "继续": "Continue",
   "拖动": "Drag",
+  "拖动调整大小": "Drag to resize",
+  "拖动移动": "Drag to move",
   "浏览器接管说明": "Browser takeover guide",
   "知道了": "Got it",
   "这是「浏览器接管」控制按钮。红色表示 Agent 可以操作浏览器；点击它会把状态切到绿色「继续」，此时 Agent 的所有浏览器操作会被立即暂停，等待你的后续指示。你可以在它旁边的 ✥ 把手处拖动它，避免遮挡页面。再次点击可恢复。": "This is the browser-takeover control. Red means the agent may operate the browser; click it to switch to green \"Continue\", which immediately pauses all browser actions until you give further instructions. Drag the ✥ handle beside it to move it out of the way. Click again to resume.",
@@ -709,12 +711,233 @@ function toast(msg, isError = false) {
 
 function esc(s) { return String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c])); }
 
+/* ================= 浮层（弹窗）可拖动调整大小 / 移动 / 位置尺寸落盘 =================
+   需求：所有可弹出的浮层都能拖动边缘改变大小——左上角拖动处管“上 / 左”，
+   右下角拖动处管“右 / 下”；也可拖动标题移动位置。尺寸与位置持久记忆
+   （存 localStorage，由 ui_prefs_bridge 落盘到后端），下次打开保持。
+   位置以“占可移动范围（视口尺寸 - 浮层尺寸）的比例”存储，因此整个窗口放大/缩小时，
+   浮层上下左右边距的比例保持不变、位置稳定，且始终被钳制在视口内、不会显示不全。 */
+const MODAL_GEOM_KEY = "modal-geom";
+const MODAL_MIN_W = 220, MODAL_MIN_H = 120, MODAL_MARGIN = 8;
+
+function loadModalGeomMap() {
+  try {
+    const v = JSON.parse(localStorage.getItem(MODAL_GEOM_KEY) || "{}");
+    return (v && typeof v === "object") ? v : {};
+  } catch (e) { return {}; }
+}
+function saveModalGeom(key, geom) {
+  if (!key) return;
+  try {
+    const map = loadModalGeomMap();
+    map[key] = geom;
+    localStorage.setItem(MODAL_GEOM_KEY, JSON.stringify(map));
+  } catch (e) { /* ignore */ }
+}
+
+const _floatingPanels = [];
+
+function enableFloatingResize(el, key, opts) {
+  if (!el || el.dataset.floatingResize === "1") return;
+  el.dataset.floatingResize = "1";
+  opts = opts || {};
+  const minW = opts.minW || MODAL_MIN_W;
+  const minH = opts.minH || MODAL_MIN_H;
+  const margin = MODAL_MARGIN;
+  const vw = () => document.documentElement.clientWidth;
+  const vh = () => document.documentElement.clientHeight;
+
+  const stored = loadModalGeomMap()[key];
+  let geom = (stored && typeof stored === "object") ? Object.assign({}, stored) : null;
+  let curW = 0, curH = 0, curLeft = 0, curTop = 0;
+  let materialized = false;
+
+  const tl = document.createElement("div");
+  tl.className = "float-resize-handle float-resize-tl";
+  tl.title = t("拖动调整大小");
+  const br = document.createElement("div");
+  br.className = "float-resize-handle float-resize-br";
+  br.title = t("拖动调整大小");
+  el.appendChild(tl);
+  el.appendChild(br);
+
+  const syncHandles = () => {
+    let left, top, right, bottom;
+    if (materialized) { left = curLeft; top = curTop; right = curLeft + curW; bottom = curTop + curH; }
+    else {
+      const r = el.getBoundingClientRect();
+      left = r.left; top = r.top; right = r.right; bottom = r.bottom;
+    }
+    tl.style.left = Math.round(left) + "px";
+    tl.style.top = Math.round(top) + "px";
+    br.style.left = Math.round(right) + "px";
+    br.style.top = Math.round(bottom) + "px";
+  };
+
+  const apply = () => {
+    el.style.position = "fixed";
+    el.style.margin = "0";
+    el.style.maxWidth = "none";
+    el.style.maxHeight = "none";
+    el.style.right = "auto";
+    el.style.bottom = "auto";
+    el.style.width = Math.round(curW) + "px";
+    el.style.height = Math.round(curH) + "px";
+    el.style.left = Math.round(curLeft) + "px";
+    el.style.top = Math.round(curTop) + "px";
+    syncHandles();
+  };
+
+  const layoutFromGeom = () => {
+    const VW = vw(), VH = vh();
+    const maxW = Math.max(minW, VW - 2 * margin);
+    const maxH = Math.max(minH, VH - 2 * margin);
+    curW = Math.max(minW, Math.min(geom.w || maxW, maxW));
+    curH = Math.max(minH, Math.min(geom.h || maxH, maxH));
+    const freeX = Math.max(0, VW - curW);
+    const freeY = Math.max(0, VH - curH);
+    const fx = typeof geom.fx === "number" ? geom.fx : 0.5;
+    const fy = typeof geom.fy === "number" ? geom.fy : 0.5;
+    curLeft = fx * freeX;
+    curTop = fy * freeY;
+    curLeft = Math.max(margin, Math.min(curLeft, Math.max(margin, VW - curW - margin)));
+    curTop = Math.max(margin, Math.min(curTop, Math.max(margin, VH - curH - margin)));
+    materialized = true;
+    apply();
+  };
+
+  const capture = () => {
+    const VW = vw(), VH = vh();
+    const freeX = Math.max(0, VW - curW);
+    const freeY = Math.max(0, VH - curH);
+    geom = {
+      w: Math.round(curW), h: Math.round(curH),
+      fx: freeX ? Math.min(Math.max(0, curLeft / freeX), 1) : 0,
+      fy: freeY ? Math.min(Math.max(0, curTop / freeY), 1) : 0,
+    };
+  };
+
+  const materialize = () => {
+    if (materialized) return;
+    const r = el.getBoundingClientRect();
+    const VW = vw(), VH = vh();
+    curW = Math.max(minW, Math.min(r.width || minW, VW - 2 * margin));
+    curH = Math.max(minH, Math.min(r.height || minH, VH - 2 * margin));
+    curLeft = Math.min(Math.max(margin, r.left), Math.max(margin, VW - curW - margin));
+    curTop = Math.min(Math.max(margin, r.top), Math.max(margin, VH - curH - margin));
+    capture();
+    materialized = true;
+    apply();
+  };
+
+  const startDrag = (e, mode) => {
+    if (e.button != null && e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    materialize();
+    const sx = e.clientX, sy = e.clientY;
+    const s = { left: curLeft, top: curTop, w: curW, h: curH };
+    const onMove = (ev) => {
+      const dx = ev.clientX - sx, dy = ev.clientY - sy;
+      const VW = vw(), VH = vh();
+      if (mode === "move") {
+        curW = s.w; curH = s.h;
+        curLeft = Math.min(Math.max(margin, s.left + dx), Math.max(margin, VW - s.w - margin));
+        curTop = Math.min(Math.max(margin, s.top + dy), Math.max(margin, VH - s.h - margin));
+      } else if (mode === "tl") {
+        const right = s.left + s.w, bottom = s.top + s.h;
+        curLeft = Math.min(Math.max(margin, s.left + dx), Math.max(margin, right - minW));
+        curTop = Math.min(Math.max(margin, s.top + dy), Math.max(margin, bottom - minH));
+        curW = right - curLeft;
+        curH = bottom - curTop;
+      } else { // br
+        curLeft = s.left; curTop = s.top;
+        curW = Math.min(Math.max(minW, s.w + dx), Math.max(minW, VW - margin - s.left));
+        curH = Math.min(Math.max(minH, s.h + dy), Math.max(minH, VH - margin - s.top));
+      }
+      apply();
+    };
+    const onUp = () => {
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onUp);
+      document.removeEventListener("pointercancel", onUp);
+      document.body.classList.remove("floating-dragging");
+      capture();
+      saveModalGeom(key, geom);
+    };
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onUp);
+    document.addEventListener("pointercancel", onUp);
+    document.body.classList.add("floating-dragging");
+  };
+
+  tl.addEventListener("pointerdown", (e) => startDrag(e, "tl"));
+  br.addEventListener("pointerdown", (e) => startDrag(e, "br"));
+
+  const dragBy = opts.dragBy || "h3";
+  const title = dragBy ? el.querySelector(dragBy) : null;
+  if (title) {
+    title.classList.add("float-drag-handle");
+    if (!title.title) title.title = t("拖动移动");
+    title.addEventListener("pointerdown", (e) => {
+      if (e.target.closest("button, a, input, select, textarea, .info-icon")) return;
+      startDrag(e, "move");
+    });
+  }
+
+  const onWindowResize = () => {
+    if (!el.isConnected) return;
+    if (materialized && geom) layoutFromGeom();
+    else syncHandles();
+  };
+  _floatingPanels.push({ el, onWindowResize });
+
+  if (window.ResizeObserver) {
+    try {
+      new ResizeObserver(() => { if (!materialized && el.isConnected) syncHandles(); }).observe(el);
+    } catch (e) { /* ignore */ }
+  }
+
+  if (geom && geom.w > 0 && geom.h > 0) {
+    layoutFromGeom();
+  } else if (opts.materialize) {
+    materialize();
+    saveModalGeom(key, geom);
+  } else {
+    syncHandles();
+  }
+}
+
+window.addEventListener("resize", () => {
+  for (let i = _floatingPanels.length - 1; i >= 0; i--) {
+    const p = _floatingPanels[i];
+    if (!p.el.isConnected) { _floatingPanels.splice(i, 1); continue; }
+    p.onWindowResize();
+  }
+});
+
+/* 自动为任何插入到 body 的 .modal-mask > .modal 启用上述能力（无需在每个弹窗里手动接线）。
+   每个弹窗用 .modal 上的 data-modal-key 区分，以便分别记忆尺寸与位置。 */
+const _floatingModalObserver = new MutationObserver((muts) => {
+  for (const mut of muts) {
+    if (!mut.addedNodes) continue;
+    mut.addedNodes.forEach((n) => {
+      if (n.nodeType !== 1 || !n.classList || !n.classList.contains("modal-mask")) return;
+      const el = n.querySelector(".modal");
+      if (!el) return;
+      const key = el.dataset.modalKey || ("modal:" + (el.className || "").trim());
+      enableFloatingResize(el, key, {});
+    });
+  }
+});
+if (document.body) _floatingModalObserver.observe(document.body, { childList: true });
+
 /* 通用只读内容查看弹窗：在当前视窗内弹出，展示消息注入块 / 记忆附着等全文。
    bodyHtml 需为已转义好的 HTML；onClose 用于复位触发按钮的高亮态。 */
 function showContentModal(title, bodyHtml, onClose) {
   const mask = document.createElement("div");
   mask.className = "modal-mask";
-  mask.innerHTML = `<div class="modal content-view-modal">
+  mask.innerHTML = `<div class="modal content-view-modal" data-modal-key="contentView">
     <h3>${title || ""}</h3>
     <div class="modal-body content-view-body">${bodyHtml || ""}</div>
     <div class="modal-actions"><button class="btn primary" data-close>${t("关闭")}</button></div>
@@ -746,7 +969,7 @@ async function openMemoryStoreModal() {
   if (!S.agentId) return;
   const mask = document.createElement("div");
   mask.className = "modal-mask";
-  mask.innerHTML = `<div class="modal memory-modal">
+  mask.innerHTML = `<div class="modal memory-modal" data-modal-key="memoryStore">
     <h3>🧠 ${t("查看/编辑记忆库")}</h3>
     <div class="modal-body memory-list" id="memoryList"><div class="muted">${t("加载中…")}</div></div>
     <div class="modal-actions">
@@ -826,7 +1049,7 @@ function renderMemoryList(items, root, reload) {
 function openMemoryEditModal(subject, content, onSave) {
   const mask = document.createElement("div");
   mask.className = "modal-mask";
-  mask.innerHTML = `<div class="modal memory-edit-modal">
+  mask.innerHTML = `<div class="modal memory-edit-modal" data-modal-key="memoryEdit">
     <h3>${t("编辑记忆")}</h3>
     <label class="memory-field-label">${t("主题")}</label>
     <input class="memory-edit-subject" type="text" value="${esc(subject)}">
@@ -945,7 +1168,7 @@ function askConfirm(prompt, opts) {
     const mask = document.createElement("div");
     mask.className = "modal-mask";
     mask.innerHTML = `
-      <div class="modal${pink ? " modal-pink" : ""}">
+      <div class="modal${pink ? " modal-pink" : ""}" data-modal-key="confirm">
         <h3>${t("确认")}</h3>
         <div class="modal-body">${esc(prompt)}</div>
         <div class="modal-actions">
@@ -970,7 +1193,7 @@ function askSummaryPercent(defaultPercent, totalTokens) {
     const mask = document.createElement("div");
     mask.className = "modal-mask";
     mask.innerHTML = `
-      <div class="modal" style="width:440px;">
+      <div class="modal" style="width:440px;" data-modal-key="summaryPercent">
         <h3>📝 ${t("主动全量总结")}</h3>
         <div class="modal-body">${t("请设置本次总结的目标百分比（占当前历史 token 的比例）。")}</div>
         <div class="summary-percent-row">
@@ -1031,7 +1254,7 @@ function showMcpJsonExample(obj) {
   const mask = document.createElement("div");
   mask.className = "modal-mask";
   mask.innerHTML = `
-    <div class="modal" style="width:560px;max-height:82vh;overflow:auto;">
+    <div class="modal" style="width:560px;max-height:82vh;overflow:auto;" data-modal-key="mcpJsonExample">
       <h3>${t("JSON 格式示例")}</h3>
       <div class="muted" style="margin-bottom:8px;">${t("该 MCP 表项在配置文件（configs/*.json）中的存储形态：")}</div>
       <pre class="json-preview">${esc(JSON.stringify(obj, null, 2))}</pre>
@@ -2031,7 +2254,7 @@ async function openSettings() {
   const mask = document.createElement("div");
   mask.className = "modal-mask";
   mask.innerHTML = `
-    <div class="modal settings-modal">
+    <div class="modal settings-modal" data-modal-key="settings">
       <h3>⚙️ ${t("系统设置")}</h3>
       <div class="settings-cols">
       <div class="switch-row">
@@ -2243,7 +2466,7 @@ async function openSensitiveForm() {
   const mask = document.createElement("div");
   mask.className = "modal-mask";
   mask.innerHTML = `
-    <div class="modal sensitive-modal">
+    <div class="modal sensitive-modal" data-modal-key="sensitive">
       <h3>🔐 ${t("编辑敏感信息表单")}</h3>
       <div class="muted" style="margin-bottom:10px;">${esc(t("用于浏览器接管：Agent 遇到表单类「可填入元素」时填 <名称>，后台会替换成右侧的真实内容；左侧填「名称」，右侧填「真实内容」。表单里没有的名称会按 Agent 原文原样填入。"))}</div>
       <div class="sensitive-head"><span>${t("信息名称（表项）")}</span><span>${t("实际填入内容")}</span><span></span><span></span></div>
@@ -2300,7 +2523,7 @@ async function openGlobalPromptModal() {
   const mask = document.createElement("div");
   mask.className = "modal-mask";
   mask.innerHTML = `
-    <div class="modal common-prompt-modal">
+    <div class="modal common-prompt-modal" data-modal-key="globalPrompt">
       <h3>📝 ${t("编辑全局常用prompt")}</h3>
       <div class="muted" style="margin-bottom:10px;">${esc(t("下方每一条是一段常用 prompt（可多行，直接按 Enter 换行）；聊天时可在会话页「编辑会话常用prompt」中选取一条，或直接输入新内容（保存时会自动加入这里）。"))}</div>
       <div class="common-prompt-head"><span>${t("常用 prompt 内容")}</span><span></span><span></span></div>
@@ -2364,7 +2587,7 @@ async function openSessionPromptModal(current, onSaved) {
   const mask = document.createElement("div");
   mask.className = "modal-mask";
   mask.innerHTML = `
-    <div class="modal common-prompt-modal">
+    <div class="modal common-prompt-modal" data-modal-key="sessionPrompt">
       <h3>📝 ${t("编辑会话常用prompt")}</h3>
       <div class="common-prompt-tabs">
         <label><input type="radio" name="cpMode" value="pick" checked>${t("从全局常用prompt选取")}</label>
@@ -2472,7 +2695,7 @@ async function openAdvancedSettings() {
   const mask = document.createElement("div");
   mask.className = "modal-mask";
   mask.innerHTML = `
-    <div class="modal" style="width:480px;">
+    <div class="modal" style="width:480px;" data-modal-key="advanced">
       <h3>🧩 ${t("进阶设置")}</h3>
       <div class="muted" style="margin-bottom:4px;">${t("历史浏览时各板块默认展开 / 折叠")}（${t("开启后默认展开")}）</div>
       <div class="switch-row">
@@ -2554,7 +2777,7 @@ async function openGlobalPostgresSettings() {
   const mask = document.createElement("div");
   mask.className = "modal-mask";
   mask.innerHTML = `
-    <div class="modal" style="width:580px;max-height:84vh;overflow:auto;">
+    <div class="modal" style="width:580px;max-height:84vh;overflow:auto;" data-modal-key="globalPostgres">
       <h3>🌐 ${t("全局postgres连接设置")}</h3>
       <div class="muted" style="margin-bottom:10px;line-height:1.65;">
         <p style="margin:0 0 6px;">${t("用途：让所有 multi-agent 共用同一套数据库连接（主机、账号、密码、SSL），每个 multi-agent 只需各自填写自己的数据库名。")}</p>
@@ -2729,7 +2952,7 @@ async function openGlobalEmbeddingSettings() {
   const mask = document.createElement("div");
   mask.className = "modal-mask";
   mask.innerHTML = `
-    <div class="modal" style="width:560px;max-height:84vh;overflow:auto;">
+    <div class="modal" style="width:560px;max-height:84vh;overflow:auto;" data-modal-key="globalEmbedding">
       <h3>🧬 ${t("全局embedding模型设置")}</h3>
       <div class="muted" style="margin-bottom:10px;line-height:1.65;">
         <p style="margin:0 0 6px;">${t("用途：让所有 multi-agent 共用同一套 embedding（向量化）模型配置，multi-agent 配置页勾选「使用全局 embedding 模型设置」即可，无需每个都重复填写。")}</p>
@@ -2827,7 +3050,7 @@ async function openGlobalSummarySettings() {
   const mask = document.createElement("div");
   mask.className = "modal-mask";
   mask.innerHTML = `
-    <div class="modal" style="width:540px;max-height:84vh;overflow:auto;">
+    <div class="modal" style="width:540px;max-height:84vh;overflow:auto;" data-modal-key="globalSummary">
       <h3>📉 ${t("全局自动（及主动）总结设置")}</h3>
       <div class="muted" style="margin-bottom:10px;line-height:1.65;">
         <p style="margin:0 0 6px;">${t("用途：让所有 multi-agent 共用同一套「自动阶段性总结 / 自动全量总结」阈值，multi-agent 配置页勾选「使用全局自动（及主动）总结设置」即可，无需每个都重复填写。")}</p>
@@ -2897,7 +3120,7 @@ async function openColorSettings() {
       <input type="color" id="${f.key}" value="${getColor(f.key, f.def)}">
     </div>`;
   mask.innerHTML = `
-    <div class="modal" style="width:480px;">
+    <div class="modal" style="width:480px;" data-modal-key="color">
       <h3>🎨 ${t("字体颜色设置")}</h3>
       <div class="muted" style="margin-bottom:4px;">${t("调整各板块文字颜色，仅本机生效。")}</div>
       ${row(COLOR_FIELDS[0], `🧠 ${t("思考过程")}`)}
@@ -2949,7 +3172,7 @@ async function openCardSettings() {
       <label class="toggle"><input type="checkbox" id="${f.key}" ${cardGet(f.key, f.def) === "solid" ? "checked" : ""}><span class="track"></span></label>
     </div>`;
   mask.innerHTML = `
-    <div class="modal card-set-modal" style="width:560px;max-height:82vh;overflow:auto;">
+    <div class="modal card-set-modal" style="width:560px;max-height:82vh;overflow:auto;" data-modal-key="card">
       <h3>🃏 ${t("Multi-Agent配置卡片 设置")}</h3>
       <div class="muted" style="margin-bottom:4px;">${t("调整主界面 multi-agent 卡片的按钮配色 / 样式、绶带与背景，仅本机生效。")}</div>
       <div class="card-set-section">
@@ -3044,7 +3267,7 @@ async function openHtmlConfigSettings() {
   }).join("");
 
   mask.innerHTML = `
-    <div class="modal" style="width:520px;max-height:82vh;overflow:auto;">
+    <div class="modal" style="width:520px;max-height:82vh;overflow:auto;" data-modal-key="htmlConfig">
       <h3>🖨 ${t("HTML 转换配置表")}</h3>
       <div class="muted" style="margin-bottom:4px;">${t("调整导出 HTML 的纸张、预览与配色。")}</div>
       ${rows}
@@ -3120,7 +3343,7 @@ async function openBrowserDelaySettings() {
   }).join("");
 
   mask.innerHTML = `
-    <div class="modal" style="width:640px;max-height:84vh;overflow:auto;">
+    <div class="modal" style="width:640px;max-height:84vh;overflow:auto;" data-modal-key="browserDelay">
       <h3>⏱ ${t("浏览器交互延迟设置")}</h3>
       <div class="muted" style="margin-bottom:6px;">${t("调整 LLM 操作浏览器时各环节的等待时长，单位为秒。数值越小响应越快，但过小可能抓不到刚加载 / 刚跳转的页面；数值越大越稳妥但更慢。修改保存后，下一次浏览器工具调用即生效。")}</div>
       ${sections}
@@ -3203,7 +3426,7 @@ async function openToolResultDisplaySettings() {
   };
 
   mask.innerHTML = `
-    <div class="modal" style="width:540px;">
+    <div class="modal" style="width:540px;" data-modal-key="toolResultDisplay">
       <h3>📄 ${t("工具调用结果显示设置")}</h3>
       <div class="muted" style="margin-bottom:6px;">${t("设置工具调用结果在「流式输出」和「查看历史消息」中的展示方式：可展示完整结果，或按「最多行数 / 最多字数」截断（0 表示不限；两个上限都填时，触发任意一个就截断）。工具结果若是单行 JSON，会先结构化再展示。")}</div>
       ${section("流式输出", "tool_result_stream_full", "tool_result_stream_max_lines", "tool_result_stream_max_chars", true, 0, 0)}
@@ -4906,7 +5129,7 @@ async function renderChatView() {
     function showInfoModal(text) {
       const mask = document.createElement("div");
       mask.className = "modal-mask";
-      mask.innerHTML = `<div class="modal"><div class="modal-body">${esc(text)}</div><div class="modal-actions"><button class="btn primary" id="tkInfoOk">${t("知道了")}</button></div></div>`;
+      mask.innerHTML = `<div class="modal" data-modal-key="browserTextInfo"><div class="modal-body">${esc(text)}</div><div class="modal-actions"><button class="btn primary" id="tkInfoOk">${t("知道了")}</button></div></div>`;
       document.body.appendChild(mask);
       mask.querySelector("#tkInfoOk").onclick = () => mask.remove();
     }
@@ -4915,7 +5138,7 @@ async function renderChatView() {
       if (settings && settings.browser_takeover_intro_popup === false) return;
       const mask = document.createElement("div");
       mask.className = "modal-mask";
-      mask.innerHTML = `<div class="modal"><h3>🌐 ${t("浏览器接管说明")}</h3><div class="modal-body">${esc(t("已在桌面显示一个始终置顶的「停止」悬浮按钮（无论切到哪个应用或页面都能看到）。红色表示 Agent 可以操作浏览器；点击它变成绿色「继续」，此时 Agent 的所有浏览器操作会被立即暂停，等待你的后续指示。可拖动它旁边的 ✥ 把手移动位置，再次点击可恢复。"))}</div><div class="modal-actions"><button class="btn primary" id="tkIntroOk">${t("知道了")}</button></div></div>`;
+      mask.innerHTML = `<div class="modal" data-modal-key="takeoverIntro"><h3>🌐 ${t("浏览器接管说明")}</h3><div class="modal-body">${esc(t("已在桌面显示一个始终置顶的「停止」悬浮按钮（无论切到哪个应用或页面都能看到）。红色表示 Agent 可以操作浏览器；点击它变成绿色「继续」，此时 Agent 的所有浏览器操作会被立即暂停，等待你的后续指示。可拖动它旁边的 ✥ 把手移动位置，再次点击可恢复。"))}</div><div class="modal-actions"><button class="btn primary" id="tkIntroOk">${t("知道了")}</button></div></div>`;
       document.body.appendChild(mask);
       mask.querySelector("#tkIntroOk").onclick = () => mask.remove();
     }
@@ -4924,7 +5147,7 @@ async function renderChatView() {
     function showPrivacyPrompt() {
       const mask = document.createElement("div");
       mask.className = "modal-mask";
-      mask.innerHTML = `<div class="modal"><h3>🕶️ ${t("建议开启隐私遮蔽模式")}</h3><div class="modal-body" style="white-space:pre-wrap;">${esc(t("隐私遮蔽模式开启后，所有从浏览器返回给 LLM 的网页内容（DOM、diff 等）以及下方「提示接管」预览块，都会在交给 LLM 之前，把其中出现的、与敏感信息表单「真实内容」相同的文字全部替换为对应的 <名称>，从而完全不向 LLM 暴露这些真实信息。\n\n⚠️ 请慎重填写：不要加入过于常见的信息。例如表单里填了「年龄 → 17」，那么网页里独立的 17 都会被替换成 <年龄>（纯数字/纯英文会做边界判断以减少误伤，例如 2017 不会被替换，但 17 岁会被替换）。请尽量只填写足够独特的内容。"))}</div><div class="modal-actions"><button class="btn" id="pmLater">${t("暂不开启")}</button><button class="btn primary" id="pmOn">${t("开启隐私遮蔽模式")}</button></div></div>`;
+      mask.innerHTML = `<div class="modal" data-modal-key="privacyMask"><h3>🕶️ ${t("建议开启隐私遮蔽模式")}</h3><div class="modal-body" style="white-space:pre-wrap;">${esc(t("隐私遮蔽模式开启后，所有从浏览器返回给 LLM 的网页内容（DOM、diff 等）以及下方「提示接管」预览块，都会在交给 LLM 之前，把其中出现的、与敏感信息表单「真实内容」相同的文字全部替换为对应的 <名称>，从而完全不向 LLM 暴露这些真实信息。\n\n⚠️ 请慎重填写：不要加入过于常见的信息。例如表单里填了「年龄 → 17」，那么网页里独立的 17 都会被替换成 <年龄>（纯数字/纯英文会做边界判断以减少误伤，例如 2017 不会被替换，但 17 岁会被替换）。请尽量只填写足够独特的内容。"))}</div><div class="modal-actions"><button class="btn" id="pmLater">${t("暂不开启")}</button><button class="btn primary" id="pmOn">${t("开启隐私遮蔽模式")}</button></div></div>`;
       document.body.appendChild(mask);
       mask.querySelector("#pmLater").onclick = () => mask.remove();
       mask.querySelector("#pmOn").onclick = async () => {
@@ -5299,27 +5522,300 @@ async function renderChatView() {
     return editable;
   }
 
+  // ---- 编辑模式滚动锚点：精确到「视口顶部那一行文本」 ----
+  // 进入/退出编辑模式会改变块内行高（编辑态去掉了段落 margin），只用像素 scrollTop
+  // 或「消息块顶部」都会让视口里的文字跳走。这里锚定视口顶部那一行文字，
+  // 重渲染后把同一行文字拉回它原先的视口纵向位置。
+
+  // 取 range 起点所在文字节点起、向后若干字符的片段（用于重渲染后重新定位这一行）。
+  // 只保留非空白字符：正常历史是「整段一起渲染」，编辑态是「按行/按段分别渲染」，
+  // 两者的空白（软换行、段间空白）并不一致，按空白做精确匹配会失败。去掉所有空白后，
+  // 同一段文字在两种渲染下具备相同的字符序列。
+  function textSnippetAt(range, len) {
+    let node = range.startContainer;
+    if (!node || node.nodeType !== 3) return null;
+    let text = node.data.slice(range.startOffset, range.startOffset + len);
+    let cur = node;
+    while (text.replace(/\s+/g, "").length < 8 && cur) {
+      let nxt = cur.nextSibling;
+      while (nxt && (nxt.nodeType !== 3 || isAnchorHidden(nxt))) nxt = nxt.nextSibling;
+      if (!nxt) break;
+      text += nxt.data.slice(0, len);
+      cur = nxt;
+    }
+    const s = text.replace(/\s+/g, "");
+    return s.length >= 6 ? s : null;
+  }
+
+  // 在 root 中按「忽略所有空白」查找 snippet，返回其所有出现的 Range。
+  function findTextRanges(root, snippet) {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+    const nodes = [];
+    let full = "";
+    let n;
+    while ((n = walker.nextNode())) {
+      if (isAnchorHidden(n)) continue;
+      nodes.push({ node: n, start: full.length });
+      full += n.data;
+    }
+    const locate = (idx) => {
+      for (let k = nodes.length - 1; k >= 0; k--) {
+        if (idx >= nodes[k].start) return { node: nodes[k].node, offset: Math.min(idx - nodes[k].start, nodes[k].node.data.length) };
+      }
+      return nodes.length ? { node: nodes[0].node, offset: 0 } : null;
+    };
+    const normSnippet = snippet.replace(/\s+/g, "");
+    if (!normSnippet) return [];
+    let norm = "";
+    const map = [];
+    for (let i = 0; i < full.length; i++) {
+      const ch = full[i];
+      if (/\s/.test(ch)) continue;
+      norm += ch;
+      map.push(i);
+    }
+    const out = [];
+    let from = 0;
+    while (true) {
+      const j = norm.indexOf(normSnippet, from);
+      if (j < 0) break;
+      const startLoc = locate(map[j]);
+      const endLoc = locate(map[j + normSnippet.length - 1] + 1);
+      if (startLoc && endLoc) {
+        const r = document.createRange();
+        r.setStart(startLoc.node, startLoc.offset);
+        r.setEnd(endLoc.node, endLoc.offset);
+        out.push(r);
+      }
+      from = j + 1;
+    }
+    return out;
+  }
+
+  // 以「非空白字符计数」作为锚点在消息块内的位置：正常历史（整段渲染）与编辑态
+  // （按行/按段渲染）字符序列一致、仅空白与分块不同，因此这个偏移在两种渲染间稳定。
+  // 锚点相关的文本遍历一律跳过 KaTeX 隐藏的 MathML（position:absolute+clip，
+  // getBoundingClientRect 恒为 0，且不可见），否则会把位置算到视口左上角。
+  function isAnchorHidden(node) {
+    return !!(node.parentElement && node.parentElement.closest(".katex-mathml"));
+  }
+
+  function countNonWsBefore(root, range) {
+    const target = range.startContainer;
+    if (!target || target.nodeType !== 3 || !root.contains(target)) return null;
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+    let count = 0, n;
+    while ((n = walker.nextNode())) {
+      if (n !== target && isAnchorHidden(n)) continue;
+      if (n === target) {
+        const s = n.data.slice(0, range.startOffset);
+        for (let i = 0; i < s.length; i++) if (!/\s/.test(s[i])) count++;
+        return count;
+      }
+      const d = n.data;
+      for (let i = 0; i < d.length; i++) if (!/\s/.test(d[i])) count++;
+    }
+    return null;
+  }
+
+  function rangeAtNonWsOffset(root, offset) {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+    let seen = 0, n, last = null;
+    while ((n = walker.nextNode())) {
+      if (isAnchorHidden(n)) continue;
+      const d = n.data;
+      for (let i = 0; i < d.length; i++) {
+        if (/\s/.test(d[i])) continue;
+        // 必须在「下一个非空白字符」处返回，而不是在节点边界返回上一个节点的末尾，
+        // 否则当偏移正好落在某节点末尾（如 emoji 表头之后）时会锚到上一节点所在行。
+        if (seen === offset) { const r = document.createRange(); r.setStart(n, i); r.setEnd(n, Math.min(i + 1, d.length)); return r; }
+        seen++;
+      }
+      last = n;
+    }
+    if (last && seen === offset) {
+      const r = document.createRange();
+      r.setStart(last, Math.max(0, last.data.length - 1));
+      r.setEnd(last, last.data.length);
+      return r;
+    }
+    return null;
+  }
+
+  // 找到「视口顶部第一条可见文字行」：按文档顺序扫描文本节点的行矩形，
+  // 取 top 之上/之内仍有可见部分（bottom > paneTop）的第一行。
+  // 比直接用 caretRangeFromPoint 猜点更稳：不会落在段间空档或错误的行上。
+  function firstVisibleTextLine(pane) {
+    const pr = pane.getBoundingClientRect();
+    const paneTop = pr.top, paneBottom = pr.bottom;
+    const walker = document.createTreeWalker(pane, NodeFilter.SHOW_TEXT, null);
+    let n, best = null, bestTop = Infinity;
+    while ((n = walker.nextNode())) {
+      if (!n.data || !/\S/.test(n.data)) continue;
+      const block = n.parentElement && n.parentElement.closest("[data-msg-indice]");
+      if (!block) continue;
+      // 跳过 KaTeX 的隐藏 MathML：它 position:absolute+clip，rect 不可靠，且不可见
+      if (n.parentElement && n.parentElement.closest(".katex-mathml")) continue;
+      const pe = n.parentElement;
+      if (pe) {
+        const er = pe.getBoundingClientRect();
+        if (er.bottom <= paneTop + 0.5) continue;   // 该节点整体在视口上方
+        if (er.top >= paneBottom) {                 // 该节点整体在视口下方
+          if (best) break;                          // 已找到顶部可见行：其后的只会更靠下
+          continue;
+        }
+      }
+      const range = document.createRange();
+      range.selectNodeContents(n);
+      const rects = range.getClientRects();
+      for (let i = 0; i < rects.length; i++) {
+        const r = rects[i];
+        if (r.height < 0.5) continue;
+        if (r.bottom <= paneTop + 0.5) continue;    // 这一行完全在视口上方
+        if (r.top >= paneBottom) continue;          // 这一行完全在视口下方
+        // 取「最靠上」的可见行（top 最小），保证与用户看到的顶部一致
+        if (r.top < bestTop) { bestTop = r.top; best = { node: n, rect: r, block }; }
+      }
+    }
+    return best;
+  }
+
+  // 取某个字符索引处单字符的矩形（用于把「某一行」映射回精确的字符偏移）
+  function charRectAt(node, i) {
+    const len = node.data.length;
+    if (len === 0) return null;
+    const k = Math.min(Math.max(0, i), len - 1);
+    const range = document.createRange();
+    range.setStart(node, k);
+    range.setEnd(node, Math.min(k + 1, len));
+    const rects = range.getClientRects();
+    return rects.length ? rects[0] : null;
+  }
+
+  // 在一个文本节点里，二分找出「落在 top≈targetTop 那一行」的字符索引。
+  // 用它来精确锚定可见行，避免 caretRangeFromPoint 落到别的节点/隐藏元素上。
+  function offsetForLine(node, targetTop) {
+    const len = node.data.length;
+    let lo = 0, hi = len;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      const r = charRectAt(node, mid);
+      if (r && (r.top + r.height / 2) < targetTop) lo = mid + 1;
+      else hi = mid;
+    }
+    return Math.max(0, Math.min(lo, len - 1));
+  }
+
+  // 捕获锚点：优先精确到「视口顶部那一行文字」（字符级），失败再退回消息块级。
   function captureMsgAnchor() {
     const pane = $("#historyPane");
     if (!pane) return null;
     const pr = pane.getBoundingClientRect();
+    if (pr.height < 8) return null;
+    const found = firstVisibleTextLine(pane);
+    if (found) {
+      // 直接在该文本节点里定位可见行对应的字符，不依赖 caretRangeFromPoint
+      const k = offsetForLine(found.node, found.rect.top);
+      const range = document.createRange();
+      range.setStart(found.node, Math.min(k, found.node.data.length));
+      range.setEnd(found.node, Math.min(k + 1, found.node.data.length));
+      const b = found.block;
+      const blockRect = b.getBoundingClientRect();
+      const blockH = blockRect.height || 1;
+      const rr = range.getBoundingClientRect();
+      const top = (rr && rr.height) ? rr.top : found.rect.top;
+      const base = { indice: b.getAttribute("data-msg-indice"), beforeTop: top, blockHeight: blockH, offsetRatio: (top - blockRect.top) / blockH };
+      const snippet = textSnippetAt(range, 48);
+      if (snippet) base.snippet = snippet;
+      const charOffset = countNonWsBefore(b, range);
+      if (charOffset != null) base.charOffset = charOffset;
+      return base;
+    }
+    // 回退：消息块级锚点
     const blocks = pane.querySelectorAll("[data-msg-indice]");
     for (const b of blocks) {
       const r = b.getBoundingClientRect();
-      if (r.bottom > pr.top + 8) return { indice: b.getAttribute("data-msg-indice"), top: r.top };
+      if (r.bottom > pr.top + 8) return { indice: b.getAttribute("data-msg-indice"), beforeTop: r.top };
     }
     return { scrollTop: pane.scrollTop };
   }
 
+  // 把「锚点行上方、但仍探入视口」的文字行推回视口之上。
+  // 作用：保证锚点行始终是视口显示的第一行——当上方内容（如思考块）在重渲染后
+  // 变高、尾部探进顶部空白外边距时，仅靠对齐锚点行还不算「第一行」，这里再补一点点滚动把它藏掉。
+  function hideLinesAbove(pane, anchorTopViewport) {
+    const pr = pane.getBoundingClientRect();
+    const paneTop = pr.top, paneBottom = pr.bottom;
+    const walker = document.createTreeWalker(pane, NodeFilter.SHOW_TEXT, null);
+    let n, maxBottom = -Infinity;
+    while ((n = walker.nextNode())) {
+      if (!n.data || !/\S/.test(n.data)) continue;
+      if (!n.parentElement || !n.parentElement.closest("[data-msg-indice]")) continue;
+      if (isAnchorHidden(n)) continue;
+      const pe = n.parentElement;
+      const er = pe.getBoundingClientRect();
+      if (er.bottom <= paneTop + 0.5) continue;
+      if (er.top >= paneBottom) continue;
+      const range = document.createRange();
+      range.selectNodeContents(n);
+      const rects = range.getClientRects();
+      for (let i = 0; i < rects.length; i++) {
+        const r = rects[i];
+        if (r.height < 0.5) continue;
+        if (r.bottom <= paneTop + 0.5) continue;
+        if (r.top >= paneBottom) continue;
+        if (r.top >= anchorTopViewport - 0.5) continue;   // 不是锚点行上方的行
+        if (r.bottom > maxBottom) maxBottom = r.bottom;
+      }
+    }
+    if (maxBottom > paneTop + 0.5) pane.scrollTop += (maxBottom - paneTop);
+  }
+
+  // 回滚锚点：把同一行文字重新拉到它原先的视口纵向位置，并确保它仍是视口第一行。
   function restoreMsgAnchor(anchor) {
     if (!anchor) return;
     const pane = $("#historyPane");
     if (!pane) return;
+    let targetRect = null;
     if (anchor.indice != null) {
       const b = pane.querySelector(`[data-msg-indice="${anchor.indice}"]`);
-      if (b) { pane.scrollTop += (b.getBoundingClientRect().top - anchor.top); return; }
+      if (b) {
+        const blockRect = b.getBoundingClientRect();
+        // ① 精确：按「非空白字符计数」定位到同一处（正常历史与编辑态字符序列一致）
+        if (anchor.charOffset != null) {
+          const r = rangeAtNonWsOffset(b, anchor.charOffset);
+          if (r) { const rr = r.getBoundingClientRect(); if (rr && rr.height) targetRect = rr; }
+        }
+        // ② 文本片段：按字符序列找到同一行（处理字符序列略有差异的情况）
+        if (!targetRect && anchor.snippet) {
+          const cands = findTextRanges(b, anchor.snippet);
+          if (cands.length) {
+            const targetOffset = (anchor.offsetRatio || 0) * (blockRect.height || 1);
+            let best = null, bestDiff = Infinity;
+            for (const c of cands) {
+              const cr = c.getBoundingClientRect();
+              if (!cr || !cr.height) continue;
+              const diff = Math.abs((cr.top - blockRect.top) - targetOffset);
+              if (diff < bestDiff) { bestDiff = diff; best = cr; }
+            }
+            if (best) targetRect = best;
+          }
+        }
+        // ③ 近似：按「在消息块内的纵向比例」还原
+        if (!targetRect && anchor.offsetRatio != null && blockRect.height) {
+          targetRect = { top: blockRect.top + anchor.offsetRatio * blockRect.height };
+        }
+        // ④ 兜底：对齐消息块顶部
+        if (!targetRect) targetRect = blockRect;
+      }
     }
-    if (anchor.scrollTop != null) pane.scrollTop = anchor.scrollTop;
+    if (targetRect) {
+      pane.scrollTop += (targetRect.top - anchor.beforeTop);
+      // 对齐后锚点行位于 beforeTop；把其上方仍探入视口的行推走
+      hideLinesAbove(pane, anchor.beforeTop);
+    } else if (anchor.scrollTop != null) {
+      pane.scrollTop = anchor.scrollTop;
+    }
   }
 
   function renderEditMode() {
@@ -5374,16 +5870,27 @@ async function renderChatView() {
     try { localStorage.setItem(EDIT_POPUP_SIZE_KEY, JSON.stringify({ w: Math.round(w), h: Math.round(h) })); } catch (e) { /* ignore */ }
   }
 
+  // 编辑框挂在 #historyPane（滚动容器）内的滚动内容坐标系里，紧贴被编辑行、随内容滚动。
+  // rect 是行的视口坐标；换算成「相对滚动内容」的坐标（加上 scrollLeft/scrollTop）。
   function positionEditPopup(popup, rect) {
+    const pane = $("#historyPane");
+    if (!pane) return;
+    const pr = pane.getBoundingClientRect();
     const pad = 6;
-    const vw = window.innerWidth, vh = window.innerHeight;
     const pw = popup.offsetWidth, ph = popup.offsetHeight;
-    let left = rect.left;
-    let top = rect.bottom + pad;
-    if (left + pw > vw) left = Math.max(8, vw - pw - 8);
-    if (top + ph > vh) top = Math.max(8, rect.top - ph - pad);
-    popup.style.left = left + "px";
-    popup.style.top = top + "px";
+    let left = (rect.left - pr.left) + pane.scrollLeft;
+    let top = (rect.bottom - pr.top) + pane.scrollTop + pad;
+    // 下方放不下就翻到被编辑行的上方
+    if (rect.bottom + pad + ph > pr.bottom) {
+      top = (rect.top - pr.top) + pane.scrollTop - ph - pad;
+    }
+    // 水平方向不越出可视区，避免撑出横向滚动条
+    const minLeft = pane.scrollLeft + 8;
+    const maxLeft = pane.scrollLeft + pane.clientWidth - pw - 8;
+    if (left > maxLeft) left = Math.max(minLeft, maxLeft);
+    if (left < minLeft) left = minLeft;
+    popup.style.left = Math.round(left) + "px";
+    popup.style.top = Math.round(top) + "px";
   }
 
   function openEditPopup(line) {
@@ -5400,11 +5907,13 @@ async function renderChatView() {
       <textarea></textarea>`;
     const ta = popup.querySelector("textarea");
     ta.value = raw;
-    document.body.appendChild(popup);
+    const pane = $("#historyPane") || document.body;
+    pane.appendChild(popup);
     const stored = readEditPopupSize();
     if (stored) {
-      // 记忆尺寸：按当前视口夹取，避免超出屏幕
-      popup.style.width = Math.min(stored.w, window.innerWidth - 16) + "px";
+      // 记忆尺寸：宽度按聊天区宽度夹取（避免撑出横向滚动条），高度按视口夹取
+      const availW = (pane.clientWidth || window.innerWidth) - 16;
+      popup.style.width = Math.min(stored.w, Math.max(240, availW)) + "px";
       popup.style.height = Math.min(stored.h, window.innerHeight - 16) + "px";
     } else {
       // 首次：动态宽度 = 一行文本（正文渲染区）宽度的 0.75 倍
