@@ -3312,18 +3312,43 @@ const PH = {
 const ph = (key) => (settingsCache && settingsCache.show_placeholders !== false) ? ` placeholder="${esc(t(PH[key]))}"` : "";
 const slugify = (s) => (s || "").trim().replace(/[^0-9a-zA-Z\u4e00-\u9fa5_-]+/g, "-").replace(/^-+|-+$/g, "").toLowerCase() || "agent";
 
-// tooltip 自动感知边界：右侧放不下翻到左侧（事件委托，覆盖动态创建的 info-icon）
+// tooltip 智能定位：优先右侧，空间不足翻左侧，两侧都不足则收窄宽度自动换行；
+// 水平/垂直均钳制在视口内，永不越界。用 position:fixed 避免被滚动容器裁切或撑出滚动条。
+const TIP_GAP = 16, TIP_MARGIN = 8, TIP_MIN_W = 140;
 document.addEventListener("mouseover", (e) => {
   const icon = e.target.closest && e.target.closest(".info-icon");
   if (!icon) return;
   const tip = icon.querySelector(".tip");
   if (!tip) return;
-  tip.classList.remove("tip-left");
   tip.style.visibility = "hidden";
   tip.style.display = "block";
+  tip.style.maxWidth = "";
+  tip.style.left = "0px";
+  tip.style.top = "0px";
+  const vw = document.documentElement.clientWidth;
+  const vh = document.documentElement.clientHeight;
   const rect = icon.getBoundingClientRect();
-  const tw = tip.offsetWidth;
-  if (rect.right + 16 + tw > window.innerWidth) tip.classList.add("tip-left");
+  let tw = tip.offsetWidth;
+  let th = tip.offsetHeight;
+  const spaceRight = vw - (rect.right + TIP_GAP) - TIP_MARGIN;
+  const spaceLeft = rect.left - TIP_GAP - TIP_MARGIN;
+  let left;
+  if (tw <= spaceRight) {
+    left = rect.right + TIP_GAP;
+  } else if (tw <= spaceLeft) {
+    left = rect.left - TIP_GAP - tw;
+  } else {
+    const useRight = spaceRight >= spaceLeft;
+    tip.style.maxWidth = Math.min(Math.max(useRight ? spaceRight : spaceLeft, TIP_MIN_W), vw - TIP_MARGIN * 2) + "px";
+    tw = tip.offsetWidth;
+    th = tip.offsetHeight;
+    left = useRight ? rect.right + TIP_GAP : rect.left - TIP_GAP - tw;
+  }
+  left = Math.min(Math.max(left, TIP_MARGIN), vw - TIP_MARGIN - tw);
+  let top = rect.top + rect.height / 2 - th / 2;
+  top = Math.min(Math.max(top, TIP_MARGIN), vh - TIP_MARGIN - th);
+  tip.style.left = Math.round(left) + "px";
+  tip.style.top = Math.round(top) + "px";
   tip.style.display = "";
   tip.style.visibility = "";
   icon.classList.add("show");
