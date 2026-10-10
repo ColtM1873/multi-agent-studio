@@ -281,6 +281,7 @@ const I18N_EN = {
   "背景颜色": "Background color",
   "暂无用户消息": "No user messages yet",
   "有未保存的修改，确定离开？": "You have unsaved changes. Leave anyway?",
+  "编辑模式中有未保存的修改，请先退出编辑模式并提交或撤销改动后再发送。": "You have unsaved changes in edit mode. Exit edit mode (submit or discard) before sending.",
   "本地模型缓存路径，留空用 Hugging Face 默认缓存。": "Local model cache path; leave empty to use Hugging Face's default cache.",
   "本地连接，自动使用 sslmode=disable": "Local connection, auto sslmode=disable",
   "模型 provider": "Model provider",
@@ -4959,6 +4960,7 @@ async function renderChatView() {
           <button type="button" class="fail-bubble-btn fail-bubble-restore" id="failRestoreBtn" title="${t("回填")}">✓</button>
         </div>
       </div>
+      <div id="editSendWarnBubble" class="edit-send-warn" style="display:none;"></div>
     </div>`;
 
   const chatBody = $("#chatBody");
@@ -6570,9 +6572,21 @@ async function renderChatView() {
     pendingFailedMsg = null;
   }
 
+  // 编辑模式中有未保存改动时点「发送」：不发送，仅在发送按钮上方提示。
+  let editSendWarnTimer = null;
+  function showEditSendWarn() {
+    const b = $("#editSendWarnBubble");
+    if (!b) return;
+    b.textContent = t("编辑模式中有未保存的修改，请先退出编辑模式并提交或撤销改动后再发送。");
+    b.style.display = "block";
+    clearTimeout(editSendWarnTimer);
+    editSendWarnTimer = setTimeout(() => { b.style.display = "none"; }, 4000);
+  }
+
+  let sendBusy = false;
   async function send() {
     const raw = input.value;
-    if (isRunning) return;
+    if (sendBusy || isRunning) return;
     // 浏览器接管提示已开启但页面内容仍在获取：暂不允许发送（按钮此时也是置灰的，
     // 这里兜底 Enter 键路径），避免发出不含页面内容的消息让 LLM 摸不着头脑。
     if (takeoverHintOn && !takeoverPreviewText) { toast(t("正在获取当前页面内容，请稍候…")); return; }
@@ -6583,6 +6597,15 @@ async function renderChatView() {
     const injectSensitive = sensitiveInjectOn && !!sensitiveInjectText;
     // 开启日期注入 / 常用 prompt 注入 / 浏览器接管提示 / 敏感信息注入后，允许「空输入」发送
     if (!userText && !injectDate && !injectCommon && !injectTakeover && !injectSensitive) return;
+    // 编辑模式：有未保存改动则提示、不发送；无改动则先自动退出编辑模式（与「退出编辑模式」
+    // 按钮同一套逻辑），再走正常发送流程，避免在编辑态 DOM 上发送导致流式回复不显示。
+    if (editModeOn) {
+      if (edits.length) { showEditSendWarn(); return; }
+      sendBusy = true;
+      try { await exitEditMode(); }
+      catch (e) { sendBusy = false; toast(e.message, true); return; }
+      finally { sendBusy = false; }
+    }
     // 前缀按「日期 → 常用prompt → 用户输入」拼接，与输入框上方灰色提示从上到下的顺序一致
     const parts = [];
     if (injectDate) parts.push(datePromptText());

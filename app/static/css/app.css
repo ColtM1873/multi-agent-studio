@@ -609,6 +609,15 @@ body.floating-dragging { user-select: none; cursor: grabbing; }
 .fail-bubble-cancel:hover { background: #fee2e2; }
 .fail-bubble-float { position: absolute; left: 50%; transform: translateX(-50%); bottom: 14px; z-index: 61; }
 
+/* ── 编辑模式有未保存改动时点发送的提示（输入框上方居中） ── */
+.edit-send-warn {
+  position: absolute; left: 50%; transform: translateX(-50%); bottom: 14px; z-index: 62;
+  background: #fffbeb; color: #92400e; border: 1px solid #fcd34d;
+  padding: 8px 16px; border-radius: 12px; font-size: 13px; line-height: 1.5;
+  box-shadow: var(--shadow-lg); animation: fadein .3s;
+  max-width: min(460px, calc(100vw - 40px)); text-align: center;
+}
+
 /* ── Pin Down 跟随按钮 ─────────────────── */
 .pin-btn {
   position: absolute; left: 0; top: 0;
