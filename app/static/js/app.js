@@ -5535,9 +5535,22 @@ async function renderChatView() {
     return String(s == null ? "" : s).replace(/\s+/g, "");
   }
 
-  // 跳过 KaTeX 隐藏的 MathML（position:absolute+clip，getBoundingClientRect 恒为 (0,0) 且不可见）。
+  // 跳过「对锚点不可见」的文本：
+  // ① KaTeX 隐藏的 MathML（position:absolute+clip，getBoundingClientRect 恒为 (0,0)）；
+  // ② 折叠 <details> 里的内容——Chrome 对折叠内容仍会报告布局矩形（甚至超大），但它并不显示，
+  //    绝不能当锚点/匹配目标；<summary> 本身仍可见，故不跳过（只跳过非 summary 的折叠内容）。
   function isAnchorHidden(node) {
-    return !!(node.parentElement && node.parentElement.closest(".katex-mathml"));
+    const pe = node.parentElement;
+    if (!pe) return false;
+    if (pe.closest(".katex-mathml")) return true;
+    // 注入型 UI（导出按钮 / 记忆附着按钮 / 工具 content 按钮等）在编辑态会消失，不能当锚点。
+    if (pe.closest(".export-html-row, .mem-attach-btn, .tool-content-btn, .mem-attach-panel, .tool-result-trunc")) return true;
+    const closed = pe.closest("details:not([open])");
+    if (closed) {
+      const sum = pe.closest("summary");
+      if (!(sum && sum.closest("details") === closed)) return true;
+    }
+    return false;
   }
 
   // 取某文字节点第一段有高度的行矩形。
@@ -5549,6 +5562,34 @@ async function renderChatView() {
       if (rects[i].height >= 0.5) return rects[i];
     }
     return null;
+  }
+
+  // 取某文字节点里第 i 个字符的矩形（用于定位「可见行的起始字符」）。
+  function charRectAt(node, i) {
+    const len = node.data.length;
+    if (len === 0) return null;
+    const k = Math.min(Math.max(0, i), len - 1);
+    const range = document.createRange();
+    range.setStart(node, k);
+    range.setEnd(node, Math.min(k + 1, len));
+    const rects = range.getClientRects();
+    return rects.length ? rects[0] : null;
+  }
+
+  // 二分找出「落在 top≈targetTop 那一行」的起始字符索引。
+  // 关键：顶部可见行常常是某个长段落（单个文字节点、软换行折成多行）的中间一行，
+  // 必须从这一行的起始字符开始截取；否则会把「整段开头」当成锚点、对齐到错误位置，
+  // 进/退出编辑模式就会出现视口跳变（这正是本轮修复的 bug）。
+  function lineStartOffset(node, targetTop) {
+    const len = node.data.length;
+    let lo = 0, hi = len;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      const r = charRectAt(node, mid);
+      if (r && (r.top + r.height / 2) < targetTop) lo = mid + 1;
+      else hi = mid;
+    }
+    return Math.max(0, Math.min(lo, len));
   }
 
   // 取 root 内 node 之后的下一个文字节点（文档顺序）。
@@ -5625,19 +5666,22 @@ async function renderChatView() {
     return block;
   }
 
-  // 捕获「顶部那一行」的文本：从起始节点向后累积，遇到新的一行即止。
+  // 捕获「顶部那一行」的文本：从**可见行起始字符**开始向后累积，遇到新的一行即止。
   // 至少累积一小段，便于唯一匹配。命中公式时由调用方改用整个公式文本。
   function collectLineText(pane, startNode, startRect) {
+    const block = startNode.parentElement && startNode.parentElement.closest("[data-msg-indice]");
     const lineH = startRect.height || 20;
-    let text = "";
+    const startOff = lineStartOffset(startNode, startRect.top);
+    let text = isAnchorHidden(startNode) ? "" : startNode.data.slice(startOff);
     let node = startNode;
-    while (node && normAnchorText(text).length < 64) {
-      if (!isAnchorHidden(node)) text += node.data;
+    while (normAnchorText(text).length < 64) {
       node = nextTextNodeWithin(pane, node);
       if (!node) break;
-      if (!node.parentElement || !node.parentElement.closest("[data-msg-indice]")) break;
+      const nb = node.parentElement && node.parentElement.closest("[data-msg-indice]");
+      if (!nb || nb !== block) break;   // 只在本消息块内累积，避免跨块拼出匹配不到的串
       const r = firstLineRect(node);
-      if (r && r.top > startRect.top + lineH * 0.7 && normAnchorText(text).length >= 12) break;
+      if (r && r.top > startRect.top + lineH * 0.7 && normAnchorText(text).length >= 20) break;
+      if (!isAnchorHidden(node)) text += node.data;
     }
     return normAnchorText(text);
   }
@@ -5770,6 +5814,35 @@ async function renderChatView() {
     return false;
   }
 
+  // 把「锚点行上方、但仍探入视口」的可见文字行推回视口之上，
+  // 保证锚点行是视口显示的第一行（上方块间距/行高变化时的残余修正）。
+  function pushLinesAbove(pane, anchorTopViewport) {
+    const pr = pane.getBoundingClientRect();
+    const walker = document.createTreeWalker(pane, NodeFilter.SHOW_TEXT, null);
+    let n, maxBottom = -Infinity;
+    while ((n = walker.nextNode())) {
+      if (!n.data || !/\S/.test(n.data)) continue;
+      if (isAnchorHidden(n)) continue;
+      if (!n.parentElement || !n.parentElement.closest("[data-msg-indice]")) continue;
+      const pe = n.parentElement;
+      const er = pe.getBoundingClientRect();
+      if (er.bottom <= pr.top + 0.5) continue;
+      if (er.top >= pr.bottom) continue;
+      const range = document.createRange();
+      range.selectNodeContents(n);
+      const rects = range.getClientRects();
+      for (let i = 0; i < rects.length; i++) {
+        const r = rects[i];
+        if (r.height < 0.5) continue;
+        if (r.bottom <= pr.top + 0.5) continue;
+        if (r.top >= pr.bottom) continue;
+        if (r.top >= anchorTopViewport - 0.5) continue;   // 不是锚点行上方的行
+        if (r.bottom > maxBottom) maxBottom = r.bottom;
+      }
+    }
+    if (maxBottom > pr.top + 0.5) pane.scrollTop += (maxBottom - pr.top);
+  }
+
   // 回滚锚点：在同一 message / 模块 / 标题作用域内找到该行文本，拉回原视口位置。
   function restoreMsgAnchor(anchor) {
     if (!anchor) return;
@@ -5808,6 +5881,7 @@ async function renderChatView() {
       target = { top: blockRect.top + (anchor.offsetRatio || 0) * (blockRect.height || 1) };
     }
     pane.scrollTop += (target.top - anchor.beforeTop);
+    pushLinesAbove(pane, anchor.beforeTop);
   }
 
   function renderEditMode() {
