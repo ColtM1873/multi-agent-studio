@@ -761,6 +761,17 @@ body.floating-dragging { user-select: none; cursor: grabbing; }
 .snapshot-name { font-size: 13px; font-weight: 600; color: var(--primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .snapshot-meta { font-size: 12px; color: var(--text-muted); }
 
+/* ── 已删除 multi-agent 的快照列表（就地展开） ── */
+.deleted-agent-item { border-bottom: 1px solid var(--border); }
+.deleted-agent-item:last-child { border-bottom: none; }
+.deleted-agent-head { display: flex; align-items: center; gap: 10px; padding: 10px 12px; }
+.deleted-agent-toggle {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  background: none; border: none; cursor: pointer; text-align: left; padding: 0;
+}
+.deleted-agent-toggle:hover .snapshot-name { text-decoration: underline; }
+.deleted-agent-snaps { padding: 0 6px 6px 20px; border-left: 2px solid var(--border); margin: 0 0 6px 12px; }
+
 /* ── 历史消息编辑模式 ──────────────────── */
 .edit-mode-badge {
   background: #16a34a; color: #fff;

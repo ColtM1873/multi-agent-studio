@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import shutil
 from datetime import datetime
 from pathlib import Path
 
@@ -30,6 +31,10 @@ logger = logging.getLogger(__name__)
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 SNAPSHOTS_DIR = BASE_DIR / "snapshots"
 CONFIG_DIR = BASE_DIR / "configs"
+
+# agent 元数据文件名（存在快照目录里，记录 agent 显示名）。
+# 以 "_" 开头，与真正的快照文件（<thread>_<stamp>_<count>.json）区分开。
+AGENT_META_FILENAME = "_meta.json"
 
 
 def _agent_snapshots_dir(agent_id: str) -> Path:
@@ -149,6 +154,9 @@ def list_snapshots(agent_id: str) -> list[dict]:
         return []
     result = []
     for p in d.glob("*.json"):
+        if p.name.startswith("_"):
+            # 跳过 agent 元数据文件（_meta.json），它不是快照
+            continue
         try:
             rec = json.loads(p.read_text(encoding="utf-8"))
         except Exception:  # noqa: BLE001
@@ -180,3 +188,75 @@ def delete_snapshot(agent_id: str, snapshot_id: str) -> bool:
         p.unlink()
         return True
     return False
+
+
+# ── 已删除 multi-agent：元数据 + 清理 ───────────────────────────────
+
+def save_agent_meta(agent_id: str, name: str) -> None:
+    """在 agent 的快照目录里记录显示名（删除 agent 前调用）。
+
+    仅当快照目录已存在时才写，避免给「从没有过快照」的 agent 凭空造出一个目录、
+    让它出现在「已删除 multi-agent」列表里。
+    """
+    d = _agent_snapshots_dir(agent_id)
+    if not d.exists():
+        return
+    try:
+        (d / AGENT_META_FILENAME).write_text(
+            json.dumps({"agent_id": agent_id, "name": name}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    except Exception:  # noqa: BLE001 — 元数据是锦上添花，失败不影响删除
+        logger.exception("写 agent 元数据失败 (agent_id=%s)", agent_id)
+
+
+def load_agent_meta(agent_id_or_dir: str) -> dict:
+    """读取 agent 元数据（存在返回 dict，否则返回空 dict）。"""
+    p = _agent_snapshots_dir(agent_id_or_dir) / AGENT_META_FILENAME
+    if not p.exists():
+        return {}
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def list_deleted_agents(existing_agent_ids) -> list[dict]:
+    """扫描 snapshots/ 下「不属于任何现存 agent」的目录，视为已删除的 multi-agent。
+
+    - 只返回**仍有快照**的目录；没有快照的残留目录会被顺手清理掉（不复存在）。
+    - 显示名优先取删除时记录的 name，缺失则退回文件夹名（= 清洗后的 agent_id）。
+    """
+    if not SNAPSHOTS_DIR.exists():
+        return []
+    live_dirs = {_agent_snapshots_dir(a).name for a in existing_agent_ids}
+    result = []
+    for d in sorted(SNAPSHOTS_DIR.iterdir()):
+        if not d.is_dir() or d.name in live_dirs:
+            continue
+        snaps = list_snapshots(d.name)
+        if not snaps:
+            # 快照已删完（只剩 _meta.json 或空目录）→ 整个目录清掉，agent 不复存在
+            shutil.rmtree(d, ignore_errors=True)
+            continue
+        meta = load_agent_meta(d.name)
+        result.append(
+            {
+                "agent_id": meta.get("agent_id") or d.name,
+                "dir": d.name,
+                "name": meta.get("name") or d.name,
+                "count": len(snaps),
+            }
+        )
+    result.sort(key=lambda x: x["name"])
+    return result
+
+
+def delete_all_snapshots(agent_id: str) -> int:
+    """删除某 agent（含已删除的）名下所有快照：整个目录删掉。返回删除的快照数。"""
+    d = _agent_snapshots_dir(agent_id)
+    if not d.exists():
+        return 0
+    n = len(list_snapshots(agent_id))
+    shutil.rmtree(d, ignore_errors=True)
+    return n

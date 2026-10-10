@@ -640,6 +640,11 @@ const I18N_EN = {
   "暂无快照": "No snapshots yet",
   "条消息": "messages",
   "确定删除快照": "Delete snapshot?",
+  "查看已删除multi-agent的快照": "View snapshots of deleted multi-agents",
+  "暂无已删除的multi-agent": "No deleted multi-agents",
+  "个快照": "snapshots",
+  "删除全部快照": "Delete all snapshots",
+  "确定删除该 multi-agent 的全部快照": "Delete all snapshots of this multi-agent?",
   "等待确认…": "Awaiting confirmation…",
   "历史消息任意时间可编辑": "Edit any historical message",
   "开启编辑模式": "Enable edit mode",
@@ -2080,7 +2085,7 @@ function renderMd(text) {
 }
 
 /* ================= 状态 ================= */
-const S = { view: "agents", agentId: null, agentName: null, threadId: null, snapshotId: null, editingDefault: false };
+const S = { view: "agents", agentId: null, agentName: null, threadId: null, snapshotId: null, snapshotFromDeleted: false, editingDefault: false };
 const app = $("#app");
 let ws = null;
 let isRunning = false;
@@ -2116,10 +2121,10 @@ function render() {
   else if (S.view === "chat") renderChatView();
   else if (S.view === "snapshot") renderSnapshotView();
 }
-function goAgents() { S.view = "agents"; S.agentId = null; S.agentName = null; S.threadId = null; S.snapshotId = null; render(); }
-function goThreads(agentId, agentName) { S.view = "threads"; S.agentId = agentId; S.agentName = agentName; S.threadId = null; S.snapshotId = null; render(); }
-function goChat(agentId, agentName, threadId) { S.view = "chat"; S.agentId = agentId; S.agentName = agentName; S.threadId = threadId; S.snapshotId = null; render(); }
-function goSnapshot(agentId, agentName, snapshotId) { S.view = "snapshot"; S.agentId = agentId; S.agentName = agentName; S.snapshotId = snapshotId; render(); }
+function goAgents() { S.view = "agents"; S.agentId = null; S.agentName = null; S.threadId = null; S.snapshotId = null; S.snapshotFromDeleted = false; render(); }
+function goThreads(agentId, agentName) { S.view = "threads"; S.agentId = agentId; S.agentName = agentName; S.threadId = null; S.snapshotId = null; S.snapshotFromDeleted = false; render(); }
+function goChat(agentId, agentName, threadId) { S.view = "chat"; S.agentId = agentId; S.agentName = agentName; S.threadId = threadId; S.snapshotId = null; S.snapshotFromDeleted = false; render(); }
+function goSnapshot(agentId, agentName, snapshotId, fromDeleted = false) { S.view = "snapshot"; S.agentId = agentId; S.agentName = agentName; S.snapshotId = snapshotId; S.snapshotFromDeleted = !!fromDeleted; render(); }
 
 /* ================= 视图1：Agent 列表 ================= */
 async function renderAgents() {
@@ -2144,10 +2149,18 @@ async function renderAgents() {
       <div id="agentGrid" class="card-grid"><div class="muted">${t("加载中…")}</div></div>
     </div>
     <div class="snapshot-drawer" id="agentsFooter">
+      <button class="snapshot-handle" id="deletedAgentsHandle" type="button" style="display:none;">🗑️ ${t("查看已删除multi-agent的快照")}<span class="sw-label" id="deletedAgentsCount"></span></button>
       <button class="showhidden-zone" id="showHiddenAgentsZone" type="button" style="display:none;border-left:none;">
         <span class="sw-label" id="showHiddenAgentsLabel"></span>
         <span class="toggle"><input type="checkbox" id="showHiddenAgentsChk"><span class="track"></span></span>
       </button>
+      <div class="snapshot-panel" id="deletedAgentsPanel" style="display:none;">
+        <div class="snapshot-panel-head">
+          <span class="snapshot-panel-title">🗑️ ${t("查看已删除multi-agent的快照")}</span>
+          <button class="btn small" id="deletedAgentsClose">×</button>
+        </div>
+        <div class="snapshot-list" id="deletedAgentsList"><div class="muted">${t("加载中…")}</div></div>
+      </div>
     </div>`;
 
   $("#newBtn").onclick = () => { S.editingDefault = false; S.agentId = null; S.view = "editor"; render(); };
@@ -2179,11 +2192,15 @@ async function renderAgents() {
     const vis = showNow ? agents : agents.filter(a => !hiddenSet.has(a.agent_id));
     const hiddenCnt = agents.filter(a => hiddenSet.has(a.agent_id)).length;
 
-    if (agents.length) {
+    // 「显示隐藏multi-agent配置」仅在有隐藏项时才显示（与「显示隐藏对话」一致）
+    if (hiddenCnt > 0) {
       $("#showHiddenAgentsChk").checked = showNow;
-      $("#showHiddenAgentsLabel").textContent = t("显示隐藏multi-agent配置") + (hiddenCnt ? `（${hiddenCnt}）` : "");
+      $("#showHiddenAgentsLabel").textContent = t("显示隐藏multi-agent配置") + `（${hiddenCnt}）`;
       $("#showHiddenAgentsZone").style.display = "flex";
+    } else {
+      $("#showHiddenAgentsZone").style.display = "none";
     }
+    updateAgentsFooter();
 
     if (!agents.length) {
       $("#agentGrid").innerHTML = `<div class="empty"><div class="big">📦</div>${t("还没有任何 multi-agent 配置")}<br/><br/><button class="btn primary" id="newBtn2">+ ${t("新建 multi-agent")}</button></div>`;
@@ -2246,6 +2263,126 @@ async function renderAgents() {
     chk.checked = !chk.checked;
     chk.dispatchEvent(new Event("change"));
   };
+
+  // ── 已删除 multi-agent 的快照抽屉 ─────────
+  // 配置已被删除（或无法从 app 访问）的 agent，其快照仍留在 snapshots/ 下。
+  // 这里把它们列出来，可就地展开看快照、删单个、或删掉该 agent 的全部快照。
+  const delHandle = $("#deletedAgentsHandle");
+  const delPanel = $("#deletedAgentsPanel");
+  const delListEl = $("#deletedAgentsList");
+  let deletedAgents = [];
+  const expandedDirs = new Set();
+
+  // 底部栏可见性：两个按钮都不可见时整条底栏隐藏；分隔线只在两者都可见时出现
+  function updateAgentsFooter() {
+    const sh = $("#showHiddenAgentsZone");
+    const dh = $("#deletedAgentsHandle");
+    const shVisible = sh.style.display !== "none";
+    const dhVisible = dh.style.display !== "none";
+    sh.style.borderLeft = (shVisible && dhVisible) ? "" : "none";
+    $("#agentsFooter").style.display = (shVisible || dhVisible) ? "" : "none";
+  }
+
+  function renderDeletedAgentSnaps(dir, aName, container) {
+    container.innerHTML = `<div class="muted" style="padding:8px 12px;">${t("加载中…")}</div>`;
+    api(`/api/agents/${encodeURIComponent(dir)}/snapshots`).then(snaps => {
+      if (!snaps.length) {
+        container.innerHTML = `<div class="muted" style="padding:8px 12px;">${t("暂无快照")}</div>`;
+        return;
+      }
+      container.innerHTML = snaps.map(s => `
+        <div class="snapshot-row" data-sid="${esc(s.id)}">
+          <div class="snapshot-info">
+            <span class="snapshot-name">${esc(s.thread_id)}</span>
+            <span class="snapshot-meta">${esc(s.created_at)} · ${s.total_messages} ${t("条消息")}</span>
+          </div>
+          <button class="btn card-btn card-btn-danger small" data-snap-del="${esc(s.id)}">${t("删除")}</button>
+        </div>`).join("");
+      $$(".snapshot-row", container).forEach(row => {
+        const sid = row.dataset.sid;
+        row.onclick = (e) => { if (e.target.closest("button")) return; goSnapshot(dir, aName, sid, true); };
+        row.querySelector("[data-snap-del]").onclick = async (e) => {
+          e.stopPropagation();
+          if (!confirm(`${t("确定删除快照")}「${sid}」？${t("此操作不可撤销。")}`)) return;
+          try {
+            await api(`/api/agents/${encodeURIComponent(dir)}/snapshots/${encodeURIComponent(sid)}`, { method: "DELETE" });
+            toast(t("已删除"));
+            await refreshDeletedAgents();
+          } catch (err) { toast(err.message, true); }
+        };
+      });
+    }).catch(e => { container.innerHTML = `<div class="empty">${esc(e.message)}</div>`; });
+  }
+
+  function renderDeletedAgentsList() {
+    if (!deletedAgents.length) {
+      delListEl.innerHTML = `<div class="muted" style="padding:12px;">${t("暂无已删除的multi-agent")}</div>`;
+      return;
+    }
+    delListEl.innerHTML = deletedAgents.map(a => `
+      <div class="deleted-agent-item" data-dir="${esc(a.dir)}" data-name="${esc(a.name)}">
+        <div class="deleted-agent-head">
+          <button class="deleted-agent-toggle" type="button">
+            <span class="snapshot-name">${esc(a.name)}</span>
+            <span class="snapshot-meta">${a.count} ${t("个快照")}</span>
+          </button>
+          <button class="btn card-btn card-btn-danger small" data-del-all="${esc(a.dir)}">${t("删除全部快照")}</button>
+        </div>
+        <div class="deleted-agent-snaps" style="display:none;"></div>
+      </div>`).join("");
+
+    $$(".deleted-agent-item", delListEl).forEach(item => {
+      const dir = item.dataset.dir;
+      const aName = item.dataset.name;
+      const snapsEl = item.querySelector(".deleted-agent-snaps");
+      item.querySelector(".deleted-agent-toggle").onclick = () => {
+        const open = snapsEl.style.display !== "none";
+        if (open) { snapsEl.style.display = "none"; expandedDirs.delete(dir); return; }
+        snapsEl.style.display = "";
+        expandedDirs.add(dir);
+        renderDeletedAgentSnaps(dir, aName, snapsEl);
+      };
+      item.querySelector("[data-del-all]").onclick = async (e) => {
+        e.stopPropagation();
+        if (!confirm(`${t("确定删除该 multi-agent 的全部快照")}「${aName}」？${t("此操作不可撤销。")}`)) return;
+        try {
+          await api(`/api/deleted-agents/${encodeURIComponent(dir)}/snapshots`, { method: "DELETE" });
+          toast(t("已删除"));
+          await refreshDeletedAgents();
+        } catch (err) { toast(err.message, true); }
+      };
+    });
+
+    // 刷新后恢复仍在的展开项
+    $$(".deleted-agent-item", delListEl).forEach(item => {
+      const dir = item.dataset.dir;
+      if (expandedDirs.has(dir)) {
+        const snapsEl = item.querySelector(".deleted-agent-snaps");
+        snapsEl.style.display = "";
+        renderDeletedAgentSnaps(dir, item.dataset.name, snapsEl);
+      }
+    });
+  }
+
+  async function refreshDeletedAgents() {
+    try { deletedAgents = await api("/api/deleted-agents"); }
+    catch (e) { deletedAgents = []; }
+    const dirs = new Set(deletedAgents.map(a => a.dir));
+    [...expandedDirs].forEach(d => { if (!dirs.has(d)) expandedDirs.delete(d); });
+    delHandle.style.display = deletedAgents.length ? "" : "none";
+    $("#deletedAgentsCount").textContent = deletedAgents.length ? `（${deletedAgents.length}）` : "";
+    updateAgentsFooter();
+    renderDeletedAgentsList();
+  }
+
+  delHandle.onclick = () => {
+    const open = delPanel.style.display !== "none";
+    delPanel.style.display = open ? "none" : "";
+    if (!open) refreshDeletedAgents();
+  };
+  $("#deletedAgentsClose").onclick = () => { delPanel.style.display = "none"; };
+
+  refreshDeletedAgents();
 }
 
 async function openSettings() {
@@ -4420,7 +4557,7 @@ async function renderThreadsView() {
     </div>
     <div id="threadsBox" style="flex:1;overflow:auto;min-height:0;"><div class="muted">${t("加载中…")}</div></div>
     <div class="snapshot-drawer" id="snapshotDrawer">
-      <button class="snapshot-handle" id="snapshotHandle" type="button">📸 ${t("快照")}</button>
+      <button class="snapshot-handle" id="snapshotHandle" type="button">📸 <span id="snapshotLabel">${t("快照")}</span></button>
       <button class="showhidden-zone" id="showHiddenZone" type="button" style="display:none;">
         <span class="sw-label" id="showHiddenLabel"></span>
         <span class="toggle"><input type="checkbox" id="showHiddenChk"><span class="track"></span></span>
@@ -4442,12 +4579,33 @@ async function renderThreadsView() {
   const hiddenKey = "hidden_threads_" + S.agentId;
   const showKey = "show_hidden_" + S.agentId;
   const hiddenSet = new Set(JSON.parse(localStorage.getItem(hiddenKey) || "[]"));
-  const showHidden = localStorage.getItem(showKey) === "1";
 
-  // footer：有会话时始终显示（即使全部隐藏），让用户能切换「显示隐藏对话」
-  if (threads.length) {
-    $("#showHiddenChk").checked = showHidden;
-    $("#showHiddenZone").style.display = "flex";
+  // 快照列表：用于决定「快照」按钮是否显示（没有快照就不显示按钮）
+  let snapshots = [];
+  try { snapshots = await api(`/api/agents/${encodeURIComponent(S.agentId)}/snapshots`); }
+  catch (e) { snapshots = []; }
+
+  // 底部栏可见性（与主界面一致）：
+  // - 没有快照 → 不显示「快照」按钮
+  // - 没有隐藏会话 → 不显示「显示隐藏对话」
+  // - 两者都没有 → 整条底栏都不显示
+  function updateThreadsFooter() {
+    const hiddenCnt = threads.filter(t => hiddenSet.has(t.thread_id)).length;
+    const hasSnap = snapshots.length > 0;
+    const zone = $("#showHiddenZone");
+    if (hiddenCnt > 0) {
+      $("#showHiddenChk").checked = localStorage.getItem(showKey) === "1";
+      $("#showHiddenLabel").textContent = t("显示隐藏对话") + `（${hiddenCnt}）`;
+      zone.style.display = "flex";
+      zone.style.borderLeft = hasSnap ? "" : "none";
+    } else {
+      zone.style.display = "none";
+    }
+    // 快照按钮上显示现有快照数量（与「显示隐藏对话」一致）
+    $("#snapshotLabel").textContent = t("快照") + (snapshots.length ? `（${snapshots.length}）` : "");
+    $("#snapshotHandle").style.display = hasSnap ? "" : "none";
+    if (!hasSnap) $("#snapshotPanel").style.display = "none";
+    $("#snapshotDrawer").style.display = (hasSnap || hiddenCnt > 0) ? "" : "none";
   }
 
   // 复用已加载的 threads，仅原地重绘列表，避免整页 flash /「加载中」闪屏
@@ -4455,7 +4613,7 @@ async function renderThreadsView() {
     const showNow = localStorage.getItem(showKey) === "1";
     const vis = showNow ? threads : threads.filter(t => !hiddenSet.has(t.thread_id));
     const hiddenCnt = threads.filter(t => hiddenSet.has(t.thread_id)).length;
-    $("#showHiddenLabel").textContent = t("显示隐藏对话") + (hiddenCnt ? `（${hiddenCnt}）` : "");
+    updateThreadsFooter();
     if (!vis.length) {
       const msg = hiddenCnt ? t("所有会话均已隐藏") : t("暂无会话");
       $("#threadsBox").innerHTML = `<div class="empty"><div class="big">🧵</div>${msg}<br/><br/><button class="btn primary" id="nt2">+ ${t("新建会话")}</button></div>`;
@@ -4508,6 +4666,8 @@ async function renderThreadsView() {
     let snaps;
     try { snaps = await api(`/api/agents/${encodeURIComponent(S.agentId)}/snapshots`); }
     catch (e) { snapListEl.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+    snapshots = snaps;
+    updateThreadsFooter();
     if (!snaps.length) {
       snapListEl.innerHTML = `<div class="muted" style="padding:12px;">${t("暂无快照")}</div>`;
       return;
@@ -6599,12 +6759,15 @@ async function renderChatView() {
 
 /* ================= 视图5：快照浏览 ================= */
 async function renderSnapshotView() {
-  const backToThreads = () => goThreads(S.agentId, S.agentName);
-  app.innerHTML = topbar(t("返回会话"), backToThreads);
+  // 从「已删除 multi-agent 的快照」进入时，原 agent 已不存在，返回主界面；
+  // 否则返回该 agent 的会话列表。
+  const fromDeleted = !!S.snapshotFromDeleted;
+  const backFn = () => (fromDeleted ? goAgents() : goThreads(S.agentId, S.agentName));
+  app.innerHTML = topbar(fromDeleted ? t("返回") : t("返回会话"), backFn);
   const view = document.createElement("div");
   view.className = "chat-view";
   app.appendChild(view);
-  bindBack(backToThreads);
+  bindBack(backFn);
 
   await getSettings().catch(() => {});
 

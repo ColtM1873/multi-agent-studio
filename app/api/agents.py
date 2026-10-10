@@ -26,6 +26,7 @@ from app.runtime.state_factory import (
     assign_history_token_measure_keys,
     assign_state_messages_keys,
 )
+from app.services import snapshot as snapshot_service
 from app.services import threads as threads_service
 
 router = APIRouter(prefix="/api", tags=["agents"])
@@ -145,10 +146,12 @@ async def update_agent(agent_id: str, cfg: MultiAgentConfig):
 @router.delete("/agents/{agent_id}")
 async def delete_agent(agent_id: str):
     try:
-        config_store.load(agent_id)
+        cfg = config_store.load(agent_id)
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="配置不存在")
     await chat_manager.invalidate(agent_id)
+    # 删除前把显示名记进快照目录，供「查看已删除 multi-agent 的快照」展示
+    snapshot_service.save_agent_meta(agent_id, cfg.name)
     config_store.delete(agent_id)
     return {"ok": True}
 
