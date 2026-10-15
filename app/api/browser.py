@@ -46,6 +46,10 @@ class FloatingBody(BaseModel):
     show: bool = True
 
 
+class OpenUrlBody(BaseModel):
+    url: str
+
+
 def _resolve_agent_name(agent_id: str | None) -> str:
     if not agent_id:
         return "agent"
@@ -107,6 +111,36 @@ def pause(body: PauseBody):
     """客户点「停止」→ paused=true；点「继续」→ paused=false。"""
     set_paused(body.paused)
     return {"paused": is_paused()}
+
+
+@router.post("/open-url")
+def open_url(body: OpenUrlBody):
+    """聊天里点链接时调用：有受控（CDP）浏览器就在其中新开标签页，否则用默认浏览器打开。
+
+    绝不在应用窗口（WebView2）内导航/渲染网页——它没有返回等浏览器通用功能，
+    一旦在窗口里打开外部站点，用户就无法回到应用（只能重启）。
+    """
+    url = (body.url or "").strip()
+    if not url:
+        return {"ok": False, "mode": "none", "error": "空 URL"}
+    connected, port = browser_status()
+    if connected:
+        try:
+            from browser_agent.controller import BrowserController
+
+            _apply_browser_timing()
+            result = BrowserController.instance().open_url(url)
+            if result.get("ok"):
+                return {"ok": True, "mode": "browser", "port": port}
+        except Exception:  # noqa: BLE001 — 受控浏览器打开失败则回退默认浏览器
+            pass
+    import webbrowser
+
+    try:
+        webbrowser.open(url)
+        return {"ok": True, "mode": "external"}
+    except Exception as exc:  # noqa: BLE001
+        return {"ok": False, "mode": "external", "error": f"{type(exc).__name__}: {exc}"}
 
 
 @router.post("/floating")

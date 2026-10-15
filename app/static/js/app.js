@@ -380,6 +380,11 @@ const I18N_EN = {
   "JSON 格式示例": "JSON example",
   "该 MCP 表项在配置文件（configs/*.json）中的存储形态：": "How this MCP entry is stored in the config file (configs/*.json):",
   "关闭": "Close",
+  "查找": "Find",
+  "上一个": "Previous",
+  "下一个": "Next",
+  "无结果": "No results",
+  "打开链接失败": "Failed to open link",
   "组成：": "Consists of:",
   "编辑": "Edit",
   "编辑 multi-agent 配置时，若做了改动但未保存就离开，弹窗确认。": "When editing a multi-agent config, prompt on leaving with unsaved changes.",
@@ -2111,6 +2116,7 @@ function bindBack(cb) { const b = $("#backBtn"); if (b) b.onclick = cb; }
 /* ================= 视图调度 ================= */
 function render() {
   flushCurrentDraft();
+  if (findState.open) findClose();
   app.innerHTML = "";
   $$(".edit-popup").forEach(p => p.remove());
   const errWrap = $(".edit-error-wrap");
@@ -7175,6 +7181,234 @@ async function pollDownload() {
 
 initDlBanner();
 setInterval(pollDownload, 1000);
+
+/* ================= 链接跳转：绝不在应用窗口内渲染网页 =================
+   应用窗口（WebView2）没有浏览器通用功能（返回、地址栏等），一旦在窗口内导航到
+   外部网页，用户就回不来了（只能重启）。所以拦截所有 <a href> 的点击：
+   - 有受控的 CDP 浏览器进程（浏览器工具绑定的那个）→ 在其中新开标签页打开；
+   - 否则 → 用系统默认浏览器打开。
+   后端 /api/browser/open-url 负责这个判断。 */
+async function openExternalLink(url) {
+  try {
+    await api("/api/browser/open-url", {
+      method: "POST",
+      body: JSON.stringify({ url }),
+    });
+  } catch (e) {
+    toast(t("打开链接失败") + "：" + (e && e.message ? e.message : e), true);
+  }
+}
+
+document.addEventListener("click", (e) => {
+  if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+  const a = e.target && e.target.closest ? e.target.closest("a[href]") : null;
+  if (!a) return;
+  const href = a.getAttribute("href") || "";
+  if (!href || href.startsWith("#") || /^javascript:/i.test(href)) return;
+  e.preventDefault();
+  openExternalLink(a.href || href);
+}, true);
+
+/* ================= Ctrl+F 页内查找（WebView2 无原生查找栏，自建） =================
+   套进 WebView2 后浏览器自带的 Ctrl+F 查找栏没有了，这里用 CSS Custom Highlight
+   API 实现页内查找：不修改 DOM（对 SPA/流式内容安全），只加高亮层。 */
+const findState = { open: false, matches: [], idx: -1, input: null, count: null };
+
+function findEnsureBar() {
+  if (findState.input) return;
+  const bar = document.createElement("div");
+  bar.id = "findBar";
+  bar.className = "find-bar";
+  bar.style.display = "none";
+  bar.innerHTML = `
+    <input id="findInput" class="find-input" type="text" placeholder="${esc(t("查找"))}" />
+    <span id="findCount" class="find-count"></span>
+    <button id="findPrev" class="find-btn" title="${esc(t("上一个"))}" aria-label="${esc(t("上一个"))}">↑</button>
+    <button id="findNext" class="find-btn" title="${esc(t("下一个"))}" aria-label="${esc(t("下一个"))}">↓</button>
+    <button id="findClose" class="find-btn" title="${esc(t("关闭"))}" aria-label="${esc(t("关闭"))}">×</button>`;
+  document.body.appendChild(bar);
+  const input = bar.querySelector("#findInput");
+  findState.input = input;
+  findState.count = bar.querySelector("#findCount");
+  bar.querySelector("#findPrev").onclick = () => findMove(-1);
+  bar.querySelector("#findNext").onclick = () => findMove(1);
+  bar.querySelector("#findClose").onclick = () => findClose();
+  input.oninput = () => findSearchReset();
+  input.onkeydown = (e) => {
+    if (e.key === "Enter") { e.preventDefault(); findMove(e.shiftKey ? -1 : 1); }
+    else if (e.key === "Escape") { e.preventDefault(); findClose(); }
+  };
+}
+
+function findCollect(query) {
+  const ranges = [];
+  if (!query) return ranges;
+  const q = query.toLowerCase();
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      const text = node.nodeValue;
+      if (!text || !text.trim()) return NodeFilter.FILTER_REJECT;
+      const p = node.parentElement;
+      if (!p || p.closest("#findBar") || p.closest("script,style,noscript")) return NodeFilter.FILTER_REJECT;
+      // 排除"存在但不绘制"的文本，否则会成幽灵匹配——计数里有，却既不跳转也无高亮：
+      //  - KaTeX 的 .katex-mathml 是 clip:rect(1px…)+绝对定位的隐藏注解（含原始 LaTeX）；
+      //  - display:none 的文本没有布局盒（getClientRects 为空）；
+      //  - visibility:hidden 有布局但不绘制。
+      // 注意：折叠 <details> 的内容不能靠 getClientRects 判断（Chrome 仍会报告矩形），
+      // 它们在导航时由 findScrollToCurrent 先展开再定位，故此处保留。
+      if (p.closest(".katex-mathml")) return NodeFilter.FILTER_REJECT;
+      if (p.getClientRects().length === 0) return NodeFilter.FILTER_REJECT;
+      if (window.getComputedStyle(p).visibility === "hidden") return NodeFilter.FILTER_REJECT;
+      return NodeFilter.FILTER_ACCEPT;
+    },
+  });
+  let node;
+  while ((node = walker.nextNode())) {
+    const lower = node.nodeValue.toLowerCase();
+    let from = 0, at;
+    while ((at = lower.indexOf(q, from)) !== -1) {
+      const r = document.createRange();
+      r.setStart(node, at);
+      r.setEnd(node, at + query.length);
+      ranges.push(r);
+      from = at + query.length;
+    }
+  }
+  return ranges;
+}
+
+function findPaint() {
+  if (typeof Highlight === "undefined" || !window.CSS || !CSS.highlights) return;
+  const all = new Highlight();
+  findState.matches.forEach((r) => all.add(r));
+  CSS.highlights.set("studio-find-match", all);
+  if (findState.idx >= 0 && findState.matches[findState.idx]) {
+    const cur = new Highlight();
+    cur.add(findState.matches[findState.idx]);
+    CSS.highlights.set("studio-find-current", cur);
+  } else if (CSS.highlights.has("studio-find-current")) {
+    CSS.highlights.delete("studio-find-current");
+  }
+}
+
+function findUpdateCount() {
+  if (!findState.count) return;
+  findState.count.textContent = findState.matches.length
+    ? (findState.idx + 1) + "/" + findState.matches.length
+    : (findState.input && findState.input.value ? t("无结果") : "");
+}
+
+function findScrollToCurrent() {
+  const r = findState.matches[findState.idx];
+  if (!r) return;
+  try {
+    const n = r.startContainer;
+    const el = n.nodeType === 1 ? n : n.parentElement;
+    if (!el) return;
+    // 命中可能落在折叠的 <details>（思考过程 / 工具调用 / 工具结果）里。Chrome 对折叠内容
+    // 仍会报告布局矩形（甚至超大），所以必须先展开祖先 details，再取矩形——否则会滚到
+    // 完全错误的位置（这正是"大量折叠时跳转错位"的根因）。命中在 <summary> 行本身时它
+    // 本就可见，不必展开那个 details。
+    let guard = 0;
+    let closed = el.closest ? el.closest("details:not([open])") : null;
+    const inSummaryOf = (details) => {
+      const sum = el.closest("summary");
+      return !!(sum && sum.parentElement === details);
+    };
+    while (closed && guard++ < 20) {
+      if (!inSummaryOf(closed)) closed.open = true;
+      const parent = closed.parentElement;
+      closed = parent && parent.closest ? parent.closest("details:not([open])") : null;
+    }
+    // 用 Range 自身的矩形定位（滚动整个父块会让大 markdown 块"看起来没动"）。
+    // 逐层上溯，把每一层可滚动祖先里的命中滚动到容器可视区中部。
+    const chain = [];
+    for (let p = el; p; p = p.parentElement) {
+      if (p === document.body) break;
+      const st = window.getComputedStyle(p);
+      if (/(auto|scroll|overlay)/.test(st.overflowY) && p.scrollHeight > p.clientHeight + 1) {
+        chain.push(p);
+      }
+    }
+    const scroller = document.scrollingElement || document.documentElement;
+    chain.push(scroller);
+    chain.forEach((c) => {
+      const rect = r.getBoundingClientRect();
+      if (!rect || (rect.width === 0 && rect.height === 0)) return;
+      const cRect = c.getBoundingClientRect();
+      const delta = (rect.top + rect.height / 2) - (cRect.top + c.clientHeight / 2);
+      if (Math.abs(delta) > 1) c.scrollTop += delta;
+    });
+  } catch (e) {}
+}
+
+function findSearchReset() {
+  findState.matches = findCollect(findState.input.value);
+  findState.idx = findState.matches.length ? 0 : -1;
+  findPaint();
+  if (findState.idx >= 0) findScrollToCurrent();
+  findUpdateCount();
+}
+
+function findMove(step) {
+  findState.matches = findCollect(findState.input.value);
+  if (!findState.matches.length) {
+    findState.idx = -1;
+    findPaint();
+    findUpdateCount();
+    return;
+  }
+  if (findState.idx < 0 || findState.idx >= findState.matches.length) {
+    findState.idx = step > 0 ? 0 : findState.matches.length - 1;
+  } else {
+    findState.idx = (findState.idx + step + findState.matches.length) % findState.matches.length;
+  }
+  findPaint();
+  findScrollToCurrent();
+  findUpdateCount();
+}
+
+function findOpen() {
+  findEnsureBar();
+  const bar = document.getElementById("findBar");
+  bar.style.display = "flex";
+  findState.open = true;
+  const sel = window.getSelection ? (window.getSelection().toString() || "") : "";
+  if (sel && sel.length <= 100) findState.input.value = sel.trim();
+  findState.input.focus();
+  findState.input.select();
+  findSearchReset();
+}
+
+function findClose() {
+  findState.open = false;
+  const bar = document.getElementById("findBar");
+  if (bar) bar.style.display = "none";
+  findState.matches = [];
+  findState.idx = -1;
+  if (window.CSS && CSS.highlights) {
+    CSS.highlights.delete("studio-find-match");
+    CSS.highlights.delete("studio-find-current");
+  }
+}
+
+document.addEventListener("keydown", (e) => {
+  const mod = e.ctrlKey || e.metaKey;
+  if (mod && !e.altKey && (e.key === "f" || e.key === "F")) {
+    e.preventDefault();
+    findOpen();
+    return;
+  }
+  if (e.key === "Escape" && findState.open) {
+    e.preventDefault();
+    findClose();
+    return;
+  }
+  if (findState.open && findState.input && document.activeElement === findState.input && e.key === "F3") {
+    e.preventDefault();
+    findMove(e.shiftKey ? -1 : 1);
+  }
+});
 
 /* ================= 启动 ================= */
 applyColors();

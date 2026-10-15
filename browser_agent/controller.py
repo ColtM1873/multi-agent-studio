@@ -2690,3 +2690,41 @@ class BrowserController:
             result = self._full_result_for(actual)
             result["content"] = self._focus_mismatch_notice(target_id, actual) + result["content"]
         return result
+
+    def open_url(self, url: str) -> dict:
+        """Open a URL in a new tab of the tool-controlled browser, without
+        capturing/serializing the page (cheap, for UI-driven navigation).
+
+        Used when the user clicks a link inside the app: the page must open in
+        the browser this tool drives (whose CDP endpoint is known), not in the
+        app's own WebView — the app has no browser chrome (back button etc.), so
+        rendering a site there would trap the user. Returns ``{"ok", "error"}``.
+        """
+        try:
+            self.ensure_connected()
+        except (BrowserLaunchError, CDPError) as exc:
+            return {"ok": False, "error": str(exc)}
+        assert self.client is not None
+        target_url = (url or "").strip()
+        if not target_url:
+            return {"ok": False, "error": rp.EMPTY_URL}
+        if not target_url.startswith(
+            (
+                "http://", "https://", "file://", "about:", "data:",
+                "chrome://", "view-source:", "mailto:", "tel:",
+            )
+        ):
+            target_url = "https://" + target_url
+        try:
+            result = self.client.send(
+                "Target.createTarget", {"url": target_url, "background": False}
+            )
+            target_id = result["targetId"]
+        except CDPError as exc:
+            return {"ok": False, "error": str(exc)}
+        self.focused_target_id = target_id
+        try:
+            self._activate_target(target_id)
+        except (CDPError, RuntimeError) as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True, "error": ""}
