@@ -678,6 +678,10 @@ const I18N_EN = {
   "当前处于编辑模式，请先退出编辑模式后再离开。是否退出编辑模式？": "You are in edit mode. Exit edit mode before leaving?",
   "查看/编辑记忆库": "View / Edit Memory Store",
   "刷新": "Refresh",
+  "重试": "Retry",
+  "数据库服务正在启动，请稍候…": "The database service is starting. Please wait…",
+  "程序正在为你加载数据库服务，通常很快；电脑配置较低时可能需要 1～2 分钟。就绪后会自动进入，请不要关闭窗口。": "The app is loading the database service. This is usually quick; on slower computers it may take 1–2 minutes. The interface will open automatically once ready — please don't close this window.",
+  "已等待 {sec} 秒": "Waited {sec}s",
   "暂无记忆": "No memories yet",
   "更新于": "Updated at",
   "编辑记忆": "Edit Memory",
@@ -703,12 +707,19 @@ const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 async function api(path, opts = {}) {
   const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...opts });
   if (!res.ok) {
-    let detail = res.statusText;
-    try { detail = (await res.json()).detail || detail; } catch (e) {}
-    throw new Error(detail);
+    let body = null;
+    try { body = await res.json(); } catch (e) {}
+    const err = new Error((body && body.detail) || res.statusText);
+    err.status = res.status;
+    if (body) { err.code = body.code; err.retryable = body.retryable; }
+    throw err;
   }
   return res.json();
 }
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+function brk(s) { return esc(s).replace(/\n/g, "<br>"); }
 
 function toast(msg, isError = false) {
   let wrap = $(".toast-wrap");
@@ -1000,7 +1011,7 @@ async function openMemoryStoreModal() {
       const items = await api(`/api/agents/${encodeURIComponent(S.agentId)}/memories`);
       renderMemoryList(items, listEl, load);
     } catch (e) {
-      listEl.innerHTML = `<div class="muted">${esc(e.message)}</div>`;
+      listEl.innerHTML = `<div class="muted">${brk(e.message)}</div>`;
     }
   };
   mask.querySelector("#memoryRefresh").onclick = load;
@@ -4579,9 +4590,38 @@ async function renderThreadsView() {
     </div>`;
   $("#newThreadBtn").onclick = () => createNewThread();
 
-  let threads;
-  try { threads = await api(`/api/agents/${encodeURIComponent(S.agentId)}/threads`); }
-  catch (e) { $("#threadsBox").innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+  // 加载会话列表。数据库服务可能还在启动（低配机器尤其慢），此时不要把一堆报错甩给用户，
+  // 而是显示「正在启动，请稍候」并自动重试；就绪后无缝进入列表。
+  let threads = null;
+  const loadStartedAt = Date.now();
+  const MAX_DB_WAIT_MS = 180000;
+  while (threads === null) {
+    try {
+      threads = await api(`/api/agents/${encodeURIComponent(S.agentId)}/threads`);
+    } catch (e) {
+      const box = $("#threadsBox");
+      if (!box) return; // 用户已离开本页
+      const stillLoading = e.code === "db_unavailable" && e.retryable === true && (Date.now() - loadStartedAt) < MAX_DB_WAIT_MS;
+      if (stillLoading) {
+        const secs = Math.floor((Date.now() - loadStartedAt) / 1000);
+        box.innerHTML = `<div class="empty" style="max-width:620px;margin:0 auto;">
+          <div class="big">⏳</div>
+          <div style="font-size:16px;">${t("数据库服务正在启动，请稍候…")}</div>
+          <div class="muted" style="margin-top:10px;line-height:1.8;">${t("程序正在为你加载数据库服务，通常很快；电脑配置较低时可能需要 1～2 分钟。就绪后会自动进入，请不要关闭窗口。")}</div>
+          <div class="muted" style="margin-top:8px;">${t("已等待 {sec} 秒").replace("{sec}", String(secs))}</div>
+        </div>`;
+        await sleep(2000);
+        continue;
+      }
+      box.innerHTML = `<div class="empty" style="max-width:680px;margin:0 auto;text-align:left;">
+        <div class="big" style="text-align:center;">⚠️</div>
+        <div style="line-height:1.8;">${brk(e.message)}</div>
+        <div style="text-align:center;margin-top:18px;"><button class="btn primary" id="threadsRetry">${t("重试")}</button></div>
+      </div>`;
+      const rb = $("#threadsRetry"); if (rb) rb.onclick = () => renderThreadsView();
+      return;
+    }
+  }
 
   const hiddenKey = "hidden_threads_" + S.agentId;
   const showKey = "show_hidden_" + S.agentId;
@@ -7122,7 +7162,7 @@ function openChatWs(content, proactive = false, subAgent = null, summaryPercent 
           resolve(true);
           break;
         case "error":
-          pushMain("tool", `\n\n> ⚠️ ${esc(msg.message)}\n\n`);
+          pushMain("tool", `\n\n> ⚠️ ${brk(msg.message)}\n\n`);
           schedule();
           resolve(false);
           break;

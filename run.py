@@ -107,14 +107,30 @@ def _wait_for_server(url: str, timeout: float = 30.0) -> bool:
     return False
 
 
-def open_browser_later(url: str, timeout: float = 30.0):
-    """等服务就绪后再打开浏览器（桌面窗口不可用时的回退路径）。"""
+def open_browser_later(url: str, timeout: float = 180.0):
+    """等服务就绪后再打开浏览器（桌面窗口不可用时的回退路径）。
+
+    低配机器上后端可能启动较慢，这里把等待时间放宽，避免过早打开导致「无法访问」。
+    """
 
     def _open():
         _wait_for_server(url, timeout)
         webbrowser.open(url)
 
     threading.Thread(target=_open, daemon=True).start()
+
+
+def _navigate_when_ready(url: str, timeout: float = 300.0) -> None:
+    """等后端就绪后，把桌面窗口从「启动页」导航到应用界面。
+
+    窗口刚创建、GUI 循环可能尚未就绪，故失败时短暂重试。
+    """
+    if not _wait_for_server(url, timeout):
+        return
+    for _ in range(30):
+        if desktop_app.navigate(url):
+            return
+        time.sleep(0.5)
 
 
 def _serve(host: str, port: int, log_level: str) -> None:
@@ -147,17 +163,19 @@ def main() -> None:
 
     server_thread = threading.Thread(target=_serve, args=(HOST, PORT, "info"), daemon=True, name="uvicorn")
     server_thread.start()
-    _wait_for_server(URL)
 
     if desktop_app.available():
         try:
-            desktop_app.create_main_window(URL, hide_on_close=False)
+            # 先开「启动页」，就绪后再导航到应用界面：低配机器上后端启动慢也不会
+            # 出现「无法访问 / 连接错误」这种吓人的画面。
+            desktop_app.create_boot_window(URL, hide_on_close=False)
+            threading.Thread(target=_navigate_when_ready, args=(URL,), daemon=True).start()
             desktop_app.start(debug=True)
             return
         except Exception as exc:
             print(f"桌面窗口启动失败，回退到默认浏览器：{exc}", flush=True)
 
-    open_browser_later(URL)
+    open_browser_later(URL, 180.0)
     try:
         server_thread.join()
     except KeyboardInterrupt:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 
 from psycopg import AsyncConnection, errors
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
@@ -12,6 +13,34 @@ from app.services.history_render import (
     render_checkpoint_to_markdown_string,
     render_messages_to_markdown_string,
 )
+
+
+@asynccontextmanager
+async def _connect(conn_string: str, *, attempts: int = 3, connect_timeout: int = 5):
+    """带超时与少量重试地建立连接。
+
+    - ``connect_timeout``：避免 host 可达但不响应时长时间挂起。
+    - ``attempts``：数据库服务可能正在启动，短暂重试几次可骑过这段窗口。
+    """
+    last_exc: Exception | None = None
+    conn: AsyncConnection | None = None
+    for i in range(max(1, attempts)):
+        try:
+            conn = await AsyncConnection.connect(conn_string, connect_timeout=connect_timeout)
+            break
+        except errors.OperationalError as exc:
+            last_exc = exc
+            if i + 1 < attempts:
+                await asyncio.sleep(0.4)
+    if conn is None:
+        raise last_exc if last_exc is not None else errors.OperationalError("连接数据库失败")
+    try:
+        yield conn
+    finally:
+        try:
+            await conn.close()
+        except Exception:
+            pass
 
 
 async def test_connection(conn_string: str, timeout: int = 5) -> tuple[bool, str]:
@@ -43,7 +72,7 @@ async def _ensure_thread_meta_table(conn: AsyncConnection) -> None:
 
 async def register_thread(conn_string: str, thread_id: str) -> None:
     """登记一个会话，使其在发送消息前也出现在会话列表中（幂等）。"""
-    async with await AsyncConnection.connect(conn_string) as conn:
+    async with _connect(conn_string) as conn:
         await conn.set_autocommit(True)
         await _ensure_thread_meta_table(conn)
         await conn.execute(
@@ -53,7 +82,7 @@ async def register_thread(conn_string: str, thread_id: str) -> None:
 
 
 async def list_threads(conn_string: str) -> list[dict]:
-    async with await AsyncConnection.connect(conn_string) as conn:
+    async with _connect(conn_string) as conn:
         await conn.set_autocommit(True)
         await _ensure_thread_meta_table(conn)
         meta_rows = await conn.execute(
@@ -93,7 +122,7 @@ async def list_threads(conn_string: str) -> list[dict]:
 
 
 async def delete_thread(conn_string: str, thread_id: str) -> None:
-    async with await AsyncConnection.connect(conn_string) as conn:
+    async with _connect(conn_string) as conn:
         await conn.set_autocommit(True)
         await _ensure_thread_meta_table(conn)
         await conn.execute("DELETE FROM thread_meta WHERE thread_id = %s", (thread_id,))
@@ -137,7 +166,7 @@ async def get_thread_history_markdown(
 
 async def list_subgraph_nodes(conn_string: str, thread_id: str) -> list[dict]:
     """按子 agent 名（node_name）去重聚合，返回唯一子图节点。"""
-    async with await AsyncConnection.connect(conn_string) as conn:
+    async with _connect(conn_string) as conn:
         await conn.set_autocommit(True)
         try:
             rows = await conn.execute(
@@ -166,7 +195,7 @@ async def get_subgraph_messages(conn_string: str, thread_id: str, node_name: str
 
     供历史渲染与快照计数/渲染复用，保证两者取到的数据完全一致。
     """
-    async with await AsyncConnection.connect(conn_string) as conn:
+    async with _connect(conn_string) as conn:
         await conn.set_autocommit(True)
         rows = await conn.execute(
             "SELECT DISTINCT checkpoint_ns FROM checkpoints "

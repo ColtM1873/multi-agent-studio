@@ -72,6 +72,35 @@ def _format_build_error(e: Exception) -> str:
             "请双击运行项目根目录的 install_pgvector.bat 一键安装，"
             "完成后重启本程序并重试。"
         )
+    if any(
+        k in lowered
+        for k in (
+            "connection refused",
+            "could not connect",
+            "connection to server",
+            "could not translate host name",
+            "timeout expired",
+            "password authentication failed",
+            "no password supplied",
+            "server closed the connection",
+            "terminating connection",
+            "could not receive data",
+            "the database system is starting up",
+            "the database system is in recovery mode",
+        )
+    ):
+        return (
+            "程序暂时连不上数据库，所以这个会话还打不开。\n"
+            "常见原因是 PostgreSQL 服务没有启动：按 Win + R 输入 services.msc，"
+            "在列表里找到名字含 PostgreSQL 的服务，右键选择「启动」，稍等片刻后重试。\n"
+            "如果该服务已经在运行，请检查这个 multi-agent 的数据库地址、端口、用户名、密码是否正确。"
+        )
+    if "does not exist" in lowered and "database" in lowered:
+        return (
+            "在 PostgreSQL 里找不到这个 multi-agent 绑定的数据库。\n"
+            "请检查创建 / 编辑该 multi-agent 时填写的「checkpoint 数据库名」是否正确，"
+            "并确认该库已在 PostgreSQL 中创建；改正后重试。"
+        )
     return "无法初始化该会话的运行环境，请稍后重试；若持续出现，请查看服务端日志 logs/server.log。"
 
 

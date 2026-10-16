@@ -67,19 +67,39 @@ def _run_server() -> None:
 
 
 def _open(_icon, _item) -> None:
+    # 桌面窗口（含启动页）还在 → 直接唤到前台即可，用户会看到「正在启动」而不是报错。
     if desktop_app.available() and desktop_app.show_window():
         return
-    webbrowser.open(URL)
+    # 浏览器回退路径：等服务就绪再打开，避免「无法访问」。
+    _open_browser_later(URL, 180.0)
 
 
 def _status(_icon, _item) -> None:
     def _worker() -> None:
-        ok = _wait_for_server(URL, 1.5)
-        text = f"服务运行中：{URL}" if ok else f"服务未响应：{URL}"
-        try:
-            ctypes.windll.user32.MessageBoxW(0, text, "Multi-Agent Studio", 0x40 if ok else 0x30)
-        except Exception:
-            webbrowser.open(f"{URL}/api/health")
+        def _show(text: str, flags: int) -> None:
+            try:
+                ctypes.windll.user32.MessageBoxW(0, text, "Multi-Agent Studio", flags)
+            except Exception:
+                webbrowser.open(f"{URL}/api/health")
+
+        if _wait_for_server(URL, 1.2):
+            _show("程序已就绪，可以正常使用。\n\n界面地址：" + URL, 0x40)
+            return
+        # 还没就绪：区分「仍在启动」与「真的没响应」，别把报错直接甩给用户。
+        still_starting = _server is None or not getattr(_server, "started", False)
+        if still_starting:
+            _show(
+                "程序正在启动中，请再稍等片刻。\n\n"
+                "首次启动、或电脑配置较低时会久一些（可能需要 1～2 分钟）。\n"
+                "启动完成后会自动打开界面，请不要关闭程序。",
+                0x40,
+            )
+        else:
+            _show(
+                "程序暂时没有响应，但它仍在运行。\n\n"
+                "请稍等一会儿再试；若长时间无响应，可在托盘菜单选择「退出」后重新启动程序。",
+                0x30,
+            )
 
     threading.Thread(target=_worker, daemon=True).start()
 
@@ -128,6 +148,8 @@ def _update_download_menu(icon, item) -> None:
                     f"下载模型：{_fmt_size(cur['downloaded'])} / {_fmt_size(cur['total'])}"
                     f" · {_fmt_size(cur['speed'])}/s"
                 )
+            elif download_manager.has_error():
+                item.text = "下载模型：上次下载失败，可在设置里重试"
             else:
                 item.text = "下载模型：就绪"
             icon.update_menu()
@@ -136,7 +158,7 @@ def _update_download_menu(icon, item) -> None:
         time.sleep(1)
 
 
-def _open_browser_later(url: str, timeout: float = 30.0) -> None:
+def _open_browser_later(url: str, timeout: float = 180.0) -> None:
     """等服务就绪后再打开浏览器（避免过早打开导致「无法访问」）。"""
 
     def _open() -> None:
@@ -146,6 +168,21 @@ def _open_browser_later(url: str, timeout: float = 30.0) -> None:
         webbrowser.open(url)
 
     threading.Thread(target=_open, daemon=True).start()
+
+
+def _navigate_when_ready(url: str, timeout: float = 300.0) -> None:
+    """等后端就绪后，把桌面窗口从「启动页」导航到应用界面。
+
+    窗口刚创建、GUI 循环可能尚未就绪，故失败时短暂重试。
+    """
+    if not _wait_for_server(url, timeout):
+        return
+    for _ in range(30):
+        if _stopped.is_set():
+            return
+        if desktop_app.navigate(url):
+            return
+        time.sleep(0.5)
 
 
 def _wait_for_server(url: str, timeout: float = 30.0) -> bool:
@@ -186,21 +223,23 @@ def main() -> None:
     threading.Thread(target=_update_download_menu, args=(icon, download_item), daemon=True).start()
 
     if not desktop_app.available():
-        _open_browser_later(URL, 30.0)
+        _open_browser_later(URL, 180.0)
         icon.run()
         return
 
     icon.run_detached()
-    _wait_for_server(URL, 30.0)
     if _stopped.is_set():
         return
     try:
-        desktop_app.create_main_window(URL)
+        # 先开「启动页」，就绪后再导航到应用界面：低配机器上后端启动慢也不会
+        # 出现「无法访问 / 连接错误」这种吓人的画面。
+        desktop_app.create_boot_window(URL)
+        threading.Thread(target=_navigate_when_ready, args=(URL,), daemon=True).start()
         desktop_app.start()
     except Exception as exc:
         print(f"[tray] 桌面窗口启动失败，回退到默认浏览器：{exc}", flush=True)
         if not _stopped.is_set():
-            webbrowser.open(URL)
+            _open_browser_later(URL, 180.0)
         _stopped.wait()
     finally:
         try:

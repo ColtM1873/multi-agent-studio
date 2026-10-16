@@ -71,6 +71,11 @@ class DownloadManager:
                     return dict(st)
             return None
 
+    def has_error(self) -> bool:
+        """是否有下载任务处于失败状态（供托盘显示更友好的提示）。"""
+        with self._lock:
+            return any(st["status"] == "error" for st in self._status.values())
+
 
 download_manager = DownloadManager()
 

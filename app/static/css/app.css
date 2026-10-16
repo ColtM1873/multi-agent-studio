@@ -418,6 +418,7 @@ html[data-style-danger="solid"] .card-btn-danger:hover { filter: brightness(.92)
 .toast {
   background: #111827; color: #fff; padding: 11px 16px; border-radius: 10px;
   font-size: 14px; box-shadow: var(--shadow-lg); animation: slidein .2s;
+  white-space: pre-line; max-width: 440px; line-height: 1.6;
 }
 .toast.error { background: var(--danger); }
 @keyframes slidein { from { transform: translateX(20px); opacity: 0; } to { transform: none; opacity: 1; } }

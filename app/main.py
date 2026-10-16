@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import sys
+import threading
 from contextlib import asynccontextmanager
 
 # huggingface_hub 在 import 时读取这些环境变量一次；先设默认国内镜像并禁用 Xet，
@@ -21,8 +23,11 @@ if sys.platform == "win32":
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+
+from psycopg import OperationalError as PgOperationalError
+from psycopg import errors as pg_errors
 
 from app.api import (
     agents,
@@ -44,7 +49,7 @@ from app.config.settings import (
     seed_global_sub_summary,
     seed_global_summary,
 )
-from app.deps import common_prompt_store, config_store, draft_store
+from app.deps import BASE_DIR, common_prompt_store, config_store, draft_store
 
 # 可选的浏览器工具计时 / 卡死看门狗探针（仅当设置 BROWSER_TOOL_TIMING=1 时安装，
 # 未设置时零开销、不改变任何行为）。见 browser_agent/diagnostics.py。
@@ -66,6 +71,22 @@ except Exception:
     pass
 
 
+logger = logging.getLogger("app")
+
+
+def _autostart_pg_services() -> None:
+    """后台拉起配置所指向的本机 PostgreSQL 服务（见 app/services/pg_service.py）。"""
+    try:
+        from app.services import pg_service
+
+        pg_service.ensure_pg_services_at_startup(BASE_DIR)
+    except Exception as exc:  # noqa: BLE001
+        try:
+            logger.warning("自动启动 PostgreSQL 服务失败：%s", exc)
+        except Exception:
+            pass
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     # 首次启动：若有已存在的 multi-agent，把第一个带连接前缀的配置提取为全局连接设置，
@@ -78,6 +99,12 @@ async def lifespan(_app: FastAPI):
         seed_global_sub_summary(config_store._dir, agents)
     except Exception:  # noqa: BLE001
         pass
+    # 部分用户的 PostgreSQL 服务没随开机启动，进入会话界面会连不上库。这里在后台
+    # 线程里把「配置所指向的本机 PostgreSQL 服务」拉起（静默失败再弹一次 UAC），
+    # 不阻塞服务启动、也不影响 /api/health 就绪。
+    threading.Thread(
+        target=_autostart_pg_services, name="pg-autostart", daemon=True
+    ).start()
     yield
     # 退出托盘程序时兜底把未发送消息缓存 / 会话常用 prompt 再落盘一次
     for store in (draft_store, common_prompt_store):
@@ -88,6 +115,88 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="Multi-Agent Studio", lifespan=lifespan)
+
+
+def _pg_startup_in_progress() -> bool:
+    """本机 PostgreSQL 服务是否正在（或刚被）拉起——用于把「仍在加载」与「确实失败」区分开。"""
+    try:
+        from app.services import pg_service
+
+        return pg_service.startup_in_progress()
+    except Exception:
+        return False
+
+
+def _pg_problem(status_code: int, code: str, detail: str, *, retryable: bool = False) -> JSONResponse:
+    """统一的「数据库问题」响应：带机器可读的 code / retryable，供前端决定「等待」还是「报错」。"""
+    return JSONResponse(
+        status_code=status_code,
+        content={"detail": detail, "code": code, "retryable": bool(retryable)},
+    )
+
+
+@app.exception_handler(PgOperationalError)
+async def _handle_pg_operational_error(request: Request, exc: PgOperationalError):
+    """数据库连不上（服务未启动 / 连接串错误 / 认证失败等）→ 503 + 人话，而非裸 500。
+
+    以前这类异常直接冒泡成 Starlette 的纯文本 "Internal Server Error"，
+    前端拿不到 detail，只能显示无信息量的报错。若服务正在被程序自动拉起
+    （低配机器可能需要一两分钟），会标记 retryable，让前端显示「正在加载，请稍候」
+    并自动重试，而不是把报错甩给用户。
+    """
+    logger.error("PostgreSQL 连接失败：%s", exc)
+    starting = _pg_startup_in_progress()
+    detail = (
+        "程序暂时连不上数据库，所以还打不开会话。\n\n"
+        "最常见的原因是 PostgreSQL 数据库服务没有启动，可以这样处理：\n"
+        "1. 按键盘上的 Win + R，输入 services.msc 后回车；\n"
+        "2. 在列表里找到名字里带 PostgreSQL 的服务，右键选择「启动」；\n"
+        "3. 回到本页面，点下面的「重试」。\n\n"
+        "如果那个服务本来就显示「正在运行」，请检查创建这个 multi-agent 时填写的"
+        "数据库地址、端口、用户名、密码是否正确。"
+    )
+    return _pg_problem(503, "db_unavailable", detail, retryable=starting)
+
+
+@app.exception_handler(pg_errors.InvalidCatalogName)
+async def _handle_pg_missing_database(request: Request, exc: pg_errors.InvalidCatalogName):
+    """目标数据库不存在 → 503 + 人话。"""
+    logger.error("PostgreSQL 目标数据库不存在：%s", exc)
+    detail = (
+        "程序在 PostgreSQL 里找不到这个 multi-agent 绑定的数据库。\n\n"
+        "请检查：\n"
+        "1. 数据库服务是否已启动（Win + R → 输入 services.msc → 启动 PostgreSQL 服务）；\n"
+        "2. 创建 / 编辑这个 multi-agent 时填写的「checkpoint 数据库名」是否正确；\n"
+        "3. 该数据库是否确实已经在 PostgreSQL 里创建（可用 pgAdmin 查看）。\n\n"
+        "改正后回到本页面，点下面的「重试」。"
+    )
+    return _pg_problem(503, "db_missing_database", detail)
+
+
+@app.exception_handler(pg_errors.InsufficientPrivilege)
+async def _handle_pg_insufficient_privilege(
+    request: Request, exc: pg_errors.InsufficientPrivilege
+):
+    """数据库用户权限不足（如无权建表）→ 503 + 人话。"""
+    logger.error("PostgreSQL 权限不足：%s", exc)
+    detail = (
+        "当前数据库用户权限不够（例如没有创建数据表的权限）。\n\n"
+        "请改用拥有该数据库权限的用户——通常就是安装 PostgreSQL 时设置的 postgres 超级用户。\n"
+        "在 multi-agent 配置里更新连接的用户名 / 密码并保存后，回到本页面点「重试」。"
+    )
+    return _pg_problem(503, "db_permission", detail)
+
+
+@app.exception_handler(pg_errors.UndefinedTable)
+async def _handle_pg_undefined_table(request: Request, exc: pg_errors.UndefinedTable):
+    """数据表尚未初始化（数据库结构由程序首次使用某功能时惰性创建）→ 503 + 人话。"""
+    logger.error("PostgreSQL 数据表未初始化：%s", exc)
+    detail = (
+        "数据库里还没有程序需要的数据表。\n\n"
+        "这类表会在你第一次和这个 multi-agent 对话时自动创建。\n"
+        "请先进入该会话发一条消息；如果仍然报错，请确认配置里的数据库是否正确。"
+    )
+    return _pg_problem(503, "db_not_initialized", detail)
 
 app.add_middleware(
     CORSMiddleware,

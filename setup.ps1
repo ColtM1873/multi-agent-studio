@@ -29,7 +29,7 @@ Write-Host '================================================'
 Write-Host ''
 
 # ---------- 1. 检查 Python ----------
-Write-Host '[1/6] 检查 Python...'
+Write-Host '[1/7] 检查 Python...'
 $py = Get-Command python -ErrorAction SilentlyContinue
 if (-not $py) {
     Write-Host ''
@@ -41,7 +41,7 @@ if (-not $py) {
 python --version
 
 # ---------- 2. 启用长路径（硬性前置） ----------
-Write-Host '[2/6] 启用 Windows 长路径支持...'
+Write-Host '[2/7] 启用 Windows 长路径支持...'
 try {
     Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name LongPathsEnabled -Value 1 -Type DWord
     $v = (Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name LongPathsEnabled).LongPathsEnabled
@@ -71,7 +71,7 @@ try {
 }
 
 # ---------- 3. 创建虚拟环境 ----------
-Write-Host '[3/6] 创建虚拟环境 venv...'
+Write-Host '[3/7] 创建虚拟环境 venv...'
 if (-not (Test-Path "$PSScriptRoot\venv")) {
     python -m venv "$PSScriptRoot\venv"
     if ($LASTEXITCODE -ne 0) {
@@ -81,7 +81,7 @@ if (-not (Test-Path "$PSScriptRoot\venv")) {
 }
 
 # ---------- 4. 安装依赖 ----------
-Write-Host '[4/6] 安装依赖（清华源，首次约需几分钟）...'
+Write-Host '[4/7] 安装依赖（清华源，首次约需几分钟）...'
 & "$PSScriptRoot\venv\Scripts\python.exe" -m pip install -r "$PSScriptRoot\requirements.txt" -i https://pypi.tuna.tsinghua.edu.cn/simple
 if ($LASTEXITCODE -ne 0) {
     Write-Host '[错误] 依赖安装失败，请截图上方完整报错信息反馈。'
@@ -148,7 +148,7 @@ if ($LASTEXITCODE -ne 0) {
 
 # ---------- 5. 可选：一键安装 pgvector（已安装 / 无 PostgreSQL 则跳过询问）----------
 Write-Host ''
-Write-Host '[5/6] 检查 PostgreSQL 的 pgvector 扩展（程序的长期记忆需要它）...'
+Write-Host '[5/7] 检查 PostgreSQL 的 pgvector 扩展（程序的长期记忆需要它）...'
 $pgvState = 'unknown'   # installed | missing | nopg | unknown
 try {
     & "$PSScriptRoot\install_pgvector.ps1" -Status
@@ -188,8 +188,41 @@ if ($pgvState -eq 'installed') {
     }
 }
 
-# ---------- 6. 打包 exe ----------
-Write-Host '[6/6] 打包 MultiAgentStudio.exe（首次会自动安装打包工具）...'
+# ---------- 6. 让 PostgreSQL 服务开机自启（无 PostgreSQL 则跳过）----------
+# 部分用户的 PostgreSQL Windows 服务启动类型是「手动」，开机不会自动启动，
+# 进入程序的会话界面就会连不上数据库。这里把检测到的 PostgreSQL 服务设为「自动」
+# 并立即启动（本脚本在管理员权限下运行）。运行期程序还会再兜底一次（见 app/services/pg_service.py）。
+Write-Host '[6/7] 配置 PostgreSQL 服务开机自启...'
+try {
+    $pgServices = @(Get-CimInstance -ClassName Win32_Service -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -like 'postgresql*' -or $_.Name -like 'pgsql*' -or $_.DisplayName -like '*PostgreSQL*' })
+    if ($pgServices.Count -eq 0) {
+        Write-Host '       未检测到 PostgreSQL 服务，跳过（安装 PostgreSQL 后程序会在启动时自动拉起）。'
+    } else {
+        foreach ($svc in $pgServices) {
+            try {
+                if ($svc.StartMode -ne 'Auto') {
+                    Set-Service -Name $svc.Name -StartupType Automatic -ErrorAction Stop
+                    Write-Host "       已将 $($svc.Name) 的启动类型设为「自动」。"
+                } else {
+                    Write-Host "       $($svc.Name) 已是「自动」启动。"
+                }
+                $cur = Get-Service -Name $svc.Name -ErrorAction SilentlyContinue
+                if ($cur -and $cur.Status -ne 'Running') {
+                    Start-Service -Name $svc.Name -ErrorAction Stop
+                    Write-Host "       已启动 $($svc.Name)。"
+                }
+            } catch {
+                Write-Host "       [提示] 处理 $($svc.Name) 失败：$($_.Exception.Message)"
+            }
+        }
+    }
+} catch {
+    Write-Host "       [警告] 配置 PostgreSQL 服务自启失败：$($_.Exception.Message)"
+}
+
+# ---------- 7. 打包 exe ----------
+Write-Host '[7/7] 打包 MultiAgentStudio.exe（首次会自动安装打包工具）...'
 & "$PSScriptRoot\venv\Scripts\python.exe" "$PSScriptRoot\build_exe.py"
 if ($LASTEXITCODE -ne 0) {
     Write-Host '[错误] 打包 exe 失败，请截图上方完整报错信息反馈。'
