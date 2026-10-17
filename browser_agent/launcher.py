@@ -16,6 +16,7 @@ from typing import Optional
 import requests
 
 from . import config as cfgmod
+from . import studio_marker
 from . import timing
 
 
@@ -42,9 +43,11 @@ class BrowserLauncher:
         return self.launch()
 
     def launch(self) -> dict:
-        browser_path, _browser_type = cfgmod.discover_browser()
+        browser_path, browser_type = cfgmod.discover_browser()
         user_data_dir = cfgmod.get_user_data_dir()
         self.user_data_dir = user_data_dir
+
+        studio_marker.apply_profile_theme(user_data_dir, browser_type)
 
         active_port_file = Path(user_data_dir) / "DevToolsActivePort"
         if active_port_file.exists():
@@ -78,6 +81,9 @@ class BrowserLauncher:
             "--remote-allow-origins=*",
             "about:blank",
         ]
+
+        if (browser_type or "").strip().lower() == "edge":
+            args[1:1] = studio_marker.edge_extension_args(user_data_dir)
 
         creationflags = 0
         if sys.platform == "win32":

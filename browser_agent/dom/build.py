@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from .capture import viewport_from_metrics
+from ..studio_marker import strip_title_marker
 
 _VIEWPORT_MARGIN = 1000.0
 
@@ -362,7 +363,13 @@ def build_enhanced_tree(raw: dict) -> EnhancedTree:
         synthetic_root.children.insert(0, page_node)
         nodes.insert(0, page_node)
 
-    return EnhancedTree(root=synthetic_root, nodes=nodes, viewport=viewport, url=url, title=title)
+    return EnhancedTree(
+        root=synthetic_root,
+        nodes=nodes,
+        viewport=viewport,
+        url=url,
+        title=strip_title_marker(title),
+    )
 
 
 def _apply_textarea_values(nodes: list[EnhancedNode], values: object) -> None:

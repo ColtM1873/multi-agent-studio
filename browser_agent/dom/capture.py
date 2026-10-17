@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..cdp import CDPClient
-from .. import timing
+from .. import studio_marker, timing
 
 REQUIRED_COMPUTED_STYLES = [
     "display",
@@ -82,7 +82,7 @@ def capture_raw(client: CDPClient, session_id: str) -> dict[str, Any]:
         )
         value = (result.get("result") or {}).get("value") or {}
         page["url"] = value.get("url", "")
-        page["title"] = value.get("title", "")
+        page["title"] = studio_marker.strip_title_marker(value.get("title", ""))
         page["ready_state"] = value.get("rs", "")
         page["time_origin"] = str(value.get("to", ""))
         page["scroll_height"] = float(value.get("sh") or 0)

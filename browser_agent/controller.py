@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import contextlib
+import logging
 import re
 import threading
 import time
 from dataclasses import dataclass
 from typing import Optional
 
-from . import debug, timing
+from . import debug, studio_marker, timing
 from . import bid065_trace  # BID065
 from .actions import (
     ActionError,
@@ -45,6 +46,8 @@ from .dom import (
 from .launcher import BrowserLauncher, BrowserLaunchError
 from .tab_registry import TabRegistry
 
+logger = logging.getLogger(__name__)
+
 # 所有对外返回文本 / 状态码集中在 ``return_prompt`` 中定义，这里以别名导入：
 # 既保持模块内引用不变，也保持外部
 # ``from browser_agent.controller import NOT_CALLED`` 可用。
@@ -63,6 +66,13 @@ NOT_CALLED = rp.NOT_CALLED
 # whose React re-render swapped backend node ids produces a diff made *only* of
 # renamed tags, which must not be mistaken for real content.
 _ELEMENT_NAME_RE = re.compile(r"\be\d+\b")
+_STUDIO_MARKER_SKIP_PREFIXES = (
+    "devtools://",
+    "chrome://",
+    "edge://",
+    "chrome-extension://",
+    "extension://",
+)
 
 
 def _range_entry_notice(node, name: str) -> str:
@@ -415,6 +425,8 @@ class BrowserController:
         self.client: Optional[CDPClient] = None
         self.focused_target_id: Optional[str] = None
         self._registries: dict[str, NameRegistry] = {}
+        self._studio_marked_targets: set[str] = set()
+        self._studio_marker_lock = threading.Lock()
         # One counter for every tab: element numbers are globally unique, so the
         # LLM can never confuse ``e17`` on one tab with a different element on
         # another (each tab still owns its name maps / active set).
@@ -453,9 +465,10 @@ class BrowserController:
         # 一段正在进行的 DOM 抓取/序列化之后被饿死（而抓取本身又是慢的根源）。
         if self.client is not None:
             try:
-                self.client.refresh_targets(timeout=timing.get().cdp.probe_timeout)  # BID066
+                targets = self.client.refresh_targets(timeout=timing.get().cdp.probe_timeout)  # BID066
                 # 上面用「短超时」探测连接健康：陈旧/半开连接最多卡 probe_timeout 就重连，  # BID066
                 # 而不是沿用 command_timeout（30s）导致空闲后首个浏览器工具卡满 30s。  # BID066
+                self._sync_studio_marker(targets)
                 bid065_trace.mark_elapsed("controller.ensure_connected 快速路径", _bid065_t0)  # BID065
                 return
             except Exception:
@@ -464,13 +477,16 @@ class BrowserController:
                 except Exception:
                     pass
                 self.client = None
+                with self._studio_marker_lock:
+                    self._studio_marked_targets.clear()
 
         # 建立/重建连接：只用专用的 _connect_lock，避免两个线程同时建连。
         with self._connect_lock:
             # 双重检查：等锁期间别的线程可能已经建好了连接。
             if self.client is not None:
                 try:
-                    self.client.refresh_targets(timeout=timing.get().cdp.probe_timeout)  # BID066
+                    targets = self.client.refresh_targets(timeout=timing.get().cdp.probe_timeout)  # BID066
+                    self._sync_studio_marker(targets)
                     bid065_trace.mark_elapsed("controller.ensure_connected 锁内快速路径", _bid065_t0)  # BID065
                     return
                 except Exception:
@@ -479,6 +495,8 @@ class BrowserController:
                     except Exception:
                         pass
                     self.client = None
+                    with self._studio_marker_lock:
+                        self._studio_marked_targets.clear()
 
             _bid065_ensure_t0 = bid065_trace.perf()  # BID066: ensure_browser 单独计时，避免把前置健康探测耗时刻进来造成误判
             info = self.launcher.ensure_browser()
@@ -486,12 +504,52 @@ class BrowserController:
             self.client = CDPClient(
                 info["ws_url"], command_timeout=timing.get().cdp.command_timeout
             )
+            with self._studio_marker_lock:
+                self._studio_marked_targets.clear()
             try:
                 self.client.send("Target.setDiscoverTargets", {"discover": True})
             except CDPError:
                 pass
-            self.client.refresh_targets()
+            targets = self.client.refresh_targets()
+            self._sync_studio_marker(targets)
             bid065_trace.mark_elapsed("controller.ensure_connected TOTAL(重建)", _bid065_t0)  # BID065
+
+    def _mark_studio_target(self, target_id: str) -> None:
+        if self.client is None or not studio_marker.marker_enabled():
+            return
+        if not target_id:
+            return
+        with self._studio_marker_lock:
+            if target_id in self._studio_marked_targets:
+                return
+            try:
+                session_id = self.client.session_for_target(target_id)
+                studio_marker.apply_title_marker(
+                    self.client, target_id, session_id=session_id
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Studio 标题标记注入失败 (%s): %s", target_id, exc)
+                return
+            self._studio_marked_targets.add(target_id)
+
+    def _sync_studio_marker(self, targets=None) -> None:
+        if self.client is None or not studio_marker.marker_enabled():
+            return
+        if targets is None:
+            try:
+                targets = self.client.page_targets()
+            except Exception:
+                return
+        iterable = targets.values() if isinstance(targets, dict) else targets
+        for target in list(iterable):
+            if target.get("type") != "page":
+                continue
+            url = target.get("url") or ""
+            if url.startswith(_STUDIO_MARKER_SKIP_PREFIXES):
+                continue
+            target_id = target.get("targetId")
+            if target_id:
+                self._mark_studio_target(target_id)
 
     # ------------------------------------------------------------------ #
     # tabs
@@ -2646,6 +2704,7 @@ class BrowserController:
             time.sleep(cfg.close_poll_interval)
         self._registries.pop(target_id, None)
         self._prev_trees.pop(target_id, None)
+        self._studio_marked_targets.discard(target_id)
         self._tab_registry.forget(target_id)
         if self.focused_target_id == target_id:
             self.focused_target_id = None
@@ -2673,6 +2732,7 @@ class BrowserController:
         except CDPError as exc:
             return self._base_result(FULL, FAIL, rp.EMPTY_CONTENT, str(exc))
         self.focused_target_id = target_id
+        self._mark_studio_target(target_id)
         try:
             self._activate_target(target_id)
             self._wait_ready_new_tab(target_id, target_url)
@@ -2723,6 +2783,7 @@ class BrowserController:
         except CDPError as exc:
             return {"ok": False, "error": str(exc)}
         self.focused_target_id = target_id
+        self._mark_studio_target(target_id)
         try:
             self._activate_target(target_id)
         except (CDPError, RuntimeError) as exc:

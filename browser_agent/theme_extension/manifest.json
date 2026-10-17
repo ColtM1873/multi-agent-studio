@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "Multi-Agent Studio Theme",
+  "version": "1.0",
+  "theme": {
+    "colors": {
+      "frame": [79, 70, 229],
+      "frame_inactive": [79, 70, 229],
+      "toolbar": [79, 70, 229],
+      "tab_text": [255, 255, 255],
+      "tab_background_text": [235, 235, 255],
+      "bookmark_text": [255, 255, 255],
+      "button_background": [79, 70, 229],
+      "ntp_background": [245, 246, 248],
+      "ntp_text": [30, 30, 40]
+    },
+    "tints": {
+      "buttons": [-1, -1, -1]
+    },
+    "properties": {
+      "ntp_logo_alternate": 1
+    }
+  }
+}

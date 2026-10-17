@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from typing import Optional
 
+from .studio_marker import strip_title_marker
+
 PLACEHOLDER_TITLE = "无标题"
 
 
@@ -34,7 +36,8 @@ class TabRegistry:
         return self._seq[target_id]
 
     def _prefix(self, target: dict) -> str:
-        title = " ".join(str(target.get("title") or "").split())
+        raw_title = strip_title_marker(target.get("title") or "")
+        title = " ".join(raw_title.split())
         return title or self._placeholder
 
     def name(self, target: dict) -> str:
