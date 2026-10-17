@@ -192,6 +192,12 @@ const I18N_EN = {
   "开启后，聊天输入框右侧会出现「注入当前日期」按钮；开启该按钮后，发送消息时会在用户消息前面拼接当前日期。": "When enabled, an \"Inject current date\" button appears next to the chat input. When that button is on, the current date is prepended to your message when sending.",
   "注入当前日期": "Inject current date",
   "开启后，发送消息时会在用户消息前面拼接当前日期。": "When enabled, the current date is prepended to your message when sending.",
+  "显示「注入当前时间」按钮": "Show the \"Inject current time\" button",
+  "开启后，聊天输入框右侧会出现「注入当前时间」按钮；开启该按钮后，发送消息时会在用户消息前面拼接当前时间。": "When enabled, an \"Inject current time\" button appears next to the chat input. When that button is on, the current time is prepended to your message when sending.",
+  "注入当前时间": "Inject current time",
+  "开启后，发送消息时会在用户消息前面拼接当前时间。": "When enabled, the current time is prepended to your message when sending.",
+  "发送框设置": "Message input settings",
+  "用于集中管理聊天输入框相关的显示与注入开关。": "Manage display and injection switches related to the chat input box.",
   "开启常用prompt注入功能": "Enable common-prompt injection",
   "开启后，会话页会出现「注入常用prompt」「编辑会话常用prompt」按钮，主界面会出现「编辑全局常用prompt」按钮；关闭后这三个按钮都不再显示，但已保存的全局常用 prompt 库与每个会话的设置都会一直保留。": "When enabled, the chat view shows the \"Inject common prompt\" and \"Edit session common prompt\" buttons, and the main screen shows \"Edit global common prompts\". When disabled these three buttons are hidden, but the saved global prompt library and each session's setting are always kept.",
   "注入常用prompt": "Inject common prompt",
@@ -294,6 +300,8 @@ const I18N_EN = {
   "正文字号减小": "Decrease body font size",
   "正文字号增大": "Increase body font size",
   "进阶设置": "Advanced settings",
+  "全局配置设置": "Global configuration settings",
+  "用于集中管理全局 postgres、embedding 与自动（及主动）总结设置。": "Manage global PostgreSQL, embedding and automatic (& proactive) summary settings.",
   "历史浏览时各板块默认展开 / 折叠": "Default expand/collapse of sections when browsing history",
   "历史浏览时，思考过程板块默认展开还是折叠。": "Whether the reasoning section is expanded or collapsed by default when browsing history.",
   "历史浏览时，工具调用板块默认展开还是折叠。": "Whether the tool call section is expanded or collapsed by default when browsing history.",
@@ -302,6 +310,7 @@ const I18N_EN = {
   "流式显示子 agent 工具": "Stream sub-agent tools",
   "流式输出时显示的内容": "Content shown during streaming",
   "输入消息缓存": "Input message cache",
+  "其他": "Other",
   "已输入未发送消息跨multi-agent流转": "Sync unsent input across multi-agents",
   "开启后，你在任意 multi-agent 输入框中输入的内容，会同步更新所有 multi-agent 的未发送消息缓存（等效于共用一个缓存）；关闭后各 multi-agent 独立保存。未发送的消息会持久化到本地，退出程序后下次打开仍会保留。": "When enabled, text you type in any multi-agent input box is synced to all multi-agents' unsent-message caches (equivalent to sharing one cache); when disabled, each multi-agent keeps its own. Unsent text is persisted locally and restored the next time you open the app after quitting.",
   "开启后，流式输出时子 agent 的工具调用与工具结果会像主 agent 一样实时显示；关闭则只显示子 agent 的正文与思考。": "When enabled, a sub-agent's tool calls and tool results stream in real time like the main agent's; when disabled, only the sub-agent's text and reasoning are shown.",
@@ -2420,13 +2429,15 @@ async function openSettings() {
         <span class="sw-label">${t("显示输入示例（灰色占位字）")} <i class="info-icon">!<span class="tip">${t("新建 / 编辑 multi-agent 时，空输入框显示灰色示例文字，帮助快速上手。")}</span></i></span>
         <label class="toggle"><input type="checkbox" id="set_ph" ${s.show_placeholders ? "checked" : ""}><span class="track"></span></label>
       </div>
-      <div class="switch-row">
-        <span class="sw-label">${t("记忆吸附")} <i class="info-icon">!<span class="tip">${t("开启后，主 agent 收到用户消息时会先从记忆库语义检索 N 条相关记忆，附在用户消息里一起传入。此设置影响图编译，进入某个 multi-agent 后不可改动，需退回主界面。")}</span></i></span>
-        <label class="toggle"><input type="checkbox" id="set_mem" ${s.memory_attach ? "checked" : ""}><span class="track"></span></label>
-      </div>
-      <div class="switch-row">
-        <span class="sw-label">${t("吸附记忆条数")}</span>
-        <input type="number" id="set_memnum" value="${s.num_memories_attached}" min="1" max="20" ${s.memory_attach ? "" : "disabled"}>
+      <div class="settings-group">
+        <div class="switch-row">
+          <span class="sw-label">${t("记忆吸附")} <i class="info-icon">!<span class="tip">${t("开启后，主 agent 收到用户消息时会先从记忆库语义检索 N 条相关记忆，附在用户消息里一起传入。此设置影响图编译，进入某个 multi-agent 后不可改动，需退回主界面。")}</span></i></span>
+          <label class="toggle"><input type="checkbox" id="set_mem" ${s.memory_attach ? "checked" : ""}><span class="track"></span></label>
+        </div>
+        <div class="switch-row">
+          <span class="sw-label">${t("吸附记忆条数")}</span>
+          <input type="number" id="set_memnum" value="${s.num_memories_attached}" min="1" max="20" ${s.memory_attach ? "" : "disabled"}>
+        </div>
       </div>
       <div class="switch-row">
         <span class="sw-label">${t("回复完成提示音")} <i class="info-icon">!<span class="tip">${t("agent 回复完成时播放的提示音，切换即试听。")}</span></i></span>
@@ -2459,79 +2470,78 @@ async function openSettings() {
         <label class="toggle"><input type="checkbox" id="set_autoscroll" ${s.auto_scroll_on_send !== false ? "checked" : ""}><span class="track"></span></label>
       </div>
       <div class="switch-row">
-        <span class="sw-label">${t("显示「注入当前日期」按钮")} <i class="info-icon">!<span class="tip">${t("开启后，聊天输入框右侧会出现「注入当前日期」按钮；开启该按钮后，发送消息时会在用户消息前面拼接当前日期。")}</span></i></span>
-        <label class="toggle"><input type="checkbox" id="set_date_inject" ${s.show_date_inject_button !== false ? "checked" : ""}><span class="track"></span></label>
-      </div>
-      <div class="switch-row">
-        <span class="sw-label">${t("开启常用prompt注入功能")} <i class="info-icon">!<span class="tip">${t("开启后，会话页会出现「注入常用prompt」「编辑会话常用prompt」按钮，主界面会出现「编辑全局常用prompt」按钮；关闭后这三个按钮都不再显示，但已保存的全局常用 prompt 库与每个会话的设置都会一直保留。")}</span></i></span>
-        <label class="toggle"><input type="checkbox" id="set_common_prompt" ${s.common_prompt_enabled !== false ? "checked" : ""}><span class="track"></span></label>
-      </div>
-      <div class="switch-row">
         <span class="sw-label">${t("显示浏览器接管说明弹窗")} <i class="info-icon">!<span class="tip">${t("每次打开浏览器时，弹窗说明红色浮动按钮（停止/继续）的作用。关闭后不再弹出。")}</span></i></span>
         <label class="toggle"><input type="checkbox" id="set_browser_popup" ${s.browser_takeover_intro_popup !== false ? "checked" : ""}><span class="track"></span></label>
       </div>
-      <div class="switch-row">
-        <span class="sw-label">${t("默认总结百分比")} <i class="info-icon">!<span class="tip">${t("全量总结时，提示模型把历史压缩到的目标比例（占历史 token 的百分比）。默认与推荐 20%（即五分之一），数值越小越省 token。")}</span></i></span>
-        <span class="sw-inline"><input type="number" id="set_summary_pct" min="1" max="100" value="${s.summary_token_percent ?? 20}"><span class="pct-suffix">%</span></span>
-      </div>
-      <div class="switch-row">
-        <span class="sw-label">${t("主动总结时手动设置总结百分比")} <i class="info-icon">!<span class="tip">${t("开启后，点击「主动全量总结」会先弹出百分比设置框，可为本次总结单独指定压缩比例；关闭时直接使用上面的默认总结百分比。")}</span></i></span>
-        <label class="toggle"><input type="checkbox" id="set_summary_custom" ${s.proactive_summary_custom_percent ? "checked" : ""}><span class="track"></span></label>
-      </div>
-      <div class="switch-row">
-        <span class="sw-label">${t("裸公式识别")} <i class="info-icon">!<span class="tip">${t("模型偶尔不带 $ 或 \\( 分隔符直接输出公式（如 s_{t+1}=f(s_t,a_t)）。开启后自动识别并渲染，适合科研 / 数理场景；日常场景建议关闭，以免误判普通文本。")}</span></i></span>
-        <label class="toggle"><input type="checkbox" id="set_baremath" ${s.bare_math_detect ? "checked" : ""}><span class="track"></span></label>
-      </div>
-      <div class="switch-row">
-        <span class="sw-label">${t("激进公式渲染")} <i class="info-icon">!<span class="tip">${t("在「裸公式识别」基础上更激进：支持单字符上下标（如 V_φ、V^π）、希腊字母与数学符号，并会把「看起来是公式」的代码块 / 行内代码也渲染成公式。适合数理场景，可能误判普通文本或代码，建议按需开启。")}</span></i></span>
-        <label class="toggle"><input type="checkbox" id="set_aggressive_math" ${s.aggressive_math_detect ? "checked" : ""}><span class="track"></span></label>
-      </div>
-      <div class="switch-row">
-        <span class="sw-label">🖨 ${t("转换 HTML")} <i class="info-icon">!<span class="tip">${t("开启后，浏览历史时每条助手回复下方会出现「转换 HTML」按钮，可将该回复转成可打印的 HTML 文件。")}</span></i></span>
-        <label class="toggle"><input type="checkbox" id="set_export_html" ${s.export_html ? "checked" : ""}><span class="track"></span></label>
-      </div>
-      <div id="exportHtmlFields" style="${s.export_html ? "" : "display:none;"}">
+      <div class="settings-group">
         <div class="switch-row">
-          <span class="sw-label">${t("HTML 输出路径")} <i class="info-icon">!<span class="tip">${t("生成 HTML 文件的输出目录（绝对路径）。")}</span></i></span>
-          <input type="text" id="set_export_html_path" value="${esc(s.export_html_path || "")}" placeholder="例如 C:\\Agent_WorkPlace\\html">
-        </div>
-      </div>
-      <div class="switch-row">
-        <span class="sw-label">📄 ${t("导出 md 文件")} <i class="info-icon">!<span class="tip">${t("开启后，浏览历史时每条助手回复下方会出现「导出 md 文件」按钮，可将该回复保存为 Markdown 文件。")}</span></i></span>
-        <label class="toggle"><input type="checkbox" id="set_export_md" ${s.export_md ? "checked" : ""}><span class="track"></span></label>
-      </div>
-      <div id="exportMdFields" style="${s.export_md ? "" : "display:none;"}">
-        <div class="switch-row">
-          <span class="sw-label">${t("md 输出路径")} <i class="info-icon">!<span class="tip">${t("生成 md 文件的输出目录（绝对路径）。")}</span></i></span>
-          <input type="text" id="set_export_md_path" value="${esc(s.export_md_path || "")}" placeholder="例如 C:\\Agent_WorkPlace\\md">
-        </div>
-      </div>
-      <div class="switch-row">
-        <span class="sw-label">✏️ ${t("开启编辑模式")} <i class="info-icon">!<span class="tip">${t("开启后，会话界面右上角会出现「进入编辑模式」按钮，可编辑历史消息。")}</span></i></span>
-        <label class="toggle"><input type="checkbox" id="set_edit_enabled" ${s.edit_mode_enabled !== false ? "checked" : ""}><span class="track"></span></label>
-      </div>
-      <div id="editFields" style="${s.edit_mode_enabled !== false ? "" : "display:none;"}">
-        <div class="switch-row">
-          <span class="sw-label">🕰 ${t("历史消息任意时间可编辑")} <i class="info-icon">!<span class="tip">${t("开启后，无论多久远的历史消息都能进入编辑模式编辑；关闭时只编辑最近一轮对话。")}</span></i></span>
-          <label class="toggle"><input type="checkbox" id="set_edit_any" ${s.edit_any_history ? "checked" : ""}><span class="track"></span></label>
+          <span class="sw-label">${t("默认总结百分比")} <i class="info-icon">!<span class="tip">${t("全量总结时，提示模型把历史压缩到的目标比例（占历史 token 的百分比）。默认与推荐 20%（即五分之一），数值越小越省 token。")}</span></i></span>
+          <span class="sw-inline"><input type="number" id="set_summary_pct" min="1" max="100" value="${s.summary_token_percent ?? 20}"><span class="pct-suffix">%</span></span>
         </div>
         <div class="switch-row">
-          <span class="sw-label">🧩 ${t("历史消息所有类型可编辑")} <i class="info-icon">!<span class="tip">${t("开启后，用户消息、思考过程、工具调用、工具结果都能编辑；关闭时只编辑 AI 回复正文。")}</span></i></span>
-          <label class="toggle"><input type="checkbox" id="set_edit_types" ${s.edit_all_message_types ? "checked" : ""}><span class="track"></span></label>
+          <span class="sw-label">${t("主动总结时手动设置总结百分比")} <i class="info-icon">!<span class="tip">${t("开启后，点击「主动全量总结」会先弹出百分比设置框，可为本次总结单独指定压缩比例；关闭时直接使用上面的默认总结百分比。")}</span></i></span>
+          <label class="toggle"><input type="checkbox" id="set_summary_custom" ${s.proactive_summary_custom_percent ? "checked" : ""}><span class="track"></span></label>
+        </div>
+      </div>
+      <div class="settings-group">
+        <div class="switch-row">
+          <span class="sw-label">${t("裸公式识别")} <i class="info-icon">!<span class="tip">${t("模型偶尔不带 $ 或 \\( 分隔符直接输出公式（如 s_{t+1}=f(s_t,a_t)）。开启后自动识别并渲染，适合科研 / 数理场景；日常场景建议关闭，以免误判普通文本。")}</span></i></span>
+          <label class="toggle"><input type="checkbox" id="set_baremath" ${s.bare_math_detect ? "checked" : ""}><span class="track"></span></label>
+        </div>
+        <div class="switch-row">
+          <span class="sw-label">${t("激进公式渲染")} <i class="info-icon">!<span class="tip">${t("在「裸公式识别」基础上更激进：支持单字符上下标（如 V_φ、V^π）、希腊字母与数学符号，并会把「看起来是公式」的代码块 / 行内代码也渲染成公式。适合数理场景，可能误判普通文本或代码，建议按需开启。")}</span></i></span>
+          <label class="toggle"><input type="checkbox" id="set_aggressive_math" ${s.aggressive_math_detect ? "checked" : ""}><span class="track"></span></label>
+        </div>
+      </div>
+      <div class="settings-group">
+        <div class="switch-row">
+          <span class="sw-label">🖨 ${t("转换 HTML")} <i class="info-icon">!<span class="tip">${t("开启后，浏览历史时每条助手回复下方会出现「转换 HTML」按钮，可将该回复转成可打印的 HTML 文件。")}</span></i></span>
+          <label class="toggle"><input type="checkbox" id="set_export_html" ${s.export_html ? "checked" : ""}><span class="track"></span></label>
+        </div>
+        <div id="exportHtmlFields" style="${s.export_html ? "" : "display:none;"}">
+          <div class="switch-row">
+            <span class="sw-label">${t("HTML 输出路径")} <i class="info-icon">!<span class="tip">${t("生成 HTML 文件的输出目录（绝对路径）。")}</span></i></span>
+            <input type="text" id="set_export_html_path" value="${esc(s.export_html_path || "")}" placeholder="例如 C:\\Agent_WorkPlace\\html">
+          </div>
+        </div>
+      </div>
+      <div class="settings-group">
+        <div class="switch-row">
+          <span class="sw-label">📄 ${t("导出 md 文件")} <i class="info-icon">!<span class="tip">${t("开启后，浏览历史时每条助手回复下方会出现「导出 md 文件」按钮，可将该回复保存为 Markdown 文件。")}</span></i></span>
+          <label class="toggle"><input type="checkbox" id="set_export_md" ${s.export_md ? "checked" : ""}><span class="track"></span></label>
+        </div>
+        <div id="exportMdFields" style="${s.export_md ? "" : "display:none;"}">
+          <div class="switch-row">
+            <span class="sw-label">${t("md 输出路径")} <i class="info-icon">!<span class="tip">${t("生成 md 文件的输出目录（绝对路径）。")}</span></i></span>
+            <input type="text" id="set_export_md_path" value="${esc(s.export_md_path || "")}" placeholder="例如 C:\\Agent_WorkPlace\\md">
+          </div>
+        </div>
+      </div>
+      <div class="settings-group">
+        <div class="switch-row">
+          <span class="sw-label">✏️ ${t("开启编辑模式")} <i class="info-icon">!<span class="tip">${t("开启后，会话界面右上角会出现「进入编辑模式」按钮，可编辑历史消息。")}</span></i></span>
+          <label class="toggle"><input type="checkbox" id="set_edit_enabled" ${s.edit_mode_enabled !== false ? "checked" : ""}><span class="track"></span></label>
+        </div>
+        <div id="editFields" style="${s.edit_mode_enabled !== false ? "" : "display:none;"}">
+          <div class="switch-row">
+            <span class="sw-label">🕰 ${t("历史消息任意时间可编辑")} <i class="info-icon">!<span class="tip">${t("开启后，无论多久远的历史消息都能进入编辑模式编辑；关闭时只编辑最近一轮对话。")}</span></i></span>
+            <label class="toggle"><input type="checkbox" id="set_edit_any" ${s.edit_any_history ? "checked" : ""}><span class="track"></span></label>
+          </div>
+          <div class="switch-row">
+            <span class="sw-label">🧩 ${t("历史消息所有类型可编辑")} <i class="info-icon">!<span class="tip">${t("开启后，用户消息、思考过程、工具调用、工具结果都能编辑；关闭时只编辑 AI 回复正文。")}</span></i></span>
+            <label class="toggle"><input type="checkbox" id="set_edit_types" ${s.edit_all_message_types ? "checked" : ""}><span class="track"></span></label>
+          </div>
         </div>
       </div>
       </div>
       <div class="modal-actions" style="justify-content:flex-start; flex-wrap:wrap;">
+        <button class="btn small" id="setInputBox">${t("发送框设置")}</button>
+        <button class="btn small" id="setGlobalConfig">${t("全局配置设置")}</button>
         <button class="btn small" id="setAdvanced">${t("进阶设置")}</button>
-        <button class="btn small" id="setGlobalPg">${t("全局postgres连接设置")}</button>
-        <button class="btn small" id="setGlobalEmb">${t("全局embedding模型设置")}</button>
-        <button class="btn small" id="setGlobalSum">${t("全局自动（及主动）总结设置")}</button>
         <button class="btn small" id="setColors">${t("字体颜色设置")}</button>
         <button class="btn small" id="setCard">${t("Multi-Agent配置卡片 设置")}</button>
         <button class="btn small" id="setHtmlConfig" style="${s.export_html ? "" : "display:none;"}">${t("HTML 转换配置表")}</button>
-        <button class="btn small" id="setBrowserDelay">${t("浏览器交互延迟设置")}</button>
         <button class="btn small" id="setToolResultDisplay">${t("工具调用结果显示设置")}</button>
-        <button class="btn small" id="setImportPrefs">${t("导入本机设置")}</button>
       </div>
       <div class="modal-actions" style="margin-top:10px;">
         <div class="spacer" style="flex:1;"></div>
@@ -2567,21 +2577,13 @@ async function openSettings() {
   updateNewline();
 
   mask.querySelector("#setCancel").onclick = () => mask.remove();
+  mask.querySelector("#setInputBox").onclick = () => { mask.remove(); openInputBoxSettings(); };
+  mask.querySelector("#setGlobalConfig").onclick = () => { mask.remove(); openGlobalConfigSettings(); };
   mask.querySelector("#setAdvanced").onclick = () => { mask.remove(); openAdvancedSettings(); };
-  mask.querySelector("#setGlobalPg").onclick = () => { mask.remove(); openGlobalPostgresSettings(); };
-  mask.querySelector("#setGlobalEmb").onclick = () => { mask.remove(); openGlobalEmbeddingSettings(); };
-  mask.querySelector("#setGlobalSum").onclick = () => { mask.remove(); openGlobalSummarySettings(); };
   mask.querySelector("#setColors").onclick = () => { mask.remove(); openColorSettings(); };
   mask.querySelector("#setCard").onclick = () => { mask.remove(); openCardSettings(); };
   mask.querySelector("#setHtmlConfig").onclick = () => { mask.remove(); openHtmlConfigSettings(); };
-  mask.querySelector("#setBrowserDelay").onclick = () => { mask.remove(); openBrowserDelaySettings(); };
   mask.querySelector("#setToolResultDisplay").onclick = () => { mask.remove(); openToolResultDisplaySettings(); };
-  mask.querySelector("#setImportPrefs").onclick = async () => {
-    mask.remove();
-    if (typeof window.__importLocalPrefs !== "function") { toast(t("导入失败：设置桥接未加载"), true); return; }
-    if ((await askConfirm(t("将当前界面的本机设置（隐藏列表、卡片外观等）上传到后端保存，用于从旧浏览器迁移。确定继续？"))) !== "yes") return;
-    try { await window.__importLocalPrefs(); toast(t("已导入本机设置")); } catch (e) { toast(e.message, true); }
-  };
   mask.querySelector("#setSave").onclick = async () => {
     try {
       await saveSettings({
@@ -2603,8 +2605,6 @@ async function openSettings() {
         edit_any_history: mask.querySelector("#set_edit_any").checked,
         edit_all_message_types: mask.querySelector("#set_edit_types").checked,
         auto_scroll_on_send: mask.querySelector("#set_autoscroll").checked,
-        show_date_inject_button: mask.querySelector("#set_date_inject").checked,
-        common_prompt_enabled: mask.querySelector("#set_common_prompt").checked,
         browser_takeover_intro_popup: mask.querySelector("#set_browser_popup").checked,
         summary_token_percent: Math.min(100, Math.max(1, +mask.querySelector("#set_summary_pct").value || 20)),
         proactive_summary_custom_percent: mask.querySelector("#set_summary_custom").checked,
@@ -2613,6 +2613,77 @@ async function openSettings() {
       toast(t("设置已保存"));
     } catch (e) { toast(e.message, true); }
   };
+}
+
+async function openInputBoxSettings() {
+  let s;
+  try { s = await getSettings(); } catch (e) { toast(e.message, true); return; }
+  const mask = document.createElement("div");
+  mask.className = "modal-mask";
+  mask.innerHTML = `
+    <div class="modal" style="width:520px;" data-modal-key="inputBox">
+      <h3>💬 ${t("发送框设置")}</h3>
+      <div class="muted" style="margin-bottom:10px;">${t("用于集中管理聊天输入框相关的显示与注入开关。")}</div>
+      <div class="switch-row">
+        <span class="sw-label">${t("显示「注入当前日期」按钮")} <i class="info-icon">!<span class="tip">${t("开启后，聊天输入框右侧会出现「注入当前日期」按钮；开启该按钮后，发送消息时会在用户消息前面拼接当前日期。")}</span></i></span>
+        <label class="toggle"><input type="checkbox" id="set_date_inject" ${s.show_date_inject_button !== false ? "checked" : ""}><span class="track"></span></label>
+      </div>
+      <div class="switch-row">
+        <span class="sw-label">${t("显示「注入当前时间」按钮")} <i class="info-icon">!<span class="tip">${t("开启后，聊天输入框右侧会出现「注入当前时间」按钮；开启该按钮后，发送消息时会在用户消息前面拼接当前时间。")}</span></i></span>
+        <label class="toggle"><input type="checkbox" id="set_time_inject" ${s.show_time_inject_button !== false ? "checked" : ""}><span class="track"></span></label>
+      </div>
+      <div class="switch-row">
+        <span class="sw-label">${t("开启常用prompt注入功能")} <i class="info-icon">!<span class="tip">${t("开启后，会话页会出现「注入常用prompt」「编辑会话常用prompt」按钮，主界面会出现「编辑全局常用prompt」按钮；关闭后这三个按钮都不再显示，但已保存的全局常用 prompt 库与每个会话的设置都会一直保留。")}</span></i></span>
+        <label class="toggle"><input type="checkbox" id="set_common_prompt" ${s.common_prompt_enabled !== false ? "checked" : ""}><span class="track"></span></label>
+      </div>
+      <div class="modal-actions">
+        <button class="btn" id="ibCancel">${t("返回")}</button>
+        <button class="btn primary" id="ibSave">${t("保存")}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(mask);
+  mask.querySelector("#ibCancel").onclick = () => { mask.remove(); openSettings(); };
+  mask.querySelector("#ibSave").onclick = async () => {
+    try {
+      await saveSettings({
+        ...s,
+        show_date_inject_button: mask.querySelector("#set_date_inject").checked,
+        show_time_inject_button: mask.querySelector("#set_time_inject").checked,
+        common_prompt_enabled: mask.querySelector("#set_common_prompt").checked,
+      });
+      mask.remove();
+      toast(t("设置已保存"));
+    } catch (e) { toast(e.message, true); }
+  };
+}
+
+async function openGlobalConfigSettings() {
+  const mask = document.createElement("div");
+  mask.className = "modal-mask";
+  mask.innerHTML = `
+    <div class="modal" style="width:520px;" data-modal-key="globalConfig">
+      <h3>🌍 ${t("全局配置设置")}</h3>
+      <div class="muted" style="margin-bottom:10px;">${t("用于集中管理全局 postgres、embedding 与自动（及主动）总结设置。")}</div>
+      <div class="modal-actions" style="justify-content:flex-start; flex-wrap:wrap;">
+        <button class="btn small" id="gcPg">${t("全局postgres连接设置")}</button>
+        <button class="btn small" id="gcEmb">${t("全局embedding模型设置")}</button>
+        <button class="btn small" id="gcSum">${t("全局自动（及主动）总结设置")}</button>
+      </div>
+      <div class="modal-actions">
+        <button class="btn" id="gcCancel">${t("返回")}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(mask);
+  mask.querySelector("#gcCancel").onclick = () => { mask.remove(); openSettings(); };
+  mask.querySelector("#gcPg").onclick = () => { mask.remove(); openGlobalPostgresSettings(() => openGlobalConfigSettings()); };
+  mask.querySelector("#gcEmb").onclick = () => { mask.remove(); openGlobalEmbeddingSettings(() => openGlobalConfigSettings()); };
+  mask.querySelector("#gcSum").onclick = () => { mask.remove(); openGlobalSummarySettings(() => openGlobalConfigSettings()); };
+}
+
+async function importLocalPrefsFlow() {
+  if (typeof window.__importLocalPrefs !== "function") { toast(t("导入失败：设置桥接未加载"), true); return; }
+  if ((await askConfirm(t("将当前界面的本机设置（隐藏列表、卡片外观等）上传到后端保存，用于从旧浏览器迁移。确定继续？"))) !== "yes") return;
+  try { await window.__importLocalPrefs(); toast(t("已导入本机设置")); } catch (e) { toast(e.message, true); }
 }
 
 async function openSensitiveForm() {
@@ -2894,6 +2965,11 @@ async function openAdvancedSettings() {
         <span class="sw-label">📎 ${t("自动吸附记忆门槛")} <i class="info-icon">!<span class="tip">${t("收到用户消息时自动检索并吸附相关记忆的语义相似度门槛，取值范围 0~1。分数低于该门槛的记忆不会被吸附；数值越大越严格、吸附的记忆越少。")}</span></i></span>
         <span class="sw-inline"><input type="number" id="adv_attach_threshold" min="0" max="1" step="0.05" value="${s.attach_memory_threshold ?? 0.7}"></span>
       </div>
+      <div class="muted" style="margin:10px 0 2px;">${t("其他")}</div>
+      <div class="modal-actions" style="justify-content:flex-start; flex-wrap:wrap;">
+        <button class="btn small" id="advBrowserDelay">${t("浏览器交互延迟设置")}</button>
+        <button class="btn small" id="advImportPrefs">${t("导入本机设置")}</button>
+      </div>
       <div class="modal-actions">
         <button class="btn" id="advCancel">${t("返回")}</button>
         <button class="btn primary" id="advSave">${t("保存")}</button>
@@ -2901,6 +2977,8 @@ async function openAdvancedSettings() {
     </div>`;
   document.body.appendChild(mask);
   mask.querySelector("#advCancel").onclick = () => { mask.remove(); openSettings(); };
+  mask.querySelector("#advBrowserDelay").onclick = () => { mask.remove(); openBrowserDelaySettings(() => openAdvancedSettings()); };
+  mask.querySelector("#advImportPrefs").onclick = async () => { mask.remove(); await importLocalPrefsFlow(); openAdvancedSettings(); };
   mask.querySelector("#advSave").onclick = async () => {
     try {
       const clamp01 = (v, def) => { const n = parseFloat(v); return Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : def; };
@@ -2922,7 +3000,7 @@ async function openAdvancedSettings() {
   };
 }
 
-async function openGlobalPostgresSettings() {
+async function openGlobalPostgresSettings(back) {
   let s;
   try { s = await getSettings(); } catch (e) { toast(e.message, true); return; }
   const gpPrefix = s.global_postgres_prefix || "";
@@ -3057,7 +3135,7 @@ async function openGlobalPostgresSettings() {
   refreshGpExample();
 
   const close = () => mask.remove();
-  mask.querySelector("#gpCancel").onclick = () => { mask.remove(); openSettings(); };
+  mask.querySelector("#gpCancel").onclick = () => { mask.remove(); (back || openSettings)(); };
   mask.addEventListener("click", (e) => { if (e.target === mask) close(); });
 
   mask.querySelector("#gpClear").onclick = async () => {
@@ -3092,7 +3170,7 @@ async function openGlobalPostgresSettings() {
   };
 }
 
-async function openGlobalEmbeddingSettings() {
+async function openGlobalEmbeddingSettings(back) {
   let s;
   try { s = await getSettings(); } catch (e) { toast(e.message, true); return; }
   const g = s.global_embedding || {};
@@ -3148,7 +3226,7 @@ async function openGlobalEmbeddingSettings() {
   hfSel.onchange = () => { hfCustom.style.display = hfSel.value === "__custom__" ? "" : "none"; };
 
   const close = () => mask.remove();
-  mask.querySelector("#gembCancel").onclick = () => { mask.remove(); openSettings(); };
+  mask.querySelector("#gembCancel").onclick = () => { mask.remove(); (back || openSettings)(); };
   mask.addEventListener("click", (e) => { if (e.target === mask) close(); });
 
   const collect = () => {
@@ -3185,7 +3263,7 @@ async function openGlobalEmbeddingSettings() {
   };
 }
 
-async function openGlobalSummarySettings() {
+async function openGlobalSummarySettings(back) {
   let s;
   try { s = await getSettings(); } catch (e) { toast(e.message, true); return; }
   const g = s.global_summary || {};
@@ -3228,7 +3306,7 @@ async function openGlobalSummarySettings() {
   document.body.appendChild(mask);
 
   const close = () => mask.remove();
-  mask.querySelector("#gsumCancel").onclick = () => { mask.remove(); openSettings(); };
+  mask.querySelector("#gsumCancel").onclick = () => { mask.remove(); (back || openSettings)(); };
   mask.addEventListener("click", (e) => { if (e.target === mask) close(); });
 
   mask.querySelector("#gsumClear").onclick = async () => {
@@ -3460,7 +3538,7 @@ async function openHtmlConfigSettings() {
   };
 }
 
-async function openBrowserDelaySettings() {
+async function openBrowserDelaySettings(back) {
   let defaults = {}, s;
   try {
     defaults = (await api("/api/browser-timing")).defaults || {};
@@ -3530,7 +3608,7 @@ async function openBrowserDelaySettings() {
     return out;
   };
 
-  mask.querySelector("#btCancel").onclick = () => { mask.remove(); openSettings(); };
+  mask.querySelector("#btCancel").onclick = () => { mask.remove(); (back || openSettings)(); };
   mask.querySelector("#btReset").onclick = () => {
     BROWSER_DELAY_SCHEMA.forEach(sec => sec.items.forEach(it => {
       const id = fid(it.p);
@@ -4975,6 +5053,7 @@ async function renderChatView() {
           <div class="input-main-left">
             <div class="input-toolbar"><span class="muted" id="inputHint">${t("输入消息（Enter 发送，Shift+Enter 换行）")}</span><div class="spacer" style="flex:1;"></div></div>
             <div class="date-inject-hint" id="dateInjectHint" style="display:none;"></div>
+            <div class="date-inject-hint" id="timeInjectHint" style="display:none;"></div>
             <div class="date-inject-hint common-prompt-hint" id="commonPromptHint" style="display:none;" title="${t("点击查看完整内容")}"></div>
             <textarea id="msgInput" placeholder="${t("输入消息…")}"></textarea>
             <div class="inject-blocks">
@@ -4985,6 +5064,7 @@ async function renderChatView() {
           <div class="input-actions-col">
             <div class="input-actions-top">
               <button class="btn small" id="stopBtn" style="display:none;">${t("停止")}</button>
+              <button class="btn small" id="timeInjectBtn" style="display:none;" title="${t("开启后，发送消息时会在用户消息前面拼接当前时间。")}"><span class="date-dot"></span>${t("注入当前时间")}</button>
               <button class="btn small" id="dateInjectBtn" style="display:none;" title="${t("开启后，发送消息时会在用户消息前面拼接当前日期。")}"><span class="date-dot"></span>${t("注入当前日期")}</button>
               <button class="btn small" id="commonPromptInjectBtn" style="display:none;"><span class="date-dot"></span>${t("注入常用prompt")}</button>
             </div>
@@ -5125,6 +5205,40 @@ async function renderChatView() {
     };
   }
   refreshDateInjectUI();
+
+  /* ================= 注入当前时间 ================= */
+  const timeInjectAvailable = !(settings && settings.show_time_inject_button === false);
+  let timeInjectOn = localStorage.getItem("time-inject-on") === "1";
+  function timePromptText() {
+    const now = new Date();
+    const hours24 = now.getHours();
+    const minutes = String(now.getMinutes()).padStart(2, "0");
+    const hours24Text = String(hours24).padStart(2, "0");
+    let hour12 = hours24 % 12;
+    if (hour12 === 0) hour12 = 12;
+    if (lang === "zh") {
+      return `现在是${hours24 < 12 ? "上午" : "下午"}${hour12}点${minutes}分（${hours24Text}:${minutes}）`;
+    }
+    return `It is now ${hour12}:${minutes} ${hours24 < 12 ? "AM" : "PM"} (${hours24Text}:${minutes}).`;
+  }
+  function refreshTimeInjectUI() {
+    const btn = $("#timeInjectBtn"), hint = $("#timeInjectHint");
+    if (btn) btn.classList.toggle("on", timeInjectOn);
+    if (hint) {
+      if (timeInjectOn) { hint.textContent = timePromptText(); hint.style.display = ""; }
+      else { hint.style.display = "none"; }
+    }
+  }
+  const timeInjectBtn = $("#timeInjectBtn");
+  if (timeInjectBtn) {
+    timeInjectBtn.style.display = timeInjectAvailable ? "" : "none";
+    timeInjectBtn.onclick = () => {
+      timeInjectOn = !timeInjectOn;
+      localStorage.setItem("time-inject-on", timeInjectOn ? "1" : "0");
+      refreshTimeInjectUI();
+    };
+  }
+  refreshTimeInjectUI();
 
   /* ============ 注入常用 prompt（每个会话一条，内容落盘在后端） ============ */
   // 与「注入当前日期」同款显示方式：开启后，在日期提示行的下一行显示本会话的常用 prompt
@@ -6638,11 +6752,12 @@ async function renderChatView() {
     if (takeoverHintOn && !takeoverPreviewText) { toast(t("正在获取当前页面内容，请稍候…")); return; }
     const userText = raw.replace(/\s+$/, "");
     const injectDate = dateInjectAvailable && dateInjectOn;
+    const injectTime = timeInjectAvailable && timeInjectOn;
     const injectCommon = commonPromptEnabled && commonPromptOn && !!commonPromptText;
     const injectTakeover = takeoverHintOn && !!takeoverPreviewText;
     const injectSensitive = sensitiveInjectOn && !!sensitiveInjectText;
-    // 开启日期注入 / 常用 prompt 注入 / 浏览器接管提示 / 敏感信息注入后，允许「空输入」发送
-    if (!userText && !injectDate && !injectCommon && !injectTakeover && !injectSensitive) return;
+    // 开启日期/时间注入 / 常用 prompt 注入 / 浏览器接管提示 / 敏感信息注入后，允许「空输入」发送
+    if (!userText && !injectDate && !injectTime && !injectCommon && !injectTakeover && !injectSensitive) return;
     // 编辑模式：有未保存改动则提示、不发送；无改动则先自动退出编辑模式（与「退出编辑模式」
     // 按钮同一套逻辑），再走正常发送流程，避免在编辑态 DOM 上发送导致流式回复不显示。
     if (editModeOn) {
@@ -6652,9 +6767,10 @@ async function renderChatView() {
       catch (e) { sendBusy = false; toast(e.message, true); return; }
       finally { sendBusy = false; }
     }
-    // 前缀按「日期 → 常用prompt → 用户输入」拼接，与输入框上方灰色提示从上到下的顺序一致
+    // 前缀按「日期 → 时间 → 常用prompt → 用户输入」拼接，与输入框上方灰色提示从上到下的顺序一致
     const parts = [];
     if (injectDate) parts.push(datePromptText());
+    if (injectTime) parts.push(timePromptText());
     if (injectCommon) parts.push(commonPromptText);
     if (userText) parts.push(userText);
     let content = parts.join("\n");

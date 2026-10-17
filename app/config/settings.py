@@ -31,6 +31,9 @@ class Settings(BaseModel):
     show_placeholders: bool = True
     # 聊天输入框是否显示「注入当前日期」按钮（开启后可在会话里选择把当前日期拼接到用户消息前）
     show_date_inject_button: bool = True
+    # 聊天输入框是否显示「注入当前时间」按钮（开启后可在会话里选择把当前时间拼接到用户消息前）。
+    # 纯前端显示开关，不参与图编译，无需 invalidate_all。默认开启。
+    show_time_inject_button: bool = True
     # 常用 prompt 注入功能总开关：关闭后，会话页的「注入常用prompt」「编辑会话常用prompt」
     # 与主界面的「编辑全局常用prompt」三个按钮都不再显示；**已保存的数据一律保留**
     # （全局库 common_prompts 与会话选择都存在后端，不因开关而删除）。

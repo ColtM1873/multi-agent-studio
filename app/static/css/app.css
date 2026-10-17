@@ -275,6 +275,7 @@ html[data-style-danger="solid"] .card-btn-danger:hover { filter: brightness(.92)
   background: #9ca3af; margin-right: 6px; vertical-align: middle;
 }
 #dateInjectBtn.on .date-dot { background: #22c55e; }
+#timeInjectBtn.on .date-dot { background: #22c55e; }
 
 /* ── 浏览器接管 ─────────────────────────── */
 /* 四个浏览器开关按钮成组放在右侧按钮列顶部（显示/隐藏由 JS 控制） */
@@ -505,6 +506,18 @@ html[data-style-danger="solid"] .card-btn-danger:hover { filter: brightness(.92)
 .modal.settings-modal { width: min(920px, calc(100vw - 32px)); }
 .settings-cols { column-count: 2; column-gap: 28px; }
 .settings-cols > * { break-inside: avoid; }
+.settings-cols > .switch-row { padding-left: 10px; padding-right: 10px; }
+.settings-group {
+  break-inside: avoid;
+  margin: 10px 0 20px;
+  padding: 7px 9px;
+  border: 1px solid var(--primary);
+  border-radius: 14px;
+  background: #fbfbfd;
+}
+.settings-group .switch-row { padding-top: 9px; padding-bottom: 9px; }
+.settings-group > .switch-row:last-child,
+.settings-group > div:last-child > .switch-row:last-child { border-bottom: none; }
 @media (max-width: 720px) { .settings-cols { column-count: 1; } }
 
 /* ── 消息统计（横向小字） ───────────────── */
