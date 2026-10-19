@@ -1,0 +1,5 @@
+# cmd.exe misparses LF-only batch files (setup.bat exits immediately when
+# downloaded from the GitHub source ZIP). Keep Windows scripts CRLF in the
+# repository archive and on checkout.
+*.bat text eol=crlf
+*.cmd text eol=crlf
