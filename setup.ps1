@@ -1,7 +1,27 @@
 ﻿# Multi-Agent Studio 一键安装脚本（由 setup.bat 调用）
 
+param(
+    [string]$Mode = ''
+)
+
 $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
+
+if (-not $Mode) {
+    Write-Host ''
+    Write-Host '请选择安装版本：'
+    Write-Host '  [1] 普通版：约 9 GB，包含本地 embedding 模型，支持长期记忆。'
+    Write-Host '  [2] Lite 轻量版：占用更少，不含长期记忆与 embedding 模型。'
+    $modeAns = Read-Host '输入 1 安装普通版，输入 2 安装 Lite 版 [1/2]'
+    if ($modeAns -match '^\s*2\s*$') { $Mode = 'Lite' } else { $Mode = 'Full' }
+}
+
+if ($Mode -notin @('Full', 'Lite')) {
+    Write-Host "[错误] 未知安装版本：$Mode（可选 Full / Lite）"
+    exit 1
+}
+
+$modeLabel = if ($Mode -eq 'Lite') { 'Lite 轻量版' } else { '普通版' }
 
 # ---------- 检测管理员 ----------
 $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -12,7 +32,7 @@ if (-not $isAdmin) {
         "本安装需要启用 Windows「长路径支持」，需要管理员权限。`n`n点击「确定」将尝试以管理员身份重新启动。`n若未弹出「用户账户控制」窗口，请关闭本窗口后，右键 setup.bat 选择「以管理员身份运行」。",
         'Multi-Agent Studio 安装', 'OK', 'Information') | Out-Null
     try {
-        Start-Process -FilePath 'powershell.exe' -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`"" -Verb RunAs
+        Start-Process -FilePath 'powershell.exe' -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -Mode $Mode" -Verb RunAs
     } catch {
         Add-Type -AssemblyName PresentationFramework
         [System.Windows.MessageBox]::Show(
@@ -24,7 +44,7 @@ if (-not $isAdmin) {
 
 Write-Host ''
 Write-Host '================================================'
-Write-Host '  Multi-Agent Studio 一键安装'
+Write-Host "  Multi-Agent Studio 一键安装（$modeLabel）"
 Write-Host '================================================'
 Write-Host ''
 
@@ -81,8 +101,17 @@ if (-not (Test-Path "$PSScriptRoot\venv")) {
 }
 
 # ---------- 4. 安装依赖 ----------
-Write-Host '[4/8] 安装依赖（清华源，首次约需几分钟）...'
-& "$PSScriptRoot\venv\Scripts\python.exe" -m pip install -r "$PSScriptRoot\requirements.txt" -i https://pypi.tuna.tsinghua.edu.cn/simple
+$reqFile = Join-Path $PSScriptRoot 'requirements.txt'
+if ($Mode -eq 'Lite') {
+    $reqFile = Join-Path $PSScriptRoot 'build\requirements-lite.txt'
+    & "$PSScriptRoot\venv\Scripts\python.exe" "$PSScriptRoot\lite\make_requirements.py" $reqFile
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host '[错误] 生成 Lite 依赖清单失败，请截图上方报错信息反馈。'
+        exit 1
+    }
+}
+Write-Host "[4/8] 安装 $modeLabel 依赖（清华源，首次约需几分钟）..."
+& "$PSScriptRoot\venv\Scripts\python.exe" -m pip install -r $reqFile -i https://pypi.tuna.tsinghua.edu.cn/simple
 if ($LASTEXITCODE -ne 0) {
     Write-Host '[错误] 依赖安装失败，请截图上方完整报错信息反馈。'
     exit 1
@@ -103,7 +132,7 @@ if ($mcpVer -and ([version]$mcpVer -ge [version]'2.0.0')) {
 $missingDeps = & "$PSScriptRoot\venv\Scripts\python.exe" -c "import importlib.util as u; print(','.join(m for m in ['websocket','requests'] if u.find_spec(m) is None))" 2>$null
 if ($missingDeps) {
     Write-Host "       检测到缺失依赖 [$missingDeps]，正在补装..."
-    & "$PSScriptRoot\venv\Scripts\python.exe" -m pip install -r "$PSScriptRoot\requirements.txt" -i https://pypi.tuna.tsinghua.edu.cn/simple
+    & "$PSScriptRoot\venv\Scripts\python.exe" -m pip install -r $reqFile -i https://pypi.tuna.tsinghua.edu.cn/simple
     if ($LASTEXITCODE -ne 0) {
         Write-Host '[错误] 补装依赖失败，请截图上方报错信息反馈。'
         exit 1
@@ -114,7 +143,7 @@ if ($missingDeps) {
 $missingWebview = & "$PSScriptRoot\venv\Scripts\python.exe" -c "import importlib.util as u; print(','.join(m for m in ['webview','pythonnet'] if u.find_spec(m) is None))" 2>$null
 if ($missingWebview) {
     Write-Host "       检测到缺失桌面窗口依赖 [$missingWebview]，正在补装..."
-    & "$PSScriptRoot\venv\Scripts\python.exe" -m pip install -r "$PSScriptRoot\requirements.txt" -i https://pypi.tuna.tsinghua.edu.cn/simple
+    & "$PSScriptRoot\venv\Scripts\python.exe" -m pip install -r $reqFile -i https://pypi.tuna.tsinghua.edu.cn/simple
     if ($LASTEXITCODE -ne 0) {
         Write-Host '[警告] 桌面窗口依赖安装失败，程序将回退到默认浏览器。'
     }
@@ -148,6 +177,9 @@ if ($LASTEXITCODE -ne 0) {
 
 # ---------- 5. 可选：一键安装 pgvector（已安装 / 无 PostgreSQL 则跳过询问）----------
 Write-Host ''
+if ($Mode -eq 'Lite') {
+    Write-Host '[5/8] Lite 版不使用长期记忆 store，跳过 pgvector 检查。'
+} else {
 Write-Host '[5/8] 检查 PostgreSQL 的 pgvector 扩展（程序的长期记忆需要它）...'
 $pgvState = 'unknown'   # installed | missing | nopg | unknown
 try {
@@ -187,6 +219,7 @@ if ($pgvState -eq 'installed') {
         Write-Host '       已跳过。稍后可双击 install_pgvector.bat 单独安装。'
     }
 }
+}
 
 # ---------- 6. 让 PostgreSQL 服务开机自启（无 PostgreSQL 则跳过）----------
 # 部分用户的 PostgreSQL Windows 服务启动类型是「手动」，开机不会自动启动，
@@ -222,8 +255,14 @@ try {
 }
 
 # ---------- 7. 打包 exe ----------
-Write-Host '[7/8] 打包 MultiAgentStudio.exe（首次会自动安装打包工具）...'
-& "$PSScriptRoot\venv\Scripts\python.exe" "$PSScriptRoot\build_exe.py"
+$exeName = if ($Mode -eq 'Lite') { 'MultiAgentStudio-Lite.exe' } else { 'MultiAgentStudio.exe' }
+Write-Host "[7/8] 打包 $exeName（首次会自动安装打包工具）..."
+$buildScript = if ($Mode -eq 'Lite') {
+    Join-Path $PSScriptRoot 'lite\build_lite.py'
+} else {
+    Join-Path $PSScriptRoot 'build_exe.py'
+}
+& "$PSScriptRoot\venv\Scripts\python.exe" $buildScript
 if ($LASTEXITCODE -ne 0) {
     Write-Host '[错误] 打包 exe 失败，请截图上方完整报错信息反馈。'
     exit 1
@@ -232,7 +271,7 @@ if ($LASTEXITCODE -ne 0) {
 # ---------- 8. 创建桌面快捷方式 ----------
 Write-Host '[8/8] 在桌面创建快捷方式...'
 try {
-    $exePath = Join-Path $PSScriptRoot 'MultiAgentStudio.exe'
+    $exePath = Join-Path $PSScriptRoot $exeName
     $desktop = [Environment]::GetFolderPath('Desktop')
     $lnkPath = Join-Path $desktop 'MultiAgent Studio.lnk'
     $shell = New-Object -ComObject WScript.Shell
@@ -245,12 +284,12 @@ try {
     Write-Host "       已创建桌面快捷方式：$lnkPath"
 } catch {
     Write-Host "       [警告] 创建桌面快捷方式失败：$($_.Exception.Message)"
-    Write-Host '             可手动右键 MultiAgentStudio.exe → 发送到 → 桌面快捷方式，并重命名为「MultiAgent Studio」。'
+    Write-Host "             可手动右键 $exeName → 发送到 → 桌面快捷方式，并重命名为「MultiAgent Studio」。"
 }
 
 Write-Host ''
 Write-Host '================================================'
-Write-Host '  安装完成！已生成 MultiAgentStudio.exe。'
+Write-Host "  安装完成！已生成 $exeName（$modeLabel）。"
 Write-Host '  桌面快捷方式「MultiAgent Studio」已创建。'
 Write-Host '  现在双击它即可启动。'
 Write-Host '================================================'
