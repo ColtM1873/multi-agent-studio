@@ -276,6 +276,7 @@ html[data-style-danger="solid"] .card-btn-danger:hover { filter: brightness(.92)
 }
 #dateInjectBtn.on .date-dot { background: #22c55e; }
 #timeInjectBtn.on .date-dot { background: #22c55e; }
+#codeInputModeBtn.on .date-dot { background: #22c55e; }
 
 /* ── 浏览器接管 ─────────────────────────── */
 /* 四个浏览器开关按钮成组放在右侧按钮列顶部（显示/隐藏由 JS 控制） */

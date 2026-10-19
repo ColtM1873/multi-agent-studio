@@ -196,6 +196,10 @@ const I18N_EN = {
   "开启后，聊天输入框右侧会出现「注入当前时间」按钮；开启该按钮后，发送消息时会在用户消息前面拼接当前时间。": "When enabled, an \"Inject current time\" button appears next to the chat input. When that button is on, the current time is prepended to your message when sending.",
   "注入当前时间": "Inject current time",
   "开启后，发送消息时会在用户消息前面拼接当前时间。": "When enabled, the current time is prepended to your message when sending.",
+  "显示「代码输入模式」按钮": "Show the \"Code input mode\" button",
+  "开启后，聊天输入框右侧会出现「代码输入模式」按钮；开启该按钮后，在输入框内按 Tab 会插入 4 个空格（而不是切换焦点）。": "When enabled, a \"Code input mode\" button appears next to the chat input. When that button is on, pressing Tab inside the input inserts 4 spaces instead of moving focus.",
+  "代码输入模式": "Code input mode",
+  "开启后，在输入框内按 Tab 会插入 4 个空格，而不是把焦点切换到下一个按钮。": "When enabled, pressing Tab inside the input inserts 4 spaces instead of moving focus to the next button.",
   "发送框设置": "Message input settings",
   "用于集中管理聊天输入框相关的显示与注入开关。": "Manage display and injection switches related to the chat input box.",
   "开启常用prompt注入功能": "Enable common-prompt injection",
@@ -2633,6 +2637,10 @@ async function openInputBoxSettings() {
         <label class="toggle"><input type="checkbox" id="set_time_inject" ${s.show_time_inject_button !== false ? "checked" : ""}><span class="track"></span></label>
       </div>
       <div class="switch-row">
+        <span class="sw-label">${t("显示「代码输入模式」按钮")} <i class="info-icon">!<span class="tip">${t("开启后，聊天输入框右侧会出现「代码输入模式」按钮；开启该按钮后，在输入框内按 Tab 会插入 4 个空格（而不是切换焦点）。")}</span></i></span>
+        <label class="toggle"><input type="checkbox" id="set_code_input" ${s.show_code_input_button !== false ? "checked" : ""}><span class="track"></span></label>
+      </div>
+      <div class="switch-row">
         <span class="sw-label">${t("开启常用prompt注入功能")} <i class="info-icon">!<span class="tip">${t("开启后，会话页会出现「注入常用prompt」「编辑会话常用prompt」按钮，主界面会出现「编辑全局常用prompt」按钮；关闭后这三个按钮都不再显示，但已保存的全局常用 prompt 库与每个会话的设置都会一直保留。")}</span></i></span>
         <label class="toggle"><input type="checkbox" id="set_common_prompt" ${s.common_prompt_enabled !== false ? "checked" : ""}><span class="track"></span></label>
       </div>
@@ -2649,6 +2657,7 @@ async function openInputBoxSettings() {
         ...s,
         show_date_inject_button: mask.querySelector("#set_date_inject").checked,
         show_time_inject_button: mask.querySelector("#set_time_inject").checked,
+        show_code_input_button: mask.querySelector("#set_code_input").checked,
         common_prompt_enabled: mask.querySelector("#set_common_prompt").checked,
       });
       mask.remove();
@@ -5067,6 +5076,7 @@ async function renderChatView() {
               <button class="btn small" id="timeInjectBtn" style="display:none;" title="${t("开启后，发送消息时会在用户消息前面拼接当前时间。")}"><span class="date-dot"></span>${t("注入当前时间")}</button>
               <button class="btn small" id="dateInjectBtn" style="display:none;" title="${t("开启后，发送消息时会在用户消息前面拼接当前日期。")}"><span class="date-dot"></span>${t("注入当前日期")}</button>
               <button class="btn small" id="commonPromptInjectBtn" style="display:none;"><span class="date-dot"></span>${t("注入常用prompt")}</button>
+              <button class="btn small" id="codeInputModeBtn" style="display:none;" title="${t("开启后，在输入框内按 Tab 会插入 4 个空格，而不是把焦点切换到下一个按钮。")}"><span class="date-dot"></span>${t("代码输入模式")}</button>
             </div>
             <button class="btn small primary" id="sendBtn">${t("发送")}</button>
           </div>
@@ -5239,6 +5249,23 @@ async function renderChatView() {
     };
   }
   refreshTimeInjectUI();
+
+  const codeInputAvailable = !(settings && settings.show_code_input_button === false);
+  let codeInputOn = localStorage.getItem("code-input-mode-on") === "1";
+  function refreshCodeInputUI() {
+    const btn = $("#codeInputModeBtn");
+    if (btn) btn.classList.toggle("on", codeInputOn);
+  }
+  const codeInputBtn = $("#codeInputModeBtn");
+  if (codeInputBtn) {
+    codeInputBtn.style.display = codeInputAvailable ? "" : "none";
+    codeInputBtn.onclick = () => {
+      codeInputOn = !codeInputOn;
+      localStorage.setItem("code-input-mode-on", codeInputOn ? "1" : "0");
+      refreshCodeInputUI();
+    };
+  }
+  refreshCodeInputUI();
 
   /* ============ 注入常用 prompt（每个会话一条，内容落盘在后端） ============ */
   // 与「注入当前日期」同款显示方式：开启后，在日期提示行的下一行显示本会话的常用 prompt
@@ -6912,6 +6939,15 @@ async function renderChatView() {
 
   sendBtn.onclick = send;
   input.onkeydown = e => {
+    if (e.key === "Tab") {
+      if (!(codeInputAvailable && codeInputOn)) return;
+      e.preventDefault();
+      const start = input.selectionStart, end = input.selectionEnd;
+      input.value = input.value.slice(0, start) + "    " + input.value.slice(end);
+      input.selectionStart = input.selectionEnd = start + 4;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      return;
+    }
     if (e.key !== "Enter") return;
     const combo = e.ctrlKey ? "ctrl_enter" : (e.shiftKey ? "shift_enter" : "enter");
     const sendKey = (settingsCache && settingsCache.send_key) || "enter";
