@@ -1,5 +1,9 @@
 # cmd.exe misparses LF-only batch files (setup.bat exits immediately when
-# downloaded from the GitHub source ZIP). Keep Windows scripts CRLF in the
-# repository archive and on checkout.
-*.bat text eol=crlf
-*.cmd text eol=crlf
+# downloaded from a source ZIP). Do not rely on archive-time attribute
+# conversion: attributes never rewrite files already extracted to disk, and
+# an archive generated before the attributes were committed keeps the old LF
+# blobs. Store CRLF in the blob itself instead. `-text` disables all EOL
+# conversion, so checkout, clone, ZIP and tarball downloads all get the exact
+# CRLF bytes committed here. Keep these files CRLF when editing them.
+*.bat -text
+*.cmd -text
