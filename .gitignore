@@ -52,3 +52,6 @@ INNER_DOCS_GUIDE.md
 /webview_profile/
 
 opencode.json
+
+# setup.ps1 提权安装期间用于把桌面快捷方式交回原登录用户创建的临时标记
+/.setup_shortcut_pending

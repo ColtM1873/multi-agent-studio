@@ -1,9 +1,6 @@
-# cmd.exe misparses LF-only batch files (setup.bat exits immediately when
-# downloaded from a source ZIP). Do not rely on archive-time attribute
-# conversion: attributes never rewrite files already extracted to disk, and
-# an archive generated before the attributes were committed keeps the old LF
-# blobs. Store CRLF in the blob itself instead. `-text` disables all EOL
-# conversion, so checkout, clone, ZIP and tarball downloads all get the exact
-# CRLF bytes committed here. Keep these files CRLF when editing them.
+# CRLF is necessary but NOT sufficient: cmd.exe also misparses batch files that
+# contain multibyte UTF-8 characters (its parser drifts and runs fragments of
+# commands). Batch files must be ASCII-only; all Chinese UI lives in .ps1 files.
+# Keep these files CRLF and ASCII-only when editing them.
 *.bat -text
 *.cmd -text

@@ -1,18 +1,64 @@
 ﻿# Multi-Agent Studio 一键安装脚本（由 setup.bat 调用）
 
 param(
-    [string]$Mode = ''
+    [string]$Mode = '',
+    [string]$OriginalUser = '',
+    [string]$OriginalSid = ''
 )
 
 $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
 
-if (-not $Mode) {
+# ---------- 桌面快捷方式辅助 ----------
+# 提权前会记录原登录用户（见下方「记录提权前的登录用户」），提权后据此决定：
+#   同一账户 → 直接创建（管理员账户的桌面就是原用户桌面）；
+#   不同账户 → 提权后的子进程只留交接标记，退出提权后由原用户父进程按真正的用户桌面创建。
+$pendingShortcutMarker = Join-Path $PSScriptRoot '.setup_shortcut_pending'
+if (Test-Path -LiteralPath $pendingShortcutMarker) {
+    Remove-Item -LiteralPath $pendingShortcutMarker -Force -ErrorAction SilentlyContinue
+}
+
+function New-StudioDesktopShortcut {
+    param([string]$ExeName)
+    $exePath = Join-Path $PSScriptRoot $ExeName
+    if (-not (Test-Path -LiteralPath $exePath)) {
+        throw "未找到 $ExeName（打包可能未完成）"
+    }
+    $desktop = [Environment]::GetFolderPath('Desktop')
+    if ([string]::IsNullOrWhiteSpace($desktop)) {
+        throw '当前用户没有可用的桌面目录'
+    }
+    $lnkPath = Join-Path $desktop 'MultiAgent Studio.lnk'
+    $shell = New-Object -ComObject WScript.Shell
+    $shortcut = $shell.CreateShortcut($lnkPath)
+    $shortcut.TargetPath = $exePath
+    $shortcut.WorkingDirectory = $PSScriptRoot
+    $shortcut.IconLocation = "$exePath,0"
+    $shortcut.Description = 'Multi-Agent Studio'
+    $shortcut.Save()
+    return $lnkPath
+}
+
+$interactive = [string]::IsNullOrWhiteSpace($Mode)
+if ($interactive) {
     Write-Host ''
-    Write-Host '请选择安装版本：'
-    Write-Host '  [1] 普通版：约 9 GB，包含本地 embedding 模型，支持长期记忆。'
-    Write-Host '  [2] Lite 轻量版：占用更少，不含长期记忆与 embedding 模型。'
-    $modeAns = Read-Host '输入 1 安装普通版，输入 2 安装 Lite 版 [1/2]'
+    Write-Host '================================================='
+    Write-Host '  Multi-Agent Studio 安装版本选择'
+    Write-Host '================================================='
+    Write-Host ''
+    Write-Host '  [1] 普通版（推荐，功能完整）'
+    Write-Host '      约需 9 GB 存储空间：包含本地 embedding 模型与运行库，'
+    Write-Host '      支持长期记忆、记忆读写、记忆吸附与记忆库管理。'
+    Write-Host ''
+    Write-Host '  [2] Lite 轻量版'
+    Write-Host '      占用更少：无需下载 embedding 模型，运行库也更小。'
+    Write-Host '      不含长期记忆、记忆读写、记忆吸附与记忆库管理；'
+    Write-Host '      其余功能与普通版一致。'
+    Write-Host ''
+    Write-Host '  请按数字键 1 或 2 选择版本（只接受 1 或 2），选好后按回车确认。'
+    do {
+        $modeAns = Read-Host '  1=普通版，2=Lite 轻量版'
+    } until ($modeAns -match '^\s*[12]\s*$')
     if ($modeAns -match '^\s*2\s*$') { $Mode = 'Lite' } else { $Mode = 'Full' }
 }
 
@@ -22,24 +68,135 @@ if ($Mode -notin @('Full', 'Lite')) {
 }
 
 $modeLabel = if ($Mode -eq 'Lite') { 'Lite 轻量版' } else { '普通版' }
+$exeName = if ($Mode -eq 'Lite') { 'MultiAgentStudio-Lite.exe' } else { 'MultiAgentStudio.exe' }
+
+if ($interactive) {
+    Write-Host ''
+    Write-Host "  已选择：$modeLabel"
+    do {
+        $confirmAns = Read-Host '  请按回车键开始安装（直接关闭窗口可取消）'
+        if ($confirmAns) {
+            Write-Host ''
+            Write-Host '  [提示] 请直接按回车键继续，不要输入其它内容。'
+        }
+    } while ($confirmAns)
+}
+
+# ---------- 记录提权前的登录用户 ----------
+# 提权后 Windows 的「桌面」会解析成管理员账户的桌面：先记下当前登录用户的 SID，
+# 提权后的子进程拿它和自身 SID 比对，决定快捷方式该直接建还是退回原用户进程再建。
+$origIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
+$origUserName = $origIdentity.Name
+$origUserSid = $origIdentity.User.Value
 
 # ---------- 检测管理员 ----------
-$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+$isAdmin = ([Security.Principal.WindowsPrincipal]$origIdentity).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 
 if (-not $isAdmin) {
     Add-Type -AssemblyName PresentationFramework
     [System.Windows.MessageBox]::Show(
-        "本安装需要启用 Windows「长路径支持」，需要管理员权限。`n`n点击「确定」将尝试以管理员身份重新启动。`n若未弹出「用户账户控制」窗口，请关闭本窗口后，右键 setup.bat 选择「以管理员身份运行」。",
+        "本安装需要启用 Windows「长路径支持」，需要管理员权限。`n`n点击「确定」将尝试以管理员身份重新启动。`n安装结束后，桌面快捷方式会自动建回你当前登录用户的桌面。`n若未弹出「用户账户控制」窗口，请关闭本窗口后，右键 setup.bat 选择「以管理员身份运行」。",
         'Multi-Agent Studio 安装', 'OK', 'Information') | Out-Null
+
+    # 把提权前记录的用户信息一并传给提权后的子进程（-Mode 也必须带，否则 UAC 后会丢版本选择）
+    $elevArgList = @(
+        '-NoProfile'
+        '-ExecutionPolicy Bypass'
+        '-File'
+        "`"$PSCommandPath`""
+        '-Mode'
+        $Mode
+        '-OriginalUser'
+        "`"$origUserName`""
+        '-OriginalSid'
+        $origUserSid
+    ) -join ' '
     try {
-        Start-Process -FilePath 'powershell.exe' -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$PSCommandPath`" -Mode $Mode" -Verb RunAs
+        $elevatedProc = Start-Process -FilePath 'powershell.exe' -ArgumentList $elevArgList -Verb RunAs -PassThru
     } catch {
         Add-Type -AssemblyName PresentationFramework
         [System.Windows.MessageBox]::Show(
-            '自动提权失败，请右键 setup.bat 选择「以管理员身份运行」。',
+            '自动提权失败或已取消，请右键 setup.bat 选择「以管理员身份运行」。',
             'Multi-Agent Studio 安装', 'OK', 'Warning') | Out-Null
+        exit 1
     }
-    exit
+    if (-not $elevatedProc) {
+        Write-Host '[错误] 未能获取管理员安装进程，请重试。'
+        exit 1
+    }
+
+    Write-Host ''
+    Write-Host '已请求管理员权限，安装将在新打开的管理员窗口中继续。'
+    Write-Host '本窗口会等待安装结束；管理员安装窗口关闭后，再回到当前登录用户的桌面创建快捷方式。'
+
+    # 等待提权后的安装进程结束（= 退出提权），之后本进程仍在原用户上下文中
+    $childExited = $false
+    $childExitCode = $null
+    try {
+        $elevatedProc.WaitForExit()
+        $childExited = $true
+        try { $childExitCode = $elevatedProc.ExitCode } catch { }
+    } catch {
+        # 少数环境下非提权进程无法等待提权进程，退化为轮询进程是否存在
+    }
+    if (-not $childExited) {
+        while (Get-Process -Id $elevatedProc.Id -ErrorAction SilentlyContinue) {
+            Start-Sleep -Milliseconds 500
+        }
+    }
+
+    if ($null -ne $childExitCode -and $childExitCode -ne 0) {
+        Write-Host ''
+        Write-Host "       [警告] 管理员安装进程未成功结束（退出码 $childExitCode），安装可能未完成。"
+        Write-Host '             请查看管理员安装窗口中的报错信息后重试。'
+        exit 1
+    }
+
+    if (Test-Path -LiteralPath $pendingShortcutMarker) {
+        # 提权账户与原登录用户不同：现在已退出提权，由原用户进程在真正的桌面创建
+        try {
+            $lnkPath = New-StudioDesktopShortcut -ExeName $exeName
+            Remove-Item -LiteralPath $pendingShortcutMarker -Force -ErrorAction SilentlyContinue
+            Write-Host ''
+            Write-Host '================================================'
+            Write-Host '  安装完成！'
+            Write-Host "  已在当前登录用户的桌面创建快捷方式：$lnkPath"
+            Write-Host '================================================'
+            exit 0
+        } catch {
+            Write-Host ''
+            Write-Host "       [警告] 创建桌面快捷方式失败：$($_.Exception.Message)"
+            Write-Host "             可手动右键 $exeName → 发送到 → 桌面快捷方式，并重命名为「MultiAgent Studio」。"
+            exit 1
+        }
+    }
+
+    if (Test-Path -LiteralPath (Join-Path $PSScriptRoot $exeName)) {
+        # 同一账户提权：管理员安装进程通常已直接创建好；若没建成（例如 COM 失败），这里补建
+        $desktop = [Environment]::GetFolderPath('Desktop')
+        $lnkPath = if ($desktop) { Join-Path $desktop 'MultiAgent Studio.lnk' } else { '' }
+        if (-not $lnkPath -or -not (Test-Path -LiteralPath $lnkPath)) {
+            try {
+                $lnkPath = New-StudioDesktopShortcut -ExeName $exeName
+            } catch {
+                Write-Host ''
+                Write-Host "       [警告] 创建桌面快捷方式失败：$($_.Exception.Message)"
+                Write-Host "             可手动右键 $exeName → 发送到 → 桌面快捷方式，并重命名为「MultiAgent Studio」。"
+                exit 1
+            }
+        }
+        Write-Host ''
+        Write-Host '================================================'
+        Write-Host '  安装完成！'
+        Write-Host "  桌面快捷方式已就绪：$lnkPath"
+        Write-Host '================================================'
+        exit 0
+    }
+
+    Write-Host ''
+    Write-Host "       [警告] 未找到 $exeName，安装可能未完成。"
+    Write-Host '             请查看管理员安装窗口中的报错信息后重试。'
+    exit 1
 }
 
 Write-Host ''
@@ -255,7 +412,6 @@ try {
 }
 
 # ---------- 7. 打包 exe ----------
-$exeName = if ($Mode -eq 'Lite') { 'MultiAgentStudio-Lite.exe' } else { 'MultiAgentStudio.exe' }
 Write-Host "[7/8] 打包 $exeName（首次会自动安装打包工具）..."
 $buildScript = if ($Mode -eq 'Lite') {
     Join-Path $PSScriptRoot 'lite\build_lite.py'
@@ -269,28 +425,50 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 # ---------- 8. 创建桌面快捷方式 ----------
-Write-Host '[8/8] 在桌面创建快捷方式...'
-try {
-    $exePath = Join-Path $PSScriptRoot $exeName
-    $desktop = [Environment]::GetFolderPath('Desktop')
-    $lnkPath = Join-Path $desktop 'MultiAgent Studio.lnk'
-    $shell = New-Object -ComObject WScript.Shell
-    $shortcut = $shell.CreateShortcut($lnkPath)
-    $shortcut.TargetPath = $exePath
-    $shortcut.WorkingDirectory = $PSScriptRoot
-    $shortcut.IconLocation = "$exePath,0"
-    $shortcut.Description = 'Multi-Agent Studio'
-    $shortcut.Save()
-    Write-Host "       已创建桌面快捷方式：$lnkPath"
-} catch {
-    Write-Host "       [警告] 创建桌面快捷方式失败：$($_.Exception.Message)"
-    Write-Host "             可手动右键 $exeName → 发送到 → 桌面快捷方式，并重命名为「MultiAgent Studio」。"
+# 关键：如果提权后的账户与提权前记录的用户不同（例如自己不是管理员，UAC 里输入了
+# 另一个管理员账户），直接创建会落到管理员账户的桌面。此时只写交接标记，
+# 等本安装进程退出（退出提权）后，由仍在原用户上下文中的父进程创建。
+Write-Host '[8/8] 处理桌面快捷方式...'
+$runIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
+$runUserName = $runIdentity.Name
+$runUserSid = $runIdentity.User.Value
+$sameUser = [string]::IsNullOrWhiteSpace($OriginalSid) -or ($OriginalSid -eq $runUserSid)
+$shortcutCreated = $false
+
+if ($sameUser) {
+    try {
+        $lnkPath = New-StudioDesktopShortcut -ExeName $exeName
+        $shortcutCreated = $true
+        Write-Host "       已创建桌面快捷方式：$lnkPath"
+    } catch {
+        Write-Host "       [警告] 创建桌面快捷方式失败：$($_.Exception.Message)"
+        Write-Host "             可手动右键 $exeName → 发送到 → 桌面快捷方式，并重命名为「MultiAgent Studio」。"
+    }
+} else {
+    Write-Host '       提权后的账户与提权前登录用户不同：'
+    Write-Host "         提权前登录用户：$OriginalUser"
+    Write-Host "         提权后管理员账户：$runUserName"
+    Write-Host '       已记录交接标记；本安装窗口退出后，会回到原登录用户桌面创建快捷方式。'
+    try {
+        Set-Content -LiteralPath $pendingShortcutMarker -Value $exeName -Encoding ASCII
+    } catch {
+        Write-Host "       [警告] 写入快捷方式交接标记失败：$($_.Exception.Message)"
+        Write-Host "             请安装结束后手动右键 $exeName → 发送到 → 桌面快捷方式。"
+    }
 }
 
 Write-Host ''
 Write-Host '================================================'
 Write-Host "  安装完成！已生成 $exeName（$modeLabel）。"
-Write-Host '  桌面快捷方式「MultiAgent Studio」已创建。'
-Write-Host '  现在双击它即可启动。'
+if ($sameUser) {
+    if ($shortcutCreated) {
+        Write-Host '  桌面快捷方式「MultiAgent Studio」已创建。'
+        Write-Host '  现在双击它即可启动。'
+    } else {
+        Write-Host '  桌面快捷方式创建失败，请按上方提示手动创建。'
+    }
+} else {
+    Write-Host '  桌面快捷方式将在本安装窗口关闭后，由原登录用户窗口创建。'
+}
 Write-Host '================================================'
 Write-Host ''
