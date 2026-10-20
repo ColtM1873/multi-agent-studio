@@ -55,3 +55,6 @@ opencode.json
 
 # setup.ps1 提权安装期间用于把桌面快捷方式交回原登录用户创建的临时标记
 /.setup_shortcut_pending
+
+# DSH 使用经验备忘（本机维护参考，本地保留，不入库）
+/DSH踩坑经验.md
