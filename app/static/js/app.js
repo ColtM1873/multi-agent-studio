@@ -528,6 +528,13 @@ const I18N_EN = {
   "md 输出路径": "MD output path",
   "开启后，浏览历史时每条助手回复下方会出现「导出 md 文件」按钮，可将该回复保存为 Markdown 文件。": "When enabled, an 'Export MD' button appears below each assistant reply in history to save it as a Markdown file.",
   "生成 md 文件的输出目录（绝对路径）。": "Output directory (absolute path) where generated MD files are saved.",
+  "显示转换本地md按钮": "Show the \"Convert local md to HTML\" button",
+  "开启后，会话页「编辑会话常用prompt」左侧会出现「将本地md转换为HTML」按钮：点它可从本机选择一个 .md 文件，用上面的「HTML 转换配置表」把它转成可打印 HTML，并保存在该 md 文件同目录下（同名 .html；已存在时另存为带时间戳的文件）。": "When enabled, a \"Convert local md to HTML\" button appears to the left of \"Edit session common prompt\" in the chat view. Click it to pick a local .md file; it is converted into a printable HTML with the \"HTML export config\" above and saved next to the md file (same name .html; a timestamped file is created instead if it already exists).",
+  "将本地md转换为HTML": "Convert local md to HTML",
+  "选择一个本地 .md 文件，用系统设置里的「HTML 转换配置表」把它转成可打印 HTML，保存在该 md 文件所在目录（同名 .html；已存在时另存为带时间戳的文件）。": "Pick a local .md file and convert it into a printable HTML with the \"HTML export config\" from system settings. The HTML is saved next to the md file (same name .html; a timestamped file is created instead if it already exists).",
+  "选择要转换为 HTML 的 Markdown 文件": "Select a Markdown file to convert to HTML",
+  "请选择 Markdown 文件…": "Select a Markdown file…",
+  "已取消": "Cancelled",
   "调整导出 HTML 的纸张、预览与配色。": "Adjust page, preview and color settings of the exported HTML.",
   "纸张": "Page",
   "纸张尺寸": "Page size",
@@ -1654,6 +1661,26 @@ async function exportMd(markdown) {
   } catch (e) { toast(e.message, true); }
 }
 
+// 「将本地md转换为HTML」：后端弹 Windows 文件选择窗口，选中后把该 md 转成可打印 HTML，
+// 写在其同目录下（同名 .html；已存在时另存为带时间戳的文件，不覆盖）。配置复用
+// 系统设置里的「HTML 转换配置表」。对话框是阻塞的，等待期间按钮置灰并给出提示。
+async function convertLocalMd(btn) {
+  const original = btn ? btn.textContent : "";
+  if (btn) { btn.disabled = true; btn.textContent = `⏳ ${t("请选择 Markdown 文件…")}`; }
+  try {
+    const r = await api("/api/convert-local-md", {
+      method: "POST",
+      body: JSON.stringify({ title: t("选择要转换为 HTML 的 Markdown 文件") }),
+    });
+    if (r && r.canceled) { toast(t("已取消")); return; }
+    toast(`${t("已生成 HTML")}：${r.path}`);
+  } catch (e) {
+    toast(e.message, true);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = original; }
+  }
+}
+
 function injectExportButtons(rootEl) {
   if (!settingsCache) return;
   const showHtml = settingsCache.export_html;
@@ -2508,6 +2535,10 @@ async function openSettings() {
             <input type="text" id="set_export_html_path" value="${esc(s.export_html_path || "")}" placeholder="例如 C:\\Agent_WorkPlace\\html">
           </div>
         </div>
+        <div class="switch-row">
+          <span class="sw-label">📄 ${t("显示转换本地md按钮")} <i class="info-icon">!<span class="tip">${t("开启后，会话页「编辑会话常用prompt」左侧会出现「将本地md转换为HTML」按钮：点它可从本机选择一个 .md 文件，用上面的「HTML 转换配置表」把它转成可打印 HTML，并保存在该 md 文件同目录下（同名 .html；已存在时另存为带时间戳的文件）。")}</span></i></span>
+          <label class="toggle"><input type="checkbox" id="set_local_md_convert" ${s.show_local_md_convert_button !== false ? "checked" : ""}><span class="track"></span></label>
+        </div>
       </div>
       <div class="settings-group">
         <div class="switch-row">
@@ -2544,7 +2575,7 @@ async function openSettings() {
         <button class="btn small" id="setAdvanced">${t("进阶设置")}</button>
         <button class="btn small" id="setColors">${t("字体颜色设置")}</button>
         <button class="btn small" id="setCard">${t("Multi-Agent配置卡片 设置")}</button>
-        <button class="btn small" id="setHtmlConfig" style="${s.export_html ? "" : "display:none;"}">${t("HTML 转换配置表")}</button>
+        <button class="btn small" id="setHtmlConfig" style="${(s.export_html || s.show_local_md_convert_button !== false) ? "" : "display:none;"}">${t("HTML 转换配置表")}</button>
         <button class="btn small" id="setToolResultDisplay">${t("工具调用结果显示设置")}</button>
       </div>
       <div class="modal-actions" style="margin-top:10px;">
@@ -2556,11 +2587,18 @@ async function openSettings() {
   document.body.appendChild(mask);
   mask.querySelector("#set_mem").addEventListener("change", e => { mask.querySelector("#set_memnum").disabled = !e.target.checked; });
   mask.querySelector("#set_sound").addEventListener("change", e => playSound(e.target.value));
+  // 「HTML 转换配置表」同时服务「转换 HTML」（历史消息按钮）与「将本地md转换为HTML」，任一开启即可见
+  const syncHtmlConfigBtn = () => {
+    const on = mask.querySelector("#set_export_html").checked
+      || mask.querySelector("#set_local_md_convert").checked;
+    mask.querySelector("#setHtmlConfig").style.display = on ? "" : "none";
+  };
   mask.querySelector("#set_export_html").addEventListener("change", e => {
     const on = e.target.checked;
     mask.querySelector("#exportHtmlFields").style.display = on ? "" : "none";
-    mask.querySelector("#setHtmlConfig").style.display = on ? "" : "none";
+    syncHtmlConfigBtn();
   });
+  mask.querySelector("#set_local_md_convert").addEventListener("change", syncHtmlConfigBtn);
   mask.querySelector("#set_export_md").addEventListener("change", e => {
     mask.querySelector("#exportMdFields").style.display = e.target.checked ? "" : "none";
   });
@@ -2603,6 +2641,7 @@ async function openSettings() {
         aggressive_math_detect: mask.querySelector("#set_aggressive_math").checked,
         export_html: mask.querySelector("#set_export_html").checked,
         export_html_path: mask.querySelector("#set_export_html_path").value,
+        show_local_md_convert_button: mask.querySelector("#set_local_md_convert").checked,
         export_md: mask.querySelector("#set_export_md").checked,
         export_md_path: mask.querySelector("#set_export_md_path").value,
         edit_mode_enabled: mask.querySelector("#set_edit_enabled").checked,
@@ -5033,6 +5072,7 @@ async function renderChatView() {
       <div class="chat-head-right">
       <span class="status-indicator" id="statusInd"></span>
       <span class="edit-mode-badge" id="editModeBadge" style="display:none;">✏️ ${t("编辑模式")}</span>
+      <button class="btn small" id="localMdConvertBtn" style="display:none;" title="${t("选择一个本地 .md 文件，用系统设置里的「HTML 转换配置表」把它转成可打印 HTML，保存在该 md 文件所在目录（同名 .html；已存在时另存为带时间戳的文件）。")}">🖨 ${t("将本地md转换为HTML")}</button>
       <button class="btn small" id="editSessionPromptBtn" style="display:none;">📝 ${t("编辑会话常用prompt")}</button>
       <button class="btn small" id="memoryStoreBtn" title="${t("查看/编辑记忆库")}">🧠 ${t("查看/编辑记忆库")}</button>
       <button class="btn small" id="delAllMsgBtn" title="${t("删除全部历史消息")}">🗑️ ${t("删除全部历史消息")}</button>
@@ -5169,6 +5209,15 @@ async function renderChatView() {
   applyReasoningZoom();
   let settings = null;
   try { settings = await getSettings(); } catch (e) {}
+  // 「将本地md转换为HTML」按钮（在「编辑会话常用prompt」左侧）是否显示由系统设置决定；
+  // 这里尽早显隐，避免等历史加载完才「跳出来」。
+  {
+    const localMdBtnEl = $("#localMdConvertBtn");
+    if (localMdBtnEl) {
+      const showLocalMd = !(settings && settings.show_local_md_convert_button === false);
+      localMdBtnEl.style.display = showLocalMd ? "" : "none";
+    }
+  }
   if (settings) {
     const keyLabel = k => ({ enter: "Enter", shift_enter: "Shift+Enter", ctrl_enter: "Ctrl+Enter" })[k] || k;
     const hint = $("#inputHint");
@@ -6703,6 +6752,9 @@ async function renderChatView() {
       refreshCommonPromptUI();
     });
   }
+  // 「将本地md转换为HTML」按钮（位于「编辑会话常用prompt」左侧）；显隐已在上面按设置处理。
+  const localMdBtn = $("#localMdConvertBtn");
+  if (localMdBtn) localMdBtn.onclick = () => convertLocalMd(localMdBtn);
   const delAllMsgBtn = $("#delAllMsgBtn");
   if (delAllMsgBtn) delAllMsgBtn.onclick = () => triggerCleanAll();
 

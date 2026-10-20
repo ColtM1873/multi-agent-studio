@@ -58,6 +58,10 @@ class Settings(BaseModel):
     export_html: bool = True
     export_html_path: str = ""
     export_html_config: dict = {}
+    # 会话页是否显示「将本地md转换为HTML」按钮（用系统文件选择窗口挑一个本地 md，
+    # 套用上面的 export_html_config 转成 HTML，写在该 md 文件同目录下）。
+    # 纯前端显示开关，不参与图编译，无需 invalidate_all。默认开启。
+    show_local_md_convert_button: bool = True
     # MD 导出：默认开启；输出路径为空时需先在设置里填写
     export_md: bool = True
     export_md_path: str = ""

@@ -37,6 +37,7 @@ from app.api import (
     downloads,
     drafts,
     export_html,
+    local_md,
     memories,
     settings,
     snapshots,
@@ -223,6 +224,7 @@ app.include_router(chat_ws.router)
 app.include_router(settings.router)
 app.include_router(downloads.router)
 app.include_router(export_html.router)
+app.include_router(local_md.router)
 app.include_router(drafts.router)
 app.include_router(common_prompts.router)
 app.include_router(ui_prefs.router)
