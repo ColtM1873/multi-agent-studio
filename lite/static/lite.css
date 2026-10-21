@@ -1,5 +1,6 @@
 #dlBanner,
 #memoryStoreBtn,
-.mem-attach-btn {
+.mem-attach-btn,
+#f_store_db_hint {
   display: none !important;
 }

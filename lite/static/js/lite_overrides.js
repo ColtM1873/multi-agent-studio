@@ -35,6 +35,7 @@
       hideField("f_ns");
       hideField("f_memory_tools");
       hideField("f_emb_use_global");
+      hideField("f_store_db_hint");
       ["embManualBlock", "embGlobalBlock"].forEach((id) => {
         const el = document.getElementById(id);
         if (el) el.style.display = "none";

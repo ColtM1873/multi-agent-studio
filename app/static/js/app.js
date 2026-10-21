@@ -4302,7 +4302,7 @@ function buildForm(cfg, canEditSubs) {
       <div class="field"><label>${t("名称")} name ${info("显示名称，创建后不可更改（与历史会话绑定）。")}</label><input id="f_name" value="${esc(cfg.name)}" ${canEditSubs ? "" : "readonly"}${ph("name")}><span class="lock-hint">${canEditSubs ? "&nbsp;" : t("创建后不可更改")}</span></div>
       <div class="field"><label>${t("checkpoint 数据库（会话历史绑定）")} ${info("会话历史归属的库名，即连接串里最后一个 / 后面的那一段（如 postgresql://…:5432/这里）。保存时如果该库不存在，程序会自动创建；创建后不可更改。")}</label><input id="f_cpdb" value="${esc(pg.checkpoint_database)}" ${canEditSubs ? "" : "readonly"}${ph("checkpoint_database")}><span class="lock-hint">${canEditSubs ? t("保存时自动创建") : t("创建后不可更改")}</span></div>
       </div>
-      <div class="field full"><div class="conn-example">🧠 ${t("长期记忆统一存放在全局 store 数据库：")}<code>${esc(gStoreDb)}</code>${t("。保存时会自动建库；如需修改库名，请到主界面设置 →「全局配置设置」。")}</div></div>
+      <div class="field full" id="f_store_db_hint"><div class="conn-example">🧠 ${t("长期记忆统一存放在全局 store 数据库：")}<code>${esc(gStoreDb)}</code>${t("。保存时会自动建库；如需修改库名，请到主界面设置 →「全局配置设置」。")}</div></div>
       ${globalSet ? `
       <div class="field full">
         <div class="global-toggle-row">
