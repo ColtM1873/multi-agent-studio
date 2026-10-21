@@ -12,6 +12,9 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 SETTINGS_FILE_NAME = "settings.json"
+# 长期记忆统一存放的 store 数据库默认名称。所有 multi-agent 共用这一份长期记忆，
+# 不再为每个 multi-agent 单独指定 store 数据库（是否共用由 store_namespace 决定）。
+DEFAULT_STORE_DATABASE = "Long_Term_Memory"
 
 
 class SensitiveEntry(BaseModel):
@@ -127,6 +130,10 @@ class Settings(BaseModel):
     # 是否已经初始化过全局连接（首次启动从已有 agent 提取，或用户在设置里保存/清空过）。
     # 用它区分「从未配置」与「用户主动清空」，避免清空后被再次自动提取。
     global_postgres_configured: bool = False
+    # 全局 store 数据库名称：所有 multi-agent 的长期记忆统一存放在这个库里。
+    # 默认 Long_Term_Memory；用户可在主界面「设置 → 全局配置设置」里改名。
+    # 改名的后端行为是直接 ALTER DATABASE ... RENAME（不会新建再迁移）。
+    global_store_database: str = DEFAULT_STORE_DATABASE
     # 全局 embedding 模型设置：与「全局 postgres 连接设置」同构——同样只是配置界面的
     # 「显示捷径」，勾选「使用全局」的 multi-agent 在保存时把全局值写回自己的配置，
     # 运行时后端只读 agent 自己那份。存 model_name/cache_folder/dims/hf_endpoint/
@@ -141,6 +148,11 @@ class Settings(BaseModel):
     global_summary_configured: bool = False
     global_sub_summary: dict = Field(default_factory=dict)
     global_sub_summary_configured: bool = False
+
+    def effective_store_database(self) -> str:
+        """当前生效的 store 数据库名（空值兜底为默认值）。"""
+        name = (self.global_store_database or "").strip()
+        return name or DEFAULT_STORE_DATABASE
 
 
 def settings_path(config_dir: Path | str) -> Path:

@@ -81,14 +81,11 @@ const I18N_EN = {
   "hf-mirror（国内镜像）": "hf-mirror (China mirror)",
   "prefer（有 SSL 就启用，无则明文）": "prefer (SSL if available, plaintext otherwise)",
   "require（必须 SSL，不校验证书）": "require (SSL required, no certificate verification)",
-  "store 数据库": "store database",
-  "store_namespace（逗号分隔）": "store_namespace (comma-separated)",
   "verify-ca（校验 CA 证书）": "verify-ca (verify CA certificate)",
   "verify-full（校验 CA + 主机名）": "verify-full (verify CA + hostname)",
   "DeepSeek 思考模式 + 工具调用时，官方 LangChain 会丢弃历史思考内容、可能偶发 400。勾选后在本项目内运行时回填该内容（不改动官方库）。": "In DeepSeek thinking mode with tool calls, official LangChain drops historical reasoning content, which can cause intermittent 400s. When enabled, this project restores it at runtime (the official library is not modified).",
   "启用 DeepSeek reasoning_content 保留修复": "Enable DeepSeek reasoning_content preservation fix",
   "✅ 回复已完成": "✅ Reply completed",
-  "一栏填库名（与上面填的 checkpoint 库名保持一致）。": "Enter the database name here (keep it consistent with the checkpoint database above).",
   "万": "×10,000",
   "下载 embedding 模型时使用的 HuggingFace 镜像源；国内推荐 hf-mirror。": "HuggingFace mirror used when downloading the embedding model; hf-mirror is recommended in China.",
   "不会删除数据库里的会话历史": "Conversation history in the database will not be deleted",
@@ -103,7 +100,7 @@ const I18N_EN = {
   "云端/企业库请选择 SSL 模式": "For cloud/enterprise databases, choose an SSL mode",
   "仅鼠标（Enter 只换行）": "Mouse only (Enter adds a newline)",
   "会话": "Conversations",
-  "会话历史归属的库名，即连接串里最后一个 / 后面的那一段（如 postgresql://…:5432/这里）。需先在 pgAdmin 建库，创建后不可改。": "Database that holds the conversation history, i.e. the segment after the last / in the connection string (e.g. postgresql://…:5432/this-part). Create it in pgAdmin first. Cannot be changed after creation.",
+  "会话历史归属的库名，即连接串里最后一个 / 后面的那一段（如 postgresql://…:5432/这里）。保存时如果该库不存在，程序会自动创建；创建后不可更改。": "Database that holds the conversation history, i.e. the segment after the last / in the connection string (e.g. postgresql://…:5432/this-part). If it does not exist, the app creates it automatically when saving. Cannot be changed after creation.",
   "例如 C:\\Agent_WorkPlace": "e.g. C:\\Agent_WorkPlace",
   "例如 my-agent": "e.g. my-agent",
   "例如 my_agent_checkpoints": "e.g. my_agent_checkpoints",
@@ -119,7 +116,7 @@ const I18N_EN = {
   "停止": "Stop",
   "共": "Total",
   "创建后不可增删改名": "Sub-agents cannot be added/removed/renamed after creation",
-  "创建后不可改": "Cannot be changed after creation",
+  "创建后不可更改": "Cannot be changed after creation",
   "删除": "Delete",
   "加载Embedding模型中": "Loading embedding model…",
   "加载中…": "Loading…",
@@ -139,25 +136,21 @@ const I18N_EN = {
   "回填": "Restore",
   "丢弃": "Discard",
   "可增删": "Can add/remove",
-  "右键": "Right-click",
   "名称": "Name",
   "向量维度；bge-m3 为 1024，换模型需对应调整。": "Vector dimension; 1024 for bge-m3, adjust if you change models.",
   "否": "No",
   "启用 HTML 报告": "Enable HTML report",
   "吸附记忆条数": "Memories to attach",
   "命令（stdio）": "Command (stdio)",
-  "唯一标识，用作配置文件名 configs/&lt;id&gt;.json，创建后不可改。": "Unique ID, used as the config filename configs/&lt;id&gt;.json. Cannot be changed after creation.",
-  "回到本页，点「保存」。": "Come back here and click 'Save'.",
+  "唯一标识，用作配置文件名 configs/&lt;id&gt;.json，创建后不可更改。": "Unique ID, used as the config filename configs/&lt;id&gt;.json. Cannot be changed after creation.",
   "回复完成提示音": "Reply completion chime",
-  "在": "In the",
   "基本信息": "Basic info",
   "子 agent": "sub-agent",
-  "子 agent 标识，会作为工具名呈现给主 agent，创建后不可改。": "Sub-agent ID, shown to the main agent as a tool name. Cannot be changed after creation.",
+  "子 agent 标识，会作为工具名呈现给主 agent，创建后不可更改。": "Sub-agent ID, shown to the main agent as a tool name. Cannot be changed after creation.",
   "完整连接串示例": "Full connection string example",
   "官方 huggingface.co": "Official huggingface.co",
   "工具结果": "Tool result",
   "工具调用": "Tool call",
-  "左侧展开": "Expand on the left",
   "已保存": "Saved",
   "已关闭 Embedding 模型离线模式：每次打开会联网校验。若已获取模型缓存，建议重新开启以跳过校验。": "Embedding offline mode disabled: it verifies online every time it opens. If you already have the model cached, re-enable it to skip verification.",
   "已创建": "Created",
@@ -168,7 +161,6 @@ const I18N_EN = {
   "开启 ReAct Prompt": "Enable ReAct Prompt",
   "用于长程多工具调用的严肃任务处理场景；日常聊天可关闭以节省 token 并加快响应。": "For serious task scenarios involving long-range, multi-tool calls; disable for everyday chat to save tokens and speed up responses.",
   "恢复默认": "Restore default",
-  "打开": "Open",
   "换行键": "Newline key",
   "换行）": "to break)",
   "描述该子 agent 能力，作为工具描述呈现给主 agent。": "Describes the sub-agent's capability, shown to the main agent as a tool description.",
@@ -186,7 +178,7 @@ const I18N_EN = {
   "无字符串（视数据库设置启用/关闭 SSL）": "No string (SSL enabled/disabled by database settings)",
   "无需提前下载，首次配置会自动下载（需连接 Hugging Face Hub，国内网络可能连不上）。若已离线缓存过，可在下方缓存目录直接使用。": "No need to download in advance; it downloads automatically on first setup (requires connecting to Hugging Face Hub, which may be blocked in China). If already cached, use the cache directory below.",
   "是": "Yes",
-  "显示名称，创建后不可改（与历史会话绑定）。": "Display name, cannot be changed after creation (bound to conversation history).",
+  "显示名称，创建后不可更改（与历史会话绑定）。": "Display name, cannot be changed after creation (bound to conversation history).",
   "显示输入示例（灰色占位字）": "Show input examples (gray placeholders)",
   "显示「注入当前日期」按钮": "Show the \"Inject current date\" button",
   "开启后，聊天输入框右侧会出现「注入当前日期」按钮；开启该按钮后，发送消息时会在用户消息前面拼接当前日期。": "When enabled, an \"Inject current date\" button appears next to the chat input. When that button is on, the current date is prepended to your message when sending.",
@@ -305,7 +297,6 @@ const I18N_EN = {
   "正文字号增大": "Increase body font size",
   "进阶设置": "Advanced settings",
   "全局配置设置": "Global configuration settings",
-  "用于集中管理全局 postgres、embedding 与自动（及主动）总结设置。": "Manage global PostgreSQL, embedding and automatic (& proactive) summary settings.",
   "历史浏览时各板块默认展开 / 折叠": "Default expand/collapse of sections when browsing history",
   "历史浏览时，思考过程板块默认展开还是折叠。": "Whether the reasoning section is expanded or collapsed by default when browsing history.",
   "历史浏览时，工具调用板块默认展开还是折叠。": "Whether the tool call section is expanded or collapsed by default when browsing history.",
@@ -374,7 +365,6 @@ const I18N_EN = {
   "添加 MCP": "Add MCP",
   "添加子 agent": "Add sub-agent",
   "清空历史时保留最近几轮对话。": "Keep the most recent turns when clearing history.",
-  "点": "Click",
   "点击检测健康状态": "Click to check health",
   "用户": "User",
   "用户名:passwd": "user:passwd",
@@ -414,8 +404,6 @@ const I18N_EN = {
   "模型偶尔不带 $ 或 \\( 分隔符直接输出公式（如 s_{t+1}=f(s_t,a_t)）。开启后自动识别并渲染，适合科研 / 数理场景；日常场景建议关闭，以免误判普通文本。": "Models sometimes output formulas without $ or \\( delimiters (e.g. s_{t+1}=f(s_t,a_t)). When enabled, they are detected and rendered automatically—useful for research/math scenarios. Keep it off in everyday use to avoid misinterpreting plain text.",
   "激进公式渲染": "Aggressive formula rendering",
   "在「裸公式识别」基础上更激进：支持单字符上下标（如 V_φ、V^π）、希腊字母与数学符号，并会把「看起来是公式」的代码块 / 行内代码也渲染成公式。适合数理场景，可能误判普通文本或代码，建议按需开启。": "More aggressive than auto-detecting bare formulas: also supports single-character sub/superscripts (e.g. V_φ, V^π), Greek letters and math symbols, and renders code blocks / inline code that look like formulas. Suited to math-heavy scenarios; may misinterpret plain text or code, so enable as needed.",
-  "记忆存储命名空间，逗号分隔多个层级。": "Memory store namespace, comma-separated for multiple levels.",
-  "记忆库（store 数据库）还需启用 pgvector：选中刚建的库 → 点上方「Query Tool」图标 → 粘贴下面这句 → 点执行（或按 F5）：": "The memory store (store database) also needs pgvector: select the database you just created → click the 'Query Tool' icon → paste the line below → click Execute (or press F5):",
   "设为默认": "Set as default",
   "设置已保存": "Settings saved",
   "该子 agent 可用的工具来源；程序不负责启动，需外部自行启动。": "Tool sources available to this sub-agent; the program does not start them—start them externally.",
@@ -456,21 +444,53 @@ const I18N_EN = {
   "连接串里的数据库名与已绑定的 checkpoint 库不一致，创建后不可更换。": "The database name in the connection string differs from the bound checkpoint database, which cannot be changed after creation.",
   "全局postgres连接设置": "Global PostgreSQL connection settings",
   "使用全局 postgres 连接设置": "Use global PostgreSQL connection settings",
-  "勾选后，本 multi-agent 直接使用主界面「系统设置 → 全局postgres连接设置」里的连接前缀与连接后缀（主机 / 账号 / 密码 / SSL）；你仍可单独填写自己的数据库名。取消勾选可为本 multi-agent 单独设置连接。": "When checked, this multi-agent uses the connection prefix and suffix (host / account / password / SSL) configured under Settings → Global PostgreSQL connection settings on the main screen; you can still fill in your own database name. Uncheck to set the connection separately for this multi-agent.",
+  "勾选后，本 multi-agent 直接使用主界面「系统设置 → 全局postgres连接设置」里的连接前缀与连接后缀（主机 / 账号 / 密码 / SSL）；你仍可单独填写自己的 checkpoint 数据库名。取消勾选可为本 multi-agent 单独设置连接。": "When checked, this multi-agent uses the connection prefix and suffix (host / account / password / SSL) configured under Settings → Global PostgreSQL connection settings on the main screen; you can still fill in your own checkpoint database name. Uncheck to set the connection separately for this multi-agent.",
   "当前使用的全局连接（密码已脱敏）：": "Current global connection in use (password masked):",
   "如需修改全局连接，请到主界面齿轮设置 →「全局postgres连接设置」。": "To change the global connection, go to the main screen gear settings → 'Global PostgreSQL connection settings'.",
-  "用途：让所有 multi-agent 共用同一套数据库连接（主机、账号、密码、SSL），每个 multi-agent 只需各自填写自己的数据库名。": "Purpose: let all multi-agents share the same database connection (host, account, password, SSL), while each multi-agent only fills in its own database name.",
   "什么是「完整连接串」（conn string）：数据库厂商提供的一整条连接地址，长这样：": "What is a 'full connection string' (conn string): the complete connection address provided by the database vendor, like this:",
   "我们自造的「连接前缀 / 连接后缀」是什么意思：把上面这条连接串从「数据库名」处切成两半——数据库名前面的一段（协议、账号密码、主机端口）叫连接前缀，数据库名后面的一段（? 开头的 SSL 等参数）叫连接后缀。": "What our custom 'connection prefix / suffix' means: split the connection string above into two halves at the database name — the part before the database name (protocol, account/password, host/port) is the connection prefix, and the part after it (parameters starting with ?, such as SSL) is the connection suffix.",
-  "所以这里只需填「前缀 + 后缀」即可，数据库名由每个 multi-agent 各自填写；也可以直接粘贴整条连接串，程序会自动帮你切出前缀与后缀（其中的数据库名会被忽略）。": "So you only need to fill in 'prefix + suffix' here; the database name is filled in by each multi-agent. Alternatively, paste the whole connection string and the app will extract the prefix and suffix automatically (the database name in it is ignored).",
   "填写方式": "Fill-in method",
-  "这里粘贴的完整串只用于提取「连接前缀 / 连接后缀」，其中的数据库名会被忽略（各 multi-agent 各自填写库名）。": "The full string pasted here is only used to extract the connection prefix / suffix; its database name is ignored (each multi-agent fills in its own database name).",
   "预览（密码已脱敏）": "Preview (password masked)",
   "清除全局设置": "Clear global settings",
   "确定清除全局 postgres 连接设置吗？清除后各 multi-agent 将恢复为单独填写的界面。": "Clear the global PostgreSQL connection settings? After clearing, each multi-agent returns to the individually-filled interface.",
   "已清除全局连接设置": "Global connection settings cleared",
   "请填写连接前缀": "Please fill in the connection prefix",
   "全局连接设置已保存": "Global connection settings saved",
+  "保存时自动创建": "Created automatically on save",
+  "长期记忆统一存放在全局 store 数据库：": "Long-term memory is stored in the global store database: ",
+  "。保存时会自动建库；如需修改库名，请到主界面设置 →「全局配置设置」。": ". The database is created automatically on save. To change its name, go to Settings → Global configuration settings.",
+  "用途：让所有 multi-agent 共用同一套数据库连接（主机、账号、密码、SSL）；每个 multi-agent 仍需填写自己的 checkpoint 数据库名（保存时程序会自动建库），长期记忆统一使用全局 store 数据库。": "Purpose: let all multi-agents share the same database connection (host, account, password, SSL). Each multi-agent still fills in its own checkpoint database name (the app creates it automatically on save), and long-term memory always uses the global store database.",
+  "所以这里只需填「前缀 + 后缀」即可，checkpoint 数据库名由每个 multi-agent 各自填写；也可以直接粘贴整条连接串，程序会自动帮你切出前缀与后缀（其中的数据库名会被忽略）。": "So you only need to fill in 'prefix + suffix' here; the checkpoint database name is filled in by each multi-agent. Alternatively, paste the whole connection string and the app extracts the prefix and suffix automatically (the database name in it is ignored).",
+  "这里粘贴的完整串只用于提取「连接前缀 / 连接后缀」，其中的数据库名会被忽略（checkpoint 库名由每个 multi-agent 各自填写）。": "The full string pasted here is only used to extract the connection prefix / suffix; its database name is ignored (each multi-agent fills in its own checkpoint database name).",
+  "用于集中管理全局 postgres、store 数据库、embedding 与自动（及主动）总结设置。": "Manage the global PostgreSQL connection, store database, embedding, and automatic (& proactive) summary settings here.",
+  "当前全局 store 数据库：": "Current global store database: ",
+  "全局store数据库名称": "Global store database name",
+  "迁移旧 store 数据库": "Migrate legacy store databases",
+  "所有 multi-agent 的长期记忆都统一存放在这个 PostgreSQL 数据库里；不同 multi-agent 是否共用记忆只由内部的命名空间决定。": "All multi-agents store long-term memory in this PostgreSQL database. Whether different multi-agents share memories is determined only by the internal namespace.",
+  "修改名称会直接把现有数据库改名（ALTER DATABASE RENAME），已有记忆会一并保留，不会新建再迁移。": "Changing the name renames the existing database in place (ALTER DATABASE RENAME). Existing memories are preserved; no new database or migration is involved.",
+  "store 数据库名称": "Store database name",
+  "默认 Long_Term_Memory；只能包含字母、数字、下划线或连字符。": "Defaults to Long_Term_Memory; only letters, digits, underscores or hyphens are allowed.",
+  "默认 Long_Term_Memory。改名后，所有 multi-agent 的长期记忆会继续使用改名后的数据库。": "Defaults to Long_Term_Memory. After renaming, all multi-agents keep using the renamed database.",
+  "store 数据库名称只能包含字母、数字、下划线或连字符，且必须以字母、数字或下划线开头": "The store database name may only contain letters, digits, underscores or hyphens, and must start with a letter, digit or underscore",
+  "「postgres」等系统库名称不能作为 store 数据库": "System databases such as 'postgres' cannot be used as the store database",
+  "全局 store 数据库已更新": "Global store database updated",
+  "没有需要迁移的旧 store 数据库": "No legacy store databases need migration",
+  "旧版本允许每个 multi-agent 使用不同的 store 数据库。现在长期记忆统一存放到：": "Older versions allowed each multi-agent to use a different store database. Long-term memory is now stored in: ",
+  "迁移会把原数据库里的记忆复制到当前库，并允许修改「新数据库中的 namespace」。复制并校验成功后，程序会删除原数据库；系统库 postgres 永不删除。": "Migration copies memories from the original database into the current one and lets you edit the namespace in the new database. After copying and verification succeed, the original database is deleted; the system database postgres is never deleted.",
+  "原数据库：": "Original database: ",
+  "系统库，不删除": "System database; not deleted",
+  "使用它的 multi-agent：": "Multi-agents using it: ",
+  "没有可迁移的记忆条目。": "No memory entries to migrate.",
+  "移除这条迁移记录": "Remove this migration record",
+  "稍后再说": "Later",
+  "开始迁移": "Start migration",
+  "确定移除这条迁移记录吗？只会删除记录，不会删除数据库里的任何数据。": "Remove this migration record? Only the record is deleted; no data in the database is touched.",
+  "没有可迁移的记忆条目": "No memory entries to migrate",
+  "新的命名空间不能为空": "The new namespace cannot be empty",
+  "迁移中…": "Migrating…",
+  "即将把记忆复制到当前 store 数据库，并在校验成功后删除原数据库。确定开始迁移吗？": "Memories will be copied into the current store database, and the original database will be deleted after verification. Start migration?",
+  "有迁移失败：": "Migration failed: ",
+  "迁移完成": "Migration complete",
   "全局embedding模型设置": "Global embedding model settings",
   "使用全局 embedding 模型设置": "Use global embedding model settings",
   "勾选后，本 multi-agent 直接使用主界面「系统设置 → 全局embedding模型设置」里的 embedding 模型、维度、镜像、缓存目录与离线模式；取消勾选可为本 multi-agent 单独设置。": "When checked, this multi-agent uses the embedding model, dimension, mirror, cache directory and offline mode configured under Settings → Global embedding model settings on the main screen. Uncheck to set them separately for this multi-agent.",
@@ -506,15 +526,10 @@ const I18N_EN = {
   "主 agent 与子 agent 各自保留一套：主 agent 用下面「主 agent」三个阈值，子 agent 用「子 agent」两个阈值。注意：这些阈值会影响图编译；修改后请保存对应的 multi-agent 才会真正生效。": "Main agent and sub-agent each keep their own set: the main agent uses the three thresholds under 'Main agent' below, and sub-agents use the two under 'Sub-agent'. Note: these thresholds affect graph compilation; after changing them, save the corresponding multi-agent for the change to take effect.",
   "读取 PDF 时，用基于框线的检测把表格转成 Markdown 并嵌回正文；关闭后只返回正文文本。": "When reading PDFs, use ruled-line detection to convert tables to Markdown and embed them back into the body; when disabled, only the body text is returned.",
   "行": "lines",
-  "长期记忆存储的库名，可与 checkpoint 库相同或不同。": "Database for long-term memory; can be the same as or different from the checkpoint database.",
   "除发送键外，其余 Enter 组合均换行。": "All Enter combos except the send key insert a newline.",
-  "需先在 pgAdmin 建库": "Create the database in pgAdmin first",
   "默认配置已保存": "Default configuration saved",
-  "（在开始菜单里搜索「pgAdmin」）。": "(search for 'pgAdmin' in the Start menu).",
   "（无历史）": "(no history)",
   "（空消息）": "(empty message)",
-  "，双击连接，输入安装 PostgreSQL 时设置的密码。": ", double-click to connect and enter the password set when installing PostgreSQL.",
-  "📖 不会建数据库？点这里看步骤": "📖 Don't know how to create a database? Click for steps",
   "、": ", ",
   "。": ".",
   "转换 HTML": "Export HTML",
@@ -2706,16 +2721,24 @@ async function openInputBoxSettings() {
 }
 
 async function openGlobalConfigSettings() {
+  let migration = null;
+  try { migration = await api("/api/store-migrations?probe=0"); } catch (e) { /* 迁移状态拿不到不影响其它设置 */ }
+  const migrationCount = migration && migration.sources ? migration.sources.length : 0;
+  const currentStoreDb = (migration && migration.current_database) || "Long_Term_Memory";
+
   const mask = document.createElement("div");
   mask.className = "modal-mask";
   mask.innerHTML = `
-    <div class="modal" style="width:520px;" data-modal-key="globalConfig">
+    <div class="modal" style="width:560px;" data-modal-key="globalConfig">
       <h3>🌍 ${t("全局配置设置")}</h3>
-      <div class="muted" style="margin-bottom:10px;">${t("用于集中管理全局 postgres、embedding 与自动（及主动）总结设置。")}</div>
+      <div class="muted" style="margin-bottom:10px;line-height:1.65;">${t("用于集中管理全局 postgres、store 数据库、embedding 与自动（及主动）总结设置。")}</div>
+      <div class="conn-example" style="margin-bottom:12px;">🧠 ${t("当前全局 store 数据库：")}<code>${esc(currentStoreDb)}</code></div>
       <div class="modal-actions" style="justify-content:flex-start; flex-wrap:wrap;">
         <button class="btn small" id="gcPg">${t("全局postgres连接设置")}</button>
+        <button class="btn small" id="gcStoreDb">${t("全局store数据库名称")}</button>
         <button class="btn small" id="gcEmb">${t("全局embedding模型设置")}</button>
         <button class="btn small" id="gcSum">${t("全局自动（及主动）总结设置")}</button>
+        ${migrationCount ? `<button class="btn small" id="gcMigrate">${t("迁移旧 store 数据库")}（${migrationCount}）</button>` : ""}
       </div>
       <div class="modal-actions">
         <button class="btn" id="gcCancel">${t("返回")}</button>
@@ -2724,9 +2747,189 @@ async function openGlobalConfigSettings() {
   document.body.appendChild(mask);
   mask.querySelector("#gcCancel").onclick = () => { mask.remove(); openSettings(); };
   mask.querySelector("#gcPg").onclick = () => { mask.remove(); openGlobalPostgresSettings(() => openGlobalConfigSettings()); };
+  mask.querySelector("#gcStoreDb").onclick = () => { mask.remove(); openGlobalStoreDatabaseSettings(() => openGlobalConfigSettings()); };
   mask.querySelector("#gcEmb").onclick = () => { mask.remove(); openGlobalEmbeddingSettings(() => openGlobalConfigSettings()); };
   mask.querySelector("#gcSum").onclick = () => { mask.remove(); openGlobalSummarySettings(() => openGlobalConfigSettings()); };
+  if (migrationCount) {
+    mask.querySelector("#gcMigrate").onclick = () => { mask.remove(); openStoreMigrationModal(() => openGlobalConfigSettings()); };
+  }
 }
+
+async function openGlobalStoreDatabaseSettings(back) {
+  let s;
+  try { s = await getSettings(); } catch (e) { toast(e.message, true); return; }
+  const current = s.global_store_database || "Long_Term_Memory";
+
+  const mask = document.createElement("div");
+  mask.className = "modal-mask";
+  mask.innerHTML = `
+    <div class="modal" style="width:540px;" data-modal-key="globalStoreDatabase">
+      <h3>🧠 ${t("全局store数据库名称")}</h3>
+      <div class="muted" style="margin-bottom:10px;line-height:1.7;">
+        <p style="margin:0 0 6px;">${t("所有 multi-agent 的长期记忆都统一存放在这个 PostgreSQL 数据库里；不同 multi-agent 是否共用记忆只由内部的命名空间决定。")}</p>
+        <p style="margin:0;">${t("修改名称会直接把现有数据库改名（ALTER DATABASE RENAME），已有记忆会一并保留，不会新建再迁移。")}</p>
+      </div>
+      <div class="field full">
+        <label>${t("store 数据库名称")} ${info("默认 Long_Term_Memory；只能包含字母、数字、下划线或连字符。")}</label>
+        <input id="gsdb_name" value="${esc(current)}" placeholder="Long_Term_Memory">
+        <span class="hint">${t("默认 Long_Term_Memory。改名后，所有 multi-agent 的长期记忆会继续使用改名后的数据库。")}</span>
+      </div>
+      <div class="modal-actions">
+        <button class="btn" id="gsdbCancel">${t("返回")}</button>
+        <button class="btn primary" id="gsdbSave">${t("保存")}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(mask);
+
+  const close = () => mask.remove();
+  mask.querySelector("#gsdbCancel").onclick = () => { close(); (back || openSettings)(); };
+  mask.addEventListener("click", (e) => { if (e.target === mask) close(); });
+
+  mask.querySelector("#gsdbSave").onclick = async () => {
+    const name = (mask.querySelector("#gsdb_name").value || "").trim();
+    if (!/^[A-Za-z0-9_][A-Za-z0-9_-]{0,62}$/.test(name)) {
+      toast(t("store 数据库名称只能包含字母、数字、下划线或连字符，且必须以字母、数字或下划线开头"), true);
+      return;
+    }
+    if (["postgres", "template0", "template1"].includes(name.toLowerCase())) {
+      toast(t("「postgres」等系统库名称不能作为 store 数据库"), true);
+      return;
+    }
+    if (name === current) { close(); (back || openSettings)(); return; }
+    try {
+      await saveSettings({ ...s, global_store_database: name });
+      close();
+      toast(t("全局 store 数据库已更新"));
+      (back || openSettings)();
+    } catch (e) { toast(e.message, true); }
+  };
+}
+
+async function openStoreMigrationModal(back, auto = false) {
+  let data;
+  try { data = await api("/api/store-migrations"); } catch (e) { toast(e.message, true); return; }
+  if (!data.sources || !data.sources.length) {
+    if (!auto) {
+      toast(t("没有需要迁移的旧 store 数据库"));
+      (back || openSettings)();
+    }
+    return;
+  }
+
+  const mask = document.createElement("div");
+  mask.className = "modal-mask";
+  mask.innerHTML = `
+    <div class="modal" style="width:640px;max-height:84vh;overflow:auto;" data-modal-key="storeMigration">
+      <h3>📦 ${t("迁移旧 store 数据库")}</h3>
+      <div class="muted" style="margin-bottom:10px;line-height:1.7;">
+        <p style="margin:0 0 6px;">${t("旧版本允许每个 multi-agent 使用不同的 store 数据库。现在长期记忆统一存放到：")}<code>${esc(data.current_database)}</code>${t("。")}</p>
+        <p style="margin:0;">${t("迁移会把原数据库里的记忆复制到当前库，并允许修改「新数据库中的 namespace」。复制并校验成功后，程序会删除原数据库；系统库 postgres 永不删除。")}</p>
+      </div>
+      <div id="migrationList">
+        ${data.sources.map(src => {
+          const nsRows = (src.namespaces || []).map(n => `
+            <div class="migration-row" data-source-ns="${esc(n.source)}">
+              <code>${esc(n.source)}</code>
+              <span class="migration-arrow">→</span>
+              <input data-migration-target value="${esc(n.target)}" placeholder="${esc(n.source)}">
+            </div>`).join("");
+          return `
+            <div class="migration-source" data-source-id="${esc(src.id)}">
+              <div class="migration-source-head">
+                <b>${t("原数据库：")}</b><code>${esc(src.database)}</code>
+                ${src.is_system ? `<span class="migration-tag">${t("系统库，不删除")}</span>` : ""}
+                ${src.agents && src.agents.length ? `<span class="muted">（${t("使用它的 multi-agent：")}${esc(src.agents.join("、"))}）</span>` : ""}
+              </div>
+              ${src.error ? `<div class="err-hint">⚠ ${esc(src.error)}</div>` : ""}
+              ${nsRows ? `<div class="migration-rows">${nsRows}</div>` : (src.error ? "" : `<div class="muted">${t("没有可迁移的记忆条目。")}</div>`)}
+              <div class="migration-source-actions">
+                <button class="btn small" data-remove-source="${esc(src.id)}">${t("移除这条迁移记录")}</button>
+              </div>
+            </div>`;
+        }).join("")}
+      </div>
+      <div class="modal-actions">
+        <button class="btn" id="migrationCancel">${auto ? t("稍后再说") : t("返回")}</button>
+        <button class="btn primary" id="migrationRun">${t("开始迁移")}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(mask);
+
+  const close = () => mask.remove();
+  const leave = () => { close(); if (back) back(); };
+  mask.querySelector("#migrationCancel").onclick = leave;
+  mask.addEventListener("click", (e) => { if (e.target === mask) close(); });
+
+  mask.querySelectorAll("[data-remove-source]").forEach(btn => {
+    btn.onclick = async () => {
+      if ((await askConfirm(t("确定移除这条迁移记录吗？只会删除记录，不会删除数据库里的任何数据。"))) !== "yes") return;
+      try {
+        await api(`/api/store-migrations/${encodeURIComponent(btn.dataset.removeSource)}`, { method: "DELETE" });
+        close();
+        openStoreMigrationModal(back, auto);
+      } catch (e) { toast(e.message, true); }
+    };
+  });
+
+  mask.querySelector("#migrationRun").onclick = async () => {
+    const sources = $$(".migration-source", mask).map(box => ({
+      id: box.dataset.sourceId,
+      namespaces: $$(".migration-row", box).map(row => ({
+        source: row.dataset.sourceNs,
+        target: (row.querySelector("[data-migration-target]").value || "").trim(),
+      })),
+    })).filter(s => s.namespaces.length);
+    if (!sources.length) { toast(t("没有可迁移的记忆条目"), true); return; }
+    for (const s of sources) {
+      for (const n of s.namespaces) {
+        if (!n.target) { toast(t("新的命名空间不能为空"), true); return; }
+      }
+    }
+    if ((await askConfirm(t("即将把记忆复制到当前 store 数据库，并在校验成功后删除原数据库。确定开始迁移吗？"))) !== "yes") return;
+    const btn = mask.querySelector("#migrationRun");
+    btn.disabled = true;
+    btn.textContent = t("迁移中…");
+    try {
+      const res = await api("/api/store-migrations/run", { method: "POST", body: JSON.stringify({ sources }) });
+      const failed = (res.results || []).filter(r => r.status === "failed");
+      if (failed.length) {
+        toast(`${t("有迁移失败：")}${failed[0].message}`, true);
+        close();
+        openStoreMigrationModal(back, auto);
+        return;
+      }
+      toast(t("迁移完成"));
+      close();
+      if (res.remaining > 0) openStoreMigrationModal(back, auto);
+      else if (back) back();
+    } catch (e) {
+      btn.disabled = false;
+      btn.textContent = t("开始迁移");
+      toast(e.message, true);
+    }
+  };
+}
+
+async function maybePromptStoreMigration() {
+  // 启动时最多探测 3 次：数据库服务/源库可能还在启动，避免一上来就弹「无法连接」。
+  for (let i = 0; i < 3; i++) {
+    try {
+      const data = await api("/api/store-migrations");
+      if (!data.sources || !data.sources.length || data.prompted) return;
+      const reachable = data.sources.some(s => s.exists || (s.namespaces && s.namespaces.length));
+      if (!reachable) {
+        if (i < 2) { await sleep(2500); continue; }
+        return;
+      }
+      await openStoreMigrationModal(null, true);
+      await api("/api/store-migrations/prompted", { method: "POST" });
+      return;
+    } catch (e) {
+      return;
+    }
+  }
+}
+
 
 async function importLocalPrefsFlow() {
   if (typeof window.__importLocalPrefs !== "function") { toast(t("导入失败：设置桥接未加载"), true); return; }
@@ -3061,10 +3264,10 @@ async function openGlobalPostgresSettings(back) {
     <div class="modal" style="width:580px;max-height:84vh;overflow:auto;" data-modal-key="globalPostgres">
       <h3>🌐 ${t("全局postgres连接设置")}</h3>
       <div class="muted" style="margin-bottom:10px;line-height:1.65;">
-        <p style="margin:0 0 6px;">${t("用途：让所有 multi-agent 共用同一套数据库连接（主机、账号、密码、SSL），每个 multi-agent 只需各自填写自己的数据库名。")}</p>
+        <p style="margin:0 0 6px;">${t("用途：让所有 multi-agent 共用同一套数据库连接（主机、账号、密码、SSL）；每个 multi-agent 仍需填写自己的 checkpoint 数据库名（保存时程序会自动建库），长期记忆统一使用全局 store 数据库。")}</p>
         <p style="margin:0 0 6px;">${t("什么是「完整连接串」（conn string）：数据库厂商提供的一整条连接地址，长这样：")}<code>postgresql://user:passwd@localhost:5432/mydb?sslmode=disable</code></p>
         <p style="margin:0 0 6px;">${t("我们自造的「连接前缀 / 连接后缀」是什么意思：把上面这条连接串从「数据库名」处切成两半——数据库名前面的一段（协议、账号密码、主机端口）叫连接前缀，数据库名后面的一段（? 开头的 SSL 等参数）叫连接后缀。")}</p>
-        <p style="margin:0;">${t("所以这里只需填「前缀 + 后缀」即可，数据库名由每个 multi-agent 各自填写；也可以直接粘贴整条连接串，程序会自动帮你切出前缀与后缀（其中的数据库名会被忽略）。")}</p>
+        <p style="margin:0;">${t("所以这里只需填「前缀 + 后缀」即可，checkpoint 数据库名由每个 multi-agent 各自填写；也可以直接粘贴整条连接串，程序会自动帮你切出前缀与后缀（其中的数据库名会被忽略）。")}</p>
       </div>
       <div class="field full">
         <label>${t("填写方式")}</label>
@@ -3078,7 +3281,7 @@ async function openGlobalPostgresSettings(back) {
         <div class="field"><label>${t("连接后缀")} suffix</label><div id="gpSuffixWrap" style="display:flex;flex-direction:column;gap:5px;">${pgSuffixCtrlHTML(suffixLocal, gpSuffix, "gp_suffix")}</div></div>
       </div>
       <div id="gpFullBlock" style="display:none;">
-        <div class="field full"><label>${t("完整连接串")}</label><textarea id="gp_conn_full" rows="3" placeholder="postgresql://user:passwd@localhost:5432/mydb?sslmode=disable"></textarea><span class="hint" id="gpFullHint"></span><span class="hint">${t("这里粘贴的完整串只用于提取「连接前缀 / 连接后缀」，其中的数据库名会被忽略（各 multi-agent 各自填写库名）。")}</span></div>
+        <div class="field full"><label>${t("完整连接串")}</label><textarea id="gp_conn_full" rows="3" placeholder="postgresql://user:passwd@localhost:5432/mydb?sslmode=disable"></textarea><span class="hint" id="gpFullHint"></span><span class="hint">${t("这里粘贴的完整串只用于提取「连接前缀 / 连接后缀」，其中的数据库名会被忽略（checkpoint 库名由每个 multi-agent 各自填写）。")}</span></div>
       </div>
       <div class="field full"><label>${t("预览（密码已脱敏）")}</label><div class="conn-example" id="gpExample"></div></div>
       <div class="modal-actions">
@@ -4022,7 +4225,6 @@ function buildForm(cfg, canEditSubs) {
   const emb = main.embedding || {};
   const sum = main.summary || {};
   const ft = main.file_tools || {};
-  const ns = (pg.store_namespace || []).join(",");
   const isLocal = isLocalPrefix(pg.prefix);
   const gap = tokToUnit(sum.summarize_gap_tokenwise);
   const flush = tokToUnit(sum.flush_history_tokenwise);
@@ -4034,6 +4236,8 @@ function buildForm(cfg, canEditSubs) {
   const gpPrefix = (settingsCache && settingsCache.global_postgres_prefix) || "";
   const gpSuffix = (settingsCache && settingsCache.global_postgres_suffix) || "";
   const globalSet = !!String(gpPrefix).trim();
+  // 长期记忆统一存放的全局 store 数据库（只读展示；改名入口在主界面设置里）
+  const gStoreDb = (settingsCache && settingsCache.global_store_database) || "Long_Term_Memory";
   const isNewCfg = !cfg.agent_id;
   const useGlobalInit = globalSet && (
     isNewCfg || (String(pg.prefix || "") === gpPrefix && String(pg.suffix || "") === gpSuffix)
@@ -4093,17 +4297,17 @@ function buildForm(cfg, canEditSubs) {
 
   form.innerHTML = `
     <div class="form-card"><h4>${t("基本信息")}</h4><div class="form-grid">
-      <div class="field"><label>agent_id ${info("唯一标识，用作配置文件名 configs/&lt;id&gt;.json，创建后不可改。")}</label><input id="f_agent_id" value="${esc(cfg.agent_id)}" ${canEditSubs ? "" : "readonly"}${ph("agent_id")}></div>
-      <div class="field"><label>${t("名称")} name ${info("显示名称，创建后不可改（与历史会话绑定）。")}</label><input id="f_name" value="${esc(cfg.name)}" ${canEditSubs ? "" : "readonly"}${ph("name")}><span class="lock-hint">${canEditSubs ? "" : t("创建后不可改")}</span></div>
-      <div class="field"><label>${t("checkpoint 数据库（会话历史绑定）")} ${info("会话历史归属的库名，即连接串里最后一个 / 后面的那一段（如 postgresql://…:5432/这里）。需先在 pgAdmin 建库，创建后不可改。")}</label><input id="f_cpdb" value="${esc(pg.checkpoint_database)}" ${canEditSubs ? "" : "readonly"}${ph("checkpoint_database")}><span class="lock-hint">${canEditSubs ? t("需先在 pgAdmin 建库") : t("创建后不可改")}</span></div>
-      <div class="field full"><details class="db-help"><summary>${t("📖 不会建数据库？点这里看步骤")}</summary><ol><li>${t("打开")} <b>pgAdmin 4</b>${t("（在开始菜单里搜索「pgAdmin」）。")}</li><li>${t("左侧展开")} <b>Servers → PostgreSQL</b>${t("，双击连接，输入安装 PostgreSQL 时设置的密码。")}</li><li>${t("右键")} <b>Databases → Create → Database…</b>${t("。")}</li><li>${t("在")} <b>Database</b> ${t("一栏填库名（与上面填的 checkpoint 库名保持一致）。")}</li><li>${t("点")} <b>Save</b>${t("。")}</li><li>${t("记忆库（store 数据库）还需启用 pgvector：选中刚建的库 → 点上方「Query Tool」图标 → 粘贴下面这句 → 点执行（或按 F5）：")}<pre>CREATE EXTENSION IF NOT EXISTS vector;</pre></li><li>${t("回到本页，点「保存」。")}</li></ol></details></div>
-      <div class="field"><label>${t("store 数据库")} ${info("长期记忆存储的库名，可与 checkpoint 库相同或不同。")}</label><input id="f_sdb" value="${esc(pg.store_database)}"></div>
-      <div class="field"><label>${t("store_namespace（逗号分隔）")} ${info("记忆存储命名空间，逗号分隔多个层级。")}</label><input id="f_ns" value="${esc(ns)}"></div>
+      <div class="basic-grid">
+      <div class="field"><label>agent_id ${info("唯一标识，用作配置文件名 configs/&lt;id&gt;.json，创建后不可更改。")}</label><input id="f_agent_id" value="${esc(cfg.agent_id)}" ${canEditSubs ? "" : "readonly"}${ph("agent_id")}><span class="lock-hint">${canEditSubs ? "&nbsp;" : t("创建后不可更改")}</span></div>
+      <div class="field"><label>${t("名称")} name ${info("显示名称，创建后不可更改（与历史会话绑定）。")}</label><input id="f_name" value="${esc(cfg.name)}" ${canEditSubs ? "" : "readonly"}${ph("name")}><span class="lock-hint">${canEditSubs ? "&nbsp;" : t("创建后不可更改")}</span></div>
+      <div class="field"><label>${t("checkpoint 数据库（会话历史绑定）")} ${info("会话历史归属的库名，即连接串里最后一个 / 后面的那一段（如 postgresql://…:5432/这里）。保存时如果该库不存在，程序会自动创建；创建后不可更改。")}</label><input id="f_cpdb" value="${esc(pg.checkpoint_database)}" ${canEditSubs ? "" : "readonly"}${ph("checkpoint_database")}><span class="lock-hint">${canEditSubs ? t("保存时自动创建") : t("创建后不可更改")}</span></div>
+      </div>
+      <div class="field full"><div class="conn-example">🧠 ${t("长期记忆统一存放在全局 store 数据库：")}<code>${esc(gStoreDb)}</code>${t("。保存时会自动建库；如需修改库名，请到主界面设置 →「全局配置设置」。")}</div></div>
       ${globalSet ? `
       <div class="field full">
         <div class="global-toggle-row">
           <label style="display:flex;flex-direction:row;align-items:center;gap:8px;margin:0;"><input type="checkbox" id="f_pg_use_global" ${useGlobalInit ? "checked" : ""}> ${t("使用全局 postgres 连接设置")}</label>
-          ${info("勾选后，本 multi-agent 直接使用主界面「系统设置 → 全局postgres连接设置」里的连接前缀与连接后缀（主机 / 账号 / 密码 / SSL）；你仍可单独填写自己的数据库名。取消勾选可为本 multi-agent 单独设置连接。")}
+          ${info("勾选后，本 multi-agent 直接使用主界面「系统设置 → 全局postgres连接设置」里的连接前缀与连接后缀（主机 / 账号 / 密码 / SSL）；你仍可单独填写自己的 checkpoint 数据库名。取消勾选可为本 multi-agent 单独设置连接。")}
           <span class="exp-tri" id="pgExpTri" title="${t("展开 / 收起说明")}"></span>
         </div>
       </div>
@@ -4300,7 +4504,7 @@ function buildForm(cfg, canEditSubs) {
 
   document.querySelectorAll('input[name="pg_conn_mode"]').forEach(r =>
     r.addEventListener("change", () => setPgMode(r.value)));
-  ["f_prefix", "f_cpdb", "f_suffix", "f_sdb"].forEach(id => { const el = $("#" + id); if (el) el.addEventListener("input", refreshExample); });
+  ["f_prefix", "f_cpdb", "f_suffix"].forEach(id => { const el = $("#" + id); if (el) el.addEventListener("input", refreshExample); });
   fullInput.addEventListener("input", () => { updateFullHint(); refreshExample(); });
   updateFullHint();
   refreshExample();
@@ -4419,7 +4623,7 @@ function subAgentBox(s, key, canEdit) {
   div.innerHTML = `
     <div class="sub-head"><span class="name">🧩 ${t("子 agent")}</span>${canEdit ? `<button class="btn danger small" data-act="remove" type="button">${t("移除")}</button>` : ""}</div>
     <div class="form-grid">
-      <div class="field"><label>${t("名称")} name ${info("子 agent 标识，会作为工具名呈现给主 agent，创建后不可改。")}</label><input data-f="name" value="${esc(s.name)}" ${canEdit ? "" : "readonly"}${ph("sub_name")}></div>
+      <div class="field"><label>${t("名称")} name ${info("子 agent 标识，会作为工具名呈现给主 agent，创建后不可更改。")}</label><input data-f="name" value="${esc(s.name)}" ${canEdit ? "" : "readonly"}${ph("sub_name")}></div>
       ${modelBlockHTML(s.llm_provider_name, s.model, `sub_${key}_mode`)}
       <div class="field"><label>API Key ${info("该子 agent 所用模型的 API 密钥（明文存本地配置）。")}</label><input data-f="api_key" value="${esc(s.api_key)}" type="password"${ph("sub_api_key")}></div>
       ${globalSubSet ? `
@@ -4642,9 +4846,9 @@ function buildPayload(cfg) {
     postgres: {
       prefix: conn.prefix,
       suffix: conn.suffix,
-      store_database: val("f_sdb"),
       checkpoint_database: conn.database,
-      store_namespace: val("f_ns").split(",").map(x => x.trim()).filter(Boolean),
+      // namespace 不在配置页展示：沿用原配置，避免保存时把既有记忆归属悄悄改掉。
+      store_namespace: (cfg.postgres && cfg.postgres.store_namespace) || ["Li", "memories"],
     },
     main_agent: {
       system_prompt: val("f_prompt"),
@@ -7658,3 +7862,5 @@ document.addEventListener("keydown", (e) => {
 applyColors();
 applyCardSettings();
 render();
+// 旧版 store 数据库迁移提示（只弹一次；数据库服务可能还在启动，函数内部会重试）
+maybePromptStoreMigration();

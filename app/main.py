@@ -41,16 +41,19 @@ from app.api import (
     memories,
     settings,
     snapshots,
+    store_migrations,
     threads,
     ui_prefs,
 )
 from app.config.settings import (
+    load_settings,
     seed_global_embedding,
     seed_global_postgres,
     seed_global_sub_summary,
     seed_global_summary,
 )
 from app.deps import BASE_DIR, common_prompt_store, config_store, draft_store
+from app.services import store_migrations as store_migration_service
 
 # 可选的浏览器工具计时 / 卡死看门狗探针（仅当设置 BROWSER_TOOL_TIMING=1 时安装，
 # 未设置时零开销、不改变任何行为）。见 browser_agent/diagnostics.py。
@@ -90,6 +93,13 @@ def _autostart_pg_services() -> None:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    # 统一 store 数据库：检测旧版「每个 agent 一个 store 库」的配置，记录迁移源，
+    # 并把 agent 配置切到全局 store 库（默认 Long_Term_Memory）。旧库数据保留待迁移。
+    try:
+        settings = load_settings(config_store._dir)
+        store_migration_service.detect_and_record(config_store, settings)
+    except Exception:  # noqa: BLE001
+        pass
     # 首次启动：若有已存在的 multi-agent，把第一个带连接前缀的配置提取为全局连接设置，
     # 供各 agent 配置界面的「使用全局连接」开关使用（见 app/config/settings.py）。
     try:
@@ -165,11 +175,11 @@ async def _handle_pg_missing_database(request: Request, exc: pg_errors.InvalidCa
     logger.error("PostgreSQL 目标数据库不存在：%s", exc)
     detail = (
         "程序在 PostgreSQL 里找不到这个 multi-agent 绑定的数据库。\n\n"
-        "请检查：\n"
-        "1. 数据库服务是否已启动（Win + R → 输入 services.msc → 启动 PostgreSQL 服务）；\n"
+        "程序会在保存 multi-agent 时按连接串自动建库，正常情况下不需要你手动创建。请检查：\n"
+        "1. 数据库服务是否已启动（程序通常会自动拉起，稍等片刻后点「重试」）；\n"
         "2. 创建 / 编辑这个 multi-agent 时填写的「checkpoint 数据库名」是否正确；\n"
-        "3. 该数据库是否确实已经在 PostgreSQL 里创建（可用 pgAdmin 查看）。\n\n"
-        "改正后回到本页面，点下面的「重试」。"
+        "3. 连接账号是否有建库权限（通常使用安装 PostgreSQL 时设置的 postgres 用户）。\n\n"
+        "回到主界面重新保存一次该 multi-agent（会自动补建数据库），再点下面的「重试」。"
     )
     return _pg_problem(503, "db_missing_database", detail)
 
@@ -220,6 +230,7 @@ app.include_router(threads.router)
 app.include_router(memories.router)
 app.include_router(snapshots.router)
 app.include_router(snapshots.deleted_router)
+app.include_router(store_migrations.router)
 app.include_router(chat_ws.router)
 app.include_router(settings.router)
 app.include_router(downloads.router)

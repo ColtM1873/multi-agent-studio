@@ -150,6 +150,9 @@ html[data-style-danger="solid"] .card-btn-danger:hover { filter: brightness(.92)
 }
 .form-card h4 { margin: 0 0 16px; font-size: 16px; display: flex; align-items: center; gap: 8px; }
 .form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); gap: 14px; }
+/* 基本信息前三项固定一行三列：无论窗口宽度如何，agent_id / name / checkpoint 都保持平齐 */
+.basic-grid { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; align-items: stretch; }
+.basic-grid > .field { min-width: 0; }
 .field { display: flex; flex-direction: column; gap: 5px; }
 .field.full { grid-column: 1 / -1; }
 .field label {
@@ -178,7 +181,8 @@ html[data-style-danger="solid"] .card-btn-danger:hover { filter: brightness(.92)
 .field textarea { resize: vertical; min-height: 110px; font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 13px; }
 .field input:disabled, .field textarea:disabled { background: #f3f4f6; color: var(--text-muted); cursor: not-allowed; }
 .field input[readonly], .field textarea[readonly] { background: #f3f4f6; color: var(--text-muted); cursor: text; }
-.lock-hint { font-size: 12px; color: var(--danger); }
+/* 固定高度：三个首行字段无论有没有红色提示，都占同样的一行，输入框始终齐平 */
+.lock-hint { display: block; min-height: 17px; line-height: 17px; font-size: 12px; color: var(--text-muted); }
 .field .hint { font-size: 12px; color: var(--text-muted); }
 
 .subagent-box {
@@ -472,7 +476,7 @@ html[data-style-danger="solid"] .card-btn-danger:hover { filter: brightness(.92)
   font-size: 12px; word-break: break-all; color: #475569;
 }
 
-/* ── 建库帮助（折叠步骤） ───────────────── */
+/* ── 折叠说明（模型额外选项等） ───────────── */
 .db-help { margin-top: 10px; border: 1px dashed var(--border); border-radius: 10px; padding: 10px 14px; background: #fbfbfd; }
 .db-help summary { cursor: pointer; color: var(--primary); font-size: 13px; font-weight: 500; }
 .db-help ol { margin: 8px 0 0; padding-left: 20px; font-size: 13px; line-height: 1.8; color: var(--text-muted); }
@@ -482,6 +486,26 @@ html[data-style-danger="solid"] .card-btn-danger:hover { filter: brightness(.92)
 .unit-row { display: flex; gap: 8px; align-items: center; }
 .unit-row input { flex: 1; }
 .unit-row select { width: 72px; flex-shrink: 0; }
+
+/* ── 旧 store 数据库迁移 ─────────────────── */
+.migration-source {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  background: #fbfbfd;
+}
+.migration-source-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 13px; }
+.migration-tag {
+  font-size: 11px; color: var(--text-muted); border: 1px solid var(--border);
+  border-radius: 999px; padding: 1px 8px;
+}
+.migration-rows { margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+.migration-row { display: flex; align-items: center; gap: 8px; }
+.migration-row code { font-size: 12px; word-break: break-all; }
+.migration-arrow { color: var(--text-muted); flex-shrink: 0; }
+.migration-row input { flex: 1; min-width: 90px; }
+.migration-source-actions { margin-top: 8px; display: flex; justify-content: flex-end; }
 
 /* ── 运行状态指示 ───────────────────────── */
 .status-indicator { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-muted); }

@@ -332,6 +332,19 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host '             可在重装 Python 时勾选 "tcl/tk and IDLE" 修复该组件。'
 }
 
+# ---------- 4.5 检测旧版 store 数据库（只记录迁移源，不迁移、不删库）----------
+# 旧版本每个 multi-agent 可以填不同的 store 数据库。新版本统一使用全局 store 数据库
+# （默认 Long_Term_Memory）。这里把配置里的旧库名落盘成迁移源，程序启动后会弹窗询问
+# 是否迁移；也可以在「系统设置 → 全局配置设置」里随时迁移。脚本只读配置、不碰数据库。
+Write-Host ''
+Write-Host '[4.5/8] 检查旧版 store 数据库...'
+& "$PSScriptRoot\venv\Scripts\python.exe" "$PSScriptRoot\scripts\detect_store_migrations.py"
+if ($LASTEXITCODE -eq 0) {
+    Write-Host '       检查完成。若发现旧版 store 数据库，启动程序后可在「系统设置 → 全局配置设置」中迁移。'
+} else {
+    Write-Host '       [提示] 旧版 store 数据库检查未完成；程序启动后也会自动检测。'
+}
+
 # ---------- 5. 可选：一键安装 pgvector（已安装 / 无 PostgreSQL 则跳过询问）----------
 Write-Host ''
 if ($Mode -eq 'Lite') {

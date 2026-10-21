@@ -39,7 +39,7 @@ def build_default_config() -> MultiAgentConfig:
         postgres=PostgresConfig(
             prefix="",
             suffix="?sslmode=disable",
-            store_database="postgres",
+            store_database="Long_Term_Memory",
             checkpoint_database="",  # 必须由用户填写（绑定历史）
             store_namespace=("Li", "memories"),
         ),
@@ -115,3 +115,23 @@ class ConfigStore:
         if not path.exists():
             return build_default_config()
         return MultiAgentConfig.model_validate_json(path.read_text(encoding="utf-8"))
+
+
+def sync_store_database(store: ConfigStore, database: str) -> int:
+    """把所有 multi-agent 配置里的 store 数据库名同步为全局值。
+
+    返回被改写的配置数量。旧版配置里的 store_database 是「每个 agent 各自一个库」，
+    现在统一使用 Settings.global_store_database；只要发现不一致就写回，
+    保证落盘配置与运行时实际连接的库一致。
+    """
+    changed = 0
+    for cfg in store.list():
+        if cfg.postgres.store_database == database:
+            continue
+        cfg.postgres.store_database = database
+        try:
+            store.save(cfg)
+            changed += 1
+        except Exception:  # noqa: BLE001 - 单个坏配置不应阻断其它配置的同步
+            continue
+    return changed

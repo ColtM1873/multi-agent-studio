@@ -154,6 +154,14 @@ def make_store_index_config(cfg: EmbeddingConfig, embeddings) -> IndexConfig:
 
 async def build_persistence(config: MultiAgentConfig) -> tuple[AsyncPostgresSaver, AsyncPostgresStore]:
     """返回 (checkpointer, store)，需用 `async with` 包裹后调用 setup()。"""
+    # 旧配置 / 全局 store 库改名后，目标库可能还不存在：运行时兜底自动建库。
+    from app.services import pg_databases
+
+    await pg_databases.ensure_databases(
+        config.postgres.prefix,
+        [config.postgres.checkpoint_database, config.postgres.store_database],
+        config.postgres.suffix,
+    )
     embeddings = await build_embeddings(config.main_agent.embedding)
     saver = AsyncPostgresSaver.from_conn_string(config.checkpoint_conn_string)
     store = AsyncPostgresStore.from_conn_string(

@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from app.config.edits import EditRuleViolation, apply_edits
 from app.config.models import MultiAgentConfig
 from app.config.settings import (
+    load_settings,
     seed_global_embedding,
     seed_global_postgres,
     seed_global_sub_summary,
@@ -21,6 +22,7 @@ from app.config.settings import (
 from app.config.store import slugify
 from app.deps import chat_manager, config_store
 from app.runtime.graph_builder import describe_mcp_error
+from app.services import pg_databases
 from app.runtime.state_factory import (
     assign_extracted_summary_ai_msg_keys,
     assign_history_token_measure_keys,
@@ -58,11 +60,38 @@ def get_agent(agent_id: str):
         raise HTTPException(status_code=404, detail="配置不存在")
 
 
+def _current_store_database() -> str:
+    """当前全局 store 数据库名（旧配置保存时会被同步成它）。"""
+    settings = load_settings(config_store._dir)
+    return settings.effective_store_database()
+
+
+def _is_lite() -> bool:
+    """Lite 版不建 store 数据库（它不使用长期记忆）。"""
+    return chat_manager.__class__.__module__.startswith("lite.")
+
+
+async def _ensure_agent_databases(cfg: MultiAgentConfig) -> None:
+    """按用户给的连接串自动创建 checkpoint / store 数据库（不要求用户先建库）。"""
+    databases = [cfg.postgres.checkpoint_database]
+    if not _is_lite():
+        databases.append(cfg.postgres.store_database)
+    try:
+        await pg_databases.ensure_databases(
+            cfg.postgres.prefix,
+            databases,
+            cfg.postgres.suffix,
+        )
+    except pg_databases.DatabaseError as exc:
+        raise HTTPException(status_code=400, detail=f"自动创建数据库失败：{exc}")
+
+
 @router.post("/agents")
 async def create_agent(cfg: MultiAgentConfig):
-    checkpoint_db = cfg.postgres.checkpoint_database
-    if not checkpoint_db.strip():
+    checkpoint_db = (cfg.postgres.checkpoint_database or "").strip()
+    if not checkpoint_db:
         raise HTTPException(status_code=400, detail="必须填写 checkpoint_database（会话历史归属的数据库名）")
+    cfg.postgres.checkpoint_database = checkpoint_db
 
     if not cfg.agent_id.strip():
         raise HTTPException(status_code=400, detail="必须填写 agent_id（或名称）")
@@ -86,12 +115,18 @@ async def create_agent(cfg: MultiAgentConfig):
         if c.postgres.checkpoint_database == checkpoint_db and c.agent_id != cfg.agent_id:
             raise HTTPException(status_code=400, detail=f"checkpoint_database [{checkpoint_db}] 已被 [{c.name}] 占用")
 
-    # 建库提醒：连接测试
+    # 长期记忆统一使用全局 store 数据库；旧配置里的 store_database 不再由用户决定
+    cfg.postgres.store_database = _current_store_database()
+
+    # 不再要求用户先建库：保存时由程序按连接串自动创建 checkpoint / store 数据库
+    await _ensure_agent_databases(cfg)
+
+    # 建库后验证连接（账号密码 / SSL / 端口是否真的可用）
     ok, err = await threads_service.test_connection(cfg.checkpoint_conn_string)
     if not ok:
         raise HTTPException(
             status_code=400,
-            detail=f"无法连接数据库 [{checkpoint_db}]，请先在 pgAdmin 或命令行创建该数据库。原始错误: {err}",
+            detail=f"数据库已自动创建，但仍无法连接 [{checkpoint_db}]。请检查连接前缀、端口、账号密码与 SSL 设置。原始错误: {err}",
         )
 
     # 生成并锁定子 agent 的消息通道键（落盘后永久固定，与历史绑定）
@@ -128,10 +163,18 @@ async def update_agent(agent_id: str, cfg: MultiAgentConfig):
     except EditRuleViolation as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+    # store 库固定使用全局值；namespace 不再在配置页展示，保留原配置以免悄悄改写记忆归属
+    merged.postgres.store_database = _current_store_database()
+    merged.postgres.store_namespace = existing.postgres.store_namespace
+    merged.postgres.checkpoint_database = merged.postgres.checkpoint_database.strip()
+
     # 子 agent 名称不能为空
     for sub in merged.sub_agents:
         if not sub.name or not sub.name.strip():
             raise HTTPException(status_code=400, detail="子 agent 名称不能为空")
+
+    # 编辑保存时同样自动补齐 checkpoint / store 数据库
+    await _ensure_agent_databases(merged)
 
     # 对旧配置（state_messages_key 为 null）兜底生成并锁定
     assign_state_messages_keys(merged)

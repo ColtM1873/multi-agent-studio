@@ -18,7 +18,10 @@ DEFAULT_HTML_REPORT_PROMPT = (
 class PostgresConfig(BaseModel):
     prefix: str = ""
     suffix: str = "?sslmode=disable"
-    store_database: str = "postgres"
+    # 旧版字段：过去用于让每个 multi-agent 各自指定 store 库。
+    # 现在所有 multi-agent 统一使用全局 store 数据库（Settings.global_store_database），
+    # 保存时由后端覆盖成全局值；保留字段只为兼容旧 configs/*.json。
+    store_database: str = "Long_Term_Memory"
     # 身份绑定：会话历史归属哪个库。创建后不可改。
     checkpoint_database: str
     store_namespace: tuple[str, ...] = ("Li", "memories")

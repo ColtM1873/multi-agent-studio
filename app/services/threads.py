@@ -44,7 +44,7 @@ async def _connect(conn_string: str, *, attempts: int = 3, connect_timeout: int 
 
 
 async def test_connection(conn_string: str, timeout: int = 5) -> tuple[bool, str]:
-    """测试数据库连接（用于创建 multi-agent 时的建库提醒）。"""
+    """测试数据库连接（保存 multi-agent 时验证自动建库后的连接是否可用）。"""
     try:
         async with await asyncio.wait_for(
             AsyncConnection.connect(conn_string, connect_timeout=timeout), timeout=timeout + 2

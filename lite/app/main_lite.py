@@ -139,11 +139,11 @@ async def _handle_pg_missing_database(
     logger.error("PostgreSQL 目标数据库不存在：%s", exc)
     detail = (
         "程序在 PostgreSQL 里找不到这个 multi-agent 绑定的数据库。\n\n"
-        "请检查：\n"
-        "1. 数据库服务是否已启动（Win + R → 输入 services.msc → 启动 PostgreSQL 服务）；\n"
+        "程序会在保存 multi-agent 时按连接串自动建库，正常情况下不需要你手动创建。请检查：\n"
+        "1. 数据库服务是否已启动（程序通常会自动拉起，稍等片刻后点「重试」）；\n"
         "2. 创建 / 编辑这个 multi-agent 时填写的「checkpoint 数据库名」是否正确；\n"
-        "3. 该数据库是否确实已经在 PostgreSQL 里创建（可用 pgAdmin 查看）。\n\n"
-        "改正后回到本页面，点下面的「重试」。"
+        "3. 连接账号是否有建库权限（通常使用安装 PostgreSQL 时设置的 postgres 用户）。\n\n"
+        "回到主界面重新保存一次该 multi-agent（会自动补建数据库），再点下面的「重试」。"
     )
     return _pg_problem(503, "db_missing_database", detail)
 

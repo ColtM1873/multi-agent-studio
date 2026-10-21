@@ -18,6 +18,15 @@ def _namespace(config: MultiAgentConfig) -> tuple[str, ...]:
     return tuple(config.postgres.store_namespace)
 
 
+async def _ensure_store_database(config: MultiAgentConfig) -> None:
+    """旧配置 / 全局改名后，store 库可能还不存在：记忆操作前兜底自动建库。"""
+    from app.services import pg_databases
+
+    await pg_databases.ensure_database(
+        config.postgres.prefix, config.postgres.store_database, config.postgres.suffix
+    )
+
+
 async def list_memories(
     config: MultiAgentConfig, *, limit: int = 1000, offset: int = 0
 ) -> list[dict]:
@@ -26,6 +35,7 @@ async def list_memories(
     `asearch` 在 query 为空时退化为「按命名空间前缀取列表」，不需要 embedding 模型。
     """
     ns = _namespace(config)
+    await _ensure_store_database(config)
     async with AsyncPostgresStore.from_conn_string(config.store_conn_string) as store:
         await store.setup()
         items = await store.asearch(ns, query=None, limit=limit, offset=offset)
@@ -47,6 +57,7 @@ async def delete_memory(config: MultiAgentConfig, key: str) -> None:
     外键 `ON DELETE CASCADE` 一并删除，因此「内容表 + 向量表」两边都会清掉。
     """
     ns = _namespace(config)
+    await _ensure_store_database(config)
     async with AsyncPostgresStore.from_conn_string(config.store_conn_string) as store:
         await store.setup()
         await store.adelete(ns, key)
@@ -60,6 +71,7 @@ async def update_memory(config: MultiAgentConfig, key: str, value: dict[str, str
       计算 embedding、upsert 进 `store_vectors`。整个流程只调用一次 embedding 模型。
     """
     ns = _namespace(config)
+    await _ensure_store_database(config)
     embeddings = await build_embeddings(config.main_agent.embedding)
     index = make_store_index_config(config.main_agent.embedding, embeddings)
     async with AsyncPostgresStore.from_conn_string(

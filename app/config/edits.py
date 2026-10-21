@@ -28,8 +28,8 @@ def apply_edits(existing: MultiAgentConfig, incoming: MultiAgentConfig) -> Multi
     """校验并返回可保存的新配置。
 
     规则：agent_id / name / checkpoint_database / 子 agent 集合（名字）不可变；
-    其余（主/子 prompt、description、MCP、模型、API key、阈值、store_database、
-    连接凭据等）均可变。
+    其余（主/子 prompt、description、MCP、模型、API key、阈值、连接凭据等）均可变。
+    store_database 现在统一由全局设置决定，保存时由 API 覆盖，不再由用户编辑。
     """
     validate_edits(existing, incoming)
     # 保留原有 state_messages_key / history_token_measure_key / extracted_summary_ai_msg_key（子 agent 名未变，键名也保持稳定）
