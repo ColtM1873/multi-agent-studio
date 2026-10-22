@@ -10,6 +10,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from app.config.db_names import join_conn_string
+
 DEFAULT_HTML_REPORT_PROMPT = (
     "不错，请把你的回答输出为一份html文件，使用你所拥有的FileTools，自拟文件名。"
 )
@@ -27,10 +29,10 @@ class PostgresConfig(BaseModel):
     store_namespace: tuple[str, ...] = ("Li", "memories")
 
     def store_conn_string(self) -> str:
-        return self.prefix + self.store_database + self.suffix
+        return join_conn_string(self.prefix, self.store_database, self.suffix)
 
     def checkpoint_conn_string(self) -> str:
-        return self.prefix + self.checkpoint_database + self.suffix
+        return join_conn_string(self.prefix, self.checkpoint_database, self.suffix)
 
 
 class EmbeddingConfig(BaseModel):

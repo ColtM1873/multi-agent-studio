@@ -12,6 +12,12 @@ from pydantic import BaseModel, Field
 
 from app.config.edits import EditRuleViolation, apply_edits
 from app.config.models import MultiAgentConfig
+from app.config.db_names import (
+    DatabaseError as DbNameError,
+    normalize_name,
+    same_identity,
+    validate_agent_name,
+)
 from app.config.settings import (
     load_settings,
     seed_global_embedding,
@@ -19,7 +25,6 @@ from app.config.settings import (
     seed_global_sub_summary,
     seed_global_summary,
 )
-from app.config.store import slugify
 from app.deps import chat_manager, config_store
 from app.runtime.graph_builder import describe_mcp_error
 from app.services import pg_databases
@@ -71,6 +76,58 @@ def _is_lite() -> bool:
     return chat_manager.__class__.__module__.startswith("lite.")
 
 
+def _normalize_namespace(value) -> tuple[str, ...]:
+    """校验并归一化记忆命名空间（逗号分隔的多层级）。
+
+    LangGraph 的 store 用 "." 把层级拼成一个 prefix，因此单个层级里不能再出现点号。
+    """
+    parts: list[str] = []
+    for raw in value or []:
+        level = normalize_name(raw)
+        if not level:
+            continue
+        if "." in level:
+            raise HTTPException(
+                status_code=400,
+                detail="记忆命名空间不能用点号：点号是层级分隔符，请改用逗号分隔多个层级（例如 Li,memories）",
+            )
+        if any(ord(ch) < 32 or ord(ch) == 127 for ch in level):
+            raise HTTPException(status_code=400, detail="记忆命名空间不能包含控制字符")
+        if len(level.encode("utf-8")) > 63:
+            raise HTTPException(
+                status_code=400, detail=f"记忆命名空间「{level}」过长（单个层级上限 63 字节）"
+            )
+        parts.append(level)
+    if not parts:
+        raise HTTPException(status_code=400, detail="记忆命名空间不能为空")
+    return tuple(parts)
+
+
+def _ensure_name_is_free(name: str) -> None:
+    """名称会同时成为 agent_id 与 checkpoint 数据库名，三者都不能和现有 agent 冲突。"""
+    if same_identity(name, _current_store_database()):
+        raise HTTPException(
+            status_code=400,
+            detail=f"名称「{name}」与全局 store 数据库同名，请换一个名称",
+        )
+    for cfg in config_store.list():
+        if same_identity(cfg.name, name):
+            raise HTTPException(
+                status_code=400,
+                detail=f"名称「{name}」已存在：名称同时用作 agent_id 与 checkpoint 数据库名，不能重名",
+            )
+        if same_identity(cfg.agent_id, name):
+            raise HTTPException(
+                status_code=400,
+                detail=f"名称「{name}」与已有 multi-agent 的 agent_id 冲突，请换一个名称",
+            )
+        if same_identity(cfg.postgres.checkpoint_database, name):
+            raise HTTPException(
+                status_code=400,
+                detail=f"名称「{name}」与已有 multi-agent 的 checkpoint 数据库同名，请换一个名称",
+            )
+
+
 async def _ensure_agent_databases(cfg: MultiAgentConfig) -> None:
     """按用户给的连接串自动创建 checkpoint / store 数据库（不要求用户先建库）。"""
     databases = [cfg.postgres.checkpoint_database]
@@ -88,32 +145,22 @@ async def _ensure_agent_databases(cfg: MultiAgentConfig) -> None:
 
 @router.post("/agents")
 async def create_agent(cfg: MultiAgentConfig):
-    checkpoint_db = (cfg.postgres.checkpoint_database or "").strip()
-    if not checkpoint_db:
-        raise HTTPException(status_code=400, detail="必须填写 checkpoint_database（会话历史归属的数据库名）")
-    cfg.postgres.checkpoint_database = checkpoint_db
-
-    if not cfg.agent_id.strip():
-        raise HTTPException(status_code=400, detail="必须填写 agent_id（或名称）")
+    # 只需要用户填名称；另外两个身份字段由名称直接派生（见 app/config/db_names.py）。
+    try:
+        name = validate_agent_name(cfg.name)
+    except DbNameError as exc:
+        raise HTTPException(status_code=400, detail=f"名称不可用：{exc}")
+    cfg.name = name
+    cfg.agent_id = name
+    cfg.postgres.checkpoint_database = name
 
     # 子 agent 名称不能为空（空 name 会让工具名回退为函数名，导致图构建报错）
     for sub in cfg.sub_agents:
         if not sub.name or not sub.name.strip():
             raise HTTPException(status_code=400, detail="子 agent 名称不能为空")
 
-    # 清理 agent_id 中的特殊字符，保证文件名与 URL 安全
-    cfg.agent_id = slugify(cfg.agent_id)
-    if not cfg.agent_id:
-        raise HTTPException(status_code=400, detail="agent_id 清理后为空，请使用字母/数字/中文/下划线/连字符")
-
-    existing_ids = {c.agent_id for c in config_store.list()}
-    if cfg.agent_id in existing_ids:
-        raise HTTPException(status_code=400, detail=f"agent_id 已存在: {cfg.agent_id}")
-
-    # 库名不能与现有配置冲突（否则会话串台）
-    for c in config_store.list():
-        if c.postgres.checkpoint_database == checkpoint_db and c.agent_id != cfg.agent_id:
-            raise HTTPException(status_code=400, detail=f"checkpoint_database [{checkpoint_db}] 已被 [{c.name}] 占用")
+    _ensure_name_is_free(name)
+    cfg.postgres.store_namespace = _normalize_namespace(cfg.postgres.store_namespace)
 
     # 长期记忆统一使用全局 store 数据库；旧配置里的 store_database 不再由用户决定
     cfg.postgres.store_database = _current_store_database()
@@ -126,7 +173,7 @@ async def create_agent(cfg: MultiAgentConfig):
     if not ok:
         raise HTTPException(
             status_code=400,
-            detail=f"数据库已自动创建，但仍无法连接 [{checkpoint_db}]。请检查连接前缀、端口、账号密码与 SSL 设置。原始错误: {err}",
+            detail=f"数据库已自动创建，但仍无法连接 [{name}]。请检查连接前缀、端口、账号密码与 SSL 设置。原始错误: {err}",
         )
 
     # 生成并锁定子 agent 的消息通道键（落盘后永久固定，与历史绑定）
@@ -155,18 +202,32 @@ async def update_agent(agent_id: str, cfg: MultiAgentConfig):
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="配置不存在")
 
-    if cfg.agent_id != agent_id:
-        raise HTTPException(status_code=400, detail="agent_id 不可修改")
+    try:
+        name = validate_agent_name(cfg.name)
+    except DbNameError as exc:
+        raise HTTPException(status_code=400, detail=f"名称不可用：{exc}")
+    if normalize_name(existing.name) != name:
+        raise HTTPException(
+            status_code=400, detail="名称不可修改（name 同时绑定 agent_id 与 checkpoint 数据库）"
+        )
+
+    # 身份字段以磁盘上的既有值为准：名称不可改，另外两个字段由名称派生、创建后不可改。
+    cfg.name = existing.name
+    cfg.agent_id = existing.agent_id
+    cfg.postgres.checkpoint_database = existing.postgres.checkpoint_database
+    # namespace 现在允许在配置页编辑；旧客户端没传该字段时保留原值，避免悄悄改掉记忆归属。
+    if "store_namespace" in cfg.postgres.model_fields_set:
+        cfg.postgres.store_namespace = _normalize_namespace(cfg.postgres.store_namespace)
+    else:
+        cfg.postgres.store_namespace = existing.postgres.store_namespace
 
     try:
         merged = apply_edits(existing, cfg)
     except EditRuleViolation as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    # store 库固定使用全局值；namespace 不再在配置页展示，保留原配置以免悄悄改写记忆归属
+    # store 库固定使用全局值
     merged.postgres.store_database = _current_store_database()
-    merged.postgres.store_namespace = existing.postgres.store_namespace
-    merged.postgres.checkpoint_database = merged.postgres.checkpoint_database.strip()
 
     # 子 agent 名称不能为空
     for sub in merged.sub_agents:

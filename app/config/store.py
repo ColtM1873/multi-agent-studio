@@ -20,6 +20,21 @@ from app.config.models import (
 CONFIG_DIR_NAME = "configs"
 DEFAULT_CONFIG_NAME = "default.json"
 
+# configs/ 下非 multi-agent 配置的内部文件（名称已禁止用作 agent 名称）。
+# 列在这里可以避免每次 list() 都去尝试解析它们。
+_NON_AGENT_STEMS = frozenset(
+    {
+        "default",
+        "settings",
+        "ui_prefs",
+        "drafts",
+        "common_prompts",
+        "store_migrations",
+        "identity_migration",
+        "floating_stop_pos",
+    }
+)
+
 
 def config_dir(base_dir: Path | str) -> Path:
     return Path(base_dir) / CONFIG_DIR_NAME
@@ -90,7 +105,7 @@ class ConfigStore:
         self.ensure_dir()
         configs = []
         for p in sorted(self._dir.glob("*.json")):
-            if p.stem == "default":
+            if p.stem in _NON_AGENT_STEMS:
                 continue
             try:
                 configs.append(MultiAgentConfig.model_validate_json(p.read_text(encoding="utf-8")))

@@ -52,8 +52,9 @@ from app.config.settings import (
     seed_global_sub_summary,
     seed_global_summary,
 )
-from app.deps import BASE_DIR, common_prompt_store, config_store, draft_store
+from app.deps import BASE_DIR, common_prompt_store, config_store, draft_store, ui_prefs_store
 from app.services import store_migrations as store_migration_service
+from app.services import identity_migration
 
 # 可选的浏览器工具计时 / 卡死看门狗探针（仅当设置 BROWSER_TOOL_TIMING=1 时安装，
 # 未设置时零开销、不改变任何行为）。见 browser_agent/diagnostics.py。
@@ -78,6 +79,16 @@ except Exception:
 logger = logging.getLogger("app")
 
 
+def _reload_identity_stores() -> None:
+    """身份迁移会改写 drafts / common_prompts / ui_prefs 里的 agent_id 键；
+    这些 store 在 import 时已经把旧键读进内存，必须重新加载一次。"""
+    for store in (draft_store, common_prompt_store, ui_prefs_store):
+        try:
+            store.reload()
+        except Exception:  # noqa: BLE001
+            logger.exception("重新加载本机数据失败（%s）", type(store).__name__)
+
+
 def _autostart_pg_services() -> None:
     """后台拉起配置所指向的本机 PostgreSQL 服务（见 app/services/pg_service.py）。"""
     try:
@@ -87,6 +98,18 @@ def _autostart_pg_services() -> None:
     except Exception as exc:  # noqa: BLE001
         try:
             logger.warning("自动启动 PostgreSQL 服务失败：%s", exc)
+        except Exception:
+            pass
+    # 服务起来后再补一次身份统一（三字段同步）。启动时的第一次尝试可能因服务
+    # 尚未就绪而跳过；失败项会记录在 configs/identity_migration.json.pending。
+    try:
+        result = identity_migration.run_for_all_sync(config_store)
+        if result.get("renamed"):
+            logger.info("[identity] 后台补做改名：%s 项", len(result["renamed"]))
+            _reload_identity_stores()
+    except Exception:  # noqa: BLE001
+        try:
+            logger.exception("身份统一（agent_id/checkpoint 数据库按名称改名）失败")
         except Exception:
             pass
 
@@ -100,6 +123,15 @@ async def lifespan(_app: FastAPI):
         store_migration_service.detect_and_record(config_store, settings)
     except Exception:  # noqa: BLE001
         pass
+    # 统一身份三件套：agent_id / checkpoint 数据库都改成与名称相同。
+    # 不弹窗、不询问；连不上数据库的 agent 会记录到 configs/identity_migration.json，
+    # 由后台线程在 PostgreSQL 服务拉起后再补一次（见 _autostart_pg_services）。
+    try:
+        await identity_migration.run_for_all(config_store)
+    except Exception:  # noqa: BLE001
+        logger.exception("身份统一（agent_id/checkpoint 数据库按名称改名）失败")
+    finally:
+        _reload_identity_stores()
     # 首次启动：若有已存在的 multi-agent，把第一个带连接前缀的配置提取为全局连接设置，
     # 供各 agent 配置界面的「使用全局连接」开关使用（见 app/config/settings.py）。
     try:

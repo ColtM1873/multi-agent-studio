@@ -24,7 +24,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 DEFAULT_PG_PORT = 5432
 
@@ -523,7 +523,16 @@ def _match_service(services: list[dict], port: int) -> dict | None:
 # --------------------------------------------------------------------------- #
 def _iter_config_conn_strings(base_dir: Path | str):
     cfg_dir = Path(base_dir) / "configs"
-    skip = {"default", "settings", "ui_prefs", "drafts", "common_prompts"}
+    skip = {
+        "default",
+        "settings",
+        "ui_prefs",
+        "drafts",
+        "common_prompts",
+        "store_migrations",
+        "identity_migration",
+        "floating_stop_pos",
+    }
     for path in sorted(cfg_dir.glob("*.json")):
         if path.stem in skip:
             continue
@@ -536,7 +545,8 @@ def _iter_config_conn_strings(base_dir: Path | str):
         db = pg.get("checkpoint_database") or ""
         suffix = pg.get("suffix") or ""
         if prefix:
-            yield prefix + db + suffix
+            # 名称可能是中文/带空格：URI 里的数据库名要百分号编码（与 db_names 一致）。
+            yield prefix + quote(str(db), safe="") + suffix
 
 
 def _local_pg_ports(base_dir: Path | str) -> set[int]:

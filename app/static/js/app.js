@@ -727,6 +727,41 @@ const I18N_EN = {
   "删除全部历史消息": "Delete all history messages",
   "删除全部历史消息不可复原，是否继续？": "Deleting all history messages cannot be undone. Continue?",
   "删除全部历史消息失败": "Failed to delete all history messages",
+  "namespace": "namespace",
+  "store_namespace（逗号分隔）": "store_namespace (comma-separated)",
+  "自动生成": "Generated automatically",
+  "自动生成，与名称相同": "Generated automatically; identical to the name",
+  "由名称自动生成，不需要填写。": "Generated automatically from the name; no need to fill in.",
+  "由名称自动生成，不需要填写。保存时如果这个库不存在，程序会自动创建；创建后不可更改。": "Generated automatically from the name; no need to fill in. If it does not exist, the app creates it when saving. Cannot be changed after creation.",
+  "唯一标识：同时用作 agent_id（配置文件名 configs/&lt;名称&gt;.json）与 checkpoint 数据库名。创建后不可更改；不能与其他 multi-agent 重名。": "Unique identity: used both as agent_id (config file configs/<name>.json) and as the checkpoint database name. Cannot be changed after creation; must be unique across multi-agents.",
+  "当前 agent_id / checkpoint 数据库仍与名称不一致：程序下次启动会自动改名；如果一直不变，请查看 logs/server.log 或 configs/identity_migration.json。": "This agent's agent_id / checkpoint database still differ from its name. The app will try to rename them on the next start; if this persists, check logs/server.log or configs/identity_migration.json.",
+  "记忆存储命名空间，逗号分隔多个层级。相同 namespace 的 multi-agent 共用长期记忆。": "Memory store namespace, with levels separated by commas. Multi-agents with the same namespace share long-term memory.",
+  "例如 Li,memories；不同 multi-agent 使用同一个 namespace 即共用记忆。": "e.g. Li,memories; multi-agents using the same namespace share memories.",
+  "请填写 store_namespace（记忆命名空间）": "Please fill in store_namespace (memory namespace)",
+  "记忆命名空间的单个层级不能包含点号，请用逗号分隔层级（例如 Li,memories）": "A single namespace level cannot contain a dot; separate levels with commas (e.g. Li,memories)",
+  "名称不能是「.」或「..」": "The name cannot be '.' or '..'",
+  "名称不能以点开头（会变成隐藏文件）": "The name cannot start with a dot (it would become a hidden file)",
+  "「postgres」等系统库名称不能作为 multi-agent 名称": "System database names such as 'postgres' cannot be used as a multi-agent name",
+  "「settings」等程序内部配置文件名不能作为 multi-agent 名称": "Internal config file names such as 'settings' cannot be used as a multi-agent name",
+  "名称不能以点或空格结尾（Windows 文件名限制）": "The name cannot end with a dot or space (Windows filename restriction)",
+  "名称不能包含这些字符：": "The name cannot contain these characters: ",
+  "（名称会同时用作文件名与数据库名）": " (the name is used as both the file name and the database name)",
+  "名称过长：最多 63 字节（约 21 个汉字或 63 个英文字符），因为名称会直接作为 checkpoint 数据库名。": "Name too long: at most 63 bytes (about 21 Chinese characters or 63 English characters), because the name is used directly as the checkpoint database name.",
+  "服务器：": "Server: ",
+  "数据库：": "Database: ",
+  "（未填写）": "(not filled in)",
+  "（填写名称后自动生成）": "(generated after you enter a name)",
+  "服务器只由连接前缀里的 host:port 决定；同一 host:port 才是同一台 PostgreSQL。pgAdmin 里的「服务器」名字只是连接配置的显示名，不改变数据位置。": "The server is determined only by host:port in the connection prefix; only the same host:port is the same PostgreSQL instance. The 'server' names in pgAdmin are just display names for connection profiles and do not change where data lives.",
+  "连接串里的数据库名": "The database name in the connection string",
+  "会被忽略：实际库名由名称自动生成。": " is ignored: the actual database name is generated from the name.",
+  "按当前填写内容实时拼出的完整连接串（密码已脱敏）。数据库名一栏只是示例，实际由名称自动生成。": "Connection string composed live from the current inputs (password masked). The database name shown is only a sample; the actual one is generated from the name.",
+  "连接前缀 = 连接串里「数据库名」前面的全部内容：协议://用户名:密码@主机:端口/。<br/><br/>例如 postgresql://user:passwd@localhost:5432/<br/><br/>它回答「连到哪台数据库服务器、用哪个账号」。注意结尾的斜杠 / 不能少；数据库名由名称自动生成，不需要在这里填。": "Connection prefix = everything before the database name in the connection string: protocol://user:password@host:port/.<br/><br/>e.g. postgresql://user:passwd@localhost:5432/<br/><br/>It answers 'which database server, with which account'. The trailing slash / is required; the database name is generated from the name, so it is not needed here.",
+  "直接粘贴数据库服务商提供的整条连接串（PostgreSQL 官方 URI 格式）。<br/><br/>例如 postgresql://user:passwd@localhost:5432/mydb?sslmode=disable<br/><br/>程序只从中拆出连接前缀、连接后缀；其中的数据库名会被忽略，实际库名由名称自动生成。": "Paste the whole connection string provided by your database vendor (official PostgreSQL URI format).<br/><br/>e.g. postgresql://user:passwd@localhost:5432/mydb?sslmode=disable<br/><br/>The app only extracts the connection prefix and suffix; the database name in it is ignored and the actual database is derived from the name.",
+  "勾选后，本 multi-agent 直接使用主界面「系统设置 → 全局postgres连接设置」里的连接前缀与连接后缀（主机 / 账号 / 密码 / SSL）；checkpoint 数据库名仍由名称自动生成。取消勾选可为本 multi-agent 单独设置连接。": "When checked, this multi-agent uses the connection prefix and suffix (host / account / password / SSL) configured under Settings → Global PostgreSQL connection settings on the main screen; the checkpoint database name is still derived from the name. Uncheck to set the connection separately for this multi-agent.",
+  "用途：让所有 multi-agent 共用同一套数据库连接（主机、账号、密码、SSL）；checkpoint 数据库名由每个 multi-agent 的名称自动生成（保存时程序会自动建库），长期记忆统一使用全局 store 数据库。": "Purpose: let all multi-agents share the same database connection (host, account, password, SSL). The checkpoint database name is derived from each multi-agent's name (the app creates it automatically on save), and long-term memory always uses the global store database.",
+  "所以这里只需填「前缀 + 后缀」即可，checkpoint 数据库名由每个 multi-agent 的名称自动生成；也可以直接粘贴整条连接串，程序会自动帮你切出前缀与后缀（其中的数据库名会被忽略）。": "So you only need to fill in 'prefix + suffix' here; each multi-agent's checkpoint database name is derived from its name. Alternatively, paste the whole connection string and the app extracts the prefix and suffix automatically (the database name in it is ignored).",
+  "迁移前会先按连接前缀识别服务器（host:port）：同一 host:port 才是同一台 PostgreSQL；pgAdmin 里的「服务器」名字只是连接配置的显示名，不改变数据位置。": "Before migrating, the app identifies the server from the connection prefix (host:port): only the same host:port is the same PostgreSQL instance. The 'server' names in pgAdmin are just display names for connection profiles and do not change where data lives.",
+  "（未知）": "(unknown)",
 };
 const t = (s) => (lang === "zh" || !I18N_EN[s]) ? s : I18N_EN[s];
 function setLang(l) {
@@ -1741,6 +1776,17 @@ function maskedPrefix(p) {
     .replace(/\/\/([^:@/]+):[^@/]+@/, "//$1:passwd@")
     .replace(/(@[^:/]+):\d+\//, "$1:port/");
 }
+/* 从连接前缀里提取「服务器」= host:port。这是后端唯一认识的服务器身份：
+ * 同一 host:port 才是同一台 PostgreSQL；pgAdmin 里的服务器名字只是显示名。 */
+function connServerLabel(prefix) {
+  const p = String(prefix || "").trim();
+  if (!p) return "";
+  const rest = p.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "");
+  const at = rest.lastIndexOf("@");
+  let hp = at >= 0 ? rest.slice(at + 1) : rest;
+  hp = hp.split("/")[0].split("?")[0];
+  return hp;
+}
 
 /* 完整连接串 ⇄ 前缀 + 数据库名 + 后缀
  * PostgreSQL URI 规范：postgresql://用户名:密码@主机:端口/数据库名?参数
@@ -1780,19 +1826,20 @@ function currentPgMode() {
   const r = document.querySelector('input[name="pg_conn_mode"]:checked');
   return r ? r.value : "split";
 }
-/* 收集当前表单的连接信息（两种填写方式归一化成 prefix/database/suffix）。 */
+/* 收集当前表单的连接信息（两种填写方式归一化成 prefix/suffix）。
+ * 数据库名不再由用户填写：它由「名称」自动生成，所以这里不返回 database。 */
 function collectPgConn() {
   if (currentPgMode() === "full") {
     const parsed = parseConnString($("#f_conn_full").value);
     if (parsed.ok) {
       let suffix = parsed.suffix;
       if (!suffix && isLocalPrefix(parsed.prefix)) suffix = "?sslmode=disable";
-      return { ok: true, prefix: parsed.prefix, database: parsed.database, suffix };
+      return { ok: true, prefix: parsed.prefix, suffix };
     }
-    return { ok: false, error: parsed.error, prefix: "", database: $("#f_cpdb").value, suffix: "" };
+    return { ok: false, error: parsed.error, prefix: "", suffix: "" };
   }
   const s = $("#f_suffix");
-  return { ok: true, prefix: $("#f_prefix").value, database: $("#f_cpdb").value, suffix: s ? s.value || "" : "" };
+  return { ok: true, prefix: $("#f_prefix").value, suffix: s ? s.value || "" : "" };
 }
 
 /* ================= Markdown 渲染器 ================= */
@@ -2294,6 +2341,7 @@ async function renderAgents() {
         <h3>${esc(a.name)}${hidden ? ` <span class="hidden-tag">${t("已隐藏")}</span>` : ""}</h3>
         <div class="meta">
           ${t("checkpoint 库")}：<code>${esc(a.postgres.checkpoint_database)}</code><br/>
+          ${t("namespace")}：<code>${esc((a.postgres.store_namespace || []).join(",") || "—")}</code><br/>
           ${t("子 agent")}：${a.sub_agents.length} ${t("个")}（${a.sub_agents.map(s => esc(s.name)).join(t("、")) || t("无")}）<br/>
           ${t("主模型")}：<code>${esc(a.main_agent.llm_provider_name)}</code>
         </div>
@@ -2823,7 +2871,8 @@ async function openStoreMigrationModal(back, auto = false) {
       <h3>📦 ${t("迁移旧 store 数据库")}</h3>
       <div class="muted" style="margin-bottom:10px;line-height:1.7;">
         <p style="margin:0 0 6px;">${t("旧版本允许每个 multi-agent 使用不同的 store 数据库。现在长期记忆统一存放到：")}<code>${esc(data.current_database)}</code>${t("。")}</p>
-        <p style="margin:0;">${t("迁移会把原数据库里的记忆复制到当前库，并允许修改「新数据库中的 namespace」。复制并校验成功后，程序会删除原数据库；系统库 postgres 永不删除。")}</p>
+        <p style="margin:0 0 6px;">${t("迁移会把原数据库里的记忆复制到当前库，并允许修改「新数据库中的 namespace」。复制并校验成功后，程序会删除原数据库；系统库 postgres 永不删除。")}</p>
+        <p style="margin:0;">${t("迁移前会先按连接前缀识别服务器（host:port）：同一 host:port 才是同一台 PostgreSQL；pgAdmin 里的「服务器」名字只是连接配置的显示名，不改变数据位置。")}</p>
       </div>
       <div id="migrationList">
         ${data.sources.map(src => {
@@ -2836,6 +2885,7 @@ async function openStoreMigrationModal(back, auto = false) {
           return `
             <div class="migration-source" data-source-id="${esc(src.id)}">
               <div class="migration-source-head">
+                <b>${t("服务器：")}</b><code>${esc(src.server || t("（未知）"))}</code>
                 <b>${t("原数据库：")}</b><code>${esc(src.database)}</code>
                 ${src.is_system ? `<span class="migration-tag">${t("系统库，不删除")}</span>` : ""}
                 ${src.agents && src.agents.length ? `<span class="muted">（${t("使用它的 multi-agent：")}${esc(src.agents.join("、"))}）</span>` : ""}
@@ -3264,10 +3314,10 @@ async function openGlobalPostgresSettings(back) {
     <div class="modal" style="width:580px;max-height:84vh;overflow:auto;" data-modal-key="globalPostgres">
       <h3>🌐 ${t("全局postgres连接设置")}</h3>
       <div class="muted" style="margin-bottom:10px;line-height:1.65;">
-        <p style="margin:0 0 6px;">${t("用途：让所有 multi-agent 共用同一套数据库连接（主机、账号、密码、SSL）；每个 multi-agent 仍需填写自己的 checkpoint 数据库名（保存时程序会自动建库），长期记忆统一使用全局 store 数据库。")}</p>
+        <p style="margin:0 0 6px;">${t("用途：让所有 multi-agent 共用同一套数据库连接（主机、账号、密码、SSL）；checkpoint 数据库名由每个 multi-agent 的名称自动生成（保存时程序会自动建库），长期记忆统一使用全局 store 数据库。")}</p>
         <p style="margin:0 0 6px;">${t("什么是「完整连接串」（conn string）：数据库厂商提供的一整条连接地址，长这样：")}<code>postgresql://user:passwd@localhost:5432/mydb?sslmode=disable</code></p>
         <p style="margin:0 0 6px;">${t("我们自造的「连接前缀 / 连接后缀」是什么意思：把上面这条连接串从「数据库名」处切成两半——数据库名前面的一段（协议、账号密码、主机端口）叫连接前缀，数据库名后面的一段（? 开头的 SSL 等参数）叫连接后缀。")}</p>
-        <p style="margin:0;">${t("所以这里只需填「前缀 + 后缀」即可，checkpoint 数据库名由每个 multi-agent 各自填写；也可以直接粘贴整条连接串，程序会自动帮你切出前缀与后缀（其中的数据库名会被忽略）。")}</p>
+        <p style="margin:0;">${t("所以这里只需填「前缀 + 后缀」即可，checkpoint 数据库名由每个 multi-agent 的名称自动生成；也可以直接粘贴整条连接串，程序会自动帮你切出前缀与后缀（其中的数据库名会被忽略）。")}</p>
       </div>
       <div class="field full">
         <label>${t("填写方式")}</label>
@@ -4238,7 +4288,13 @@ function buildForm(cfg, canEditSubs) {
   const globalSet = !!String(gpPrefix).trim();
   // 长期记忆统一存放的全局 store 数据库（只读展示；改名入口在主界面设置里）
   const gStoreDb = (settingsCache && settingsCache.global_store_database) || "Long_Term_Memory";
+  const ns = (pg.store_namespace || []).join(",");
   const isNewCfg = !cfg.agent_id;
+  // 只有「编辑已有 agent」才可能出现身份未统一（迁移失败）；新建 / 默认模板不算。
+  const identityMismatch = !canEditSubs && (
+    String(cfg.agent_id || "") !== String(cfg.name || "") ||
+    String(pg.checkpoint_database || "") !== String(cfg.name || "")
+  );
   const useGlobalInit = globalSet && (
     isNewCfg || (String(pg.prefix || "") === gpPrefix && String(pg.suffix || "") === gpSuffix)
   );
@@ -4268,8 +4324,9 @@ function buildForm(cfg, canEditSubs) {
   const gFlush = tokToUnit(gSum.flush_history_tokenwise != null ? gSum.flush_history_tokenwise : 0);
 
   const pgMode = pgConnMode === "full" ? "full" : "split";
+  // 数据库名不再手填：完整连接串里只借用「前缀 / 后缀」，库名由名称自动生成。
   const fullConnInit = (pg.prefix || "").trim()
-    ? composeConnString(pg.prefix, pg.checkpoint_database, pg.suffix)
+    ? composeConnString(pg.prefix, "mydb", pg.suffix)
     : "";
 
   const embInOptions = EMB_OPTIONS.includes(emb.model_name);
@@ -4298,16 +4355,18 @@ function buildForm(cfg, canEditSubs) {
   form.innerHTML = `
     <div class="form-card"><h4>${t("基本信息")}</h4><div class="form-grid">
       <div class="basic-grid">
-      <div class="field"><label>agent_id ${info("唯一标识，用作配置文件名 configs/&lt;id&gt;.json，创建后不可更改。")}</label><input id="f_agent_id" value="${esc(cfg.agent_id)}" ${canEditSubs ? "" : "readonly"}${ph("agent_id")}><span class="lock-hint">${canEditSubs ? "&nbsp;" : t("创建后不可更改")}</span></div>
-      <div class="field"><label>${t("名称")} name ${info("显示名称，创建后不可更改（与历史会话绑定）。")}</label><input id="f_name" value="${esc(cfg.name)}" ${canEditSubs ? "" : "readonly"}${ph("name")}><span class="lock-hint">${canEditSubs ? "&nbsp;" : t("创建后不可更改")}</span></div>
-      <div class="field"><label>${t("checkpoint 数据库（会话历史绑定）")} ${info("会话历史归属的库名，即连接串里最后一个 / 后面的那一段（如 postgresql://…:5432/这里）。保存时如果该库不存在，程序会自动创建；创建后不可更改。")}</label><input id="f_cpdb" value="${esc(pg.checkpoint_database)}" ${canEditSubs ? "" : "readonly"}${ph("checkpoint_database")}><span class="lock-hint">${canEditSubs ? t("保存时自动创建") : t("创建后不可更改")}</span></div>
+      <div class="field"><label>${t("名称")} name ${info("唯一标识：同时用作 agent_id（配置文件名 configs/&lt;名称&gt;.json）与 checkpoint 数据库名。创建后不可更改；不能与其他 multi-agent 重名。")}</label><input id="f_name" value="${esc(cfg.name)}" ${canEditSubs ? "" : "readonly"}${ph("name")}><span class="lock-hint">${canEditSubs ? "&nbsp;" : t("创建后不可更改")}</span></div>
+      <div class="field"><label>agent_id ${info("由名称自动生成，不需要填写。")}</label><input id="f_agent_id_view" value="${esc(cfg.agent_id)}" readonly placeholder="${t("自动生成")}"><span class="lock-hint">${t("自动生成，与名称相同")}</span></div>
+      <div class="field"><label>${t("checkpoint 数据库（会话历史绑定）")} ${info("由名称自动生成，不需要填写。保存时如果这个库不存在，程序会自动创建；创建后不可更改。")}</label><input id="f_cpdb_view" value="${esc(pg.checkpoint_database)}" readonly placeholder="${t("自动生成")}"><span class="lock-hint">${t("自动生成，与名称相同")}</span></div>
       </div>
+      ${identityMismatch ? `<div class="field full"><div class="err-hint">⚠ ${t("当前 agent_id / checkpoint 数据库仍与名称不一致：程序下次启动会自动改名；如果一直不变，请查看 logs/server.log 或 configs/identity_migration.json。")}</div></div>` : ""}
       <div class="field full" id="f_store_db_hint"><div class="conn-example">🧠 ${t("长期记忆统一存放在全局 store 数据库：")}<code>${esc(gStoreDb)}</code>${t("。保存时会自动建库；如需修改库名，请到主界面设置 →「全局配置设置」。")}</div></div>
+      <div class="field"><label>${t("store_namespace（逗号分隔）")} ${info("记忆存储命名空间，逗号分隔多个层级。相同 namespace 的 multi-agent 共用长期记忆。")}</label><input id="f_ns" value="${esc(ns)}"><span class="hint">${t("例如 Li,memories；不同 multi-agent 使用同一个 namespace 即共用记忆。")}</span></div>
       ${globalSet ? `
       <div class="field full">
         <div class="global-toggle-row">
           <label style="display:flex;flex-direction:row;align-items:center;gap:8px;margin:0;"><input type="checkbox" id="f_pg_use_global" ${useGlobalInit ? "checked" : ""}> ${t("使用全局 postgres 连接设置")}</label>
-          ${info("勾选后，本 multi-agent 直接使用主界面「系统设置 → 全局postgres连接设置」里的连接前缀与连接后缀（主机 / 账号 / 密码 / SSL）；你仍可单独填写自己的 checkpoint 数据库名。取消勾选可为本 multi-agent 单独设置连接。")}
+          ${info("勾选后，本 multi-agent 直接使用主界面「系统设置 → 全局postgres连接设置」里的连接前缀与连接后缀（主机 / 账号 / 密码 / SSL）；checkpoint 数据库名仍由名称自动生成。取消勾选可为本 multi-agent 单独设置连接。")}
           <span class="exp-tri" id="pgExpTri" title="${t("展开 / 收起说明")}"></span>
         </div>
       </div>
@@ -4327,15 +4386,15 @@ function buildForm(cfg, canEditSubs) {
         </div>
       </div>
       <div id="pgSplitBlock" style="${pgMode === "split" ? "display:contents;" : "display:none;"}">
-        <div class="field full"><label>${t("连接前缀")} prefix <i class="info-icon">!<span class="tip">${t("连接前缀 = 连接串里「数据库名」前面的全部内容：协议://用户名:密码@主机:端口/。<br/><br/>例如 postgresql://user:passwd@localhost:5432/<br/><br/>它回答「连到哪台数据库服务器、用哪个账号」。注意结尾的斜杠 / 不能少，数据库名填在上一栏「checkpoint 数据库」。")}</span></i></label><input id="f_prefix" value="${esc(pg.prefix)}"${ph("prefix")}><span class="hint">${t("格式：postgresql://用户名:密码@主机:端口/（以斜杠 / 结尾）")}</span></div>
+        <div class="field full"><label>${t("连接前缀")} prefix <i class="info-icon">!<span class="tip">${t("连接前缀 = 连接串里「数据库名」前面的全部内容：协议://用户名:密码@主机:端口/。<br/><br/>例如 postgresql://user:passwd@localhost:5432/<br/><br/>它回答「连到哪台数据库服务器、用哪个账号」。注意结尾的斜杠 / 不能少；数据库名由名称自动生成，不需要在这里填。")}</span></i></label><input id="f_prefix" value="${esc(pg.prefix)}"${ph("prefix")}><span class="hint">${t("格式：postgresql://用户名:密码@主机:端口/（以斜杠 / 结尾）")}</span></div>
         <div class="field"><label>${t("连接后缀")} suffix <i class="info-icon">!<span class="tip">${t("连接后缀 = 连接串里「数据库名」后面的部分，通常是 ? 开头的参数，最主要的是 SSL 模式。<br/><br/>例如 ?sslmode=disable、?sslmode=require。<br/><br/>本地数据库用 sslmode=disable 即可；云端/企业数据库按服务商要求选择。")}</span></i></label><div id="suffixCtrlWrap" style="display:flex;flex-direction:column;gap:5px;">${suffixCtrl}</div></div>
       </div>
       <div class="field full" id="pgFullBlock" style="${pgMode === "full" ? "" : "display:none;"}">
-        <label>${t("完整连接串")} <i class="info-icon">!<span class="tip">${t("直接粘贴数据库服务商提供的整条连接串（PostgreSQL 官方 URI 格式）。<br/><br/>例如 postgresql://user:passwd@localhost:5432/mydb?sslmode=disable<br/><br/>程序会自动拆出连接前缀、数据库名、连接后缀；其中的数据库名会同步到上面的「checkpoint 数据库」。")}</span></i></label>
+        <label>${t("完整连接串")} <i class="info-icon">!<span class="tip">${t("直接粘贴数据库服务商提供的整条连接串（PostgreSQL 官方 URI 格式）。<br/><br/>例如 postgresql://user:passwd@localhost:5432/mydb?sslmode=disable<br/><br/>程序只从中拆出连接前缀、连接后缀；其中的数据库名会被忽略，实际库名由名称自动生成。")}</span></i></label>
         <textarea id="f_conn_full" rows="3" placeholder="postgresql://user:passwd@localhost:5432/mydb?sslmode=disable">${esc(fullConnInit)}</textarea>
         <span class="hint" id="connFullHint"></span>
       </div>
-      <div class="field full"><label>${t("完整连接串示例")} ${info("按当前填写内容实时拼出的完整连接串（密码已脱敏）。")}</label><div class="conn-example" id="connExample"></div></div>
+      <div class="field full"><label>${t("完整连接串示例")} ${info("按当前填写内容实时拼出的完整连接串（密码已脱敏）。数据库名一栏只是示例，实际由名称自动生成。")}</label><div class="conn-example" id="connExample"></div></div>
       </div>
     </div></div>
 
@@ -4415,8 +4474,18 @@ function buildForm(cfg, canEditSubs) {
   const fullInput = $("#f_conn_full");
   const fullHint = $("#connFullHint");
   const suffixWrap = $("#suffixCtrlWrap");
-  const cpdbInput = $("#f_cpdb");
   const prefixInput = $("#f_prefix");
+  const nameInput = $("#f_name");
+  const idView = $("#f_agent_id_view");
+  const cpdbView = $("#f_cpdb_view");
+
+  // 名称是唯一输入：agent_id 与 checkpoint 数据库实时跟着名称走（只读展示）。
+  const syncDerived = () => {
+    const name = (nameInput ? nameInput.value : "").trim();
+    if (idView) idView.value = name;
+    if (cpdbView) cpdbView.value = name;
+  };
+  if (canEditSubs && nameInput) nameInput.addEventListener("input", syncDerived);
 
   const bindSuffixEvents = () => {
     const el = $("#f_suffix");
@@ -4438,22 +4507,25 @@ function buildForm(cfg, canEditSubs) {
     }
   };
 
+  const currentDbName = () => ((nameInput ? nameInput.value : "") || "").trim();
+
   const refreshExample = () => {
-    let prefix, db, suffix;
+    let prefix, suffix;
     if (currentPgMode() === "full") {
       const parsed = parseConnString(fullInput.value);
       prefix = parsed.ok ? parsed.prefix : "";
-      db = parsed.ok ? parsed.database : "";
       suffix = parsed.ok ? parsed.suffix : "";
     } else {
       prefix = prefixInput.value;
-      db = cpdbInput.value;
       const s = $("#f_suffix");
       suffix = s ? s.value || "" : "";
     }
-    const full = maskedPrefix(prefix) + (db || t("<数据库名>")) + (suffix || "");
-    $("#connExample").innerHTML = esc(full) +
-      `<div class="muted" style="margin-top:6px;font-size:11px;">${t("组成：")}<code>postgresql://</code> ${t("协议")} · <code>${t("用户名:passwd")}</code> ${t("登录凭据")} · <code>@${t("主机:port")}</code> ${t("数据库地址")} · <code>/${t("数据库名")}</code> ${t("库名")} · <code>?sslmode</code> ${t("SSL 模式")}</div>`;
+    const db = currentDbName();
+    const server = connServerLabel(prefix);
+    $("#connExample").innerHTML =
+      esc(maskedPrefix(prefix) + (db || t("<数据库名>")) + (suffix || "")) +
+      `<div class="muted" style="margin-top:6px;font-size:11px;">🖥 ${t("服务器：")}<code>${esc(server || t("（未填写）"))}</code> · ${t("数据库：")}<code>${esc(db || t("（填写名称后自动生成）"))}</code></div>` +
+      `<div class="muted" style="margin-top:4px;font-size:11px;">${t("服务器只由连接前缀里的 host:port 决定；同一 host:port 才是同一台 PostgreSQL。pgAdmin 里的「服务器」名字只是连接配置的显示名，不改变数据位置。")}</div>`;
   };
 
   const updateFullHint = () => {
@@ -4461,17 +4533,12 @@ function buildForm(cfg, canEditSubs) {
     const parsed = parseConnString(fullInput.value);
     if (parsed.empty) { fullHint.innerHTML = ""; return; }
     if (!parsed.ok) { fullHint.innerHTML = `<span class="err-hint">⚠ ${esc(parsed.error)}</span>`; return; }
-    if (cpdbInput.readOnly && cpdbInput.value && cpdbInput.value !== parsed.database) {
-      fullHint.innerHTML = `<span class="err-hint">⚠ ${esc(t("连接串里的数据库名与已绑定的 checkpoint 库不一致，创建后不可更换。"))}</span>`;
-      return;
-    }
-    if (!cpdbInput.readOnly) cpdbInput.value = parsed.database;
     let suffix = parsed.suffix;
     if (!suffix && isLocalPrefix(parsed.prefix)) suffix = "?sslmode=disable";
     fullHint.innerHTML = `<span class="ok-hint">✓ ${t("已识别")}</span> ` +
       `${t("连接前缀")} <code>${esc(maskedPrefix(parsed.prefix))}</code> · ` +
-      `${t("数据库名")} <code>${esc(parsed.database)}</code> · ` +
-      `${t("连接后缀")} <code>${esc(suffix || t("（无）"))}</code>`;
+      `${t("连接后缀")} <code>${esc(suffix || t("（无）"))}</code>` +
+      `<div class="muted" style="margin-top:4px;">${t("连接串里的数据库名")}<code>${esc(parsed.database)}</code>${t("会被忽略：实际库名由名称自动生成。")}</div>`;
   };
 
   const setPgMode = (mode) => {
@@ -4481,14 +4548,13 @@ function buildForm(cfg, canEditSubs) {
     if (pgConnMode === "full") {
       if ((prefixInput.value || "").trim()) {
         const s = $("#f_suffix");
-        fullInput.value = composeConnString(prefixInput.value, cpdbInput.value, s ? s.value : "");
+        fullInput.value = composeConnString(prefixInput.value, currentDbName() || "mydb", s ? s.value : "");
       }
       updateFullHint();
     } else {
       const parsed = parseConnString(fullInput.value);
       if (parsed.ok) {
         prefixInput.value = parsed.prefix;
-        if (!cpdbInput.readOnly) cpdbInput.value = parsed.database;
         let suffix = parsed.suffix;
         if (!suffix && isLocalPrefix(parsed.prefix)) suffix = "?sslmode=disable";
         if (isLocalPrefix(parsed.prefix) !== isLocal) {
@@ -4504,8 +4570,12 @@ function buildForm(cfg, canEditSubs) {
 
   document.querySelectorAll('input[name="pg_conn_mode"]').forEach(r =>
     r.addEventListener("change", () => setPgMode(r.value)));
-  ["f_prefix", "f_cpdb", "f_suffix"].forEach(id => { const el = $("#" + id); if (el) el.addEventListener("input", refreshExample); });
+  ["f_prefix", "f_suffix"].forEach(id => { const el = $("#" + id); if (el) el.addEventListener("input", refreshExample); });
+  if (nameInput) nameInput.addEventListener("input", refreshExample);
   fullInput.addEventListener("input", () => { updateFullHint(); refreshExample(); });
+  // 新建 / 默认配置：只读派生值跟着名称输入实时变；已有 agent 显示磁盘上的真实值，
+  // 若与名称不一致，由上面的 identityMismatch 警告提示。
+  if (canEditSubs) syncDerived();
   updateFullHint();
   refreshExample();
 
@@ -4784,6 +4854,11 @@ function hfEndpointValue() {
 
 function buildPayload(cfg) {
   const val = id => $(`#${id}`).value;
+  const name = (val("f_name") || "").trim();
+  const namespace = (val("f_ns") || "")
+    .split(/[,，]/)
+    .map(x => x.trim())
+    .filter(Boolean);
   const pgUseGlobal = $("#f_pg_use_global");
   let conn;
   if (pgUseGlobal && pgUseGlobal.checked) {
@@ -4792,7 +4867,7 @@ function buildPayload(cfg) {
     const prefix = gp.global_postgres_prefix || "";
     let suffix = gp.global_postgres_suffix || "";
     if (!suffix && isLocalPrefix(prefix)) suffix = "?sslmode=disable";
-    conn = { ok: true, prefix, database: val("f_cpdb"), suffix };
+    conn = { ok: true, prefix, suffix };
   } else {
     conn = collectPgConn();
   }
@@ -4841,14 +4916,14 @@ function buildPayload(cfg) {
     };
   }
   return {
-    agent_id: val("f_agent_id") || slugify(val("f_name")),
-    name: val("f_name"),
+    // 名称是唯一身份输入：agent_id 与 checkpoint 数据库都取同一个值（后端会再校验一次）。
+    agent_id: name,
+    name,
     postgres: {
       prefix: conn.prefix,
       suffix: conn.suffix,
-      checkpoint_database: conn.database,
-      // namespace 不在配置页展示：沿用原配置，避免保存时把既有记忆归属悄悄改掉。
-      store_namespace: (cfg.postgres && cfg.postgres.store_namespace) || ["Li", "memories"],
+      checkpoint_database: name,
+      store_namespace: namespace,
     },
     main_agent: {
       system_prompt: val("f_prompt"),
@@ -4869,11 +4944,40 @@ function buildPayload(cfg) {
   };
 }
 
+/* 名称同时是 agent_id（文件名）与 checkpoint 数据库名，前端先做同样的校验，
+ * 后端仍会再校验一次（以前端为准的只是提示速度）。 */
+function validateAgentName(raw) {
+  const name = String(raw || "").trim();
+  if (!name) return t("请填写名称");
+  if (name === "." || name === "..") return t("名称不能是「.」或「..」");
+  if (name.startsWith(".")) return t("名称不能以点开头（会变成隐藏文件）");
+  if (/[. ]$/.test(name)) return t("名称不能以点或空格结尾（Windows 文件名限制）");
+  if (["postgres", "template0", "template1"].includes(name.toLowerCase())) {
+    return t("「postgres」等系统库名称不能作为 multi-agent 名称");
+  }
+  const reserved = ["default", "settings", "ui_prefs", "drafts", "common_prompts", "store_migrations", "identity_migration", "floating_stop_pos"];
+  if (reserved.includes(name.toLowerCase())) {
+    return t("「settings」等程序内部配置文件名不能作为 multi-agent 名称");
+  }
+  const bad = name.match(/[\\/:*?"<>|]/g);
+  if (bad) return `${t("名称不能包含这些字符：")}${[...new Set(bad)].join(" ")}${t("（名称会同时用作文件名与数据库名）")}`;
+  const bytes = window.TextEncoder ? new TextEncoder().encode(name).length : name.length;
+  if (bytes > 63) return t("名称过长：最多 63 字节（约 21 个汉字或 63 个英文字符），因为名称会直接作为 checkpoint 数据库名。");
+  return "";
+}
+
 async function saveConfig(cfg, isNew, isDefault) {
   try {
     const payload = buildPayload(cfg);
-    if (!payload.name) return toast(t("请填写名称"), true);
-    if (!payload.postgres.checkpoint_database) return toast(t("请填写 checkpoint 数据库名"), true);
+    // 默认配置模板允许不填名称（它只是新建时的预填内容）；真正的 multi-agent 必须填。
+    if (!isDefault || payload.name) {
+      const nameErr = validateAgentName(payload.name);
+      if (nameErr) return toast(nameErr, true);
+    }
+    if (!payload.postgres.store_namespace.length) return toast(t("请填写 store_namespace（记忆命名空间）"), true);
+    if (payload.postgres.store_namespace.some(x => x.includes("."))) {
+      return toast(t("记忆命名空间的单个层级不能包含点号，请用逗号分隔层级（例如 Li,memories）"), true);
+    }
     if (payload.sub_agents.some(s => !(s.name || "").trim())) return toast(t("子 agent 名称不能为空"), true);
 
     if (isDefault) { await api("/api/default", { method: "PUT", body: JSON.stringify(payload) }); toast(t("默认配置已保存")); goAgents(); }

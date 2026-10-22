@@ -26,6 +26,7 @@ IGNORED = {
     "common_prompts.json",
     "drafts.json",
     "store_migrations.json",
+    "identity_migration.json",
     "default.json",
 }
 

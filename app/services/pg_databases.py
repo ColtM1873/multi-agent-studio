@@ -1,8 +1,8 @@
 """PostgreSQL 数据库自动建库 / 改名 / 删除。
 
-需求背景：用户不再需要自己去 pgAdmin 建库。只要在配置表单里填了连接串与
-checkpoint 数据库名，程序就在保存时用同一套凭据自动创建数据库；长期记忆的
-store 数据库也统一由程序创建（默认 Long_Term_Memory）。
+需求背景：用户不再需要自己去 pgAdmin 建库。checkpoint 数据库名由 multi-agent
+的「名称」自动派生（见 app/config/db_names.py），程序在保存时用同一套凭据自动
+创建；长期记忆的 store 数据库也统一由程序创建（默认 Long_Term_Memory）。
 
 安全边界（见 inner_docs/ID46）：
 - 本模块只做「建库 / 改名 / 删库」，绝不删除表或数据行；
@@ -17,16 +17,16 @@ import re
 
 from psycopg import AsyncConnection, errors, sql
 
-SYSTEM_DATABASES = frozenset({"postgres", "template0", "template1"})
+from app.config.db_names import (
+    SYSTEM_DATABASES,
+    DatabaseError,
+    join_conn_string,
+    normalize_prefix,
+    validate_database_name,
+)
 
 # 全局 store 数据库名：只允许常见安全字符，避免连接串拼接/URL 解析出问题。
 _STORE_DB_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_-]{0,62}$")
-# checkpoint 库名沿用用户既有习惯，只拦截会破坏连接串的字符。
-_FORBIDDEN_DB_CHARS = ("/", "?", "#")
-
-
-class DatabaseError(Exception):
-    """自动建库/改名/删库失败；message 直接面向用户展示。"""
 
 
 def validate_store_database_name(name: str) -> str:
@@ -45,26 +45,9 @@ def validate_store_database_name(name: str) -> str:
     return n
 
 
-def _validate_database_name(name: str, *, label: str = "数据库名称") -> str:
-    n = (name or "").strip()
-    if not n:
-        raise DatabaseError(f"{label}不能为空")
-    if any(ch in n for ch in _FORBIDDEN_DB_CHARS) or any(ch.isspace() for ch in n):
-        raise DatabaseError(f"{label}「{n}」包含不支持的字符（不能含空格、/、?、#）")
-    if len(n.encode("utf-8")) > 63:
-        raise DatabaseError(f"{label}「{n}」过长（PostgreSQL 上限 63 字节）")
-    return n
-
-
-def normalize_prefix(prefix: str) -> str:
-    p = (prefix or "").strip()
-    if p and not p.endswith("/"):
-        p += "/"
-    return p
-
-
-def join_conn_string(prefix: str, database: str, suffix: str = "") -> str:
-    return normalize_prefix(prefix) + database + (suffix or "")
+# checkpoint / 旧 store 库名的校验统一走 app.config.db_names（允许中文与空格，
+# 但拒绝连接串分隔符、控制字符与超过 63 字节的名字）。
+_validate_database_name = validate_database_name
 
 
 def masked_prefix(prefix: str) -> str:
@@ -155,18 +138,20 @@ async def ensure_databases(prefix: str, databases, suffix: str = "") -> list[str
 
 
 async def rename_database(prefix: str, suffix: str, old: str, new: str) -> str:
-    """把旧 store 库直接改名为新名字（不会新建再迁移）。
+    """把旧库直接改名为新名字（不会新建再迁移）。
 
-    返回值：renamed / missing（旧库不存在，什么都没做） / exists（新库已存在且旧库不存在）。
+    返回值：renamed / missing（旧库不存在） / exists（旧库不存在但新库已存在） /
+    unchanged（同名）。
     """
-    old_name = _validate_database_name(old, label="旧 store 数据库名称")
-    new_name = validate_store_database_name(new)
+    old_name = _validate_database_name(old, label="旧数据库名称")
+    # 这里用通用数据库名校验（checkpoint 库名允许中文/空格）；全局 store 库名的
+    # 更严 ASCII 白名单由 API 层 validate_store_database_name 负责。
+    new_name = _validate_database_name(new, label="新数据库名称")
     if old_name == new_name:
         return "unchanged"
     if old_name in SYSTEM_DATABASES:
         raise DatabaseError(
-            f"「{old_name}」是 PostgreSQL 系统库，不能改名。请先把全局 store 数据库"
-            "设置为一个普通数据库，再执行迁移。"
+            f"「{old_name}」是 PostgreSQL 系统库，不能改名。请改用普通数据库名。"
         )
 
     conn = await _maintenance_connection(prefix, suffix)

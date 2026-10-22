@@ -90,3 +90,8 @@ class CommonPromptStore:
         """把当前内存态再落盘一次（退出托盘程序时的兜底）。"""
         with self._lock:
             self._persist_locked()
+
+    def reload(self) -> None:
+        """从磁盘重新读取（身份迁移改了 agent_id 键之后必须调用，避免内存里还是旧键）。"""
+        with self._lock:
+            self._data = self._load()

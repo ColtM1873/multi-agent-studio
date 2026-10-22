@@ -28,6 +28,7 @@ from app.config.models import EmbeddingConfig
 from app.config.settings import Settings
 from app.config.store import ConfigStore
 from app.services import pg_databases
+from app.services.pg_service import parse_conn_host_port
 
 MIGRATIONS_FILE_NAME = "store_migrations.json"
 _MIGRATION_LOCK = asyncio.Lock()
@@ -188,10 +189,16 @@ async def list_sources(config_dir: Path | str, settings: Settings, *, probe: boo
     sources = []
     for src in state["sources"]:
         probe_result = await _probe_source(src) if probe else {"exists": True, "namespaces": [], "error": ""}
+        host, port = parse_conn_host_port(src.get("prefix", ""))
         sources.append(
             {
                 "id": src["id"],
                 "database": src["database"],
+                # 先识别 server：host:port 才代表真正的 PostgreSQL 实例；
+                # pgAdmin 里的「服务器」名字只是连接配置的显示名。
+                "host": host or "",
+                "port": port,
+                "server": (f"{host}:{port}" if host and port else (host or "")),
                 "masked_prefix": pg_databases.masked_prefix(src.get("prefix", "")),
                 "suffix": src.get("suffix", ""),
                 "agents": src.get("agents", []),

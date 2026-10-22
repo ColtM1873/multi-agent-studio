@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -38,7 +39,17 @@ AGENT_META_FILENAME = "_meta.json"
 
 
 def _agent_snapshots_dir(agent_id: str) -> Path:
-    safe = re.sub(r"[^\w\-]+", "_", str(agent_id)).strip("_") or "agent"
+    """agent_id → 快照目录名。
+
+    新的 agent_id 就是名称，可能带空格（如「SI Agent」）。这里除了把非法字符换成
+    下划线，还在「清洗后与原值不同」时追加 8 位哈希，保证两个不同名称不会映射到
+    同一个目录（例如「A B」与「A_B」）。中文属于 \\w，保持原样可读。
+    """
+    raw = str(agent_id)
+    safe = re.sub(r"[^\w\-]+", "_", raw).strip("_") or "agent"
+    if safe != raw:
+        digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:8]
+        safe = f"{safe}_{digest}"
     return SNAPSHOTS_DIR / safe
 
 

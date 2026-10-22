@@ -74,3 +74,8 @@ class UiPrefsStore:
         with self._lock:
             self._data = {str(k): str(v) for k, v in data.items() if v is not None}
             self._persist_locked()
+
+    def reload(self) -> None:
+        """从磁盘重新读取（身份迁移改了 agent_id 相关键之后必须调用）。"""
+        with self._lock:
+            self._data = self._load()
