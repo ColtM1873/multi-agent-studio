@@ -150,8 +150,8 @@ html[data-style-danger="solid"] .card-btn-danger:hover { filter: brightness(.92)
 }
 .form-card h4 { margin: 0 0 16px; font-size: 16px; display: flex; align-items: center; gap: 8px; }
 .form-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); gap: 14px; }
-/* 基本信息前三项固定一行三列：无论窗口宽度如何，agent_id / name / checkpoint 都保持平齐 */
-.basic-grid { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; align-items: stretch; }
+/* 基本信息固定一行两列：无论窗口宽度如何，名称 / 长期记忆分组都保持平齐 */
+.basic-grid { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; align-items: stretch; }
 .basic-grid > .field { min-width: 0; }
 .field { display: flex; flex-direction: column; gap: 5px; }
 .field.full { grid-column: 1 / -1; }
@@ -181,7 +181,7 @@ html[data-style-danger="solid"] .card-btn-danger:hover { filter: brightness(.92)
 .field textarea { resize: vertical; min-height: 110px; font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 13px; }
 .field input:disabled, .field textarea:disabled { background: #f3f4f6; color: var(--text-muted); cursor: not-allowed; }
 .field input[readonly], .field textarea[readonly] { background: #f3f4f6; color: var(--text-muted); cursor: text; }
-/* 固定高度：三个首行字段无论有没有红色提示，都占同样的一行，输入框始终齐平 */
+/* 固定高度：同一行的首列字段无论有没有提示文案，都占同样的高度，输入框始终齐平 */
 .lock-hint { display: block; min-height: 17px; line-height: 17px; font-size: 12px; color: var(--text-muted); }
 .field .hint { font-size: 12px; color: var(--text-muted); }
 

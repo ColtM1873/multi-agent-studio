@@ -71,7 +71,6 @@ const I18N_EN = {
   "agent 回复完成时播放的提示音，切换即试听。": "Chime played when the agent finishes replying; switch to preview.",
   "ber（下滑音）": "ber (descending)",
   "checkpoint 库": "checkpoint database",
-  "checkpoint 数据库（会话历史绑定）": "checkpoint database (bound to conversation history)",
   "chime（双音上行）": "chime (rising two-tone)",
   "ding（清脆单音）": "ding (crisp single tone)",
   "embedding 模型": "embedding model",
@@ -457,8 +456,9 @@ const I18N_EN = {
   "请填写连接前缀": "Please fill in the connection prefix",
   "全局连接设置已保存": "Global connection settings saved",
   "保存时自动创建": "Created automatically on save",
-  "长期记忆统一存放在全局 store 数据库：": "Long-term memory is stored in the global store database: ",
-  "。保存时会自动建库；如需修改库名，请到主界面设置 →「全局配置设置」。": ". The database is created automatically on save. To change its name, go to Settings → Global configuration settings.",
+  "长期记忆分组": "Long-term memory group",
+  "相同分组共用长期记忆，不同分组互相隔离": "Multi-agents in the same group share long-term memory; different groups are isolated from each other",
+  "长期记忆（agent 用 write_memory 存下的知识、偏好、结论等）都放在同一个全局记忆库里，靠「分组」区分归属。<br/><br/>① 分组相同：这些 multi-agent 共用同一份长期记忆，能读到彼此写下的内容；<br/>② 分组不同：彼此完全隔离，互相检索不到对方的记忆；<br/>③ 写一层即可（例如 default）；需要更细的划分时，可写多层并用逗号分隔（例如 teamA,projectX）；<br/>④ 不能为空。修改本项后，本 multi-agent 会改用新分组读写记忆：旧分组里的记忆不会被删除，但本 multi-agent 不再读取它。<br/><br/>分组按字符串完全匹配：大小写不同、多一个空格都会被当作不同分组。想让几个 multi-agent 共享经验，就把这里写成完全相同的一串。": "Long-term memory (knowledge, preferences, conclusions saved by an agent via write_memory) all lives in one global memory database and is separated by 'group'.<br/><br/>① Same group: these multi-agents share the same long-term memory and can read what each other wrote;<br/>② Different groups: fully isolated — neither can retrieve the other's memories;<br/>③ One level is enough (e.g. default); for finer separation use several levels separated by commas (e.g. teamA,projectX);<br/>④ Cannot be empty. After changing this, the multi-agent reads and writes memory under the new group: memories in the old group are not deleted, but this multi-agent no longer reads them.<br/><br/>Groups match exactly as strings: different letter case or an extra space counts as a different group. To let several multi-agents share experience, enter exactly the same value here.",
   "用途：让所有 multi-agent 共用同一套数据库连接（主机、账号、密码、SSL）；每个 multi-agent 仍需填写自己的 checkpoint 数据库名（保存时程序会自动建库），长期记忆统一使用全局 store 数据库。": "Purpose: let all multi-agents share the same database connection (host, account, password, SSL). Each multi-agent still fills in its own checkpoint database name (the app creates it automatically on save), and long-term memory always uses the global store database.",
   "所以这里只需填「前缀 + 后缀」即可，checkpoint 数据库名由每个 multi-agent 各自填写；也可以直接粘贴整条连接串，程序会自动帮你切出前缀与后缀（其中的数据库名会被忽略）。": "So you only need to fill in 'prefix + suffix' here; the checkpoint database name is filled in by each multi-agent. Alternatively, paste the whole connection string and the app extracts the prefix and suffix automatically (the database name in it is ignored).",
   "这里粘贴的完整串只用于提取「连接前缀 / 连接后缀」，其中的数据库名会被忽略（checkpoint 库名由每个 multi-agent 各自填写）。": "The full string pasted here is only used to extract the connection prefix / suffix; its database name is ignored (each multi-agent fills in its own checkpoint database name).",
@@ -728,17 +728,10 @@ const I18N_EN = {
   "删除全部历史消息不可复原，是否继续？": "Deleting all history messages cannot be undone. Continue?",
   "删除全部历史消息失败": "Failed to delete all history messages",
   "namespace": "namespace",
-  "store_namespace（逗号分隔）": "store_namespace (comma-separated)",
-  "自动生成": "Generated automatically",
-  "自动生成，与名称相同": "Generated automatically; identical to the name",
-  "由名称自动生成，不需要填写。": "Generated automatically from the name; no need to fill in.",
-  "由名称自动生成，不需要填写。保存时如果这个库不存在，程序会自动创建；创建后不可更改。": "Generated automatically from the name; no need to fill in. If it does not exist, the app creates it when saving. Cannot be changed after creation.",
   "唯一标识：同时用作 agent_id（配置文件名 configs/&lt;名称&gt;.json）与 checkpoint 数据库名。创建后不可更改；不能与其他 multi-agent 重名。": "Unique identity: used both as agent_id (config file configs/<name>.json) and as the checkpoint database name. Cannot be changed after creation; must be unique across multi-agents.",
-  "当前 agent_id / checkpoint 数据库仍与名称不一致：程序下次启动会自动改名；如果一直不变，请查看 logs/server.log 或 configs/identity_migration.json。": "This agent's agent_id / checkpoint database still differ from its name. The app will try to rename them on the next start; if this persists, check logs/server.log or configs/identity_migration.json.",
-  "记忆存储命名空间，逗号分隔多个层级。相同 namespace 的 multi-agent 共用长期记忆。": "Memory store namespace, with levels separated by commas. Multi-agents with the same namespace share long-term memory.",
-  "例如 Li,memories；不同 multi-agent 使用同一个 namespace 即共用记忆。": "e.g. Li,memories; multi-agents using the same namespace share memories.",
-  "请填写 store_namespace（记忆命名空间）": "Please fill in store_namespace (memory namespace)",
-  "记忆命名空间的单个层级不能包含点号，请用逗号分隔层级（例如 Li,memories）": "A single namespace level cannot contain a dot; separate levels with commas (e.g. Li,memories)",
+  "该 multi-agent 的内部标识（agent_id / checkpoint 数据库）仍与名称不一致：程序下次启动会自动改名；如果一直不变，请查看 logs/server.log 或 configs/identity_migration.json。": "This multi-agent's internal identifiers (agent_id / checkpoint database) still differ from its name. The app will try to rename them on the next start; if this persists, check logs/server.log or configs/identity_migration.json.",
+  "请填写长期记忆分组": "Please fill in the long-term memory group",
+  "长期记忆分组的单个层级不能包含点号，请用逗号分隔层级（例如 teamA,projectX）": "A single memory group level cannot contain a dot; separate levels with commas (e.g. teamA,projectX)",
   "名称不能是「.」或「..」": "The name cannot be '.' or '..'",
   "名称不能以点开头（会变成隐藏文件）": "The name cannot start with a dot (it would become a hidden file)",
   "「postgres」等系统库名称不能作为 multi-agent 名称": "System database names such as 'postgres' cannot be used as a multi-agent name",
@@ -4053,9 +4046,7 @@ async function renderEditorView() {
 const info = (tip) => `<i class="info-icon">!<span class="tip">${t(tip)}</span></i>`;
 
 const PH = {
-  agent_id: "例如 my-agent",
   name: "例如 研究助理",
-  checkpoint_database: "例如 my_agent_checkpoints",
   prefix: "例如 postgresql://user:passwd@localhost:5432/",
   main_system_prompt: "例如：你是一名研究助理，负责理解用户问题，将复杂任务拆解并委派给合适的子 agent，汇总后给出结构化、准确的回答。请使用中文。",
   main_api_key: "例如 sk-...",
@@ -4286,8 +4277,6 @@ function buildForm(cfg, canEditSubs) {
   const gpPrefix = (settingsCache && settingsCache.global_postgres_prefix) || "";
   const gpSuffix = (settingsCache && settingsCache.global_postgres_suffix) || "";
   const globalSet = !!String(gpPrefix).trim();
-  // 长期记忆统一存放的全局 store 数据库（只读展示；改名入口在主界面设置里）
-  const gStoreDb = (settingsCache && settingsCache.global_store_database) || "Long_Term_Memory";
   const ns = (pg.store_namespace || []).join(",");
   const isNewCfg = !cfg.agent_id;
   // 只有「编辑已有 agent」才可能出现身份未统一（迁移失败）；新建 / 默认模板不算。
@@ -4356,12 +4345,9 @@ function buildForm(cfg, canEditSubs) {
     <div class="form-card"><h4>${t("基本信息")}</h4><div class="form-grid">
       <div class="basic-grid">
       <div class="field"><label>${t("名称")} name ${info("唯一标识：同时用作 agent_id（配置文件名 configs/&lt;名称&gt;.json）与 checkpoint 数据库名。创建后不可更改；不能与其他 multi-agent 重名。")}</label><input id="f_name" value="${esc(cfg.name)}" ${canEditSubs ? "" : "readonly"}${ph("name")}><span class="lock-hint">${canEditSubs ? "&nbsp;" : t("创建后不可更改")}</span></div>
-      <div class="field"><label>agent_id ${info("由名称自动生成，不需要填写。")}</label><input id="f_agent_id_view" value="${esc(cfg.agent_id)}" readonly placeholder="${t("自动生成")}"><span class="lock-hint">${t("自动生成，与名称相同")}</span></div>
-      <div class="field"><label>${t("checkpoint 数据库（会话历史绑定）")} ${info("由名称自动生成，不需要填写。保存时如果这个库不存在，程序会自动创建；创建后不可更改。")}</label><input id="f_cpdb_view" value="${esc(pg.checkpoint_database)}" readonly placeholder="${t("自动生成")}"><span class="lock-hint">${t("自动生成，与名称相同")}</span></div>
+      <div class="field"><label>${t("长期记忆分组")} ${info("长期记忆（agent 用 write_memory 存下的知识、偏好、结论等）都放在同一个全局记忆库里，靠「分组」区分归属。<br/><br/>① 分组相同：这些 multi-agent 共用同一份长期记忆，能读到彼此写下的内容；<br/>② 分组不同：彼此完全隔离，互相检索不到对方的记忆；<br/>③ 写一层即可（例如 default）；需要更细的划分时，可写多层并用逗号分隔（例如 teamA,projectX）；<br/>④ 不能为空。修改本项后，本 multi-agent 会改用新分组读写记忆：旧分组里的记忆不会被删除，但本 multi-agent 不再读取它。<br/><br/>分组按字符串完全匹配：大小写不同、多一个空格都会被当作不同分组。想让几个 multi-agent 共享经验，就把这里写成完全相同的一串。")}</label><input id="f_ns" value="${esc(ns)}"><span class="lock-hint">${t("相同分组共用长期记忆，不同分组互相隔离")}</span></div>
       </div>
-      ${identityMismatch ? `<div class="field full"><div class="err-hint">⚠ ${t("当前 agent_id / checkpoint 数据库仍与名称不一致：程序下次启动会自动改名；如果一直不变，请查看 logs/server.log 或 configs/identity_migration.json。")}</div></div>` : ""}
-      <div class="field full" id="f_store_db_hint"><div class="conn-example">🧠 ${t("长期记忆统一存放在全局 store 数据库：")}<code>${esc(gStoreDb)}</code>${t("。保存时会自动建库；如需修改库名，请到主界面设置 →「全局配置设置」。")}</div></div>
-      <div class="field"><label>${t("store_namespace（逗号分隔）")} ${info("记忆存储命名空间，逗号分隔多个层级。相同 namespace 的 multi-agent 共用长期记忆。")}</label><input id="f_ns" value="${esc(ns)}"><span class="hint">${t("例如 Li,memories；不同 multi-agent 使用同一个 namespace 即共用记忆。")}</span></div>
+      ${identityMismatch ? `<div class="field full"><div class="err-hint">⚠ ${t("该 multi-agent 的内部标识（agent_id / checkpoint 数据库）仍与名称不一致：程序下次启动会自动改名；如果一直不变，请查看 logs/server.log 或 configs/identity_migration.json。")}</div></div>` : ""}
       ${globalSet ? `
       <div class="field full">
         <div class="global-toggle-row">
@@ -4476,16 +4462,6 @@ function buildForm(cfg, canEditSubs) {
   const suffixWrap = $("#suffixCtrlWrap");
   const prefixInput = $("#f_prefix");
   const nameInput = $("#f_name");
-  const idView = $("#f_agent_id_view");
-  const cpdbView = $("#f_cpdb_view");
-
-  // 名称是唯一输入：agent_id 与 checkpoint 数据库实时跟着名称走（只读展示）。
-  const syncDerived = () => {
-    const name = (nameInput ? nameInput.value : "").trim();
-    if (idView) idView.value = name;
-    if (cpdbView) cpdbView.value = name;
-  };
-  if (canEditSubs && nameInput) nameInput.addEventListener("input", syncDerived);
 
   const bindSuffixEvents = () => {
     const el = $("#f_suffix");
@@ -4573,9 +4549,6 @@ function buildForm(cfg, canEditSubs) {
   ["f_prefix", "f_suffix"].forEach(id => { const el = $("#" + id); if (el) el.addEventListener("input", refreshExample); });
   if (nameInput) nameInput.addEventListener("input", refreshExample);
   fullInput.addEventListener("input", () => { updateFullHint(); refreshExample(); });
-  // 新建 / 默认配置：只读派生值跟着名称输入实时变；已有 agent 显示磁盘上的真实值，
-  // 若与名称不一致，由上面的 identityMismatch 警告提示。
-  if (canEditSubs) syncDerived();
   updateFullHint();
   refreshExample();
 
@@ -4974,9 +4947,9 @@ async function saveConfig(cfg, isNew, isDefault) {
       const nameErr = validateAgentName(payload.name);
       if (nameErr) return toast(nameErr, true);
     }
-    if (!payload.postgres.store_namespace.length) return toast(t("请填写 store_namespace（记忆命名空间）"), true);
+    if (!payload.postgres.store_namespace.length) return toast(t("请填写长期记忆分组"), true);
     if (payload.postgres.store_namespace.some(x => x.includes("."))) {
-      return toast(t("记忆命名空间的单个层级不能包含点号，请用逗号分隔层级（例如 Li,memories）"), true);
+      return toast(t("长期记忆分组的单个层级不能包含点号，请用逗号分隔层级（例如 teamA,projectX）"), true);
     }
     if (payload.sub_agents.some(s => !(s.name || "").trim())) return toast(t("子 agent 名称不能为空"), true);
 

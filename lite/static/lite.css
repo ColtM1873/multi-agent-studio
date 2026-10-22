@@ -4,3 +4,8 @@
 #f_store_db_hint {
   display: none !important;
 }
+
+/* Lite 不使用长期记忆（namespace 字段被隐藏），基本信息里只剩名称：让它独占一行 */
+.basic-grid {
+  grid-template-columns: 1fr;
+}
