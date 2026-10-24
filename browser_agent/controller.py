@@ -1515,11 +1515,35 @@ class BrowserController:
 
 
         new_tree = self.capture_tree(target_id)
+        opened_names = self._opened_tab_names(old_target_ids)  # BID081
         notice = (
             self._dialog_notice(dialog)
             + (fill_notice + "\n\n" if fill_notice else "")
             + self._title_change_notice(target_id, old_name)
         )
+        # BID081：点击在后台新开标签页时，当前聚焦页的增量不是本次动作的结果。
+        # 真实会话里两类噪声都由此而来：
+        #   * Bing 搜索结果页在点击后的几秒内仍会异步重排/插入「其他用户还搜索过」；
+        #   * memoryindex 的价格表是 animation 跑马灯，DOM 文本顺序持续变化。
+        # 两者都会让 compute_diff 把整屏内容当成「点击新增」。BID017 的原始契约
+        # 就是「后台新标签页提示就是结果」，这里只在当前页 URL 未变（没有真的
+        # 导航）时恢复该契约；URL 变了说明当前页确实跳转，保留原有增量逻辑。
+        if opened_names and new_tree.url == old_tree.url:  # BID081
+            extra = rp.new_tab_notice_suppressed(  # BID081
+                "、".join(opened_names), self.focused_tab_label()  # BID081
+            )  # BID081
+            content = "\n\n".join(  # BID081
+                part for part in (notice.strip(), extra) if part  # BID081
+            )  # BID081
+            if extras.get("popup_missing"):  # BID081
+                content = rp.popup_not_opened_notice(ctx.name) + "\n\n" + content  # BID081
+            return self._base_result(  # BID081
+                INCREMENTAL,  # BID081
+                FAIL if fill_error else OK,  # BID081
+                content,  # BID081
+                error=fill_error or rp.NO_ERROR,  # BID081
+                include_tabs=True,  # BID081
+            )  # BID081
         content = self._incremental_content(
             old_lines, new_tree, target_id, notice, old_url=old_tree.url
         )
@@ -1535,7 +1559,6 @@ class BrowserController:
         # The click may have opened a background tab without moving focus. The
         # focused page then looks unchanged, so tell the LLM explicitly and hand
         # it the full tab list instead.
-        opened_names = self._opened_tab_names(old_target_ids)
 
         if not opened_names and click_noop:
             opened_names = self._await_opened_tabs(old_target_ids)

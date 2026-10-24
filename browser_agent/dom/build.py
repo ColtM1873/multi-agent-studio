@@ -8,7 +8,15 @@ from typing import Optional
 from .capture import viewport_from_metrics
 from ..studio_marker import strip_title_marker
 
-_VIEWPORT_MARGIN = 1000.0
+# BID081：返回给 LLM 的内容必须严格等于「真实视口」。
+# 历史上这里是 1000px，序列化会把视口上下各一屏的节点也带上，导致：
+#   * 绝大多数页面第一屏就返回了「全量信息」，tool_03_scroll 形同虚设；
+#   * page_info 报的视口（如 1905x958）与返回内容覆盖的范围不一致，模型无法
+#     判断「下面到底还有没有内容」；
+#   * diff 基线也带上了视口外内容，滚动/异步更新时产生大量伪新增。
+# 取 0 后，in_viewport 与浏览器真实可视区域一致；视口外内容由 tool_03_scroll
+# 滚动后按增量返回（#page 的滚动状态见 BID081 的 page_info 修复）。
+_VIEWPORT_MARGIN = 0.0  # BID081
 
 # Synthetic tag for the document-level (whole page) scrollbar. ``html``/``body``
 # are deliberately excluded from the scrollable classification (see IDBT02
@@ -341,6 +349,16 @@ def build_enhanced_tree(raw: dict) -> EnhancedTree:
     if page:
         url = page.get("url", "")
         title = page.get("title", "")
+        # BID081：Page.getLayoutMetrics 的 contentHeight 是视口高度（CSS 像素），
+        # 不是文档滚动高度；#page 的「到顶/到底」必须用 Runtime.evaluate 拿到的
+        # document.scrollingElement 指标。此前 viewport 里的 scroll_height 恒等于
+        # 视口高度，导致 #page 永远被算成「已到顶、已到底」，tool_03 失去意义。
+        if page.get("scroll_height"):  # BID081
+            viewport["scroll_height"] = float(page.get("scroll_height") or 0.0)  # BID081
+        if page.get("client_height"):  # BID081
+            viewport["client_height"] = float(page.get("client_height") or 0.0)  # BID081
+        if page.get("scroll_top") is not None:  # BID081
+            viewport["scroll_y"] = float(page.get("scroll_top") or 0.0)  # BID081
     if not url or not title:
         for doc in raw.get("snapshot", {}).get("documents", []):
             url = url or doc.get("documentURL", "")

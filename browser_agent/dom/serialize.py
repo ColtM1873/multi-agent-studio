@@ -1188,6 +1188,12 @@ class DOMSerializer:
         name = self.registry.get_or_create(node)
         if node.tag == PAGE_SCROLL_TAG:
             # Document-level scrollbar: a single inline tag carrying the hint.
+            # BID081：整页滚动条也要登记滚动状态（此前这里提前 return，_scroll_reports
+            # 里永远没有 #page，page_info 只能报某个内部导航条，模型因此以为整页
+            # 「已到顶、已到底」而不调用 tool_03_scroll）。
+            self._scroll_reports.append(  # BID081
+                (depth, name, True) + self._scroll_position(node)  # BID081
+            )  # BID081
             self._emit_content(
                 depth,
                 f"<可滚动元素 {name}> 整页滚动条：用 scroll_delta 向下(正)/向上(负)滚动整个页面 </可滚动元素 {name}>",
