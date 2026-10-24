@@ -515,10 +515,20 @@ def scroll_blocked(down: bool) -> str:
     )
 
 
-# 作用：告知本次互动因「把目标滚进视口」而自动滚动了整页，提醒增量里混有滚动副作用。
-# 触发条件：_finish_interaction 发现文档 scrollY 前后变化超过阈值。
+# 作用：告知本次互动因「把目标滚进视口」而自动滚动了视口。
+# 触发条件：_finish_interaction 发现动作前为让目标可见而滚动过视口（BID078），
+#           或文档 scrollY 前后变化超过阈值。
 # 返回时机：作为增量 content 的前缀。
-def viewport_scrolled(before: float, after: float) -> str:
+# 入参：before/after 为文档 scrollY；BID078 起视野口移动时传 None——此时增量基线
+#       已在滚动后重建，增量里不再混有「因滚动新进入视口」的内容。
+def viewport_scrolled(before=None, after=None) -> str:
+    if before is None:  # BID078
+        return (
+            "[视口已自动滚动] 为让目标元素可操作，视口已自动滚动到它所在的位置；"
+            "增量基线已按滚动后的视口重建，下列增量只包含本次操作直接产生的内容，"
+            "不含因滚动新进入视口的页面内容。如需查看当前视口全貌，请调用 "
+            "tool_10_get_full_viewport。\n"
+        )  # BID078
     return f"""[视口已自动滚动] 已经自动将视口滚动到  可以操作  你所调用的 可交互元素 的位置，
     下列增量里可能同时含有『本操作直接产生的内容』与『因滚动新进入视口、与本操作无关的内容』；
     请勿把后者当作本操作的结果。

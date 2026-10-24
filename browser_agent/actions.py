@@ -399,15 +399,25 @@ class ActionExecutor:
         return (x + w / 2.0, y + h / 2.0)
 
     # 本函数于BID068引入
-    def scroll_into_view(self, backend_node_id: int) -> None:  # BID068
+    def scroll_into_view(self, backend_node_id: int) -> bool:  # BID068 / BID078
         """把节点滚入视口并等其几何稳定（不点击、不移动鼠标）。  # BID068
 
         浮层「点前/点后」指纹是**视口坐标**（``getBoundingClientRect``）拼出来的；若点击
         自身会把页面滚动（触发者在折叠区时 ``click`` 内部会先 scrollIntoView），那么滚动
         会让大量常驻盒子的 rect 整体位移，指纹凭空变化，被误判成「浮层已打开」。在取
         ``panels_before`` 之前先调用本方法把视口稳定下来，之后 ``click`` 的滚动即为空操作，
-        指纹只会因「真的新出现了浮层」而变化（BID068）。"""  # BID068
+        指纹只会因「真的新出现了浮层」而变化（BID068）。  # BID068
+
+        返回「这次调用是否真的移动了节点在视口中的位置」（BID078）：调用方据此判断
+        页面是否被自己滚动了——滚动会把「因滚动新进入视口」的整屏内容混进增量 diff，
+        需要在动作前重建 diff 基线。
+        """
+        before = self._raw_box(backend_node_id)  # BID078
         self._node_box(backend_node_id)  # BID068
+        after = self._raw_box(backend_node_id)  # BID078
+        if before is None or after is None:  # BID078
+            return False  # BID078
+        return max(abs(a - b) for a, b in zip(before, after)) > 1.0  # BID078
 
     # ------------------------------------------------------------------ #
     # human-like mouse

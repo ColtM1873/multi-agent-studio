@@ -415,6 +415,9 @@ class _InteractContext:
     session: str
     executor: ActionExecutor
     scroll_before: Optional[float] = None
+    # 动作前是否为了「让目标可操作」而滚动过视口；滚动后已重建 diff 基线，
+    # 用于在返回里明确告知「增量只含操作本身的变化」（BID078）。
+    viewport_moved: bool = False  # BID078
 
 
 class BrowserController:
@@ -770,7 +773,9 @@ class BrowserController:
             self._registries[target_id] = NameRegistry(self._name_counter)
         return self._registries[target_id]
 
-    def capture_tree(self, target_id: Optional[str] = None) -> EnhancedTree:
+    def capture_tree(
+        self, target_id: Optional[str] = None, record_debug: bool = True  # BID078
+    ) -> EnhancedTree:
         _bid065_t0 = bid065_trace.perf()  # BID065
         bid065_trace.mark("controller.capture_tree START")  # BID065
         self.ensure_connected()
@@ -790,7 +795,9 @@ class BrowserController:
         self._prev_trees[target_id] = tree
         self.focused_target_id = target_id
         # Debug 模式：记录原始 HTML 与处理后的序列化 DOM（未开启时静默跳过）。
-        if debug.current_capture() is not None:
+        # 动作前为重建 diff 基线而做的额外抓取不落盘（record_debug=False），
+        # 否则会把「动作前」的快照覆盖到日志里，看不到动作后的真实页面（BID078）。
+        if record_debug and debug.current_capture() is not None:  # BID078
             raw_html = read_outer_html(self.client, session)
             processed = self.serialize_tree(tree, target_id)
             debug.record_dom(raw_html, processed, tree.url, tree.title)
@@ -837,12 +844,19 @@ class BrowserController:
         """A notice when the interaction auto-scrolled the whole document.
 
         A click/fill on an off-screen target calls ``DOM.scrollIntoViewIfNeeded``,
-        which moves the viewport. The resulting incremental diff is then dominated
-        by content that merely *scrolled into view* and has nothing to do with the
+        which moves the viewport. The incremental diff is then dominated by
+        content that merely *scrolled into view* and has nothing to do with the
         action itself; without a heads-up the LLM misreads it as "opening this
         control revealed hidden content" and wastes reasoning. Returns "" when the
         page did not move (or the offset could not be read).
+
+        ``ctx.viewport_moved`` 是 BID078 起更可靠的信号：``page_scroll_top`` 只
+        描述文档滚动条，SPA 的内层滚动容器（如飞书表单）滚动时它恒为 0；而
+        BID078 已在动作前把目标滚入视口并重建 diff 基线，所以这里只需要告诉
+        LLM「视口被工具移动过、增量不含滚动副作用」。
         """
+        if getattr(ctx, "viewport_moved", False):  # BID078
+            return rp.viewport_scrolled(None, None)  # BID078
         before = getattr(ctx, "scroll_before", None)
         try:
             after = ctx.executor.page_scroll_top()
@@ -1057,7 +1071,6 @@ class BrowserController:
                 include_tabs=False,
             )
 
-        old_lines = self.serialize_lines_tree(old_tree, target_id)
         old_name = self._name_for_target(target_id)
         old_target_ids = {t["targetId"] for t in self._live_targets()}
 
@@ -1078,6 +1091,36 @@ class BrowserController:
         except Exception:  # noqa: BLE001
             scroll_before = None
 
+        # 动作前先把目标滚入视口，并据此重建 diff 基线（BID078）。
+        # 原因：``ActionExecutor._node_box`` 在每次点击/输入前都会
+        # ``DOM.scrollIntoViewIfNeeded``；目标不在当前视口时，整个视口会被滚动。
+        # 动作后的视口里，所有「滚动后才出现」的行相对旧基线都是新增行，于是增量
+        # diff 退化成整屏输出（debug_folder/20261023-21-22 的 e164 / e175 两例）。
+        # 这里先把滚动做掉，再抓一次「动作前、已滚动到位」的快照作为基线，diff
+        # 才只包含动作本身产生的变化。滚动工具自己不改基线：它就是靠移动视口取新内容。
+        viewport_moved = False  # BID078
+        if category != "scroll":  # BID078
+            try:  # BID078
+                viewport_moved = executor.scroll_into_view(node.backend_node_id)  # BID078
+            except Exception:  # BID078
+                viewport_moved = False  # BID078
+            if viewport_moved:  # BID078
+                refreshed_tree = self.capture_tree(target_id, record_debug=False)  # BID078
+                refreshed_node = next(  # BID078
+                    (n for n in refreshed_tree.nodes if n.key == key), None  # BID078
+                )  # BID078
+                if refreshed_node is not None:  # BID078
+                    old_tree = refreshed_tree  # BID078
+                    node = refreshed_node  # BID078
+                else:  # BID078
+                    # 节点在滚动后的新树里找不到（页面刚好重渲染）：没有可信的新基线，
+                    # 不能对 LLM 声称「增量已按新视口重建」。
+                    viewport_moved = False  # BID078
+
+        # 基线序列化放在「预滚动 + 必要时重建基线」之后：这样一次互动只序列化一次，
+        # 且序列化的一定是动作即将发生时的那个视口（BID078）。
+        old_lines = self.serialize_lines_tree(old_tree, target_id)  # BID078
+
         return (
             _InteractContext(
                 name=name,
@@ -1091,6 +1134,7 @@ class BrowserController:
                 session=session,
                 executor=executor,
                 scroll_before=scroll_before,
+                viewport_moved=viewport_moved,  # BID078
             ),
             None,
         )
@@ -1826,7 +1870,6 @@ class BrowserController:
             plan.append((click_name, "click", node.backend_node_id))
 
         # ---- serial execution ----
-        old_lines = self.serialize_lines_tree(tree, target_id)
         old_focus = self.focused_target_id
         old_name = self._name_for_target(target_id)
         old_target_ids = {t["targetId"] for t in self._live_targets()}
@@ -1838,6 +1881,17 @@ class BrowserController:
             return self._base_result(INCREMENTAL, FAIL, rp.EMPTY_CONTENT, str(exc), include_tabs=False)
 
         executor = ActionExecutor(self.client, session)
+        # 批量互动的第一个动作同样会把目标滚入视口；不先滚动并重建基线的话，
+        # 整屏新视口都会被当成「新增」混进增量（BID078，单动作路径同因）。
+        # 批量字段通常集中在同一表单区块，先把首个目标滚到位即可覆盖绝大多数情形；
+        # 后续动作若再次滚动，仍按原行为返回。
+        if plan:  # BID078
+            try:  # BID078
+                if executor.scroll_into_view(plan[0][2]):  # BID078
+                    tree = self.capture_tree(target_id, record_debug=False)  # BID078
+            except Exception:  # BID078
+                pass  # BID078
+        old_lines = self.serialize_lines_tree(tree, target_id)  # BID078
         success_count = 0
         error_msg = ""
 
