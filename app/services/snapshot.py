@@ -117,12 +117,23 @@ async def _collect_snapshot_data(conn_string: str, thread_id: str) -> dict | Non
     return {"main": main_md or "", "subgraphs": subgraphs, "total_messages": total}
 
 
-async def capture_snapshot(conn_string: str, thread_id: str, agent_id: str) -> dict | None:
-    """采集并落盘一次快照。返回元数据（id/thread_id/created_at/total_messages），失败返回 None。"""
+async def capture_snapshot(
+    conn_string: str, thread_id: str, agent_id: str, raise_on_error: bool = False
+) -> dict | None:
+    """采集并落盘一次快照。返回元数据（id/thread_id/created_at/total_messages），失败返回 None。
+
+    Args:
+        raise_on_error: 默认 False —— 快照失败绝不影响总结主流程（「锦上添花」）。
+            手动「归档为快照后删除」场景传 True：失败时向上抛异常，让调用方中止删除，
+            避免「以为归档了其实没归档」的静默数据丢失。此时返回 None 只表示
+            「该会话没有可归档的历史内容」，不再是失败。
+    """
     try:
         data = await _collect_snapshot_data(conn_string, thread_id)
     except Exception:  # noqa: BLE001 — 快照失败绝不影响总结主流程
         logger.exception("采集快照数据失败 (thread_id=%s)", thread_id)
+        if raise_on_error:
+            raise
         return None
     if data is None:
         return None
@@ -149,6 +160,8 @@ async def capture_snapshot(conn_string: str, thread_id: str, agent_id: str) -> d
         out_path.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
     except Exception:  # noqa: BLE001
         logger.exception("写快照文件失败 (agent_id=%s)", agent_id)
+        if raise_on_error:
+            raise
         return None
 
     return {

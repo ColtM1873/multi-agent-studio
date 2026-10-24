@@ -70,6 +70,8 @@ body {
 .btn:hover { border-color: #c7cbd4; box-shadow: var(--shadow); }
 .btn.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
 .btn.primary:hover { background: var(--primary-hover); }
+.btn.soft { background: #e0e7ff; border-color: #c7d2fe; color: var(--primary); }
+.btn.soft:hover { background: #d3ddff; border-color: #a5b4fc; }
 .btn.danger { color: var(--danger); border-color: #fecaca; }
 .btn.danger:hover { background: #fef2f2; }
 .btn.hide { color: var(--primary); border-color: #c7d2fe; }

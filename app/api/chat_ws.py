@@ -6,7 +6,10 @@
   {"type": "proactive_summarize_sub", "sub_agent": "...", "percent": 20}
                                                           触发子 agent 主动全量总结
                                                           （percent 缺省 / 非法时走默认或图内确认）
-  {"type": "clean_all"}                删除主图当前线程全部历史消息（不可复原）
+  {"type": "clean_all", "archive": false}
+                                       删除主图当前线程全部历史消息（不可复原）；
+                                       archive=true 时先按「主动全量总结」的方式落一份快照，
+                                       再执行删除（归档失败则中止删除）
   {"type": "resume", "value": "yes"}   回复 interrupt 中断
   {"type": "stop"}                     关闭
 
@@ -19,6 +22,8 @@
   {"type": "tool_call", "source": "main"|"sub:<name>", "name", "args"}
   {"type": "tool_result", "source": "main"|"sub:<name>", "name", "content"}
   {"type": "interrupt", "prompt"}
+  {"type": "snapshot_saved", "id", "thread_id", "created_at", "total_messages"}
+                                           「归档为快照后删除」已成功落盘快照
   {"type": "status", "status": "loading"}  运行时构建中（embedding 模型加载等）
   {"type": "status", "status": "ready"}    运行时已就绪，图/LLM 即将开始
   {"type": "sub_agents", "names": [...]}   配置里的子 agent 名单（前端分区渲染用）
@@ -34,6 +39,7 @@ import logging
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.deps import chat_manager
+from app.services import snapshot as snapshot_service
 from app.services.chat import (
     make_clean_all_input,
     make_edit_input,
@@ -185,6 +191,7 @@ async def chat_ws(websocket: WebSocket, agent_id: str, thread_id: str):
         sub_agent: str | None = None,
         summary_percent: float | None = None,
         clean_all: bool = False,
+        clean_all_archive: bool = False,
     ):
         import os
 
@@ -200,6 +207,35 @@ async def chat_ws(websocket: WebSocket, agent_id: str, thread_id: str):
             await emit(event)
 
         try:
+            if clean_all and clean_all_archive:
+                # 「归档为快照后删除」：快照与「主动全量总结」共用同一个 capture_snapshot，
+                # 产物结构完全一致（main + 所有子图 + total_messages）。
+                # 这里刻意不走图内节点：必须在真正删除前确认快照已落盘，失败就中止删除。
+                try:
+                    archived = await snapshot_service.capture_snapshot(
+                        runtime.config.checkpoint_conn_string,
+                        thread_id,
+                        runtime.config.agent_id,
+                        raise_on_error=True,
+                    )
+                except Exception:
+                    logger.exception(
+                        "归档快照失败，已取消删除 (agent_id=%s, thread_id=%s)",
+                        agent_id,
+                        thread_id,
+                    )
+                    await emit(
+                        {
+                            "type": "error",
+                            "message": (
+                                "生成快照失败，因此没有删除任何历史消息。"
+                                "请检查数据库连接与磁盘空间后重试，或改用「直接删除」。"
+                            ),
+                        }
+                    )
+                    return
+                if archived:
+                    await emit({"type": "snapshot_saved", **archived})
             if clean_all:
                 user_input = make_clean_all_input()
             elif sub_agent:
@@ -280,7 +316,13 @@ async def chat_ws(websocket: WebSocket, agent_id: str, thread_id: str):
                 if current_run and not current_run.done():
                     await emit({"type": "error", "message": "上一轮仍在运行"})
                     continue
-                current_run = asyncio.create_task(_run("", clean_all=True))
+                current_run = asyncio.create_task(
+                    _run(
+                        "",
+                        clean_all=True,
+                        clean_all_archive=bool(data.get("archive")),
+                    )
+                )
             elif mtype == "resume":
                 if resume_future and not resume_future.done():
                     resume_future.set_result(data.get("value", ""))

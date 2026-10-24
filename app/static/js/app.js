@@ -727,7 +727,11 @@ const I18N_EN = {
   "主题不能为空": "Subject cannot be empty",
   "确定删除该条记忆？此操作不可撤销。": "Delete this memory? This cannot be undone.",
   "删除全部历史消息": "Delete all history messages",
-  "删除全部历史消息不可复原，是否继续？": "Deleting all history messages cannot be undone. Continue?",
+  "删除全部历史消息后不可恢复。可先归档为快照再删除，或直接删除。": "Deleted history cannot be restored. You can archive it as a snapshot first and then delete, or delete directly.",
+  "归档为快照后删除": "Archive as snapshot, then delete",
+  "直接删除": "Delete directly",
+  "已归档为快照（{n} 条消息）": "Archived as snapshot ({n} messages)",
+  "归档快照失败，已取消删除": "Failed to archive snapshot; deletion cancelled",
   "删除全部历史消息失败": "Failed to delete all history messages",
   "namespace": "namespace",
   "唯一标识：同时用作 agent_id（配置文件名 configs/&lt;名称&gt;.json）与 checkpoint 数据库名。创建后不可更改；不能与其他 multi-agent 重名。": "Unique identity: used both as agent_id (config file configs/<name>.json) and as the checkpoint database name. Cannot be changed after creation; must be unique across multi-agents.",
@@ -1248,10 +1252,23 @@ function isLocalPrefix(prefix) {
   return h === "localhost" || h === "127.0.0.1" || h === "::1";
 }
 
-/* 确认弹窗 */
+/* 确认弹窗
+   opts.buttons 可自定义按钮（按数组顺序从左到右渲染）：
+     primary = 蓝底白字主按钮；soft = 浅蓝底蓝字按钮；danger = 红色文字危险按钮；
+     都不传 = 普通按钮。
+     [{ v: "no", label: t("否") }, { v: "archive", label: t("归档为快照后删除"), soft: true },
+      { v: "delete", label: t("直接删除"), primary: true }]
+   不传时保持原样「否 / 是」，返回值是对应按钮的 v。 */
 function askConfirm(prompt, opts) {
   return new Promise(resolve => {
     const pink = opts && opts.pink;
+    const buttons = (opts && opts.buttons) || [
+      { v: "no", label: t("否") },
+      { v: "yes", label: t("是"), primary: true },
+    ];
+    const btnHtml = buttons.map(b =>
+      `<button class="btn${b.primary ? " primary" : ""}${b.soft ? " soft" : ""}${b.danger ? " danger" : ""}" data-v="${esc(b.v)}">${esc(b.label)}</button>`
+    ).join("");
     const mask = document.createElement("div");
     mask.className = "modal-mask";
     mask.innerHTML = `
@@ -1259,8 +1276,7 @@ function askConfirm(prompt, opts) {
         <h3>${t("确认")}</h3>
         <div class="modal-body">${esc(prompt)}</div>
         <div class="modal-actions">
-          <button class="btn" data-v="no">${t("否")}</button>
-          <button class="btn primary" data-v="yes">${t("是")}</button>
+          ${btnHtml}
         </div>
       </div>`;
     document.body.appendChild(mask);
@@ -7248,14 +7264,25 @@ async function renderChatView() {
 
   async function triggerCleanAll() {
     if (isRunning) return;
-    const ans = await askConfirm(t("删除全部历史消息不可复原，是否继续？"));
-    if (ans !== "yes") return;
+    // 三种选择（从左到右）：否 / 归档为快照后删除 / 直接删除。
+    const ans = await askConfirm(
+      t("删除全部历史消息后不可恢复。可先归档为快照再删除，或直接删除。"),
+      {
+        buttons: [
+          { v: "no", label: t("否") },
+          { v: "archive", label: t("归档为快照后删除"), soft: true },
+          { v: "delete", label: t("直接删除"), primary: true },
+        ],
+      }
+    );
+    if (ans !== "archive" && ans !== "delete") return;
+    const archive = ans === "archive";
     // 待删除的历史中包含编辑态正在编辑的消息，直接退出编辑模式（放弃未提交的改动）。
     if (editModeOn) leaveEditMode();
     setRunning(true, "loading");
     currentReplyEl = null;
     appendReplyHeader();
-    const ok = await openChatWs("", false, null, null, true);
+    const ok = await openChatWs("", false, null, null, archive ? "archive" : true);
     if (ok) {
       // 原地刷新历史，避免整页 render() 造成闪屏
       currentReplyEl = null;
@@ -7274,7 +7301,7 @@ async function renderChatView() {
       setRunning(false);
     } else {
       setRunning(false);
-      toast(t("删除全部历史消息失败"), true);
+      toast(archive ? t("归档快照失败，已取消删除") : t("删除全部历史消息失败"), true);
     }
   }
 
@@ -7564,7 +7591,7 @@ function openChatWs(content, proactive = false, subAgent = null, summaryPercent 
     }
 
     ws.onopen = () => ws.send(JSON.stringify(
-      cleanAll ? { type: "clean_all" }
+      cleanAll ? { type: "clean_all", archive: cleanAll === "archive" }
         : subAgent ? { type: "proactive_summarize_sub", sub_agent: subAgent, percent: summaryPercent }
           : proactive ? { type: "proactive_summarize", percent: summaryPercent }
             : { type: "send", content }
@@ -7650,6 +7677,9 @@ function openChatWs(content, proactive = false, subAgent = null, summaryPercent 
         case "status":
           if (msg.status === "loading") setStatusIndicator("loading");
           else if (msg.status === "ready") leaveLoading("thinking", "main");
+          break;
+        case "snapshot_saved":
+          toast(t("已归档为快照（{n} 条消息）").replace("{n}", String(msg.total_messages || 0)));
           break;
         case "done":
           resolve(true);
