@@ -311,6 +311,8 @@ const I18N_EN = {
   "浏览器接管": "Browser takeover",
   "浏览器工具debug模式": "Browser tool debug mode",
   "开启后，LLM 每次调用浏览器工具都会在程序根目录的 browser_tools_DEBUG_logs 文件夹下，按小时记录一份日志（含整个 viewport 的原始 DOM、处理后的 DOM、LLM 输入、工具返回的 content），便于排查。": "When enabled, every browser tool call by the LLM writes an hourly log under the browser_tools_DEBUG_logs folder in the program root (the whole viewport's raw DOM, processed DOM, LLM input and returned content) to help troubleshooting.",
+  "浏览器工具解析图片标签": "Parse image tags in browser tool output", // BID080
+  "开启后，浏览器工具会把网页里的图片解析成 [图片] 标签（有 alt 时附带一行文本）返回给 LLM；关闭时（默认），[图片] 行以及因此变空的 [..] 结构标签父链会被整条删除，不输出任何图片信息。": "When enabled, the browser tool renders images in web pages as [图片] tags (with one line of alt text when available) for the LLM; when disabled (the default), the [图片] line and any [..] structural parent chain left empty by its removal are deleted entirely, so no image information is returned.", // BID080
   "隐私遮蔽模式": "Privacy masking mode",
   "开启隐私遮蔽模式": "Enable privacy masking mode",
   "暂不开启": "Not now",
@@ -3214,6 +3216,7 @@ async function openAdvancedSettings() {
   try { s = await getSettings(); } catch (e) { toast(e.message, true); return; }
   const mask = document.createElement("div");
   mask.className = "modal-mask";
+  // BID080：进阶设置新增「浏览器工具解析图片标签」开关（默认关闭）；模板字符串内不能写注释，故在此标注。
   mask.innerHTML = `
     <div class="modal" style="width:480px;" data-modal-key="advanced">
       <h3>🧩 ${t("进阶设置")}</h3>
@@ -3250,6 +3253,10 @@ async function openAdvancedSettings() {
         <span class="sw-label">🐞 ${t("浏览器工具debug模式")} <i class="info-icon">!<span class="tip">${t("开启后，LLM 每次调用浏览器工具都会在程序根目录的 browser_tools_DEBUG_logs 文件夹下，按小时记录一份日志（含整个 viewport 的原始 DOM、处理后的 DOM、LLM 输入、工具返回的 content），便于排查。")}</span></i></span>
         <label class="toggle"><input type="checkbox" id="adv_browser_debug" ${s.browser_takeover_debug ? "checked" : ""}><span class="track"></span></label>
       </div>
+      <div class="switch-row">
+        <span class="sw-label">🖼️ ${t("浏览器工具解析图片标签")} <i class="info-icon">!<span class="tip">${t("开启后，浏览器工具会把网页里的图片解析成 [图片] 标签（有 alt 时附带一行文本）返回给 LLM；关闭时（默认），[图片] 行以及因此变空的 [..] 结构标签父链会被整条删除，不输出任何图片信息。")}</span></i></span>
+        <label class="toggle"><input type="checkbox" id="adv_browser_image_tags" ${s.browser_image_tags ? "checked" : ""}><span class="track"></span></label>
+      </div>
       <div class="muted" style="margin:10px 0 2px;">${t("记忆检索相似度门槛")}（${t("取值范围 0~1")}）</div>
       <div class="switch-row">
         <span class="sw-label">🔎 ${t("主动搜索记忆门槛")} <i class="info-icon">!<span class="tip">${t("主 agent 主动调用搜索记忆工具时的语义相似度门槛，取值范围 0~1。分数低于该门槛的记忆不会被返回；数值越大越严格、返回的记忆越少。")}</span></i></span>
@@ -3285,6 +3292,7 @@ async function openAdvancedSettings() {
         pdf_table_extraction: mask.querySelector("#adv_pdf_tables").checked,
         cross_agent_draft_flow: mask.querySelector("#adv_cross_draft").checked,
         browser_takeover_debug: mask.querySelector("#adv_browser_debug").checked,
+        browser_image_tags: mask.querySelector("#adv_browser_image_tags").checked, // BID080
         search_memory_threshold: clamp01(mask.querySelector("#adv_search_threshold").value, 0.5),
         attach_memory_threshold: clamp01(mask.querySelector("#adv_attach_threshold").value, 0.7),
       });

@@ -25,6 +25,7 @@ from .classify import (
     picker_range_position,
 )
 from .diff import changed_lines, compute_diff, compute_lost, format_lines, format_lost
+from .prune import prune_image_lines  # BID080
 from .registry import NameCounter, NameRegistry
 from .serialize import DOMSerializer, OutLine, full_view_lines  # BID079
 
@@ -61,4 +62,5 @@ __all__ = [
     "DOMSerializer",
     "OutLine",
     "full_view_lines",  # BID079
+    "prune_image_lines",  # BID080
 ]

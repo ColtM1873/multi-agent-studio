@@ -100,6 +100,11 @@ class Settings(BaseModel):
     # 处理后的 DOM / LLM 输入 / 工具返回的 content）。工具调用时实时读取，
     # 不参与图编译，无需 invalidate_all。默认关闭。
     browser_takeover_debug: bool = False
+    # 浏览器接管：是否把网页里的图片解析成 [图片] 标签返回给 LLM。
+    # 默认关闭（纯文本口径）：关闭时，页面解析之后、BID079 的层级压缩之前，
+    # 会把 [图片] 行及其「独子父 [..] 结构标签链」整条删除（含 alt 文本）。
+    # 工具调用时实时读取，不参与图编译，无需 invalidate_all。
+    browser_image_tags: bool = False  # BID080
     # 敏感信息表单：浏览器接管填写「可填入元素」时，LLM 用 <名称> 占位，
     # 后台按本表把 <名称> 替换为真实值（表单里没有的名称原样保留）。
     # 工具调用时实时读取，不参与图编译，无需 invalidate_all。

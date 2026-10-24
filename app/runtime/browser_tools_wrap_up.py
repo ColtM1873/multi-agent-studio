@@ -46,6 +46,25 @@ def _apply_browser_timing() -> None:
         pass
 
 
+# 本函数于BID080引入
+def _apply_browser_image_tags() -> None:
+    """按全局「浏览器工具解析图片标签」开关覆盖 browser_agent 的输出偏好。
+
+    关闭（默认）时，图片标签以及其独子父链会在层级压缩前被删除。每次工具调用前
+    现读设置，因此改完保存后下一次调用即生效；browser_agent 默认也是关闭。
+    """
+    try:
+        from browser_agent import prefs as browser_prefs
+
+        settings = _load_settings_safe()
+        if settings is not None:
+            browser_prefs.configure_image_tags(
+                bool(getattr(settings, "browser_image_tags", False))
+            )
+    except Exception:  # noqa: BLE001
+        pass
+
+
 async def _wrap_up(sync_func , **kwargs) -> str:
     if _paused:
         return PAUSE_PROMPT
@@ -53,6 +72,7 @@ async def _wrap_up(sync_func , **kwargs) -> str:
     bid065_trace.mark(f"_wrap_up START {getattr(sync_func, '__name__', sync_func)}")  # BID065
     # 按全局「浏览器交互延迟设置」覆盖运行时延迟（调用时现读，改完即生效）。
     _apply_browser_timing()
+    _apply_browser_image_tags()  # BID080
     # 记录 LLM 原始输入（敏感信息替换前的 kwargs）。
     llm_input = dict(kwargs)
 

@@ -18,8 +18,12 @@
   整页序列化结果 ``context_lines``，本模块按行文本把它对齐到可见行上
   （``_align``），用全量侧的事实判断兄弟 / 内容行数。
 
-只有 ``[..]`` 结构 tab 参与归并（``<可点击元素 eN>`` / ``<可滚动元素 eN>`` 等互动
-标签是 LLM 的寻址锚点，保持独立成行）。
+只有 ``[..]`` 结构 tab 参与归并。``<可点击元素 eN>`` / ``<可滚动元素 eN>`` 等互动
+标签不是 tab：带独立闭合行的互动**块**永远保持自己的层级；互动**叶子**行（如
+``<可点击元素 eN>进入</可点击元素 eN>`` 或 ``#page`` 的单行滚动提示）按「内容」处理，
+可以被规则 3 内联进上一级结构 tab（BID080 审查澄清：互动元素算内容，标签只认
+``[]`` 包裹的行）。``<可滚动元素 eN>`` 尤其特殊：开标签 + 内容 + 闭标签是成对块，
+规则 1 只把它的内容 dedent，绝不把整块并进上一级 tab，也不吞掉闭标签。
 """
 
 from __future__ import annotations
@@ -28,6 +32,8 @@ import bisect
 import re
 from dataclasses import dataclass, field
 from typing import Optional, Sequence
+
+from .prune import prune_image_lines  # BID080
 
 # ``[文本]`` / ``[列表项]`` / ``[3级标题]`` 这类纯结构标签行（后面不能再跟文字）。
 _BRACKET_TAG_RE = re.compile(r"^\[[^\[\]\n]+\]$")
@@ -184,6 +190,8 @@ def _is_group(node: _Node) -> bool:
 # 本函数于BID079引入
 def _is_tab(node: _Node) -> bool:
     """只有 ``[..]`` 结构标签、且带子行、且没有独立闭合行的节点才参与归并。"""
+    if node.is_scroll:  # BID080：滚动块是成对块，绝不参与归并/内联
+        return False
     if node.kind != "group" or node.closing:
         return False
     if _BRACKET_TAG_RE.match(node.text) is None:
@@ -213,7 +221,11 @@ def _fold_child(node: _Node, visible_children: Sequence[_Node]) -> Optional[_Nod
 
 # 本函数于BID079引入
 def _inline_child(node: _Node, visible_children: Sequence[_Node]) -> Optional[_Node]:
-    """规则 3：tab 下只有一行内容时，把这一行并入 tab 行。"""
+    """规则 3：tab 下只有一行内容时，把这一行并入 tab 行。
+
+    互动叶子行也是「内容行」，因此会被内联（``[1级标题] <可点击元素 e14>…``）；
+    带闭合行的互动块是 group，不会走这里（BID080 审查澄清）。
+    """
     if not _is_tab(node):
         return None
     if _content_count(node) != 1:
@@ -289,6 +301,11 @@ def compress_lines(
     """
     if not lines:
         return []
+    # BID080：图片标签关闭时，先把 [图片] 及其独子父 tag 链整条删除，再做层级压缩；
+    # 全量口径依据（context_lines）也要同样删干净，否则兄弟/内容行数会把图片算进去。
+    lines = prune_image_lines(lines)  # BID080
+    if context_lines:
+        context_lines = prune_image_lines(context_lines)  # BID080
     root = _build_tree(lines)
     if context_lines:
         context_root = _build_tree(context_lines)

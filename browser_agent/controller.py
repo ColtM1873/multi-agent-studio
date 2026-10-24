@@ -42,6 +42,7 @@ from .dom import (
     is_range_picker_entry,
     may_navigate,
     picker_range_position,
+    prune_image_lines,  # BID080
     read_outer_html,
 )
 from .launcher import BrowserLauncher, BrowserLaunchError
@@ -828,7 +829,10 @@ class BrowserController:
 
     def serialize_lines_tree(self, tree: EnhancedTree, target_id: str) -> list[OutLine]:
         registry = self._registry_for(target_id)
-        return DOMSerializer(registry).serialize_lines(tree)
+        lines = DOMSerializer(registry).serialize_lines(tree)  # BID080
+        # BID080：图片标签关闭时，diff 基线/新快照都要先删 [图片] 及其独子父链，
+        # 否则「只是页面多了一张图」也会被算成一次内容变化。
+        return prune_image_lines(lines)  # BID080
 
     def _incremental_content(
         self,
