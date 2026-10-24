@@ -120,6 +120,16 @@ def _lines_have_new_text(old_lines: list[OutLine], new_lines: list[OutLine]) -> 
             return True
     return False
 
+
+# 本函数于BID078引入
+def _strip_interactive_tags(text: str) -> str:
+    """剥掉序列化行里的 ``<可…元素 eN>`` 包装，保留缩进与内部文本。
+
+    同标签页硬跳转后，旧文档里的元素名已经全部失效（实测回退后重新编号）；
+    旧页面的增量仍要完整返回，但不能留下会误导点击的旧 ``eN``。
+    """
+    return re.sub(r"</?[^<>]*元素[^<>]*?>", "", text)
+
 # 空白页/骨架提示文本见 ``return_prompt.BLANK_SHELL_NOTICE`` / ``ABOUT_BLANK_NOTICE``；
 # 由 ``_blank_notice(tree)`` 依据 URL 选择。
 
@@ -1881,24 +1891,50 @@ class BrowserController:
             return self._base_result(INCREMENTAL, FAIL, rp.EMPTY_CONTENT, str(exc), include_tabs=False)
 
         executor = ActionExecutor(self.client, session)
-        # 批量互动的第一个动作同样会把目标滚入视口；不先滚动并重建基线的话，
-        # 整屏新视口都会被当成「新增」混进增量（BID078，单动作路径同因）。
-        # 批量字段通常集中在同一表单区块，先把首个目标滚到位即可覆盖绝大多数情形；
-        # 后续动作若再次滚动，仍按原行为返回。
-        if plan:  # BID078
-            try:  # BID078
-                if executor.scroll_into_view(plan[0][2]):  # BID078
-                    tree = self.capture_tree(target_id, record_debug=False)  # BID078
-            except Exception:  # BID078
-                pass  # BID078
-        old_lines = self.serialize_lines_tree(tree, target_id)  # BID078
+        base_tree = tree  # BID078
+        base_lines = self.serialize_lines_tree(tree, target_id)  # BID078
+        initial_lines = base_lines  # BID078
+        diff_parts: list[str] = []  # BID078
+        diff_urls: list[str] = []  # BID078
         success_count = 0
         error_msg = ""
+
+        # 本函数于BID078引入
+        def _rebuild_baseline(backend_node_id: int) -> None:
+            """动作前滚到目标；视口真移动时，用滚动后的视口重建这一步的基线。"""
+            nonlocal base_tree, base_lines
+            try:
+                moved = executor.scroll_into_view(backend_node_id)
+            except Exception:
+                moved = False
+            if moved:
+                base_tree = self.capture_tree(target_id, record_debug=False)
+                base_lines = self.serialize_lines_tree(base_tree, target_id)
+
+        # 本函数于BID078引入
+        def _capture_step() -> None:
+            """抓取一步动作后的状态，把「相对上一步」的增量并入最终结果。
+
+            批量字段可能分布在不同的滚动位置；只在全部动作结束后抓一次，
+            前面字段的变化会随视口滚走而丢失（只剩最后一屏的 diff）。
+            """
+            nonlocal base_tree, base_lines
+            try:
+                new_tree = self.capture_tree(target_id, record_debug=False)
+            except Exception:
+                return
+            new_lines = self.serialize_lines_tree(new_tree, target_id)
+            diff = compute_diff(base_lines, new_lines, base_tree.url, new_tree.url)
+            if diff and diff != rp.PAGE_NO_CHANGE:
+                diff_parts.append(diff)
+                diff_urls.append(new_tree.url)  # BID078
+            base_tree, base_lines = new_tree, new_lines
 
         def _run_plan() -> None:
             nonlocal success_count, error_msg
             for index, (_name, category, backend_node_id) in enumerate(plan):
                 try:
+                    _rebuild_baseline(backend_node_id)  # BID078
                     if category == "input":
                         # A readonly control (cascader / picker / masked field)
                         # must not be written: the native-setter fallback *can*
@@ -1914,6 +1950,8 @@ class BrowserController:
                         executor.select_option(backend_node_id, fills[index])
                     else:
                         executor.click(backend_node_id)
+                    if category in ("input", "select"):  # BID078
+                        _capture_step()  # BID078
                 except (ActionError, CDPError) as exc:
                     error_msg = str(exc)
                     break
@@ -2003,19 +2041,42 @@ class BrowserController:
 
         if focus_changed:
             new_tree = self.capture_tree(new_focus)
-            content = self.serialize_tree(new_tree, new_focus)
+            new_text = self.serialize_tree(new_tree, new_focus)  # BID078
+            old_text = "\n\n".join(diff_parts)  # BID078
+            content = (  # BID078
+                rp.OLD_TAB_DIFF_NOTICE + "\n" + old_text + "\n\n" + new_text  # BID078
+                if old_text  # BID078
+                else new_text  # BID078
+            )  # BID078
             mode = FULL
         elif opened_names:
             # Trailing click opened a background tab without moving focus:
-            # replace the (empty) incremental diff with an explicit hint.
-            content = self._new_tab_notice(opened_names)
+            # keep the fills done on the still-open original tab, then hint the tab.  # BID078
+            content = "\n\n".join(  # BID078
+                p for p in ["\n\n".join(diff_parts), self._new_tab_notice(opened_names)] if p  # BID078
+            )  # BID078
             mode = INCREMENTAL
         else:
             new_tree = self.capture_tree(target_id)
+            new_lines = self.serialize_lines_tree(new_tree, target_id)  # BID078
+            if new_tree.url != tree.url:  # BID078
+                # 旧页面被覆盖：旧增量一行不删，只剥掉已经失效的 <…元素 eN> 包装。
+                diff_parts = [  # BID078
+                    _strip_interactive_tags(p) if u == tree.url else p  # BID078
+                    for p, u in zip(diff_parts, diff_urls)  # BID078
+                ]  # BID078
+                base_lines = initial_lines  # BID078
+            final_diff = compute_diff(  # BID078
+                base_lines, new_lines, base_tree.url, new_tree.url  # BID078
+            )  # BID078
+            if final_diff and final_diff != rp.PAGE_NO_CHANGE:  # BID078
+                diff_parts.append(final_diff)  # BID078
+                diff_urls.append(new_tree.url)  # BID078
             notice = self._title_change_notice(target_id, old_name)
-            content = self._incremental_content(
-                old_lines, new_tree, target_id, notice, old_url=tree.url
-            )
+            lost_text = format_lost(compute_lost(initial_lines, new_lines, registry))  # BID078
+            content = "\n\n".join(  # BID078
+                p for p in [notice.strip()] + diff_parts + [lost_text] if p  # BID078
+            ) or rp.PAGE_NO_CHANGE  # BID078
             # A trailing click may have opened a background tab whose target is
             # registered a beat late (see ``_await_opened_tabs``). Re-check now
             # (the capture above already spent some time), then poll if the
