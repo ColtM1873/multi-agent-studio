@@ -102,10 +102,10 @@ async def tool_08_click_dropdown(
 
 @langchain_tool
 async def tool_10_get_full_viewport() -> str|dict:
-    """获得当前视窗的全貌，通常不需要调用。
-普通交互工具通常只返回 交互前 和 交互后 的新增值（交互后新出现的内容），
-但是对于 交互前 和 交互后 的减少值，只会以『本次互动后丢失的可互动元素列表』的方式提及（不过这种方式通常也足够了）
-调用这个工具，返回的只是 过往工具结果 的一个汇总。想通过调用该工具获得，超出过往信息汇总这个范畴的，新的信息，是徒劳。"""
+    """获得当前视口的全貌，通常不需要调用。
+普通交互工具通常只返回 交互后 相对于交互前 的新增值（交互后新出现的内容），
+但是对于 交互后 相对于交互前 的减少值，只会以『本次互动后丢失的可互动元素列表』的方式提及
+调用这个工具，返回的是 过往工具结果 的一个汇总，并不会获得新的信息。"""
     sync_func_here = BrowserController.instance().full_dom
     return await   _wrap_up(sync_func_here , action_ok=NOT_CALLED)  
 
