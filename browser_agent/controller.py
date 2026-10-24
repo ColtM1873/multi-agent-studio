@@ -34,6 +34,7 @@ from .dom import (
     compute_lost,
     format_lines,
     format_lost,
+    full_view_lines,  # BID079
     has_text,
     is_control_icon,
     is_cursor_pointer_only,
@@ -817,7 +818,11 @@ class BrowserController:
     def serialize_tree(self, tree: EnhancedTree, target_id: str) -> str:
         _bid065_t0 = bid065_trace.perf()  # BID065
         registry = self._registry_for(target_id)
-        result = DOMSerializer(registry).serialize(tree)
+        # BID079：全量输出（tool_10 / 切标签页 / 导航 / 刷新）的缩进压缩按「全量
+        # 口径」判断 —— 传入忽略视口裁剪的整页行，避免把「视口边界下方还有兄弟 /
+        # 还有第二行内容」的结构误压成单行。
+        context = full_view_lines(tree)  # BID079
+        result = DOMSerializer(registry).serialize(tree, context_lines=context)  # BID079
         bid065_trace.mark_elapsed("controller.serialize_tree", _bid065_t0)  # BID065
         return result
 
@@ -1694,6 +1699,7 @@ class BrowserController:
         seen: set[tuple[int, str]] = set()
         prev_lines = base_lines
         last_top = scroller.scroll_top()
+        last_tree: Optional[EnhancedTree] = None  # BID079: 全量口径判断的取样树
         moved = False
         at_boundary = False
         blocked = False
@@ -1718,6 +1724,7 @@ class BrowserController:
             moved = True
 
             tree = self.capture_tree(target_id)
+            last_tree = tree  # BID079
             lines = self.serialize_lines_tree(tree, target_id)
             for line in changed_lines(prev_lines, lines):
                 key = (line.depth, line.text)
@@ -1742,7 +1749,10 @@ class BrowserController:
                 # the element is not a scroller.
                 return rp.scroll_no_new_content(down)
             return rp.PAGE_NO_CHANGE
-        content = format_lines(added)
+        # BID079：滚动增量同样按「全量口径」压缩 —— 滚动出来的那一屏里，
+        # 「某 tab 是否还有兄弟 / 是否只有一行内容」要按整页判断，不能只按这一屏。
+        context = full_view_lines(last_tree) if last_tree is not None else None  # BID079
+        content = format_lines(added, context_lines=context)  # BID079
         lost_text = format_lost(compute_lost(base_lines, prev_lines, registry))
         if lost_text:
             content = content + "\n\n" + lost_text

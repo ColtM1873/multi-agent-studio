@@ -26,7 +26,7 @@ from .classify import (
 )
 from .diff import changed_lines, compute_diff, compute_lost, format_lines, format_lost
 from .registry import NameCounter, NameRegistry
-from .serialize import DOMSerializer, OutLine
+from .serialize import DOMSerializer, OutLine, full_view_lines  # BID079
 
 __all__ = [
     "PAGE_SCROLL_TAG",
@@ -60,4 +60,5 @@ __all__ = [
     "NameCounter",
     "DOMSerializer",
     "OutLine",
+    "full_view_lines",  # BID079
 ]

@@ -15,6 +15,7 @@ import difflib
 import re
 from typing import Optional
 
+from .compress import compress_lines  # BID079
 from .serialize import OutLine, separate_scroll_blocks
 
 MAX_DIFF_CHARS = 40000
@@ -42,41 +43,15 @@ def changed_lines(old_lines: list[OutLine], new_lines: list[OutLine]) -> list[Ou
     return out
 
 
-def _emit(out: list[str], cursor: list[tuple[int, str, str]], line: OutLine) -> None:
-    """Append ``line``, closing/opening ancestor groups as needed.
-
-    ``cursor`` holds the currently open groups as ``(depth, opening, closing)``.
-    """
-    path = list(line.ancestors)
-    common = 0
-    while common < len(path) and common < len(cursor) and path[common] == cursor[common]:
-        common += 1
-    # Close the groups we are leaving, innermost first.
-    for depth, _opening, closing in reversed(cursor[common:]):
-        if closing:
-            out.append("\t" * depth + closing)
-    for depth, opening, _closing in path[common:]:
-        if depth == 0 and out:
-            out.append("")
-        out.append("\t" * depth + opening)
-    if line.depth == 0 and out:
-        out.append("")
-    out.append(("\t" * line.depth + line.text) if line.text else "")
-    if line.kind == "header":
-        cursor[:] = path + [(line.depth, line.text, line.closing)]
-    else:
-        cursor[:] = path
-
-
-def format_lines(lines: list[OutLine], max_chars: int = MAX_DIFF_CHARS) -> str:
-    out: list[str] = []
-    cursor: list[tuple[int, str, str]] = []
-    for line in lines:
-        _emit(out, cursor, line)
-    # Flush any groups still open at the end.
-    for depth, _opening, closing in reversed(cursor):
-        if closing:
-            out.append("\t" * depth + closing)
+def format_lines(
+    lines: list[OutLine],
+    max_chars: int = MAX_DIFF_CHARS,
+    context_lines: Optional[list[OutLine]] = None,  # BID079
+) -> str:
+    # BID079：先按「祖先链 + 行」还原成行树再做缩进压缩，然后整体产出文本。
+    # 原来的祖先游标式拼装（``_emit``）逻辑已并入 compress.compress_lines：
+    # 归并/内联会改写祖先行的文本与层级，游标式增量拼装无法表达。
+    out = compress_lines(lines, context_lines=context_lines, blank_mode="any")  # BID079
     text = "\n".join(separate_scroll_blocks(out))
     if len(text) > max_chars:
         text = text[:max_chars] + "\n…（diff 已截断）"
@@ -89,6 +64,7 @@ def compute_diff(
     old_url: str = "",
     new_url: str = "",
     max_chars: int = MAX_DIFF_CHARS,
+    context_lines: Optional[list[OutLine]] = None,  # BID079
 ) -> str:
     lines = changed_lines(old_lines, new_lines)
     if not lines:
@@ -96,7 +72,7 @@ def compute_diff(
     parts: list[str] = []
     if old_url != new_url and new_url:
         parts.append(f"[增量] url 已变为 {new_url}")
-    parts.append(format_lines(lines, max_chars))
+    parts.append(format_lines(lines, max_chars, context_lines=context_lines))  # BID079
     return "\n".join(parts)
 
 

@@ -54,6 +54,7 @@ from .classify import (
     _marks_select_control,
 )
 from .registry import NameRegistry
+from .compress import compress_lines  # BID079
 
 SKIP_TAGS = {
     "script",
@@ -659,16 +660,14 @@ class DOMSerializer:
     # ------------------------------------------------------------------ #
     # public API
     # ------------------------------------------------------------------ #
-    def serialize(self, tree: EnhancedTree) -> str:
+    def serialize(  # BID079
+        self, tree: EnhancedTree, context_lines: Optional[list[OutLine]] = None  # BID079
+    ) -> str:
         lines = self.serialize_lines(tree)
         parts = [f"[document] url={tree.url or 'about:blank'} title={tree.title or ''}".rstrip()]
-        first_block = True
-        for line in lines:
-            if line.depth == 0 and line.kind == "header":
-                if not first_block:
-                    parts.append("")
-                first_block = False
-            parts.append(("\t" * line.depth + line.text) if line.text else "")
+        # BID079：缩进压缩在「序列化完成之后」统一做一次（不改渲染逻辑）。
+        # context_lines = 忽略视口裁剪的整页行，用于「全量口径」判断兄弟/内容行数。
+        parts.extend(compress_lines(lines, context_lines=context_lines, blank_mode="header"))  # BID079
         parts.append("")
         parts.append(self._page_info(tree))
         text = "\n".join(separate_scroll_blocks(parts))
@@ -4659,3 +4658,46 @@ class DOMSerializer:
             "未到顶" if can_up else "已到顶",
             "未到底" if can_down else "已到底",
         )
+
+
+# 本类于BID079引入
+class FullViewSerializer(DOMSerializer):
+    """忽略「滚动裁剪」的序列化。
+
+    只用于 BID079 的「全量口径」判断（tool_03 / tool_10 的兄弟 tab、兄弟内容、
+    单行内容判断不能只看当前 viewport）。与正常序列化共用同一套渲染逻辑，只把
+    ``_in_clip`` 恒判为命中；``in_viewport`` 由 :func:`full_view_lines` 临时放开。
+    """
+
+    def _in_clip(self, node: EnhancedNode, clip: Optional[BBox]) -> bool:
+        return True
+
+
+# 全量口径序列化的规模上限：超过时放弃全量判断（退回「只按可见行判断」），
+# 避免超大页面为了压缩判断多做一遍全页序列化而拖慢工具返回。
+_FULL_VIEW_NODE_LIMIT = 60000
+
+
+# 本函数于BID079引入
+def full_view_lines(tree: EnhancedTree) -> Optional[list[OutLine]]:
+    """把整棵树按「忽略视口裁剪」再序列化一遍，作为压缩的全量依据。
+
+    * 用**一次性**的 ``NameRegistry``：不消耗全局元素编号，也不往当前标签页
+      的名字表里塞 LLM 看不到的元素（对齐时按去掉 ``eN`` 的文本匹配）。
+    * 结束时把 ``in_viewport`` 复位（节点是共享对象，不能留下副作用）。
+    * 超过 ``_FULL_VIEW_NODE_LIMIT`` 返回 None（调用方退回可见行口径）。
+    """
+    if len(tree.nodes) > _FULL_VIEW_NODE_LIMIT:
+        return None
+    saved = [(node, node.in_viewport) for node in tree.nodes]
+    try:
+        for node in tree.nodes:
+            node.in_viewport = True
+        serializer = FullViewSerializer(NameRegistry())
+        return serializer.serialize_lines(tree)
+    except Exception:  # noqa: BLE001 — 全量口径只是压缩的参考信息，取不到就退回可见行口径
+        return None
+    finally:
+        for node, value in saved:
+            node.in_viewport = value
+
