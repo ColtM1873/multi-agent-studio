@@ -791,6 +791,27 @@ class ActionExecutor:
         except Exception:
             return {"resolved": False, "readonly": False, "disabled": False}
 
+    # 本函数于BID085引入
+    def is_focused(self, backend_node_id: int) -> bool:
+        """True if ``node`` is the document's current ``activeElement``.
+
+        Used to avoid a redundant *click* on a control that already has focus:
+        component-library selects toggle their panel on click, so clicking an
+        already-open (focused) select closes it — exactly the opposite of what
+        "show me the full candidate list" wants (BID085, Moka ``sd-Select``).
+        """
+        object_id = self._resolve(backend_node_id)  # BID085
+        if not object_id:  # BID085
+            return False  # BID085
+        try:  # BID085
+            value = self._call_on_node(  # BID085
+                object_id,  # BID085
+                "function(){try{return this.ownerDocument.activeElement===this;}catch(e){return false;}}",
+            )  # BID085
+            return bool(value)  # BID085
+        except Exception:  # noqa: BLE001  # BID085
+            return False  # BID085
+
     def clear_field(self, backend_node_id: int) -> bool:
         """Focus an editable control and clear its text; return whether it is empty.
 
@@ -804,7 +825,15 @@ class ActionExecutor:
         widget may swallow it. When the field is still non-empty the native setter
         is used as a bounded second attempt, and the real outcome is returned so
         the caller never believes a stale value was replaced.
+
+        BID085：**框里已经是空的，就一个键都不发**。原实现无条件对空筛选框发
+        Ctrl+A/Delete；组件的 select 常把「空筛选框上按删除键」解释为「删掉已选项」
+        （tag/多选语义），于是「清空筛选词」会顺手抹掉用户/模型刚选好的值。空框本来
+        就没有可清的内容，跳过既安全又省一次交互。
         """
+        if self._read_value(backend_node_id) == "":  # BID085
+            # 确认「读到的是空串」才跳过；读不到（None）不是「已空」，照旧走清理流程。
+            return True  # BID085
         self.focus(backend_node_id)
         _sleep(*timing.get().actions.input_focus)
         self._clear_field()

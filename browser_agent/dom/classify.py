@@ -741,6 +741,33 @@ _INDICATOR_TOKENS = (
     "icon-down",
     "down-icon",
 )
+# BID085：下拉控件**装配部件**的令牌（增补部件 / 后缀 / 值显示区 / 清除按钮）。
+# 这些部件是控件结构的一部分，悬停/聚焦时只会**换图标**而不是消失，所以可以
+# 当作「这个输入框是下拉的筛选框」的稳定证据。原判据只认「朝下箭头」，而 Moka
+# ``sd-Select`` 在悬停时把箭头 ``iconcaretDown`` 换成清除 ``iconclear``：分类随之
+# 由 ``searchable`` 翻成 ``input``，于是 tool_07/tool_02/tool_01 互相推诿、已选值
+# 被读成「（空）」（2026-10-26 校招表单实测）。
+_SELECT_CHROME_TOKENS = (  # BID085
+    "addon",  # BID085
+    "suffix",  # BID085
+    "indicator",  # BID085
+    "clear",  # BID085
+    "display-value",  # BID085
+    "selection-item",  # BID085
+    "selected-item",  # BID085
+    "select-value",  # BID085
+    "arrow",  # BID085
+    "caret",  # BID085
+)  # BID085
+# 校验/提示文案块里也会出现 ``iconclear`` 这类图标类名（Moka 的必填错误图标与清除
+# 按钮共用同一个图标类），它们不是控件部件，不能当成下拉装配证据（BID085）。
+_SELECT_CHROME_SKIP_TOKENS = (  # BID085
+    "error",  # BID085
+    "invalid",  # BID085
+    "message",  # BID085
+    "help",  # BID085
+    "tip",  # BID085
+)  # BID085
 
 
 def _class_id_text(node: EnhancedNode) -> str:
@@ -1653,6 +1680,28 @@ def is_searchable_typeahead(node: EnhancedNode) -> bool:
     return is_date_picker_input(node)
 
 
+# 本函数于BID085引入
+def _has_popup_aria(node: EnhancedNode, max_hops: int = 4) -> bool:
+    """True if ``node`` or a near ancestor declares a popup contract via ARIA.
+
+    ``aria-haspopup`` / ``aria-controls`` / ``aria-expanded`` are *structural*
+    (they do not change with hover / focus styling), so they are the strongest
+    evidence that an editable input belongs to a widget that opens a panel.
+    """
+    current = node  # BID085
+    hops = 0  # BID085
+    while current is not None and hops < max_hops:  # BID085
+        if current.is_element:  # BID085
+            attrs = current.attributes  # BID085
+            if attrs.get("aria-haspopup") or attrs.get("aria-controls"):  # BID085
+                return True  # BID085
+            if attrs.get("aria-expanded") is not None:  # BID085
+                return True  # BID085
+        current = current.parent  # BID085
+        hops += 1  # BID085
+    return False  # BID085
+
+
 def is_custom_select_input(node: EnhancedNode) -> bool:
     """True if ``node`` is the *filter input* of a custom (non-ARIA) select.
 
@@ -1666,6 +1715,16 @@ def is_custom_select_input(node: EnhancedNode) -> bool:
     combobox control and which has a down-arrow addon *sibling* inside that control
     (Moka ``sd-Select``). A sibling that is itself a composite control (an
     Ant-Design phone-country selector) does not count.
+
+    BID085：**身份不能挂在会随状态换装的小图标上**。原判据只认「朝下箭头」，而
+    Moka ``sd-Select`` 在悬停/聚焦时把箭头换成清除 ``×``（同一个 addon 部件里换
+    span），于是同一个节点在「未悬停=searchable / 悬停=input」之间来回翻转：
+    tool_07 说「这是可输入元素」、tool_02 说「这是可搜索下拉」，互踢皮球；
+    已选值（值显示区 ``sd-Input-display-value``）也被读成「（空）」。现在把
+    「控件装配部件」（addon / suffix / indicator / 清除 / 值显示区，见
+    ``_SELECT_CHROME_TOKENS``）与 ``aria-*`` 弹层契约一起算作稳定证据——它们
+    只在「这确实是个下拉控件」时出现，与悬停/聚焦无关。校验/提示块里的同名图标
+    被 ``_SELECT_CHROME_SKIP_TOKENS`` 排除，避免「有错误提示的普通输入框」被误判。
     """
     if node.tag != "input":
         return False
@@ -1676,6 +1735,8 @@ def is_custom_select_input(node: EnhancedNode) -> bool:
     parent = node.parent
     if parent is None or not _marks_select_control(parent):
         return False
+    if _has_popup_aria(node):  # BID085
+        return True  # BID085
     for sibling in parent.children:
         if sibling is node or sibling.is_text or not sibling.is_element:
             continue
@@ -1683,6 +1744,11 @@ def is_custom_select_input(node: EnhancedNode) -> bool:
             continue
         if _has_dropdown_indicator(sibling):
             return True
+        sibling_tokens = _class_id_text(sibling)  # BID085
+        if _has_token(sibling_tokens, _SELECT_CHROME_SKIP_TOKENS):  # BID085
+            continue  # BID085
+        if _has_token(sibling_tokens, _SELECT_CHROME_TOKENS):  # BID085
+            return True  # BID085
     return False
 
 

@@ -40,6 +40,7 @@ from .dom import (
     has_text,
     is_control_icon,
     is_cursor_pointer_only,
+    is_custom_select_input,  # BID085
     is_range_picker_end,
     is_range_picker_entry,
     may_navigate,
@@ -1099,6 +1100,8 @@ class BrowserController:
             )
 
         category = classify(node)
+        if category not in allowed:  # BID085
+            category = self._compatible_category(node, category, allowed)  # BID085
         if category not in allowed:
             target_tool = self._SPLIT_CATEGORY_TOOL.get(category, "")
             return None, self._base_result(
@@ -1176,6 +1179,28 @@ class BrowserController:
             ),
             None,
         )
+
+    # 本函数于BID085引入
+    def _compatible_category(self, node: EnhancedNode, category: str, allowed: tuple) -> str:
+        """把「下拉筛选框被判成 input」的类别映射到本次调用可接受的同族类别。
+
+        同一个筛选框可能因为瞬时状态（悬停/聚焦换图标、禁用态、组件换装）在不同
+        快照里被分成 ``searchable`` 或 ``input``。若严格按类别拒绝，tool_07 会说
+        「它是可输入元素，请用 tool_02」，tool_02 又说「它是可搜索下拉，请用
+        tool_07」，模型永远操作不了该字段（2026-10-26 校招表单实测死循环）。
+
+        映射只走**结构证据**（``is_custom_select_input``：可编辑 input + 直接父容器
+        带 select 令牌 + 下拉装配部件/aria 弹层契约），不猜、不放宽语法不同的控件：
+
+        * ``input`` → ``searchable``：仅当结构上确实是下拉筛选框，且本次工具接受
+          ``searchable``（tool_07 / tool_08）；
+        * 反向（tool_02 接受 ``searchable``）由调用方的 ``allowed`` 显式声明，因为
+          「往筛选框里打字」本身就是该工具能做的动作。
+        """
+        if category == "input" and "searchable" in allowed:  # BID085
+            if is_custom_select_input(node):  # BID085
+                return "searchable"  # BID085
+        return category  # BID085
 
     def _run_click(self, ctx: _InteractContext) -> dict:
         node = ctx.node
@@ -1345,6 +1370,10 @@ class BrowserController:
         name = ctx.name
         fill_error = ""
         fill_notice = ""
+        # BID085：下拉控件的筛选框（Moka ``sd-Select`` 的 input）也能被这个工具写到
+        # （它的类别会随悬停/聚焦抖动成 ``input``）。写进去的只是**筛选词**，不会
+        # 提交取值，所以下面会补一条提示，绝不把它当成「已填好」。
+        is_select_filter = is_custom_select_input(node)  # BID085
         # A ``readonly`` control (a cascader / date picker / masked field that
         # only displays a value its own widget committed) must never be written:
         # the native-setter fallback *can* write it, which leaves the visible text
@@ -1360,8 +1389,13 @@ class BrowserController:
             # empty afterwards instead of answering "（页面无变化）" (which the model
             # read as "nothing happened" and retried; the real session burned
             # several turns on the 微信号 field this way).
+            had_text = bool(executor.read_value(node.backend_node_id))  # BID085
             if not executor.clear_field(node.backend_node_id):
                 fill_error = rp.clear_fill_error(name)
+            elif is_select_filter:  # BID085
+                # 清空的只是筛选词；下拉的已选值是控件自己的状态，不随筛选框清空
+                # （2026-10-26：用户手动选中的「合肥市」被模型当成了自己填的/清掉的）。
+                fill_notice = rp.select_filter_clear_notice(name, had_text)  # BID085
             self._stabilize(target_id)
             return {
                 "fill_error": fill_error,
@@ -1404,6 +1438,9 @@ class BrowserController:
             with self._watch_navigation(ctx.session) as nav_state:
                 executor.press_enter()
                 self._settle_navigation(ctx.session, nav_state, True)
+        if fill and not fill_error and is_select_filter:  # BID085
+            # 值确实进了输入框，但那只是筛选词：下拉的取值只能靠点候选提交。
+            fill_notice = rp.select_filter_typing_notice(name, fill)  # BID085
         return {
             "fill_error": fill_error,
             "fill_notice": fill_notice,
@@ -1437,7 +1474,26 @@ class BrowserController:
             "dialog": {"type": "", "message": ""},
         }
 
-    def _run_searchable(self, ctx: _InteractContext, fill: str) -> dict:
+    # 本函数于BID085引入
+    def _select_panel_open(self, ctx: _InteractContext) -> bool:
+        """该下拉控件此刻是否已经展开（用于躲开 toggle 语义的二次点击）。
+
+        组件库的 select 是 toggle：对**已展开**的控件再点一次会把它关掉。
+        「用空串筛出完整候选列表」「打开下拉」这两个动作如果盲点一次，就会把
+        刚展开的面板关掉、返回里一个候选都没有（Moka 实测）。判据用「控件有焦点
+        且页面上有可见浮层」——两条都成立几乎只可能来自它自己的面板；任一不成立
+        就按「未展开」处理，照常点击（不改变常规行为）。
+        """
+        try:  # BID085
+            if not ctx.executor.is_focused(ctx.node.backend_node_id):  # BID085
+                return False  # BID085
+            return self._overlay_open(ctx.session)  # BID085
+        except Exception:  # noqa: BLE001  # BID085
+            return False  # BID085
+
+    def _run_searchable(
+        self, ctx: _InteractContext, fill: str, open_only: bool = False  # BID085
+    ) -> dict:
         """Filter a searchable select's typeahead and surface the candidates.
 
         Typing only narrows the candidate list; the value is committed by a
@@ -1446,14 +1502,31 @@ class BrowserController:
         opens the dropdown. An empty ``fill`` means "show the full list": click
         to open, then wipe any leftover filter from a previous call (``input_text``
         deliberately does not clear on an empty fill).
+
+        BID085：``open_only=True``（tool_08 落到可搜索下拉时）只点击展开、**不动**
+        已有的筛选词——tool_08 的语义是「打开候选面板」，顺手清掉用户/模型刚输入的
+        筛选词是计划外的破坏性副作用。
         """
         node = ctx.node
         executor = ctx.executor
+        already_open = False  # BID085
         if fill:
             executor.input_text(node.backend_node_id, fill)
+        elif open_only:  # BID085
+            if self._select_panel_open(ctx):  # BID085
+                already_open = True  # BID085
+            else:  # BID085
+                executor.click(node.backend_node_id)  # BID085
         else:
-            executor.input_text(node.backend_node_id, "")
-            executor.clear_field(node.backend_node_id)
+            # BID085：已在焦点上的下拉控件**不要**再点一次——组件库的 select 是
+            # toggle 语义：点已展开的控件会把它关掉。「用空串筛出完整候选列表」于是
+            # 变成「先关掉面板再清筛选词」，返回里一个候选都没有（Moka 实测）。
+            # 焦点在别处时才用点击打开面板，然后只清筛选词。
+            if self._select_panel_open(ctx):  # BID085
+                executor.clear_field(node.backend_node_id)  # BID085
+            else:  # BID085
+                executor.input_text(node.backend_node_id, "")  # BID085
+                executor.clear_field(node.backend_node_id)  # BID085
         self._stabilize(ctx.target_id)
         # A dropdown mounts on focus/typing and paints a frame or two later;
         # give it a bounded moment so its candidates are captured.
@@ -1462,6 +1535,10 @@ class BrowserController:
         # the moment the panel opens — see ``_range_entry_notice`` for why the two
         # shapes must not share one wording.
         fill_notice = _range_entry_notice(node, ctx.name)
+        if already_open:  # BID085
+            # 面板本来就是展开的：本轮没有可观察变化，必须说明，否则模型会把
+            # 「（页面无变化）」读成「没打开」而重复调用。
+            fill_notice = rp.dropdown_already_open_notice(ctx.name)  # BID085
         return {
             "fill_error": "",
             "fill_notice": fill_notice,
@@ -1611,13 +1688,26 @@ class BrowserController:
 
         与 ``interact_click`` 共用同一套点击与浮层兜底逻辑（点击后保留刚打开的
         浮层以便捕获候选），区别只是类别与工具：候选项仍由 ``tool_01_click`` 点选。
+
+        BID085：可搜索下拉（``searchable``/其筛选框被瞬时状态判成 ``input``）也接受本
+        工具——「打开候选面板」这个语义对两者完全一致，且面板已展开时**不再重复点击**
+        （toggle 会把它关掉），只回提示与候选。
         """
-        ctx, err = self._begin_interaction(name, allowed=("clickdropdown",))
+        ctx, err = self._begin_interaction(name, allowed=("clickdropdown", "searchable"))  # BID085
         if err is not None:
             return err
         assert ctx is not None
         try:
-            extras = self._run_click(ctx)
+            # BID085：可搜索下拉（或其被瞬时状态判成 input 的筛选框）用「聚焦 + 展开
+            # 候选」实现同一个语义：tool_08 的契约就是「打开面板，让候选出现在返回里」。
+            # 拒绝它只会把模型推向一次注定失败的 tool_07（类别抖动时）。
+            if (  # BID085
+                classify(ctx.node) == "searchable"  # BID085
+                or is_custom_select_input(ctx.node)  # BID085
+            ):  # BID085
+                extras = self._run_searchable(ctx, "", open_only=True)  # BID085
+            else:  # BID085
+                extras = self._run_click(ctx)  # BID085
         except (ActionError, CDPError) as exc:
             return self._base_result(INCREMENTAL, FAIL, rp.EMPTY_CONTENT, str(exc), include_tabs=False)
         # Same "how this commits" contract as tool_07 — worded per shape:
@@ -1634,7 +1724,7 @@ class BrowserController:
         self, name: str, fill: str = "", press_enter: bool = False
     ) -> dict:
         """对单个『可输入元素』填写内容（可选填完按回车），返回增量 DOM。"""
-        ctx, err = self._begin_interaction(name, allowed=("input",))
+        ctx, err = self._begin_interaction(name, allowed=("input", "searchable"))  # BID085
         if err is not None:
             return err
         assert ctx is not None

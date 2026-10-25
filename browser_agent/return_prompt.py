@@ -412,6 +412,45 @@ def clear_fill_error(name: str) -> str:
     )
 
 
+# 作用：告知「这次写的只是筛选词，取值尚未提交」。
+# 触发条件：_run_fill 的非空 fill 落在下拉控件的筛选框上（is_custom_select_input），
+#           且读回值与填入值一致（文字确实进去了，但那只是过滤条件）。
+# 返回时机：作为 fill_notice 拼在返回内容最前面（action_ok 仍为成功——动作本身成功）。
+def select_filter_typing_notice(name: str, fill: str) -> str:
+    return (
+        f"[提示] {name} 是下拉控件的筛选框：已输入筛选词「{fill}」，"
+        f"但**这不是取值**。请再用 tool_01_click 点击返回内容里的候选项完成选择；"
+        f"若没有候选，先改用空字符串筛出完整候选列表。"
+    )
+
+
+# 作用：告知「清空的只是筛选词，已选值不受影响」。
+# 触发条件：_run_fill 收到空 fill 且元素是下拉控件的筛选框（is_custom_select_input）。
+# 返回时机：作为 fill_notice 拼在返回内容前面。
+# 入参：had_text 判断清空前筛选框里是否真有文字（空框时我们一个键都没发，
+#       不能说「已清空」——只能说「本来就是空的、本次没有改动控件」）。
+def select_filter_clear_notice(name: str, had_text: bool = True) -> str:
+    if not had_text:
+        return (
+            f"[提示] {name} 的筛选框本来就是空的，本次没有改动控件；"
+            f"下拉控件里**已选中的值保持不变**。如需改选，请点击该下拉控件本身。"
+        )
+    return (
+        f"[提示] 已清空 {name} 的筛选词。下拉控件里**已选中的值不会因此被清除**；"
+        f"如确实要清空或改选，请点击该下拉控件本身，在候选面板里操作。"
+    )
+
+
+# 作用：告知「候选面板本来就是展开的，本轮没有再点一次」。
+# 触发条件：tool_08 落到可搜索下拉、且该控件已展开（再点一次会 toggle 关掉它）。
+# 返回时机：作为 fill_notice 拼在返回内容前面，避免模型把「（页面无变化）」读成没打开。
+def dropdown_already_open_notice(name: str) -> str:
+    return (
+        f"[提示] {name} 的候选面板已经是展开状态，本次没有再点它"
+        f"（重复点击会把面板关掉）；候选项见下方返回内容。"
+    )
+
+
 # 作用：告知「先清空再输入」中的清空这一步失败，字段现在是被拼接污染的脏值。
 # 触发条件：_run_fill 中 input_text 报告 clear_ok=False（清空后字段仍非空）。
 # 返回时机：作为 fill_error 返回（此时报告成功会让 LLM 在错误前提上继续操作）。

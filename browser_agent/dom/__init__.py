@@ -15,6 +15,7 @@ from .classify import (
     is_clickable,
     is_control_icon,
     is_cursor_pointer_only,
+    is_custom_select_input,  # BID085
     is_draggable,
     is_input,
     is_range_picker_end,
@@ -44,6 +45,7 @@ __all__ = [
     "is_clickable",
     "is_control_icon",
     "is_cursor_pointer_only",
+    "is_custom_select_input",  # BID085
     "is_draggable",
     "is_input",
     "is_range_picker_end",

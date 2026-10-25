@@ -191,6 +191,17 @@ _HELPER_TEXT_TOKENS = (
     "asterisk",
     "tooltip",
 )
+# BID085：控件**自己的值显示区**令牌。它们与「下拉面板」在几何上同样可能是浮层
+# （Moka 的值显示区就是 position:absolute），所以判定「这是面板文本」时必须先让
+# 这组令牌胜出，否则已选值会被当成面板噪声丢掉、标签退化成「（空）」。
+_VALUE_DISPLAY_TOKENS = (  # BID085
+    "display-value",  # BID085
+    "selection-item",  # BID085
+    "selected-item",  # BID085
+    "select-value",  # BID085
+    "selection__placeholder",  # BID085
+    "selection-placeholder",  # BID085
+)  # BID085
 
 
 def _is_click_like(category: str) -> bool:
@@ -1814,8 +1825,15 @@ class DOMSerializer:
             # stays a plain "field: value" without extra hints.
             label = self._searchable_label(node)
         elif category == "input":
-            value = self._input_value(node)
-            if value:
+            value = self._input_value(node)  # BID085
+            if is_custom_select_input(node):  # BID085
+                # BID085：即使类别因为别的原因落到 ``input``（状态判据抖动、禁用态
+                # 等），只要它确实是下拉控件的筛选框，就仍按「字段名：已选值」渲染。
+                # 否则已选值会被读成「（空）」——2026-10-26 校招表单里
+                # 「意向工作城市」已选「合肥市」，模型却被告知是空的，据此向用户
+                # 报告「已清空」，属于最危险的一类谎报。
+                label = self._searchable_label(node)  # BID085
+            elif value:  # BID085
                 # Say "value" explicitly. A privacy-masked real value reads as
                 # ``<邮箱>`` — byte-identical to the placeholder the model is told
                 # to type — so ``<可输入元素 e61><邮箱></>`` was understood as "empty
@@ -3974,6 +3992,14 @@ class DOMSerializer:
 
         Same as ``_nearby_text_label`` but skips helper / validation text
         (``必填项未填写``), which a custom select renders right beside its input.
+
+        BID085：还要跳过**下拉面板本身**。字段为空、面板已展开时，Moka 把
+        「暂无选项」渲染在控件的兄弟节点里，原逻辑会把它当成「当前值」，于是标签
+        变成「意向工作城市：暂无选项」——比「（空）」更误导。面板按**结构**识别
+        （overlay role / class 含 dropdown·menu·panel…），而控件自己的值显示区
+        （``display-value`` / ``selection-item``…）优先保留，见
+        ``_is_dropdown_panel_like``；不能按 position 判——Moka 的值显示区本身也是
+        ``position:absolute``。
         """
         branch = node
         ancestor = node.parent
@@ -3992,6 +4018,8 @@ class DOMSerializer:
                     continue
                 if self._is_helper_text(sibling):
                     continue
+                if self._is_dropdown_panel_like(sibling):  # BID085
+                    continue  # BID085
                 text = self._collect_text(sibling)
                 if text:
                     texts.append(text)
@@ -4001,6 +4029,45 @@ class DOMSerializer:
             ancestor = ancestor.parent
             hops += 1
         return ""
+
+    # 本函数于BID085引入
+    def _is_dropdown_panel_like(self, node: EnhancedNode, depth: int = 3) -> bool:
+        """True if ``node`` is (or wraps, within ``depth``) a dropdown panel.
+
+        Used to keep an open panel's own text ("暂无选项", candidate lists) out of
+        the control's value. Recognised by *class/role*, not by position: Moka
+        renders the control's own value display (``sd-Input-display-value``) as an
+        ``position:absolute`` box *inside* the control, so "floating" is not a
+        usable discriminator. The value-display tokens win over everything else
+        (checked first), because a control's displayed value must never be treated
+        as panel noise.
+        """
+        raw = (  # BID085
+            f"{node.attributes.get('class', '')} {node.attributes.get('id', '')}"
+        ).lower()  # BID085
+        if any(tok in raw for tok in _VALUE_DISPLAY_TOKENS):  # BID085
+            return False  # BID085
+        if (node.role or "").lower() in (  # BID085
+            "listbox",
+            "menu",
+            "dialog",
+            "tooltip",
+            "grid",
+            "tree",
+            "option",
+        ):  # BID085
+            return True  # BID085
+        if any(  # BID085
+            tok in raw
+            for tok in ("dropdown", "menu", "panel", "popup", "popper", "listbox", "option-list")
+        ):  # BID085
+            return True  # BID085
+        if depth <= 0:  # BID085
+            return False  # BID085
+        for child in node.children:  # BID085
+            if child.is_element and self._is_dropdown_panel_like(child, depth - 1):  # BID085
+                return True  # BID085
+        return False  # BID085
 
     def _interactive_text(
         self, node: EnhancedNode, category: str, name: str
