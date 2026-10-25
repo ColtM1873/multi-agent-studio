@@ -29,11 +29,9 @@ from .serialize import OutLine, separate_scroll_blocks
 MAX_DIFF_CHARS = 40000
 MAX_LOST = 50
 
-# BID083：去重判据用的「父路径」= 该行祖先链上的分组开标签文本。
-# 直接用整条链（而不是只看最后一项）是为了区分同层但不同的父实例：
-# 两个 ``[列表]`` 块在缩进上完全一样，只看末项会把它们当成同一个父级。
-# 要求父路径相同是 BID083 的第一道防护：宁可少去重，也不把「换位置/换父级
-# 出现的内容」当成重复吞掉。
+# BID083：去重判据用的「直接父级」= 最邻近的那一层分组开标签（祖先链最后一项）。
+# 再往上/往前的祖先不参与比较——类型不同、层级更深的嵌套不该阻止去重。
+# 没有父标签（顶层行）时用空串表示，两边都是空串自然满足。
 
 
 def _key(line: OutLine) -> tuple[int, str]:
@@ -41,23 +39,26 @@ def _key(line: OutLine) -> tuple[int, str]:
 
 
 # 本函数于BID083引入
-def _parent_path(line: OutLine) -> tuple[str, ...]:
-    """该行祖先链上的分组开标签（'' 表示顶层，没有父标签）。"""
-    return tuple(anc[1] for anc in (getattr(line, "ancestors", ()) or ()))
+def _parent_tag(line: OutLine) -> str:
+    """该行最邻近的父级标签（'' 表示顶层，没有父标签）。"""
+    ancestors = getattr(line, "ancestors", ()) or ()
+    return ancestors[-1][1] if ancestors else ""
 
 
 # 本函数于BID083引入
 def _sibling_links(lines: Sequence[OutLine]) -> tuple[list[Optional[int]], list[Optional[int]]]:
-    """给每一行算出「同一父路径下的上一条/下一条」下标（跳过 close 行）。
+    """给每一行算出「直接父级标签相同」的上一条/下一条下标（跳过 close 行）。
 
     BID083 的第二道防护：只有前后相邻行也一致，才允许把这一行判成重复。
     close 行是结构标记、不是渲染内容，不参与相邻关系。
+    同一父级标签下的多个平行容器（两个 ``[列表]``）会被视作同一组，这只会让
+    「前/后一行」要求更严（更容易保留 diff），不会多吞内容。
     """
-    groups: dict[tuple[str, ...], list[int]] = {}
+    groups: dict[str, list[int]] = {}
     for index, line in enumerate(lines):
         if line.kind == "close":
             continue
-        groups.setdefault(_parent_path(line), []).append(index)
+        groups.setdefault(_parent_tag(line), []).append(index)
     prev: list[Optional[int]] = [None] * len(lines)
     nxt: list[Optional[int]] = [None] * len(lines)
     for indices in groups.values():
@@ -86,10 +87,11 @@ def _reappears_in_place(
 ) -> bool:
     """判断新行是否只是旧内容在「同一个位置」重现（可安全从 diff 中去掉）。
 
-    三个条件同时成立才算：文本逐字相同（含元素编号）、父路径相同、同一父级下的
-    前/后一行也相同。任何一项不满足都保留，宁可多给 diff，也不吞掉可能的变化。
+    三个条件同时成立才算：文本逐字相同（含元素编号）、直接父级标签相同、
+    该父级下的前/后一行也相同。任何一项不满足都保留，宁可多给 diff，
+    也不吞掉可能的变化。
     """
-    if _parent_path(old_lines[old_index]) != _parent_path(new_lines[new_index]):  # BID083
+    if _parent_tag(old_lines[old_index]) != _parent_tag(new_lines[new_index]):  # BID083
         return False  # BID083
     if _text_at(old_lines, old_prev[old_index]) != _text_at(new_lines, new_prev[new_index]):  # BID083
         return False  # BID083
@@ -109,7 +111,8 @@ def changed_lines(old_lines: list[OutLine], new_lines: list[OutLine]) -> list[Ou
 
     * 行文本必须**逐字相同**（元素编号 ``eN`` 也参与比较，不抹成 ``eN``——
       重新渲染/硬插入会分配新编号，这种一律当成新增让它进 diff）；
-    * 直接父级必须相同（``_parent_path``；两边都没有父标签时自然相同）；
+    * 直接父级必须相同（``_parent_tag``：只看最邻近那层分组标签，更上层不管；
+      两边都没有父标签时自然相同）；
     * 同一父级下的前一行、后一行内容必须相同；若这一行在父级下是第一行
       （没有前一行）则只比后一行，最后一行只比前一行，父级下只有这一行则不比。
     """
