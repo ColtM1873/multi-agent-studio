@@ -1,9 +1,17 @@
 ﻿# Multi-Agent Studio 一键安装脚本（由 setup.bat 调用）
+#
+# 权限策略：默认就用当前用户权限安装，不再一上来就要求管理员。
+# 只有遇到确实需要管理员才能完成的步骤时才提示提权并重跑本脚本：
+#   * 依赖安装 / 打包等步骤因权限或长路径限制失败；
+#   * 需要安装 pgvector（写入 PostgreSQL 安装目录）。
+# 提权重跑会带上 -Mode / -OriginalUser / -OriginalSid，跳过版本菜单；
+# 退出提权后再由原登录用户的进程创建桌面快捷方式。
 
 param(
     [string]$Mode = '',
     [string]$OriginalUser = '',
-    [string]$OriginalSid = ''
+    [string]$OriginalSid = '',
+    [switch]$InstallPgvector
 )
 
 $ErrorActionPreference = 'Stop'
@@ -37,6 +45,147 @@ function New-StudioDesktopShortcut {
     $shortcut.Description = 'Multi-Agent Studio'
     $shortcut.Save()
     return $lnkPath
+}
+
+function Start-ElevatedSetupChild {
+    # 以管理员身份重新运行本脚本并等待结束；返回子进程退出码（取不到时返回 $null）。
+    # 返回 2 表示「没能启动提权进程」（例如用户在 UAC 点了否）——调用方据此区分
+    # 「用户拒绝提权」和「管理员安装真的失败了」。
+    # 子进程负责全部安装步骤；退出提权后由本进程（原登录用户）补建桌面快捷方式。
+    $elevArgList = @(
+        '-NoProfile'
+        '-ExecutionPolicy Bypass'
+        '-File'
+        "`"$PSCommandPath`""
+        '-Mode'
+        $Mode
+        '-OriginalUser'
+        "`"$origUserName`""
+        '-OriginalSid'
+        $origUserSid
+    )
+    if ($InstallPgvector) {
+        $elevArgList += '-InstallPgvector'
+    }
+    $elevArgList = $elevArgList -join ' '
+
+    try {
+        $elevatedProc = Start-Process -FilePath 'powershell.exe' -ArgumentList $elevArgList -Verb RunAs -PassThru
+    } catch {
+        Write-Host ''
+        Write-Host '       [提示] 未能获得管理员权限（可能点了「否」）。'
+        Write-Host '             可稍后右键 setup.bat 选择「以管理员身份运行」。'
+        return 2
+    }
+    if (-not $elevatedProc) {
+        Write-Host '[错误] 未能获取管理员安装进程，请重试。'
+        return 2
+    }
+
+    Write-Host ''
+    Write-Host '已请求管理员权限，安装将在新打开的管理员窗口中继续。'
+    Write-Host '本窗口会等待安装结束；若桌面快捷方式尚未创建，结束后会回到当前登录用户的桌面补建。'
+
+    # 等待提权后的安装进程结束（= 退出提权），之后本进程仍在原用户上下文中
+    $childExited = $false
+    $childExitCode = $null
+    try {
+        $elevatedProc.WaitForExit()
+        $childExited = $true
+        try { $childExitCode = $elevatedProc.ExitCode } catch { }
+    } catch {
+        # 少数环境下非提权进程无法等待提权进程，退化为轮询进程是否存在
+    }
+    if (-not $childExited) {
+        while (Get-Process -Id $elevatedProc.Id -ErrorAction SilentlyContinue) {
+            Start-Sleep -Milliseconds 500
+        }
+    }
+
+    if ($null -ne $childExitCode -and $childExitCode -ne 0) {
+        Write-Host ''
+        Write-Host "       [警告] 管理员安装进程未成功结束（退出码 $childExitCode），安装可能未完成。"
+        Write-Host '             请查看管理员安装窗口中的报错信息后重试。'
+        return 1
+    }
+
+    if (Test-Path -LiteralPath $pendingShortcutMarker) {
+        # 提权账户与原登录用户不同：现在已退出提权，由原用户进程在真正的桌面创建
+        try {
+            $lnkPath = New-StudioDesktopShortcut -ExeName $exeName
+            Remove-Item -LiteralPath $pendingShortcutMarker -Force -ErrorAction SilentlyContinue
+            Write-Host ''
+            Write-Host '================================================'
+            Write-Host '  安装完成！'
+            Write-Host "  已在当前登录用户的桌面创建快捷方式：$lnkPath"
+            Write-Host '================================================'
+            return 0
+        } catch {
+            Write-Host ''
+            Write-Host "       [警告] 创建桌面快捷方式失败：$($_.Exception.Message)"
+            Write-Host "             可手动右键 $exeName → 发送到 → 桌面快捷方式，并重命名为「MultiAgent Studio」。"
+            return 1
+        }
+    }
+
+    if (Test-Path -LiteralPath (Join-Path $PSScriptRoot $exeName)) {
+        # 同一账户提权：管理员安装进程通常已直接创建好；若没建成（例如 COM 失败），这里补建
+        $desktop = [Environment]::GetFolderPath('Desktop')
+        $lnkPath = if ($desktop) { Join-Path $desktop 'MultiAgent Studio.lnk' } else { '' }
+        if (-not $lnkPath -or -not (Test-Path -LiteralPath $lnkPath)) {
+            try {
+                $lnkPath = New-StudioDesktopShortcut -ExeName $exeName
+            } catch {
+                Write-Host ''
+                Write-Host "       [警告] 创建桌面快捷方式失败：$($_.Exception.Message)"
+                Write-Host "             可手动右键 $exeName → 发送到 → 桌面快捷方式，并重命名为「MultiAgent Studio」。"
+                return 1
+            }
+        }
+        Write-Host ''
+        Write-Host '================================================'
+        Write-Host '  安装完成！'
+        Write-Host "  桌面快捷方式已就绪：$lnkPath"
+        Write-Host '================================================'
+        return 0
+    }
+
+    Write-Host ''
+    Write-Host "       [警告] 未找到 $exeName，安装可能未完成。"
+    Write-Host '             请查看管理员安装窗口中的报错信息后重试。'
+    return 1
+}
+
+function Request-ElevatedInstall {
+    # 普通权限下安装跑不通时调用：说明原因，询问是否提权重跑。
+    # 返回子进程退出码；用户选择不提权时返回 $null。
+    param([string]$Reason)
+    Write-Host ''
+    Write-Host '------------------------------------------------'
+    Write-Host "  安装没有继续下去：$Reason"
+    Write-Host '  这类问题常见于没有管理员权限（Windows 长路径限制、写入系统设置等）。'
+    Write-Host '  选择 Y 后，安装会以管理员身份重新执行；已下载/已安装的内容会直接复用。'
+    Write-Host '------------------------------------------------'
+    $ans = Read-Host '  输入 Y 以管理员身份重新运行安装；直接回车退出 [Y/N]'
+    if ($ans -notmatch '^(y|yes)$') {
+        return $null
+    }
+    return Start-ElevatedSetupChild
+}
+
+function Stop-InstallStep {
+    # 安装步骤失败的统一出口：普通权限下先给一次提权重跑的机会。
+    param([string]$Message, [string]$Reason)
+    Write-Host ''
+    Write-Host $Message
+    if (-not $isAdmin) {
+        $code = Request-ElevatedInstall -Reason $Reason
+        if ($null -ne $code) {
+            if ($code -eq 2) { exit 1 }   # 用户拒绝提权 / UAC 失败
+            exit $code
+        }
+    }
+    exit 1
 }
 
 $interactive = [string]::IsNullOrWhiteSpace($Mode)
@@ -88,121 +237,18 @@ if ($interactive) {
 $origIdentity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $origUserName = $origIdentity.Name
 $origUserSid = $origIdentity.User.Value
-
-# ---------- 检测管理员 ----------
 $isAdmin = ([Security.Principal.WindowsPrincipal]$origIdentity).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-
-if (-not $isAdmin) {
-    Add-Type -AssemblyName PresentationFramework
-    [System.Windows.MessageBox]::Show(
-        "本安装需要启用 Windows「长路径支持」，需要管理员权限。`n`n点击「确定」将尝试以管理员身份重新启动。`n安装结束后，桌面快捷方式会自动建回你当前登录用户的桌面。`n若未弹出「用户账户控制」窗口，请关闭本窗口后，右键 setup.bat 选择「以管理员身份运行」。",
-        'Multi-Agent Studio 安装', 'OK', 'Information') | Out-Null
-
-    # 把提权前记录的用户信息一并传给提权后的子进程（-Mode 也必须带，否则 UAC 后会丢版本选择）
-    $elevArgList = @(
-        '-NoProfile'
-        '-ExecutionPolicy Bypass'
-        '-File'
-        "`"$PSCommandPath`""
-        '-Mode'
-        $Mode
-        '-OriginalUser'
-        "`"$origUserName`""
-        '-OriginalSid'
-        $origUserSid
-    ) -join ' '
-    try {
-        $elevatedProc = Start-Process -FilePath 'powershell.exe' -ArgumentList $elevArgList -Verb RunAs -PassThru
-    } catch {
-        Add-Type -AssemblyName PresentationFramework
-        [System.Windows.MessageBox]::Show(
-            '自动提权失败或已取消，请右键 setup.bat 选择「以管理员身份运行」。',
-            'Multi-Agent Studio 安装', 'OK', 'Warning') | Out-Null
-        exit 1
-    }
-    if (-not $elevatedProc) {
-        Write-Host '[错误] 未能获取管理员安装进程，请重试。'
-        exit 1
-    }
-
-    Write-Host ''
-    Write-Host '已请求管理员权限，安装将在新打开的管理员窗口中继续。'
-    Write-Host '本窗口会等待安装结束；管理员安装窗口关闭后，再回到当前登录用户的桌面创建快捷方式。'
-
-    # 等待提权后的安装进程结束（= 退出提权），之后本进程仍在原用户上下文中
-    $childExited = $false
-    $childExitCode = $null
-    try {
-        $elevatedProc.WaitForExit()
-        $childExited = $true
-        try { $childExitCode = $elevatedProc.ExitCode } catch { }
-    } catch {
-        # 少数环境下非提权进程无法等待提权进程，退化为轮询进程是否存在
-    }
-    if (-not $childExited) {
-        while (Get-Process -Id $elevatedProc.Id -ErrorAction SilentlyContinue) {
-            Start-Sleep -Milliseconds 500
-        }
-    }
-
-    if ($null -ne $childExitCode -and $childExitCode -ne 0) {
-        Write-Host ''
-        Write-Host "       [警告] 管理员安装进程未成功结束（退出码 $childExitCode），安装可能未完成。"
-        Write-Host '             请查看管理员安装窗口中的报错信息后重试。'
-        exit 1
-    }
-
-    if (Test-Path -LiteralPath $pendingShortcutMarker) {
-        # 提权账户与原登录用户不同：现在已退出提权，由原用户进程在真正的桌面创建
-        try {
-            $lnkPath = New-StudioDesktopShortcut -ExeName $exeName
-            Remove-Item -LiteralPath $pendingShortcutMarker -Force -ErrorAction SilentlyContinue
-            Write-Host ''
-            Write-Host '================================================'
-            Write-Host '  安装完成！'
-            Write-Host "  已在当前登录用户的桌面创建快捷方式：$lnkPath"
-            Write-Host '================================================'
-            exit 0
-        } catch {
-            Write-Host ''
-            Write-Host "       [警告] 创建桌面快捷方式失败：$($_.Exception.Message)"
-            Write-Host "             可手动右键 $exeName → 发送到 → 桌面快捷方式，并重命名为「MultiAgent Studio」。"
-            exit 1
-        }
-    }
-
-    if (Test-Path -LiteralPath (Join-Path $PSScriptRoot $exeName)) {
-        # 同一账户提权：管理员安装进程通常已直接创建好；若没建成（例如 COM 失败），这里补建
-        $desktop = [Environment]::GetFolderPath('Desktop')
-        $lnkPath = if ($desktop) { Join-Path $desktop 'MultiAgent Studio.lnk' } else { '' }
-        if (-not $lnkPath -or -not (Test-Path -LiteralPath $lnkPath)) {
-            try {
-                $lnkPath = New-StudioDesktopShortcut -ExeName $exeName
-            } catch {
-                Write-Host ''
-                Write-Host "       [警告] 创建桌面快捷方式失败：$($_.Exception.Message)"
-                Write-Host "             可手动右键 $exeName → 发送到 → 桌面快捷方式，并重命名为「MultiAgent Studio」。"
-                exit 1
-            }
-        }
-        Write-Host ''
-        Write-Host '================================================'
-        Write-Host '  安装完成！'
-        Write-Host "  桌面快捷方式已就绪：$lnkPath"
-        Write-Host '================================================'
-        exit 0
-    }
-
-    Write-Host ''
-    Write-Host "       [警告] 未找到 $exeName，安装可能未完成。"
-    Write-Host '             请查看管理员安装窗口中的报错信息后重试。'
-    exit 1
-}
 
 Write-Host ''
 Write-Host '================================================'
 Write-Host "  Multi-Agent Studio 一键安装（$modeLabel）"
 Write-Host '================================================'
+Write-Host ''
+if ($isAdmin) {
+    Write-Host '  当前已是管理员权限，将直接完成全部安装步骤。'
+} else {
+    Write-Host '  将以当前用户权限安装；只有遇到确实需要管理员的步骤时，才会提示提权重跑。'
+}
 Write-Host ''
 
 # ---------- 1. 检查 Python ----------
@@ -217,19 +263,39 @@ if (-not $py) {
 }
 python --version
 
-# ---------- 2. 启用长路径（硬性前置） ----------
-Write-Host '[2/8] 启用 Windows 长路径支持...'
+# ---------- 2. 启用长路径（优先，但不再强制提权）----------
+# 长路径对 torch 这类依赖很关键，但普通用户改不了 HKLM。这里先只读检测：
+# 已启用就什么都不做；未启用且当前不是管理员就先继续安装，等真的因路径过长
+# 失败时再走「提权重跑」；已是管理员则照旧直接写入并校验。
+Write-Host '[2/8] 检查 Windows 长路径支持...'
+$longPathKey = 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem'
+$longPathsEnabled = $false
 try {
-    Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name LongPathsEnabled -Value 1 -Type DWord
-    $v = (Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name LongPathsEnabled).LongPathsEnabled
-    if ($v -ne 1) { throw '验证失败' }
+    $lpValue = (Get-ItemProperty -Path $longPathKey -Name LongPathsEnabled -ErrorAction Stop).LongPathsEnabled
+    $longPathsEnabled = ($lpValue -eq 1)
 } catch {
-    Write-Host ''
-    Write-Host '[错误] 无法启用 Windows 长路径支持（注册表写入失败）。'
-    Write-Host '请确认已以管理员身份运行本脚本后重试。'
-    exit 1
 }
-Write-Host '       长路径支持已启用。'
+
+if ($longPathsEnabled) {
+    Write-Host '       长路径支持已启用，无需修改。'
+} elseif ($isAdmin) {
+    try {
+        Set-ItemProperty -Path $longPathKey -Name LongPathsEnabled -Value 1 -Type DWord
+        $v = (Get-ItemProperty -Path $longPathKey -Name LongPathsEnabled).LongPathsEnabled
+        if ($v -ne 1) { throw '验证失败' }
+        $longPathsEnabled = $true
+        Write-Host '       长路径支持已启用。'
+    } catch {
+        Write-Host ''
+        Write-Host '[错误] 无法启用 Windows 长路径支持（注册表写入失败）。'
+        Write-Host '请确认已以管理员身份运行本脚本后重试。'
+        exit 1
+    }
+} else {
+    Write-Host '       [提示] 当前未启用长路径支持；修改系统设置需要管理员权限。'
+    Write-Host '             先继续以普通权限安装：如果依赖安装因「路径过长」失败，'
+    Write-Host '             安装流程会再提示你以管理员身份重试（届时会自动启用）。'
+}
 
 # ---------- 2.5 修复「低完整性」标签（环境自愈）----------
 # 某些下载器/网盘客户端/沙箱解压工具会把项目文件夹打成 Windows「低完整性(Low)」，
@@ -252,8 +318,7 @@ Write-Host '[3/8] 创建虚拟环境 venv...'
 if (-not (Test-Path "$PSScriptRoot\venv")) {
     python -m venv "$PSScriptRoot\venv"
     if ($LASTEXITCODE -ne 0) {
-        Write-Host '[错误] 创建虚拟环境失败，请截图上方报错信息反馈。'
-        exit 1
+        Stop-InstallStep -Message '[错误] 创建虚拟环境失败，请截图上方报错信息反馈。' -Reason '创建虚拟环境失败（可能是权限或长路径限制）'
     }
 }
 
@@ -263,15 +328,17 @@ if ($Mode -eq 'Lite') {
     $reqFile = Join-Path $PSScriptRoot 'build\requirements-lite.txt'
     & "$PSScriptRoot\venv\Scripts\python.exe" "$PSScriptRoot\lite\make_requirements.py" $reqFile
     if ($LASTEXITCODE -ne 0) {
-        Write-Host '[错误] 生成 Lite 依赖清单失败，请截图上方报错信息反馈。'
-        exit 1
+        Stop-InstallStep -Message '[错误] 生成 Lite 依赖清单失败，请截图上方报错信息反馈。' -Reason '生成 Lite 依赖清单失败'
     }
 }
 Write-Host "[4/8] 安装 $modeLabel 依赖（清华源，首次约需几分钟）..."
 & "$PSScriptRoot\venv\Scripts\python.exe" -m pip install -r $reqFile -i https://pypi.tuna.tsinghua.edu.cn/simple
 if ($LASTEXITCODE -ne 0) {
-    Write-Host '[错误] 依赖安装失败，请截图上方完整报错信息反馈。'
-    exit 1
+    $longPathHint = ''
+    if (-not $longPathsEnabled) {
+        $longPathHint = '（若报错涉及「路径过长 / filename too long / WinError 206」，通常是长路径支持未启用。）'
+    }
+    Stop-InstallStep -Message "[错误] 依赖安装失败，请截图上方完整报错信息反馈。$longPathHint" -Reason '依赖安装失败（可能是长路径或权限限制）'
 }
 
 # 检测 mcp 版本（langchain-mcp-adapters 0.3.x 要求 mcp<2.0）
@@ -280,8 +347,7 @@ if ($mcpVer -and ([version]$mcpVer -ge [version]'2.0.0')) {
     Write-Host "       检测到不兼容的 mcp $mcpVer，正在重装兼容版本 mcp==1.28.0..."
     & "$PSScriptRoot\venv\Scripts\python.exe" -m pip install "mcp==1.28.0" -i https://pypi.tuna.tsinghua.edu.cn/simple
     if ($LASTEXITCODE -ne 0) {
-        Write-Host '[错误] 重装 mcp 失败，请截图上方报错信息反馈。'
-        exit 1
+        Stop-InstallStep -Message '[错误] 重装 mcp 失败，请截图上方报错信息反馈。' -Reason '重装 mcp 失败'
     }
 }
 
@@ -291,8 +357,7 @@ if ($missingDeps) {
     Write-Host "       检测到缺失依赖 [$missingDeps]，正在补装..."
     & "$PSScriptRoot\venv\Scripts\python.exe" -m pip install -r $reqFile -i https://pypi.tuna.tsinghua.edu.cn/simple
     if ($LASTEXITCODE -ne 0) {
-        Write-Host '[错误] 补装依赖失败，请截图上方报错信息反馈。'
-        exit 1
+        Stop-InstallStep -Message '[错误] 补装依赖失败，请截图上方报错信息反馈。' -Reason '补装依赖失败'
     }
 }
 
@@ -302,7 +367,7 @@ if ($missingWebview) {
     Write-Host "       检测到缺失桌面窗口依赖 [$missingWebview]，正在补装..."
     & "$PSScriptRoot\venv\Scripts\python.exe" -m pip install -r $reqFile -i https://pypi.tuna.tsinghua.edu.cn/simple
     if ($LASTEXITCODE -ne 0) {
-        Write-Host '[警告] 桌面窗口依赖安装失败，程序将回退到默认浏览器。'
+        Write-Host '       [警告] 桌面窗口依赖安装失败，程序将回退到默认浏览器。'
     }
 }
 
@@ -346,56 +411,82 @@ if ($LASTEXITCODE -eq 0) {
 }
 
 # ---------- 5. 可选：一键安装 pgvector（已安装 / 无 PostgreSQL 则跳过询问）----------
+# pgvector 必须写入 PostgreSQL 安装目录，是真正需要管理员的步骤。
+# 普通权限下先不擅自启动安装：明确询问后提权重跑；管理员则就地安装。
+$pgvSkipped = $false
 Write-Host ''
 if ($Mode -eq 'Lite') {
     Write-Host '[5/8] Lite 版不使用长期记忆 store，跳过 pgvector 检查。'
 } else {
-Write-Host '[5/8] 检查 PostgreSQL 的 pgvector 扩展（程序的长期记忆需要它）...'
-$pgvState = 'unknown'   # installed | missing | nopg | unknown
-try {
-    & "$PSScriptRoot\install_pgvector.ps1" -Status
-    switch ($LASTEXITCODE) {
-        0 { $pgvState = 'installed' }
-        1 { $pgvState = 'missing' }
-        2 { $pgvState = 'nopg' }
-        default { $pgvState = 'unknown' }
-    }
-} catch {
-    $pgvState = 'unknown'
-}
-
-if ($pgvState -eq 'installed') {
-    Write-Host '       已检测到 pgvector，无需重复安装，跳过。'
-} elseif ($pgvState -eq 'nopg') {
-    Write-Host '       未检测到 PostgreSQL 安装，跳过（安装 PostgreSQL 后可双击 install_pgvector.bat 单独安装）。'
-} else {
-    if ($pgvState -eq 'unknown') {
-        Write-Host '       未能自动确认 pgvector 状态；如已安装可直接回车跳过。'
-    }
-    Write-Host '       说明：会自动识别 PostgreSQL 安装目录与 Visual Studio 编译环境；'
-    Write-Host '             没有编译环境时会询问是否使用社区预编译包（会有风险提示）。'
-    $pgvAns = Read-Host '       输入 Y 立即安装，直接回车跳过 [Y/N]'
-    if ($pgvAns -match '^(y|yes)$') {
-        try {
-            & "$PSScriptRoot\install_pgvector.ps1"
-            if ($LASTEXITCODE -ne 0) {
-                Write-Host '       [提示] pgvector 安装未成功完成，可稍后单独双击 install_pgvector.bat 重试。'
-            }
-        } catch {
-            Write-Host "       [提示] pgvector 安装过程出错：$($_.Exception.Message)"
-            Write-Host '             可稍后单独双击 install_pgvector.bat 重试。'
+    Write-Host '[5/8] 检查 PostgreSQL 的 pgvector 扩展（程序的长期记忆需要它）...'
+    $pgvState = 'unknown'   # installed | missing | nopg | unknown
+    try {
+        & "$PSScriptRoot\install_pgvector.ps1" -Status
+        switch ($LASTEXITCODE) {
+            0 { $pgvState = 'installed' }
+            1 { $pgvState = 'missing' }
+            2 { $pgvState = 'nopg' }
+            default { $pgvState = 'unknown' }
         }
-    } else {
-        Write-Host '       已跳过。稍后可双击 install_pgvector.bat 单独安装。'
+    } catch {
+        $pgvState = 'unknown'
     }
-}
+
+    if ($pgvState -eq 'installed') {
+        Write-Host '       已检测到 pgvector，无需重复安装，跳过。'
+    } elseif ($pgvState -eq 'nopg') {
+        Write-Host '       未检测到 PostgreSQL 安装，跳过（安装 PostgreSQL 后可双击 install_pgvector.bat 单独安装）。'
+    } else {
+        if ($pgvState -eq 'unknown') {
+            Write-Host '       未能自动确认 pgvector 状态；如已安装可直接回车跳过。'
+        }
+        Write-Host '       说明：会自动识别 PostgreSQL 安装目录与 Visual Studio 编译环境；'
+        Write-Host '             没有编译环境时会询问是否使用社区预编译包（会有风险提示）。'
+        if ($isAdmin) {
+            $pgvAns = if ($InstallPgvector) { 'y' } else { Read-Host '       输入 Y 立即安装，直接回车跳过 [Y/N]' }
+            if ($pgvAns -match '^(y|yes)$') {
+                try {
+                    & "$PSScriptRoot\install_pgvector.ps1"
+                    if ($LASTEXITCODE -ne 0) {
+                        Write-Host '       [提示] pgvector 安装未成功完成，可稍后单独双击 install_pgvector.bat 重试。'
+                    }
+                } catch {
+                    Write-Host "       [提示] pgvector 安装过程出错：$($_.Exception.Message)"
+                    Write-Host '             可稍后单独双击 install_pgvector.bat 重试。'
+                }
+            } else {
+                Write-Host '       已跳过。稍后可双击 install_pgvector.bat 单独安装。'
+                $pgvSkipped = $true
+            }
+        } else {
+            Write-Host '       注意：安装 pgvector 需要写入 PostgreSQL 安装目录，需要管理员权限。'
+            $pgvAns = Read-Host '       输入 Y 现在以管理员身份继续安装；直接回车先跳过 [Y/N]'
+            if ($pgvAns -match '^(y|yes)$') {
+                $InstallPgvector = $true
+                $code = Start-ElevatedSetupChild
+                if ($code -eq 0) { exit 0 }
+                if ($code -eq 2) {
+                    # 用户取消提权：pgvector 是可选步骤，别因此中断整个安装
+                    Write-Host '       [提示] 未能获得管理员权限，本次先跳过 pgvector，继续安装。'
+                    $pgvSkipped = $true
+                } else {
+                    exit $code
+                }
+            } else {
+                Write-Host '       已跳过（当前没有管理员权限）。稍后可双击 install_pgvector.bat 单独安装。'
+                $pgvSkipped = $true
+            }
+        }
+    }
 }
 
 # ---------- 6. 让 PostgreSQL 服务开机自启（无 PostgreSQL 则跳过）----------
 # 部分用户的 PostgreSQL Windows 服务启动类型是「手动」，开机不会自动启动，
 # 进入程序的会话界面就会连不上数据库。这里把检测到的 PostgreSQL 服务设为「自动」
-# 并立即启动（本脚本在管理员权限下运行）。运行期程序还会再兜底一次（见 app/services/pg_service.py）。
+# 并立即启动。修改服务配置需要管理员：普通权限下只检测并给出提示，不阻断安装
+#（运行期程序还会兜底拉起服务，见 app/services/pg_service.py）。
 Write-Host '[6/8] 配置 PostgreSQL 服务开机自启...'
+$pgServiceNeedsAdmin = $false
 try {
     $pgServices = @(Get-CimInstance -ClassName Win32_Service -ErrorAction SilentlyContinue |
         Where-Object { $_.Name -like 'postgresql*' -or $_.Name -like 'pgsql*' -or $_.DisplayName -like '*PostgreSQL*' })
@@ -405,6 +496,11 @@ try {
         foreach ($svc in $pgServices) {
             try {
                 if ($svc.StartMode -ne 'Auto') {
+                    if (-not $isAdmin) {
+                        $pgServiceNeedsAdmin = $true
+                        Write-Host "       [提示] $($svc.Name) 当前不是「自动」启动；修改服务配置需要管理员权限，已跳过。"
+                        continue
+                    }
                     Set-Service -Name $svc.Name -StartupType Automatic -ErrorAction Stop
                     Write-Host "       已将 $($svc.Name) 的启动类型设为「自动」。"
                 } else {
@@ -412,6 +508,11 @@ try {
                 }
                 $cur = Get-Service -Name $svc.Name -ErrorAction SilentlyContinue
                 if ($cur -and $cur.Status -ne 'Running') {
+                    if (-not $isAdmin) {
+                        $pgServiceNeedsAdmin = $true
+                        Write-Host "       [提示] $($svc.Name) 当前未运行；启动服务需要管理员权限，已跳过。"
+                        continue
+                    }
                     Start-Service -Name $svc.Name -ErrorAction Stop
                     Write-Host "       已启动 $($svc.Name)。"
                 }
@@ -423,6 +524,11 @@ try {
 } catch {
     Write-Host "       [警告] 配置 PostgreSQL 服务自启失败：$($_.Exception.Message)"
 }
+if ($pgServiceNeedsAdmin) {
+    Write-Host '       [提示] 未以管理员运行，服务启动类型/运行状态未修改。'
+    Write-Host '             程序启动时仍会自动拉起服务（可能弹一次 UAC）。'
+    Write-Host '             如需开机自启，请稍后右键 setup.bat 选择「以管理员身份运行」。'
+}
 
 # ---------- 7. 打包 exe ----------
 Write-Host "[7/8] 打包 $exeName（首次会自动安装打包工具）..."
@@ -433,8 +539,7 @@ $buildScript = if ($Mode -eq 'Lite') {
 }
 & "$PSScriptRoot\venv\Scripts\python.exe" $buildScript
 if ($LASTEXITCODE -ne 0) {
-    Write-Host '[错误] 打包 exe 失败，请截图上方完整报错信息反馈。'
-    exit 1
+    Stop-InstallStep -Message '[错误] 打包 exe 失败，请截图上方完整报错信息反馈。' -Reason '打包 exe 失败（可能是权限或长路径限制）'
 }
 
 # ---------- 8. 创建桌面快捷方式 ----------
@@ -485,3 +590,15 @@ if ($sameUser) {
 }
 Write-Host '================================================'
 Write-Host ''
+
+if ($pgvSkipped) {
+    Write-Host '提示：本次未安装 pgvector，长期记忆功能会不可用；'
+    Write-Host '      可随时双击 install_pgvector.bat 单独安装。'
+    Write-Host ''
+}
+if (-not $longPathsEnabled) {
+    Write-Host '提示：Windows 长路径支持尚未启用（修改它需要管理员权限）。'
+    Write-Host '      本次安装已完成；若以后遇到「路径过长」报错，'
+    Write-Host '      请右键 setup.bat 选择「以管理员身份运行」即可自动启用。'
+    Write-Host ''
+}
