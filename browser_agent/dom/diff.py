@@ -8,20 +8,20 @@ back into the tree. The only "something disappeared" signal is the
 ``[丢失的可互动元素列表]`` block, which lists interactive names that no longer
 exist and would therefore fail if referenced.
 
-BID083 adds a *containment* check on top of the line-by-line comparison: a line
-whose content was already present in the old snapshot is treated as "old content
-that only moved" (floating blocks, marquee animation, component re-mount) and is
-not reported as new. See ``changed_lines`` for the exact three-way rule — the
-point is to keep genuine changes (including "the same form block was added
-again") while dropping the redundant diff noise.
+BID083 adds a *conservative* duplicate check on top of the line-by-line
+comparison: an added line is only treated as "old content that merely reappeared"
+when it is literally the same line (same text, element names included), sits
+under the same parent, and its immediate siblings under that parent match too.
+Anything else (a hard insertion, a re-rendered element with a new name, a block
+that moved to another parent) keeps its diff. The rule of thumb is explicit:
+give up de-duplication rather than risk hiding a real change.
 """
 
 from __future__ import annotations
 
 import difflib
 import re
-from collections import Counter  # BID083
-from typing import Optional
+from typing import Optional, Sequence
 
 from .compress import compress_lines  # BID079
 from .serialize import OutLine, separate_scroll_blocks
@@ -29,18 +29,11 @@ from .serialize import OutLine, separate_scroll_blocks
 MAX_DIFF_CHARS = 40000
 MAX_LOST = 50
 
-# BID083：行级 diff 的「包含判断」用到的归一化。
-# 同一份内容在页面重建后会拿到新的元素编号（旧 ``e44`` → 新 ``e53``），比较前
-# 统一抹成 ``eN``；行首的结构标签（``[列表项]``/``[文本]``…）只是分组的投影，
-# 旧内容里同一行可能没有这层前缀（压缩内联也会临时造出 ``[列表项] <可点击元素…>``），
-# 所以比较前剥掉；行内连续空白折叠（层级缩进已由 ``depth`` 表达，不算内容差异）。
-_ELEMENT_NAME_RE = re.compile(r"(?<![0-9A-Za-z])e\d+(?![0-9A-Za-z])")  # BID083
-_LEADING_STRUCT_RE = re.compile(r"^(?:\[[^\[\]\n]+\]\s*)+")  # BID083
-# BID083：需要模型「填写/选择」的控件。带这类控件的行即使内容与旧内容重复，
-# 也不能当冗余丢掉——「再加一份同样的表单块」是真实新增，模型必须看见它。
-_STATEFUL_CONTROL_RE = re.compile(  # BID083
-    r"<(?:可输入元素|可选择元素|可搜索下拉元素|可拖动元素|可点击下拉元素) "  # BID083
-)  # BID083
+# BID083：去重判据用的「父路径」= 该行祖先链上的分组开标签文本。
+# 直接用整条链（而不是只看最后一项）是为了区分同层但不同的父实例：
+# 两个 ``[列表]`` 块在缩进上完全一样，只看末项会把它们当成同一个父级。
+# 要求父路径相同是 BID083 的第一道防护：宁可少去重，也不把「换位置/换父级
+# 出现的内容」当成重复吞掉。
 
 
 def _key(line: OutLine) -> tuple[int, str]:
@@ -48,16 +41,61 @@ def _key(line: OutLine) -> tuple[int, str]:
 
 
 # 本函数于BID083引入
-def _content_key(text: str) -> str:
-    """把一行文本归一成「内容键」，用于判断它是否已经出现在旧内容里。
+def _parent_path(line: OutLine) -> tuple[str, ...]:
+    """该行祖先链上的分组开标签（'' 表示顶层，没有父标签）。"""
+    return tuple(anc[1] for anc in (getattr(line, "ancestors", ()) or ()))
 
-    BID083 的核心判断：行级 diff 只有在「这一行的内容之前没出现过」时才算新增。
-    浮动块重排、跑马灯位移、组件临时重建都会让同一份内容换个位置/层级重新出现，
-    旧的「(depth, text) 逐行比对」会把它们当成新增，于是 diff 里塞满冗余信息。
+
+# 本函数于BID083引入
+def _sibling_links(lines: Sequence[OutLine]) -> tuple[list[Optional[int]], list[Optional[int]]]:
+    """给每一行算出「同一父路径下的上一条/下一条」下标（跳过 close 行）。
+
+    BID083 的第二道防护：只有前后相邻行也一致，才允许把这一行判成重复。
+    close 行是结构标记、不是渲染内容，不参与相邻关系。
     """
-    text = _ELEMENT_NAME_RE.sub("eN", text or "")  # BID083
-    text = _LEADING_STRUCT_RE.sub("", text)  # BID083
-    return re.sub(r"[ \t]+", " ", text).strip()  # BID083
+    groups: dict[tuple[str, ...], list[int]] = {}
+    for index, line in enumerate(lines):
+        if line.kind == "close":
+            continue
+        groups.setdefault(_parent_path(line), []).append(index)
+    prev: list[Optional[int]] = [None] * len(lines)
+    nxt: list[Optional[int]] = [None] * len(lines)
+    for indices in groups.values():
+        for position, index in enumerate(indices):
+            prev[index] = indices[position - 1] if position > 0 else None
+            nxt[index] = indices[position + 1] if position + 1 < len(indices) else None
+    return prev, nxt
+
+
+# 本函数于BID083引入
+def _text_at(lines: Sequence[OutLine], index: Optional[int]) -> Optional[str]:
+    """取某行的文本；没有这一行时返回 ``None``（用于「没有前/后一行」的比较）。"""
+    return None if index is None else lines[index].text
+
+
+# 本函数于BID083引入
+def _reappears_in_place(
+    old_lines: Sequence[OutLine],
+    new_lines: Sequence[OutLine],
+    new_index: int,
+    old_index: int,
+    old_prev: Sequence[Optional[int]],
+    old_next: Sequence[Optional[int]],
+    new_prev: Sequence[Optional[int]],
+    new_next: Sequence[Optional[int]],
+) -> bool:
+    """判断新行是否只是旧内容在「同一个位置」重现（可安全从 diff 中去掉）。
+
+    三个条件同时成立才算：文本逐字相同（含元素编号）、父路径相同、同一父级下的
+    前/后一行也相同。任何一项不满足都保留，宁可多给 diff，也不吞掉可能的变化。
+    """
+    if _parent_path(old_lines[old_index]) != _parent_path(new_lines[new_index]):  # BID083
+        return False  # BID083
+    if _text_at(old_lines, old_prev[old_index]) != _text_at(new_lines, new_prev[new_index]):  # BID083
+        return False  # BID083
+    if _text_at(old_lines, old_next[old_index]) != _text_at(new_lines, new_next[new_index]):  # BID083
+        return False  # BID083
+    return True  # BID083
 
 
 def changed_lines(old_lines: list[OutLine], new_lines: list[OutLine]) -> list[OutLine]:
@@ -66,46 +104,44 @@ def changed_lines(old_lines: list[OutLine], new_lines: list[OutLine]) -> list[Ou
     Closing tags (``kind == "close"``) are structural: they are never emitted
     directly, they are flushed by the ancestor cursor in ``format_lines``.
 
-    BID083：新增行还要过一道「包含判断」——它的内容键若在旧快照里已经出现，
-    说明这行只是「旧内容换个位置/层级重现」（浮动块重排、跑马灯位移、组件临时
-    重建），不算新增。判断分三档（见 ``_content_key``）：
+    BID083：新增行还要过一道「是否只是旧内容原地重现」的判断。判定**故意很严**，
+    原则是「宁可放弃去重，也不让可能的信息丢失」：
 
-    * 旧快照里没有 → 全新内容，保留；
-    * 旧快照里有、且出现次数没变多 → 纯重排/重建，丢弃；
-    * 旧快照里有、但出现次数变多了 → 真的「又加了一份」。此时只有整段新增块里
-      带可填写/可选择控件（``_STATEFUL_CONTROL_RE``）才保留：Bing 那种把同一批
-      推荐链接再插一份的异步渲染是噪声，而「添加家庭成员」再复制一份同样的表单
-      块是真实变化，模型必须知道要填哪些新字段。
+    * 行文本必须**逐字相同**（元素编号 ``eN`` 也参与比较，不抹成 ``eN``——
+      重新渲染/硬插入会分配新编号，这种一律当成新增让它进 diff）；
+    * 直接父级必须相同（``_parent_path``；两边都没有父标签时自然相同）；
+    * 同一父级下的前一行、后一行内容必须相同；若这一行在父级下是第一行
+      （没有前一行）则只比后一行，最后一行只比前一行，父级下只有这一行则不比。
     """
     old_keys = [_key(line) for line in old_lines]
     new_keys = [_key(line) for line in new_lines]
     matcher = difflib.SequenceMatcher(None, old_keys, new_keys, autojunk=False)
-    old_content = Counter(  # BID083
-        _content_key(line.text)  # BID083
-        for line in old_lines  # BID083
-        if line.text and line.text.strip()  # BID083
-    )  # BID083
-    new_content = Counter(  # BID083
-        _content_key(line.text)  # BID083
-        for line in new_lines  # BID083
-        if line.text and line.text.strip()  # BID083
-    )  # BID083
+    old_by_text: dict[str, list[int]] = {}  # BID083
+    for index, line in enumerate(old_lines):  # BID083
+        if line.kind == "close":  # BID083
+            continue  # BID083
+        old_by_text.setdefault(line.text, []).append(index)  # BID083
+    old_prev, old_next = _sibling_links(old_lines)  # BID083
+    new_prev, new_next = _sibling_links(new_lines)  # BID083
+
     out: list[OutLine] = []
     for tag, _i1, _i2, j1, j2 in matcher.get_opcodes():
         if tag in ("equal", "delete"):
             continue
-        chunk = [line for line in new_lines[j1:j2] if line.kind != "close"]  # BID083
-        chunk_stateful = any(_STATEFUL_CONTROL_RE.search(line.text) for line in chunk)  # BID083
-        for line in chunk:
-            content_key = _content_key(line.text)  # BID083
-            if not content_key:  # BID083
+        for new_index in range(j1, j2):
+            line = new_lines[new_index]
+            if line.kind == "close":
+                continue
+            same_spot = any(  # BID083
+                _reappears_in_place(  # BID083
+                    old_lines, new_lines, new_index, old_index,  # BID083
+                    old_prev, old_next, new_prev, new_next,  # BID083
+                )  # BID083
+                for old_index in old_by_text.get(line.text, ())  # BID083
+            )  # BID083
+            if same_spot:  # BID083
                 continue  # BID083
-            old_count = old_content[content_key]  # BID083
-            if old_count == 0:  # BID083
-                out.append(line)  # BID083
-                continue  # BID083
-            if new_content[content_key] > old_count and chunk_stateful:  # BID083
-                out.append(line)  # BID083
+            out.append(line)
     return out
 
 
