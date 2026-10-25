@@ -332,14 +332,26 @@ html[data-style-danger="solid"] .card-btn-danger:hover { filter: brightness(.92)
 .input-pane .common-prompt-hint:hover { color: var(--primary); }
 /* 「注入常用prompt」开关：开启后长亮绿灯（发送后自动关闭）；未设置时禁用置灰 */
 #commonPromptInjectBtn.on .date-dot { background: #22c55e; }
-/* 全局 / 会话常用 prompt 弹窗：每行一个多行文本框 +「−」「+」 */
+/* 全局 / 会话常用 prompt 弹窗：全局库每条一个只读预览框 +「−」「+」 */
 .modal.common-prompt-modal { width: min(680px, calc(100vw - 32px)); }
 .common-prompt-head { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; font-size: 12px; color: var(--text-muted); padding: 0 2px 6px; }
 .common-prompt-row { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: start; margin-bottom: 8px; }
-.common-prompt-row .cp-text { width: 100%; min-height: 64px; resize: vertical; font-family: inherit; font-size: 13px; line-height: 1.5; }
+/* 预览框：只读、固定三行高；超过三行只显示前三行（点击打开独立编辑弹窗）。
+   注意：三行裁切必须放在「没有 padding 的内层」上——Chromium 的 overflow 裁切边界是
+   padding 盒，若把 -webkit-line-clamp 直接放在带内边距的外层，第 4 行会露出 8px（半行残字）。 */
+.common-prompt-row .cp-box {
+  border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px;
+  background: var(--bg); cursor: pointer; font-size: 13px; line-height: 1.5;
+  overflow: hidden;
+  min-height: calc(1.5em * 3 + 18px); max-height: calc(1.5em * 3 + 18px);
+}
+.common-prompt-row .cp-box-text {
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3;
+  overflow: hidden; white-space: pre-wrap; overflow-wrap: anywhere;
+}
+.common-prompt-row .cp-box:hover { border-color: var(--primary); }
+.common-prompt-row .cp-box:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
 .common-prompt-row .cp-minus, .common-prompt-row .cp-plus { width: 34px; padding: 0; font-size: 16px; line-height: 1; }
-.common-prompt-tabs { display: flex; gap: 18px; margin-bottom: 10px; font-size: 14px; }
-.common-prompt-tabs label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
 .common-prompt-list { max-height: 46vh; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; scrollbar-gutter: stable; }
 .common-prompt-item {
   border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px;
@@ -347,6 +359,20 @@ html[data-style-danger="solid"] .card-btn-danger:hover { filter: brightness(.92)
 }
 .common-prompt-item:hover { border-color: var(--primary); }
 .common-prompt-item.sel { border-color: var(--primary); background: var(--bg); box-shadow: inset 0 0 0 1px var(--primary); }
+/* 常用 prompt 独立编辑弹窗：文本域撑满剩余高度，「保存 / 取消」固定在底部；
+   尺寸与位置由通用浮层系统（data-modal-key="commonPromptEditor"）单独记忆。
+   拖得过小时允许整个弹窗滚动，保证「保存」永远可达。 */
+.modal.common-prompt-editor { display: flex; flex-direction: column; overflow-y: auto; overflow-x: hidden; }
+.modal.common-prompt-editor textarea {
+  flex: 1 1 auto; min-height: 120px; width: 100%;
+  resize: none; padding: 10px 12px; font-family: inherit; font-size: 14px; line-height: 1.6;
+  color: var(--text); background: var(--surface);
+  border: 1px solid var(--border); border-radius: 10px;
+}
+.modal.common-prompt-editor textarea:focus {
+  outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(79,70,229,.12);
+}
+.modal.common-prompt-editor .modal-actions { margin-top: 14px; flex: 0 0 auto; }
 
 .gutter { background: var(--border); opacity: .6; cursor: row-resize; }
 .gutter:hover, .gutter.gutter-horizontal:hover { opacity: 1; background: var(--primary); }

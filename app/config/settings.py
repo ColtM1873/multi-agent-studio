@@ -6,10 +6,11 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 SETTINGS_FILE_NAME = "settings.json"
 # 长期记忆统一存放的 store 数据库默认名称。所有 multi-agent 共用这一份长期记忆，
@@ -22,6 +23,35 @@ class SensitiveEntry(BaseModel):
 
     name: str = ""
     value: str = ""
+
+
+class CommonPrompt(BaseModel):
+    """全局常用 prompt 库的一条。
+
+    - `id`：稳定标识。每个会话保存的是「指向某条 id 的指针」，所以在这里改内容，
+      所有指向它的会话会一起生效（见 `app/services/common_prompts.py`）。
+    - `text`：内容（可多行）。
+    """
+
+    id: str = ""
+    text: str = ""
+
+
+def make_common_prompt_id(text: str, taken: set[str] | None = None) -> str:
+    """给「还没有 id」的条目生成确定性的稳定 id（老数据从 `list[str]` 升级时用）。
+
+    按内容哈希生成，因此**尚未落盘的旧库反复读取也会得到同一个 id**，
+    不会让已经保存的会话指针时有时无。内容相同的条目用 `taken` 去重。
+    """
+    digest = hashlib.sha1((text or "").encode("utf-8")).hexdigest()[:10]
+    base = f"cp{digest}"
+    if not taken:
+        return base
+    cand, n = base, 2
+    while cand in taken:
+        cand = f"{base}-{n}"
+        n += 1
+    return cand
 
 
 class Settings(BaseModel):
@@ -43,9 +73,10 @@ class Settings(BaseModel):
     # （全局库 common_prompts 与会话选择都存在后端，不因开关而删除）。
     # 纯前端显示开关，不参与图编译，无需 invalidate_all。默认开启。
     common_prompt_enabled: bool = True
-    # 全局常用 prompt 库（多条，每条可多行）；会话页可从中选取一条作为本会话的常用 prompt，
-    # 也可「直接输入」（保存时自动追加到这里）。
-    common_prompts: list[str] = Field(default_factory=list)
+    # 全局常用 prompt 库（多条，每条可多行）；每条有稳定 id，会话页保存的是
+    # 「指向某条 id 的指针」——在这里改了内容，指向它的会话会一起变。
+    # 兼容老数据：旧版是 list[str]（只有文本），加载时会自动补上确定性 id。
+    common_prompts: list[CommonPrompt] = Field(default_factory=list)
     # 裸公式识别：无分隔符公式的启发式渲染，默认关闭以避开日常场景误判
     bare_math_detect: bool = False
     # 激进公式渲染：在裸公式识别基础上支持单字符上下标/希腊字母/数学符号，
@@ -169,6 +200,32 @@ class Settings(BaseModel):
         """当前生效的 store 数据库名（空值兜底为默认值）。"""
         name = (self.global_store_database or "").strip()
         return name or DEFAULT_STORE_DATABASE
+
+    @field_validator("common_prompts", mode="before")
+    @classmethod
+    def _coerce_common_prompts(cls, value):
+        """兼容老数据并补齐 id：接受 `list[str]` / `[{id,text}]` 两种形态，空内容条目丢弃。"""
+        if not value:
+            return []
+        out: list[dict] = []
+        taken: set[str] = set()
+        for item in value:
+            if isinstance(item, CommonPrompt):
+                pid, text = item.id, item.text
+            elif isinstance(item, dict):
+                pid = str(item.get("id") or "")
+                raw = item.get("text")
+                text = "" if raw is None else str(raw)
+            else:
+                pid, text = "", str(item)
+            if not text.strip():
+                continue
+            # 缺 id（老数据 / 前端新增）或 id 撞车：按内容生成确定性 id
+            if not pid or pid in taken:
+                pid = make_common_prompt_id(text, taken)
+            taken.add(pid)
+            out.append({"id": pid, "text": text})
+        return out
 
 
 def settings_path(config_dir: Path | str) -> Path:

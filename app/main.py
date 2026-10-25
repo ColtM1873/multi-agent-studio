@@ -55,6 +55,7 @@ from app.config.settings import (
 from app.deps import BASE_DIR, common_prompt_store, config_store, draft_store, ui_prefs_store
 from app.services import store_migrations as store_migration_service
 from app.services import identity_migration
+from app.services.common_prompts import migrate_legacy_session_refs
 
 # 可选的浏览器工具计时 / 卡死看门狗探针（仅当设置 BROWSER_TOOL_TIMING=1 时安装，
 # 未设置时零开销、不改变任何行为）。见 browser_agent/diagnostics.py。
@@ -132,6 +133,14 @@ async def lifespan(_app: FastAPI):
         logger.exception("身份统一（agent_id/checkpoint 数据库按名称改名）失败")
     finally:
         _reload_identity_stores()
+    # 常用 prompt 指针化迁移：旧版 common_prompts.json 存的是「文本副本」，新版本存
+    # 「指向全局库条目的 id」。老数据在这里一次性升级，之后主界面改内容会话会一起变。
+    try:
+        migrated = migrate_legacy_session_refs(config_store._dir, common_prompt_store)
+        if migrated:
+            logger.info("[common-prompt] 已把 %s 条会话常用 prompt 迁移为指针", migrated)
+    except Exception:  # noqa: BLE001
+        logger.exception("常用 prompt 指针化迁移失败")
     # 首次启动：若有已存在的 multi-agent，把第一个带连接前缀的配置提取为全局连接设置，
     # 供各 agent 配置界面的「使用全局连接」开关使用（见 app/config/settings.py）。
     try:
