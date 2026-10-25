@@ -313,6 +313,13 @@ const I18N_EN = {
   "开启后，LLM 每次调用浏览器工具都会在程序根目录的 browser_tools_DEBUG_logs 文件夹下，按小时记录一份日志（含整个 viewport 的原始 DOM、处理后的 DOM、LLM 输入、工具返回的 content），便于排查。": "When enabled, every browser tool call by the LLM writes an hourly log under the browser_tools_DEBUG_logs folder in the program root (the whole viewport's raw DOM, processed DOM, LLM input and returned content) to help troubleshooting.",
   "浏览器工具解析图片标签": "Parse image tags in browser tool output", // BID080
   "开启后，浏览器工具会把网页里的图片解析成 [图片] 标签（有 alt 时附带一行文本）返回给 LLM；关闭时（默认），[图片] 行以及因此变空的 [..] 结构标签父链会被整条删除，不输出任何图片信息。": "When enabled, the browser tool renders images in web pages as [图片] tags (with one line of alt text when available) for the LLM; when disabled (the default), the [图片] line and any [..] structural parent chain left empty by its removal are deleted entirely, so no image information is returned.", // BID080
+  // BID084：可交互元素整合 / 分隔符 / 英文渲染
+  "浏览器可交互元素整合": "Merge interactive browser elements",
+  "开启后（默认），返回给 LLM 的可交互元素会从 `<可点击元素 eN>内容</可点击元素 eN>` 压缩成 `<可点击元素 eN : 内容>`，取消闭合标签，可显著节省上下文长度。可滚动元素不参与整合。": "When enabled (the default), interactive elements returned to the LLM are compressed from `<可点击元素 eN>content</可点击元素 eN>` into `<可点击元素 eN : content>`, dropping the closing tag to save context. Scrollable elements are not merged.",
+  "整合分隔符": "Merge separator",
+  "连接元素编号与内容的符号，默认英文冒号 `:`。例如设为 `|` 时输出 `<可点击元素 eN | 内容>`。": "Symbol between the element id and its content; defaults to a colon `:`. For example, `|` produces `<可点击元素 eN | content>`.",
+  "浏览器交互元素使用英文渲染": "Render interactive elements in English",
+  "开启后，可交互元素标签改用英文渲染（如 `<Click elem 23>`、`<Scroll elem 1>`），工具调用的元素编号直接传数字（如 23）。只替换标签与术语，提示语正文仍为中文。": "When enabled, interactive element tags are rendered in English (e.g. `<Click elem 23>`, `<Scroll elem 1>`), and tool calls take the bare number (e.g. 23). Only tags/terms change; notice prose stays Chinese.",
   "隐私遮蔽模式": "Privacy masking mode",
   "开启隐私遮蔽模式": "Enable privacy masking mode",
   "暂不开启": "Not now",
@@ -3233,6 +3240,7 @@ async function openAdvancedSettings() {
   const mask = document.createElement("div");
   mask.className = "modal-mask";
   // BID080：进阶设置新增「浏览器工具解析图片标签」开关（默认关闭）；模板字符串内不能写注释，故在此标注。
+  // BID084：进阶设置新增「浏览器可交互元素整合」开关（默认开启）、整合分隔符、英文渲染开关。
   mask.innerHTML = `
     <div class="modal" style="width:480px;" data-modal-key="advanced">
       <h3>🧩 ${t("进阶设置")}</h3>
@@ -3273,6 +3281,18 @@ async function openAdvancedSettings() {
         <span class="sw-label">🖼️ ${t("浏览器工具解析图片标签")} <i class="info-icon">!<span class="tip">${t("开启后，浏览器工具会把网页里的图片解析成 [图片] 标签（有 alt 时附带一行文本）返回给 LLM；关闭时（默认），[图片] 行以及因此变空的 [..] 结构标签父链会被整条删除，不输出任何图片信息。")}</span></i></span>
         <label class="toggle"><input type="checkbox" id="adv_browser_image_tags" ${s.browser_image_tags ? "checked" : ""}><span class="track"></span></label>
       </div>
+      <div class="switch-row">
+        <span class="sw-label">🧩 ${t("浏览器可交互元素整合")} <i class="info-icon">!<span class="tip">${esc(t("开启后（默认），返回给 LLM 的可交互元素会从 `<可点击元素 eN>内容</可点击元素 eN>` 压缩成 `<可点击元素 eN : 内容>`，取消闭合标签，可显著节省上下文长度。可滚动元素不参与整合。"))}</span></i></span>
+        <label class="toggle"><input type="checkbox" id="adv_browser_interactive_merge" ${s.browser_interactive_merge !== false ? "checked" : ""}><span class="track"></span></label>
+      </div>
+      <div class="switch-row">
+        <span class="sw-label">🔗 ${t("整合分隔符")} <i class="info-icon">!<span class="tip">${esc(t("连接元素编号与内容的符号，默认英文冒号 `:`。例如设为 `|` 时输出 `<可点击元素 eN | 内容>`。"))}</span></i></span>
+        <span class="sw-inline"><input type="text" id="adv_browser_interactive_sep" maxlength="8" value="${esc(s.browser_interactive_merge_separator || ":")}" style="width:70px;"></span>
+      </div>
+      <div class="switch-row">
+        <span class="sw-label">🔤 ${t("浏览器交互元素使用英文渲染")} <i class="info-icon">!<span class="tip">${esc(t("开启后，可交互元素标签改用英文渲染（如 `<Click elem 23>`、`<Scroll elem 1>`），工具调用的元素编号直接传数字（如 23）。只替换标签与术语，提示语正文仍为中文。"))}</span></i></span>
+        <label class="toggle"><input type="checkbox" id="adv_browser_interactive_english" ${s.browser_interactive_english ? "checked" : ""}><span class="track"></span></label>
+      </div>
       <div class="muted" style="margin:10px 0 2px;">${t("记忆检索相似度门槛")}（${t("取值范围 0~1")}）</div>
       <div class="switch-row">
         <span class="sw-label">🔎 ${t("主动搜索记忆门槛")} <i class="info-icon">!<span class="tip">${t("主 agent 主动调用搜索记忆工具时的语义相似度门槛，取值范围 0~1。分数低于该门槛的记忆不会被返回；数值越大越严格、返回的记忆越少。")}</span></i></span>
@@ -3309,6 +3329,9 @@ async function openAdvancedSettings() {
         cross_agent_draft_flow: mask.querySelector("#adv_cross_draft").checked,
         browser_takeover_debug: mask.querySelector("#adv_browser_debug").checked,
         browser_image_tags: mask.querySelector("#adv_browser_image_tags").checked, // BID080
+        browser_interactive_merge: mask.querySelector("#adv_browser_interactive_merge").checked, // BID084
+        browser_interactive_merge_separator: (mask.querySelector("#adv_browser_interactive_sep").value || ":").trim() || ":", // BID084
+        browser_interactive_english: mask.querySelector("#adv_browser_interactive_english").checked, // BID084
         search_memory_threshold: clamp01(mask.querySelector("#adv_search_threshold").value, 0.5),
         attach_memory_threshold: clamp01(mask.querySelector("#adv_attach_threshold").value, 0.7),
       });

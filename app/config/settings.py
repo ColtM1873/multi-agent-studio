@@ -105,6 +105,17 @@ class Settings(BaseModel):
     # 会把 [图片] 行及其「独子父 [..] 结构标签链」整条删除（含 alt 文本）。
     # 工具调用时实时读取，不参与图编译，无需 invalidate_all。
     browser_image_tags: bool = False  # BID080
+    # 浏览器接管：可交互元素整合（BID084）。开启后，返回给 LLM 的
+    # ``<可点击元素 eN>内容</可点击元素 eN>`` 会压成 ``<可点击元素 eN : 内容>``
+    # （可滚动元素除外），取消闭合标签，显著节省上下文长度。默认开启。
+    # 工具调用时实时读取；但它同时改变工具描述，故保存时需 invalidate_all。
+    browser_interactive_merge: bool = True  # BID084
+    # 整合分隔符（BID084）：连接元素编号与内容的符号，默认英文冒号。
+    browser_interactive_merge_separator: str = ":"  # BID084
+    # 浏览器接管：可交互元素使用英文渲染（BID084）。开启后标签改用
+    # ``<Click elem 23>`` / ``<Scroll elem 1>``，工具入参直接传数字（如 23）。
+    # 默认关闭；同样会改变工具描述，保存时需 invalidate_all。
+    browser_interactive_english: bool = False  # BID084
     # 敏感信息表单：浏览器接管填写「可填入元素」时，LLM 用 <名称> 占位，
     # 后台按本表把 <名称> 替换为真实值（表单里没有的名称原样保留）。
     # 工具调用时实时读取，不参与图编译，无需 invalidate_all。

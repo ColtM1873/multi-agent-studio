@@ -12,6 +12,8 @@
 
 from __future__ import annotations
 
+from . import wording  # BID084
+
 
 # ════════════════════════════════════════════════════════════════════════
 # 一、结果字典的状态字段（这些值会作为 ``_base_result`` 的 mode / action_ok /
@@ -51,30 +53,16 @@ EMPTY_CONTENT = "无"
 
 # 把内部互动类别映射为面向 LLM 的中文类别名；未知类别回退为「不可互动」。
 # 使用场景：元素类别与所调用工具不匹配时的错误提示。
-def category_label(category: str) -> str:
-    return {
-        "input": "可输入",
-        "searchable": "可搜索下拉",
-        "select": "可选择",
-        "click": "可点击",
-        "clickdropdown": "可点击下拉",
-        "drag": "可拖动",
-        "scroll": "可滚动",
-    }.get(category, "不可互动")
+# BID084：英文渲染开关开启时改用英文类别名（由 wording 统一收口）。
+def category_label(category: str) -> str:  # BID084
+    return wording.category_label(category)  # BID084
 
 
 # 把内部互动类别映射为其对应的操作动词（该工具正在尝试做的动作）。
 # 使用场景：元素类别与所调用工具不匹配时，提示「不能用于 XX 操作」。
-def action_label(category: str) -> str:
-    return {
-        "click": "点击",
-        "input": "输入",
-        "searchable": "可搜索下拉筛选",
-        "select": "下拉选择",
-        "clickdropdown": "点击下拉",
-        "scroll": "滚动",
-        "drag": "拖动",
-    }.get(category, "")
+# BID084：英文渲染开关开启时改用英文动作词（由 wording 统一收口）。
+def action_label(category: str) -> str:  # BID084
+    return wording.action_label(category)  # BID084
 
 
 # ════════════════════════════════════════════════════════════════════════

@@ -50,6 +50,12 @@ async def put_settings(body: Settings):
         raise HTTPException(status_code=400, detail=str(exc))
     body.global_store_database = new_store_db
 
+    # BID084：整合分隔符只接受单行文本，空串回退到默认英文冒号。
+    sep = (body.browser_interactive_merge_separator or ":").strip()  # BID084
+    if not sep or "\n" in sep or "\r" in sep:  # BID084
+        sep = ":"  # BID084
+    body.browser_interactive_merge_separator = sep  # BID084
+
     store_db_changed = old_store_db != new_store_db
     if store_db_changed:
         # 先关闭所有运行时，释放对旧 store 库的连接，才能 ALTER DATABASE ... RENAME
@@ -83,6 +89,7 @@ async def put_settings(body: Settings):
     save_settings(config_store._dir, body)
     # 记忆吸附、默认总结百分比、记忆相似度门槛、PDF 表格提取在构建图时被闭包捕获，变更后需全量失效重建。
     # store 数据库改名也需要重建（已在上面的改名分支里先失效过一次）。
+    # BID084：浏览器可交互元素的整合/英文渲染会改变 bind_tools 时注入的工具描述，同样需要重建图。
     if (
         store_db_changed
         or old.memory_attach != body.memory_attach
@@ -91,6 +98,9 @@ async def put_settings(body: Settings):
         or old.search_memory_threshold != body.search_memory_threshold
         or old.attach_memory_threshold != body.attach_memory_threshold
         or old.pdf_table_extraction != body.pdf_table_extraction
+        or old.browser_interactive_merge != body.browser_interactive_merge  # BID084
+        or old.browser_interactive_merge_separator != body.browser_interactive_merge_separator  # BID084
+        or old.browser_interactive_english != body.browser_interactive_english  # BID084
     ):
         await chat_manager.invalidate_all()
     return body.model_dump()

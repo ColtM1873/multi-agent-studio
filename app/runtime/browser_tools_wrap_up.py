@@ -65,6 +65,34 @@ def _apply_browser_image_tags() -> None:
         pass
 
 
+# 本函数于BID084引入
+def _apply_browser_interactive_prefs() -> None:
+    """按全局「可交互元素整合 / 英文渲染」设置覆盖 browser_agent 的输出偏好。
+
+    每次工具调用前现读设置，因此改完保存后下一次调用即生效；工具描述在
+    图编译时读取，所以设置页保存这类改动时还需要 invalidate_all（见
+    ``app/api/settings.py``）。
+    """
+    try:
+        from browser_agent import prefs as browser_prefs
+
+        settings = _load_settings_safe()
+        if settings is not None:
+            browser_prefs.configure_interactive(
+                merge_enabled=bool(
+                    getattr(settings, "browser_interactive_merge", True)
+                ),
+                separator=getattr(
+                    settings, "browser_interactive_merge_separator", ":"
+                ),
+                english_enabled=bool(
+                    getattr(settings, "browser_interactive_english", False)
+                ),
+            )
+    except Exception:  # noqa: BLE001
+        pass
+
+
 async def _wrap_up(sync_func , **kwargs) -> str:
     if _paused:
         return PAUSE_PROMPT
@@ -73,6 +101,7 @@ async def _wrap_up(sync_func , **kwargs) -> str:
     # 按全局「浏览器交互延迟设置」覆盖运行时延迟（调用时现读，改完即生效）。
     _apply_browser_timing()
     _apply_browser_image_tags()  # BID080
+    _apply_browser_interactive_prefs()  # BID084
     # 记录 LLM 原始输入（敏感信息替换前的 kwargs）。
     llm_input = dict(kwargs)
 

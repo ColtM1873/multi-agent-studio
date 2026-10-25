@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import functools  # BID084
 import logging
 import re
 import threading
@@ -12,6 +13,7 @@ from typing import Optional
 
 from . import debug, studio_marker, timing
 from . import bid065_trace  # BID065
+from . import finalize as finalize_output  # BID084
 from .actions import (
     ActionError,
     ActionExecutor,
@@ -361,6 +363,22 @@ def _dedupe_scroll_fragments(lines: list[OutLine]) -> list[OutLine]:
     return out
 
 
+# 本函数于BID084引入
+def _finalize_llm_output(func):
+    """公开工具方法返回前的统一收口：整合 + 英文渲染（只在最终文本上做）。
+
+    必须包在**公开方法**上而不是 ``_base_result`` 上：``switch_tab`` / ``go_back``
+    等方法会在 ``_base_result`` 之后继续往 ``content`` 前面拼提示语，若在
+    ``_base_result`` 里做后处理，那些提示会绕过这一层。
+    """
+
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        return finalize_output.finalize_result(func(*args, **kwargs))
+
+    return wrapper
+
+
 class _ContainerScroller:
     """Scrolls an element-level scroll container (``[可滚动元素 eN]``)."""
 
@@ -591,6 +609,7 @@ class BrowserController:
     def tab_labels(self) -> list[str]:
         return self._tab_registry.names(self._live_targets())
 
+    @_finalize_llm_output  # BID084
     def tab_url_map(self) -> dict:
         _bid065_t0 = bid065_trace.perf()  # BID065
         bid065_trace.mark("controller.tab_url_map START")  # BID065
@@ -1573,6 +1592,7 @@ class BrowserController:
             error=fill_error or rp.NO_ERROR, include_tabs=False,
         )
 
+    @_finalize_llm_output  # BID084
     def interact_click(self, name: str) -> dict:
         """与单个『可点击元素』互动，返回增量 DOM。"""
         ctx, err = self._begin_interaction(name, allowed=("click",))
@@ -1585,6 +1605,7 @@ class BrowserController:
             return self._base_result(INCREMENTAL, FAIL, rp.EMPTY_CONTENT, str(exc), include_tabs=False)
         return self._finish_interaction(ctx, extras)
 
+    @_finalize_llm_output  # BID084
     def interact_click_dropdown(self, name: str) -> dict:
         """点击单个『可点击下拉元素』，使其展开候选/菜单，返回增量 DOM。
 
@@ -1608,6 +1629,7 @@ class BrowserController:
             extras["fill_notice"] = notice
         return self._finish_interaction(ctx, extras)
 
+    @_finalize_llm_output  # BID084
     def interact_fill_in(
         self, name: str, fill: str = "", press_enter: bool = False
     ) -> dict:
@@ -1622,6 +1644,7 @@ class BrowserController:
             return self._base_result(INCREMENTAL, FAIL, rp.EMPTY_CONTENT, str(exc), include_tabs=False)
         return self._finish_interaction(ctx, extras)
 
+    @_finalize_llm_output  # BID084
     def interact_select(self, name: str, fill: str = "") -> dict:
         """对单个『可选择元素』（原生下拉）选择选项文字，返回增量 DOM。"""
         ctx, err = self._begin_interaction(name, allowed=("select",))
@@ -1634,6 +1657,7 @@ class BrowserController:
             return self._base_result(INCREMENTAL, FAIL, rp.EMPTY_CONTENT, str(exc), include_tabs=False)
         return self._finish_interaction(ctx, extras)
 
+    @_finalize_llm_output  # BID084
     def interact_searchable_fill_in(self, name: str, fill: str = "") -> dict:
         """对单个『可搜索下拉元素』输入筛选词并返回候选项，返回增量 DOM。
 
@@ -1651,6 +1675,7 @@ class BrowserController:
             return self._base_result(INCREMENTAL, FAIL, rp.EMPTY_CONTENT, str(exc), include_tabs=False)
         return self._finish_interaction(ctx, extras)
 
+    @_finalize_llm_output  # BID084
     def interact_scroll(self, name: str, scroll_delta: int = 0) -> dict:
         """对单个『可滚动元素』滚动，返回滚动新增内容。"""
         ctx, err = self._begin_interaction(name, allowed=("scroll",))
@@ -1662,6 +1687,7 @@ class BrowserController:
         except (ActionError, CDPError) as exc:
             return self._base_result(INCREMENTAL, FAIL, rp.EMPTY_CONTENT, str(exc), include_tabs=False)
 
+    @_finalize_llm_output  # BID084
     def interact_drag(self, name: str, drag_pct: int = 0) -> dict:
         """对单个『可拖动元素』拖动到指定百分比位置，返回增量 DOM。"""
         ctx, err = self._begin_interaction(name, allowed=("drag",))
@@ -1810,6 +1836,7 @@ class BrowserController:
     # ------------------------------------------------------------------ #
     # batch interaction (tool-06)
     # ------------------------------------------------------------------ #
+    @_finalize_llm_output  # BID084
     def interact_many(self, name_list: list, fill_list: list) -> dict:
         """A sequence of fills plus an optional trailing click, run serially.
 
@@ -2585,6 +2612,7 @@ class BrowserController:
             result = {"tabs": self.tab_labels(), **result}
         return result
 
+    @_finalize_llm_output  # BID084
     def full_dom(self, action_ok: str = NOT_CALLED) -> dict:
         # 串行化：前端「提示接管」每秒轮询一次，且「打开浏览器」也会走这里，
         # 并发抓取会拖垮 CDP 连接。持有全局锁，一次只跑一个。
@@ -2610,6 +2638,7 @@ class BrowserController:
         except (BrowserLaunchError, CDPError, RuntimeError) as exc:
             return self._base_result(FULL, FAIL, rp.EMPTY_CONTENT, str(exc))
 
+    @_finalize_llm_output  # BID084
     def list_tabs(self) -> dict:
         _bid065_t0 = bid065_trace.perf()  # BID065
         bid065_trace.mark("controller.list_tabs START")  # BID065
@@ -2716,6 +2745,7 @@ class BrowserController:
             content = self._blank_notice(tree) + content
         return self._base_result(FULL, action_ok, content)
 
+    @_finalize_llm_output  # BID084
     def switch_tab(self, tab_id: str) -> dict:
         """tool_21_switch_tab: focus an existing tab and return its full DOM."""
         try:
@@ -2748,6 +2778,7 @@ class BrowserController:
             result["content"] = self._focus_mismatch_notice(target_id, actual) + result["content"]
         return result
 
+    @_finalize_llm_output  # BID084
     def go_back(self) -> dict:
         """tool_30_go_back: browser back button, return full DOM."""
         try:
@@ -2785,6 +2816,7 @@ class BrowserController:
         result["content"] = self._dialog_notice(dialog) + self._title_change_notice(target_id, old_name) + result["content"]
         return result
 
+    @_finalize_llm_output  # BID084
     def refresh(self) -> dict:
         """tool_31_refresh: reload current tab, return incremental diff."""
         try:
@@ -2815,6 +2847,7 @@ class BrowserController:
         )
         return self._base_result(INCREMENTAL, OK, content, include_tabs=False)
 
+    @_finalize_llm_output  # BID084
     def close_tab(self, tab_id: str) -> dict:
         """tool_32_close_tab: close a tab, return the remaining tab list."""
         try:
@@ -2843,6 +2876,7 @@ class BrowserController:
             self.focused_target_id = None
         return {"tabs": self.tab_labels()}
 
+    @_finalize_llm_output  # BID084
     def navigate(self, url: str) -> dict:
         """tool_33_navigate: open a new tab at the given URL, return its full DOM."""
         try:

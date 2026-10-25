@@ -17,6 +17,7 @@ from app.runtime.browser_tools_privacy_mask import make_sensitive_masker
 from app.runtime.browser_tools_wrap_up import (
     PAUSE_PROMPT,
     _apply_browser_image_tags,  # BID080
+    _apply_browser_interactive_prefs,  # BID084
     _apply_browser_timing,
     is_paused,
     set_paused,
@@ -169,6 +170,7 @@ def viewport_dom(body: AgentBody | None = None):
 
         _apply_browser_timing()
         _apply_browser_image_tags()  # BID080：预览块与工具返回共用同一「图片标签」口径
+        _apply_browser_interactive_prefs()  # BID084：整合/英文渲染口径与工具返回一致
         result = BrowserController.instance().full_dom(action_ok=NOT_CALLED)
         if browser_status()[0]:
             _show_floating(body.agent_id if body else None)
