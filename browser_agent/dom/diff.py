@@ -7,12 +7,20 @@ group headers (indented as in the full serialization) so the model can place it
 back into the tree. The only "something disappeared" signal is the
 ``[丢失的可互动元素列表]`` block, which lists interactive names that no longer
 exist and would therefore fail if referenced.
+
+BID083 adds a *containment* check on top of the line-by-line comparison: a line
+whose content was already present in the old snapshot is treated as "old content
+that only moved" (floating blocks, marquee animation, component re-mount) and is
+not reported as new. See ``changed_lines`` for the exact three-way rule — the
+point is to keep genuine changes (including "the same form block was added
+again") while dropping the redundant diff noise.
 """
 
 from __future__ import annotations
 
 import difflib
 import re
+from collections import Counter  # BID083
 from typing import Optional
 
 from .compress import compress_lines  # BID079
@@ -21,9 +29,35 @@ from .serialize import OutLine, separate_scroll_blocks
 MAX_DIFF_CHARS = 40000
 MAX_LOST = 50
 
+# BID083：行级 diff 的「包含判断」用到的归一化。
+# 同一份内容在页面重建后会拿到新的元素编号（旧 ``e44`` → 新 ``e53``），比较前
+# 统一抹成 ``eN``；行首的结构标签（``[列表项]``/``[文本]``…）只是分组的投影，
+# 旧内容里同一行可能没有这层前缀（压缩内联也会临时造出 ``[列表项] <可点击元素…>``），
+# 所以比较前剥掉；行内连续空白折叠（层级缩进已由 ``depth`` 表达，不算内容差异）。
+_ELEMENT_NAME_RE = re.compile(r"(?<![0-9A-Za-z])e\d+(?![0-9A-Za-z])")  # BID083
+_LEADING_STRUCT_RE = re.compile(r"^(?:\[[^\[\]\n]+\]\s*)+")  # BID083
+# BID083：需要模型「填写/选择」的控件。带这类控件的行即使内容与旧内容重复，
+# 也不能当冗余丢掉——「再加一份同样的表单块」是真实新增，模型必须看见它。
+_STATEFUL_CONTROL_RE = re.compile(  # BID083
+    r"<(?:可输入元素|可选择元素|可搜索下拉元素|可拖动元素|可点击下拉元素) "  # BID083
+)  # BID083
+
 
 def _key(line: OutLine) -> tuple[int, str]:
     return (line.depth, line.text)
+
+
+# 本函数于BID083引入
+def _content_key(text: str) -> str:
+    """把一行文本归一成「内容键」，用于判断它是否已经出现在旧内容里。
+
+    BID083 的核心判断：行级 diff 只有在「这一行的内容之前没出现过」时才算新增。
+    浮动块重排、跑马灯位移、组件临时重建都会让同一份内容换个位置/层级重新出现，
+    旧的「(depth, text) 逐行比对」会把它们当成新增，于是 diff 里塞满冗余信息。
+    """
+    text = _ELEMENT_NAME_RE.sub("eN", text or "")  # BID083
+    text = _LEADING_STRUCT_RE.sub("", text)  # BID083
+    return re.sub(r"[ \t]+", " ", text).strip()  # BID083
 
 
 def changed_lines(old_lines: list[OutLine], new_lines: list[OutLine]) -> list[OutLine]:
@@ -31,15 +65,47 @@ def changed_lines(old_lines: list[OutLine], new_lines: list[OutLine]) -> list[Ou
 
     Closing tags (``kind == "close"``) are structural: they are never emitted
     directly, they are flushed by the ancestor cursor in ``format_lines``.
+
+    BID083：新增行还要过一道「包含判断」——它的内容键若在旧快照里已经出现，
+    说明这行只是「旧内容换个位置/层级重现」（浮动块重排、跑马灯位移、组件临时
+    重建），不算新增。判断分三档（见 ``_content_key``）：
+
+    * 旧快照里没有 → 全新内容，保留；
+    * 旧快照里有、且出现次数没变多 → 纯重排/重建，丢弃；
+    * 旧快照里有、但出现次数变多了 → 真的「又加了一份」。此时只有整段新增块里
+      带可填写/可选择控件（``_STATEFUL_CONTROL_RE``）才保留：Bing 那种把同一批
+      推荐链接再插一份的异步渲染是噪声，而「添加家庭成员」再复制一份同样的表单
+      块是真实变化，模型必须知道要填哪些新字段。
     """
     old_keys = [_key(line) for line in old_lines]
     new_keys = [_key(line) for line in new_lines]
     matcher = difflib.SequenceMatcher(None, old_keys, new_keys, autojunk=False)
+    old_content = Counter(  # BID083
+        _content_key(line.text)  # BID083
+        for line in old_lines  # BID083
+        if line.text and line.text.strip()  # BID083
+    )  # BID083
+    new_content = Counter(  # BID083
+        _content_key(line.text)  # BID083
+        for line in new_lines  # BID083
+        if line.text and line.text.strip()  # BID083
+    )  # BID083
     out: list[OutLine] = []
     for tag, _i1, _i2, j1, j2 in matcher.get_opcodes():
         if tag in ("equal", "delete"):
             continue
-        out.extend(line for line in new_lines[j1:j2] if line.kind != "close")
+        chunk = [line for line in new_lines[j1:j2] if line.kind != "close"]  # BID083
+        chunk_stateful = any(_STATEFUL_CONTROL_RE.search(line.text) for line in chunk)  # BID083
+        for line in chunk:
+            content_key = _content_key(line.text)  # BID083
+            if not content_key:  # BID083
+                continue  # BID083
+            old_count = old_content[content_key]  # BID083
+            if old_count == 0:  # BID083
+                out.append(line)  # BID083
+                continue  # BID083
+            if new_content[content_key] > old_count and chunk_stateful:  # BID083
+                out.append(line)  # BID083
     return out
 
 

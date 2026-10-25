@@ -255,22 +255,6 @@ def new_tab_notice(opened: str, focus: str) -> str:
     )
 
 
-# 本函数于BID081引入
-# 作用：点击在后台新开标签页时，明确告知「当前聚焦页的增量已被省去」。
-# 触发条件：_finish_interaction 发现新增标签页、聚焦页未变、且当前页 URL 未变。
-# 返回时机：作为该次互动的唯一 content（不再拼接原页 diff）。
-# 与 new_tab_notice 的差别：旧文案说「没有内容变化或只有少量内容变化」，但真实
-# 页面可能因为异步刷新/跑马灯动画持续变化；这里如实说明「已省略、不是点击结果」。
-def new_tab_notice_suppressed(opened: str, focus: str) -> str:
-    focus = focus or "未知标签页"
-    return (
-        f"[新标签页] 本次互动在当前聚焦标签页之外新打开了标签页（{opened}），"
-        f"当前聚焦标签页仍为 {focus}。"
-        f"为避免把该页与本次点击无关的异步刷新/动画当成点击结果，本次不返回当前聚焦页的增量内容。"
-        f"如需查看或操作新标签页，使用 tool_21_switch_tab 切换到目标标签页。"
-    )
-
-
 # 作用：告知当前标签页的标题发生了变化（常用于页面跳转后的辨识）。
 # 触发条件：操作前后标签页显示名发生变化。
 # 返回时机：作为全量/增量 content 的前缀（_run_scroll / _finish_interaction / interact_many /
