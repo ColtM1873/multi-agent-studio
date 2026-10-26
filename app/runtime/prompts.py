@@ -6,6 +6,7 @@ DEFAULT_SUMMARY_PERCENT = 20
 
 summary_prompt_prefix =  "<primary_objective>\nExtract the highest quality/most relevant context from the entire conversation history."
 
+user_choose_stop = "用户点击了中止按钮，工具调用已经取消"
 
 def _format_token_amount(value : int):
    """把 token 数量折算成「万 / 千 / 原值」的显示形式，返回 (数值, 单位)。"""

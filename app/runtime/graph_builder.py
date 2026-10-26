@@ -31,9 +31,9 @@ from app.runtime.prompts import (
     ReAct_system_prompt, summary_prompt_generator, 
     subagent_call_prompt, summary_prompt_prefix,trimmed_summary_prompt,
     browser_tools_debug_phrase_prompt,
+    user_choose_stop,
 )
 from app.runtime.state_factory import make_main_state, make_sub_agent_state
-from app.runtime.message_repair import repair_tool_pairs
 from app.services import snapshot as snapshot_service
 
 from browser_agent import bid065_trace  # BID065
@@ -197,7 +197,7 @@ async def build_sub_agent(
     react_prompt = ReAct_system_prompt if spec.react_prompt else ""
 
     async def call_llm(state):
-        existing = repair_tool_pairs(state.get(state_messages_key, []))
+        existing = state.get(state_messages_key, [])
         concate = [SystemMessage(content=agent_system_prompt + react_prompt)] + existing
         response = await model_with_tools.ainvoke(concate)
         return {state_messages_key: [response]}
@@ -315,7 +315,9 @@ async def build_sub_agent(
 
     async def route_to_proactive_summary(state):
         proactive_summary_bool = state.get("instructions_for_subagents", {}).get(sub_agent_name, {}).get("proactive_summary", False)
-        if proactive_summary_bool:
+        if state.get("to_complete_tool_results") == True:
+            return Command(goto = "peel_off_human_msg")
+        elif proactive_summary_bool:
             return Command(goto="proactive_summary_confirm")
         elif ( state.get("request_to_edit_msg_in_the_past") != None 
               and  state["request_to_edit_msg_in_the_past"].get("request_or_not") 
@@ -323,7 +325,51 @@ async def build_sub_agent(
             return Command(goto = "edit_msg_in_the_past_sub")
         else:
             return Command(goto="period_summarize_evaluate")
+        
+    async def peel_off_human_msg(state):
+        msg_list = state.get(state_messages_key, [])
+        last_indice_non_human = -1
+        for i in range(len(msg_list) - 1, -1 , -1):
+            if not isinstance(msg_list[i] , HumanMessage):
+                last_indice_non_human = i
+                break
+        return Command(goto = "complete_tool_results" , update = {
+            state_messages_key : [ RemoveMessage(id=msg.id) for msg in msg_list[last_indice_non_human + 1: ] ]
+        })
 
+    async def complete_tool_results(state):
+        msg_list = state.get(state_messages_key, [])
+        tool_msg_ids_before_ai_msg_set = set()
+        ai_msg_indice = -1
+
+        for i in range(len(msg_list) - 1, -1 , -1):
+            if isinstance(msg_list[i] , ToolMessage):
+                tool_msg_ids_before_ai_msg_set.add(  msg_list[i].tool_call_id )
+            elif isinstance(msg_list[i] , AIMessage):
+                ai_msg_indice = i
+                break
+
+        if ai_msg_indice >= 0:
+            tool_call_list = msg_list[ai_msg_indice].tool_calls
+            tool_msg_list_to_construct = []
+            
+            for tool_call_dict in tool_call_list:
+                if tool_call_dict["id"] in tool_msg_ids_before_ai_msg_set:
+                    continue
+                else:
+                    tool_msg_list_to_construct.append(ToolMessage(
+                        tool_call_id =  tool_call_dict["id"] ,
+                        name =  tool_call_dict["name"] ,
+                        content = user_choose_stop,
+                        id = str(uuid.uuid4())  ))
+            return Command(goto = END , update = {state_messages_key : tool_msg_list_to_construct})
+        
+    (
+        builder
+        .add_node("complete_tool_results",complete_tool_results)
+        .add_node("peel_off_human_msg",peel_off_human_msg)
+
+    )
 
     async def proactive_summary_confirm(state):
         # 前端已弹「百分比设置框」并确认过时，直接进入总结，不再二次 interrupt。
@@ -792,7 +838,7 @@ async def build_world(
     async def call_main_llm(state):
         _bid065_t0 = bid065_trace.perf()  # BID065
         bid065_trace.mark("node call_main_llm START")  # BID065
-        existing = repair_tool_pairs(state.get("messages", []))
+        existing = state.get("messages", [])
         subagent_call_prompt_here = subagent_call_prompt if sub_agent_dict else ""
         react_prompt = ReAct_system_prompt if main_spec.react_prompt else ""
         browser_tools_debug_phrase_prompt_here = browser_tools_debug_phrase_prompt if main_spec.browser_takeover else ""
@@ -800,9 +846,67 @@ async def build_world(
         response = await main_model_with_tools.ainvoke(concate_sys_messages)
         bid065_trace.mark_elapsed("node call_main_llm LLM调用", _bid065_t0)  # BID065
         return {"messages": [response]}
+
     
+    async def peel_off_human_msg(state):
+        msg_list = state.get("messages", [])
+        last_indice_non_human = -1
+        for i in range(len(msg_list) - 1, -1 , -1):
+            if not isinstance(msg_list[i] , HumanMessage):
+                last_indice_non_human = i
+                break
+        return Command(goto = "complete_tool_results" , update = {
+            "messages" : [ RemoveMessage(id=msg.id) for msg in msg_list[last_indice_non_human + 1: ] ]
+        })
+
+    async def complete_tool_results(state):
+        msg_list = state.get("messages", [])
+        tool_msg_ids_before_ai_msg_set = set()
+        ai_msg_indice = -1
+
+        for i in range(len(msg_list) - 1, -1 , -1):
+            if isinstance(msg_list[i] , ToolMessage):
+                tool_msg_ids_before_ai_msg_set.add(  msg_list[i].tool_call_id )
+            elif isinstance(msg_list[i] , AIMessage):
+                ai_msg_indice = i
+                break
+
+        if ai_msg_indice >= 0:
+            tool_call_list = msg_list[ai_msg_indice].tool_calls
+            tool_msg_list_to_construct = []
+
+            for tool_call_dict in tool_call_list:
+                if tool_call_dict["id"] in tool_msg_ids_before_ai_msg_set:
+                    continue
+                else:
+                    tool_msg_list_to_construct.append(ToolMessage(
+                        tool_call_id =  tool_call_dict["id"] ,
+                        name =  tool_call_dict["name"] ,
+                        content = user_choose_stop,
+                        id = str(uuid.uuid4())  ))
+            return {"messages" : tool_msg_list_to_construct}
+        
+
+    async def get_status_reset_tool_complete(state):
+        return Command(goto = END , update = {"to_complete_tool_results" : False} )
+
+    async def in_case_no_sub_agents (state):
+        return
+
+    (
+        main_agent_builder
+        .add_node("complete_tool_results",complete_tool_results)
+        .add_node("peel_off_human_msg",peel_off_human_msg)
+        .add_node("get_status_reset_tool_complete",get_status_reset_tool_complete)
+        .add_node("in_case_no_sub_agents",in_case_no_sub_agents)
+        .add_edge("complete_tool_results","in_case_no_sub_agents")
+        .add_edge("in_case_no_sub_agents","get_status_reset_tool_complete")
+    )
+
     async def query_to_proactive_summary(state):
-        if state.get("proactive_summary_requested") == True:
+        if state.get("to_complete_tool_results") == True:
+            return Command(goto = "peel_off_human_msg")
+        elif state.get("proactive_summary_requested") == True:
             return Command(goto="proactive_summary_confirm", update={"proactive_summary_requested": False})
         elif state.get("proactive_summary_requested_for_specified_sub_agent") != None:
             return Command(goto="summary_requested_for_sub_agent" )
@@ -901,7 +1005,11 @@ async def build_world(
 
     for name, subgraph in sub_agent_dict.items():
         main_agent_builder.add_node(name, subgraph, retry_policy=RetryPolicy(max_attempts=3))
-        
+
+    for name in sub_agent_dict.keys():
+        main_agent_builder.add_edge("complete_tool_results", name)
+
+
     (
         main_agent_builder
         .add_node("extract_human_message", extract_human_message)
@@ -1027,7 +1135,7 @@ async def build_world(
     async def produce_html_call_llm(state):
         _bid065_t0 = bid065_trace.perf()  # BID065
         bid065_trace.mark("node produce_html_call_llm START")  # BID065
-        existing = repair_tool_pairs(state.get("messages", []))
+        existing = state.get("messages", [])
         subagent_call_prompt_here = subagent_call_prompt if sub_agent_dict else ""
         react_prompt = ReAct_system_prompt if main_spec.react_prompt else ""
         browser_tools_debug_phrase_prompt_here = browser_tools_debug_phrase_prompt if main_spec.browser_takeover else ""
@@ -1107,18 +1215,24 @@ async def build_world(
 
     main_agent_builder.add_edge("call_main_llm", "delegate_instructions")
     main_agent_builder.add_conditional_edges("delegate_instructions", route_to_func)
-    for name in sub_agent_dict.keys():
+
+    for name in sub_agent_dict.keys():  #其实没有什么魔法
         async def route_after_sub_agent(state, _name=name):
-            instructions = state.get("instructions_for_subagents", {}).get(_name, {})
-            if instructions.get("proactive_summary"):
-                return "proactive_done"
-            return "consume_reports"
+            if state.get("to_complete_tool_results"):
+                return "get_status_reset"
+            else:
+                instructions = state.get("instructions_for_subagents", {}).get(_name, {})
+                if instructions.get("proactive_summary"):
+                    return "proactive_done"
+                return "consume_reports"
 
         main_agent_builder.add_conditional_edges(
             name,
             route_after_sub_agent,
-            {"proactive_done": END, "consume_reports": "consume_submitted_reports"},
+            {"proactive_done": END, "consume_reports": "consume_submitted_reports" ,
+             "get_status_reset" : "get_status_reset_tool_complete"},
         )
+
     main_agent_builder.add_edge("tool_node_front", "consume_submitted_reports")
     main_agent_builder.add_conditional_edges("produce_html_call_llm", should_continue_main)
     main_agent_builder.add_edge("tool_node", "produce_html_call_llm")

@@ -12,17 +12,13 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
+from langchain_core.messages import HumanMessage
 from langgraph.errors import GraphDrained
 from langgraph.graph.state import CompiledStateGraph
 from langgraph.runtime import RunControl
 from langgraph.types import Command
 
 from browser_agent import bid065_trace  # BID065
-from app.runtime.message_repair import (
-    CANCELLED_TOOL_CONTENT,
-    make_cancelled_tool_message,
-    missing_tail_tool_calls,
-)
 
 logger = logging.getLogger(__name__)
 
@@ -47,54 +43,44 @@ async def _state_text(main_agent: CompiledStateGraph, thread_id_config: dict) ->
         return ""
 
 
-async def _repair_drained_tail(
-    main_agent: CompiledStateGraph,
-    thread_id_config: dict,
-    *,
-    messages_key: str = "messages",
-    checkpoint_ns: str | None = None,
-) -> list[dict]:
-    """drain 结束后修「最后一条 AI 消息的尾巴」。
+async def repair_tool_results(
+    main_agent: CompiledStateGraph, thread_id_config: dict
+) -> list[str]:
+    """跑一遍图内的 `to_complete_tool_results` 修复（ID90 的唯一修复入口）。
 
-    为什么需要：drain 只在 superstep 边界生效。若 drain 落在 call_llm 之后、tool 节点之前，
-    AI 的 tool_calls 已提交、ToolMessage 永远不会有 → 下一次调用 provider 会 400。
-    这里给这些 call 追加一条「已取消」结果，历史与下一轮都干净。
+    图会：削掉末尾连续的 HumanMessage → 给最后一条 AI 的悬空 tool_call 补一条
+    「已取消」ToolMessage（紧跟 AI，保证 provider 要求的顺序）→ 扇出到每个子图做同样
+    的事 → 复位 flag → END。
 
-    `checkpoint_ns` 不为空时修的是某个子图的 checkpoint（子 agent 的 drain 会下沉到
-    它自己的 superstep 边界，同样可能留下悬空）。
+    本函数**不流式、不发任何前端事件**；调用方必须在上一轮 run 完全结束后再调
+    （同一 thread 不能并发跑两个 run）。
 
-    返回成功写入的 tool_call 列表（用于给前端补一条 tool_result 事件）。
+    返回被削掉的尾部 Human 文本，调用方据此决定要不要提示「是否回填」：停止时还没被
+    消费的用户消息、400 时那一轮的用户消息，都会在这里被删掉。
     """
-    config = thread_id_config
-    if checkpoint_ns:
-        config = {
-            **thread_id_config,
-            "configurable": {
-                **(thread_id_config.get("configurable") or {}),
-                "checkpoint_ns": checkpoint_ns,
-            },
-        }
+    removed: list[str] = []
     try:
-        snapshot = await main_agent.aget_state(config)
-        messages = (snapshot.values or {}).get(messages_key, [])
-        missing = missing_tail_tool_calls(messages)
-        if not missing:
-            return []
-        synthetic = [
-            msg
-            for msg in (make_cancelled_tool_message(tc) for tc in missing)
-            if msg is not None
-        ]
-        if not synthetic:
-            return []
-        # 只追加、不重写；messages 是 add_messages，追加即可（此时 AI 消息就是最后一条）。
-        await main_agent.aupdate_state(config, {messages_key: synthetic})
-        return missing
+        snapshot = await main_agent.aget_state(thread_id_config)
+        messages = (snapshot.values or {}).get("messages", [])
+        start = len(messages)
+        while start > 0 and isinstance(messages[start - 1], HumanMessage):
+            start -= 1
+        removed = [str(m.content) for m in messages[start:]]
     except Exception:  # noqa: BLE001
-        logger.exception(
-            "drain 后修复悬空 tool_call 失败（ns=%s，不影响停止本身）", checkpoint_ns
-        )
-        return []
+        logger.exception("修复前读取尾部用户消息失败（不影响修复本身）")
+
+    try:
+        await main_agent.ainvoke({"to_complete_tool_results": True}, thread_id_config)
+    except Exception:  # noqa: BLE001
+        logger.exception("图内修复悬空 tool_call 失败")
+        # flag 是图 state 里的普通字段：修复失败必须复位，否则后续每一轮都会被它劫持。
+        try:
+            await main_agent.aupdate_state(
+                thread_id_config, {"to_complete_tool_results": False}
+            )
+        except Exception:  # noqa: BLE001
+            logger.exception("复位 to_complete_tool_results 失败")
+    return removed
 
 
 async def run_agent_stream(
@@ -106,6 +92,7 @@ async def run_agent_stream(
     sub_agent_names: set[str] | None = None,
     sub_agent_state_keys: dict[str, str] | None = None,
     control: RunControl | None = None,
+    echo_user: bool = True,
 ) -> RunResult:
     """运行一次 agent 调用，把 token/子图/tool 事件流式 emit 出去。
 
@@ -118,6 +105,9 @@ async def run_agent_stream(
     control: 每次 run 新建的 `RunControl`。调用方（WebSocket）在用户点「停止」时调用
     `control.request_drain(...)`，图会在**当前节点跑完之后的下一个 superstep 边界**停下，
     而不是把正在跑的工作硬掐断。
+
+    echo_user: False 时不再把 `merge_human_message_with_memory` 产生的用户消息推给前端。
+    只用于「400 之后的重跑」——那一轮的用户气泡已经渲染过，重跑会再推一遍。
 
     返回 `RunResult`（文本 + 是否 drained）。
     """
@@ -134,41 +124,15 @@ async def run_agent_stream(
         # 不能用默认的 gather：drain 时三路消费协程都会抛 GraphDrained，
         # 默认 gather 只取第一个异常，其余异常会变成 "never retrieved" 警告。
         results = await asyncio.gather(
-            _consume_messages(stream, emit, sub_names),
+            _consume_messages(stream, emit, sub_names, echo_user),
             _consume_subgraphs(stream, emit, sub_names, sub_state_keys),
             _consume_values(stream.values, emit),
             return_exceptions=True,
         )
 
         if any(isinstance(r, GraphDrained) for r in results):
-            missing = await _repair_drained_tail(main_agent, thread_id_config)
-            # 前端已经渲染了这条 AI 的 tool_call；补一条 tool_result，避免界面看起来断掉。
-            for tool_call in missing:
-                try:
-                    await emit(
-                        {
-                            "type": "tool_result",
-                            "source": "main",
-                            "name": tool_call.get("name") or "unknown",
-                            "content": CANCELLED_TOOL_CONTENT,
-                        }
-                    )
-                except Exception:  # noqa: BLE001
-                    logger.exception("补发 drain 的 tool_result 失败")
-            # drain 会继承到子图：子 agent 也可能停在自己的「LLM 之后、tool 之前」，
-            # 于是子图 namespace 里留下悬空 tool_call。逐个补一条取消结果。
-            # 这里不补前端事件（子图分区此时通常已 subgraph_end，补事件会多出一个分区；
-            # 刷新历史即可看到；400 由请求前 repair_tool_pairs 双保险）。
-            for sub_name in sorted(sub_names):
-                sub_key = sub_state_keys.get(sub_name)
-                if not sub_key:
-                    continue
-                await _repair_drained_tail(
-                    main_agent,
-                    thread_id_config,
-                    messages_key=sub_key,
-                    checkpoint_ns=sub_name,
-                )
+            # 悬空 tool_call 不在这里修：调用方在 run 完全结束后会跑一遍图内修复
+            # （`repair_tool_results`），见 ID90。
             return RunResult(text=await _state_text(main_agent, thread_id_config), drained=True)
 
         errors = [r for r in results if isinstance(r, BaseException)]
@@ -272,10 +236,15 @@ async def _emit_message_stream(message, source: str, emit: Emit, sub_agent_names
         await emit_phase("tool_wait")
 
 
-async def _consume_messages(stream, emit: Emit, sub_agent_names: set[str]):
+async def _consume_messages(
+    stream, emit: Emit, sub_agent_names: set[str], echo_user: bool = True
+):
     """主图（主 agent）的文本流（含思考过程）。"""
     async for message in stream.messages:
         is_user = message.node == "merge_human_message_with_memory"
+        if is_user and not echo_user:
+            # 400 之后的重跑：这一轮的用户气泡上一轮已经渲染过，不要再推一次。
+            continue
         await _emit_message_stream(
             message, "main_user" if is_user else "main", emit, sub_agent_names
         )

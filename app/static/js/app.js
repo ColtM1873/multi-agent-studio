@@ -7404,6 +7404,8 @@ async function renderChatView() {
       if (injectCommon) resetCommonPrompt();
       // 软取消（停止中 → 本轮回 done）不播「回复已完成」气泡与提示音。
       if (!ok.stopped) showDoneBubble();
+      // 停止后修复削掉了还没被消费的用户消息：提示是否回填（复用失败回填气泡）。
+      if (ok.backfill) showFailBubble(userText);
     } else {
       // 真正的失败（连接断开 / 后端 error）：气泡提示是否回填原发送信息。
       // 软取消不再走这里（会正常收到 done）。
@@ -7689,6 +7691,8 @@ function openChatWs(content, proactive = false, subAgent = null, summaryPercent 
     };
     let rafPending = false;
     let lastPhaseKey = "";
+    // 停止后图内修复削掉了末尾的用户消息：后端发 backfill，done 时提示是否回填。
+    let backfillNeeded = false;
     const actorOf = (source) => source === "main" ? t("主 agent") : source.replace(/^sub:/, "");
     // 流式输出时是否渲染子 agent 的工具调用 / 工具结果（进阶设置，默认开启）。
     // 后端始终会下发这些事件，这里只决定是否渲染。
@@ -7928,9 +7932,13 @@ function openChatWs(content, proactive = false, subAgent = null, summaryPercent 
           }
           break;
         }
+        case "backfill":
+          // 停止后修复把末尾还没被消费的用户消息删掉了：等 done 后提示回填。
+          backfillNeeded = true;
+          break;
         case "done":
           // 软取消（drain）结束时也走 done，但 stopped=true：不弹「回复已完成」。
-          resolve({ stopped: !!msg.stopped });
+          resolve({ stopped: !!msg.stopped, backfill: backfillNeeded });
           break;
         case "error":
           pushMain("tool", `\n\n> ⚠️ ${brk(msg.message)}\n\n`);

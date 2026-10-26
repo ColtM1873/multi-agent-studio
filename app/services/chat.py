@@ -11,6 +11,7 @@ from app.config.store import ConfigStore
 from app.config.models import MultiAgentConfig
 from app.runtime.graph_builder import build_world
 from app.runtime.persistence import build_persistence
+from app.runtime.streaming import repair_tool_results as run_graph_tool_repair
 from app.runtime.streaming import run_agent_stream
 from app.services import threads as threads_service
 from app.services.messages_json import dict_to_message
@@ -119,6 +120,7 @@ class AgentRuntime:
         emit,
         on_interrupt=None,
         control=None,
+        echo_user: bool = True,
     ):
         config_dict = {"configurable": {"thread_id": thread_id}}
         return await run_agent_stream(
@@ -130,6 +132,17 @@ class AgentRuntime:
             sub_agent_names={s.name for s in self.config.sub_agents},
             sub_agent_state_keys={s.name: s.state_messages_key for s in self.config.sub_agents},
             control=control,
+            echo_user=echo_user,
+        )
+
+    async def repair_tool_results(self, thread_id: str) -> list[str]:
+        """图内修复悬空 tool_call（削尾部 Human + 补 ToolMessage + 子图 + 复位 flag）。
+
+        必须在上一轮 run 完全结束后调用（同一 thread 不能并发跑）；不流式、不发事件。
+        返回被削掉的尾部用户消息文本（空列表表示啥也没删）。
+        """
+        return await run_graph_tool_repair(
+            self.graph, {"configurable": {"thread_id": thread_id}}
         )
 
     async def close(self) -> None:

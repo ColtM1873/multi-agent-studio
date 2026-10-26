@@ -35,6 +35,7 @@ SHARED_FIELDS = {
     # 主动全量总结时用户为「本次总结」单独指定的压缩百分比；
     # None 表示未指定（走全局默认 / 保留确认弹窗）。父子图共享，故放这里。
     "proactive_summary_percent" : float | None,
+    "to_complete_tool_results" : bool
 }
 
 
@@ -57,6 +58,7 @@ def make_main_state() -> type:
         proactive_summary_percent : float | None
         request_to_edit_msg_in_the_past : dict[str , Any] | None
         clean_every_and_all : bool
+        to_complete_tool_results : bool
     return MainAgentState
 
 #request_to_edit_msg_in_the_past assumed structure

@@ -12,7 +12,8 @@
                                        再执行删除（归档失败则中止删除）
   {"type": "resume", "value": "yes"}   回复 interrupt 中断
   {"type": "stop"}                     软取消：请求 drain，当前节点跑完后在 superstep 边界停下
-                                       （不中断正在执行的工具/LLM；连接保持，直到本轮回 done）
+                                       （不中断正在执行的工具/LLM；连接保持，直到本轮回 done）；
+                                       drain 结束后会自动跑一遍图内 tool_call 修复
 
 服务端→客户端事件：
   {"type": "text", "source": "main"|"sub:<name>", "text": token}
@@ -29,6 +30,7 @@
   {"type": "status", "status": "ready"}    运行时已就绪，图/LLM 即将开始
   {"type": "sub_agents", "names": [...]}   配置里的子 agent 名单（前端分区渲染用）
   {"type": "stopping"}                     已收到停止请求，正在等当前节点收尾
+  {"type": "backfill"}                     停止后修复削掉了末尾用户消息，提示是否回填
   {"type": "done", "final_state", "stopped"}  stopped=true 表示本轮是软取消结束
   {"type": "error", "message"}
 """
@@ -65,6 +67,26 @@ def _to_percent(value) -> float | None:
     except (TypeError, ValueError):
         return None
     return percent if percent > 0 else None
+
+
+def _is_bad_request(e: BaseException) -> bool:
+    """异常链上是否带着 provider 的 HTTP 400。
+
+    OpenAI 兼容接口（DeepSeek 也走同一套 SDK）的 400 是 `openai.BadRequestError`，
+    实例上有 `status_code = 400`；被包装过时沿 `__cause__ / __context__` 往上找。
+    """
+    seen: set[int] = set()
+    cur: BaseException | None = e
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        if getattr(cur, "status_code", None) == 400:
+            return True
+        if getattr(getattr(cur, "response", None), "status_code", None) == 400:
+            return True
+        if "error code: 400" in str(cur).lower():
+            return True
+        cur = cur.__cause__ or cur.__context__
+    return False
 
 
 def _format_build_error(e: Exception) -> str:
@@ -204,6 +226,7 @@ async def chat_ws(websocket: WebSocket, agent_id: str, thread_id: str):
         control: RunControl | None = None,
         started: asyncio.Event | None = None,
     ):
+        nonlocal current_control, current_started
         import os
 
         html_files: list[str] = []
@@ -219,6 +242,38 @@ async def chat_ws(websocket: WebSocket, agent_id: str, thread_id: str):
                     html_files.append(fp)
             await emit(event)
 
+        def open_html_files():
+            # HTML 报告生成后，用系统默认程序打开
+            for fp in html_files:
+                root = runtime.config.main_agent.file_tools.root_dir
+                full = fp if os.path.isabs(fp) else os.path.join(root, fp)
+                if os.path.exists(full):
+                    try:
+                        os.startfile(full)  # noqa: F821 — Windows
+                    except Exception:
+                        pass
+
+        async def finish(result, *, allow_backfill: bool):
+            """本轮正常收尾：drained 时先跑图内修复，再回 done。
+
+            修复期间前端保持在「停止中」（它要等 done 才恢复「发送」）。
+            修复可能削掉末尾还没被消费的用户消息，此时发 backfill 让前端提示回填。
+            """
+            if result.drained:
+                removed = await runtime.repair_tool_results(thread_id)
+                if removed and allow_backfill:
+                    await emit({"type": "backfill"})
+            await emit(
+                {
+                    "type": "done",
+                    "final_state": result.text,
+                    "stopped": result.drained,
+                }
+            )
+            open_html_files()
+
+        # 400 重跑要用同一份用户输入；放在 try 外先占位，异常分支才能判断是否已经构造好。
+        user_input: dict | None = None
         try:
             if clean_all and clean_all_archive:
                 # 「归档为快照后删除」：快照与「主动全量总结」共用同一个 capture_snapshot，
@@ -262,25 +317,51 @@ async def chat_ws(websocket: WebSocket, agent_id: str, thread_id: str):
             result = await runtime.run(
                 thread_id, user_input, emit_checked, on_interrupt, control=control
             )
-            await emit(
-                {
-                    "type": "done",
-                    "final_state": result.text,
-                    "stopped": result.drained,
-                }
-            )
-
-            # HTML 报告生成后，用系统默认程序打开
-            for fp in html_files:
-                root = runtime.config.main_agent.file_tools.root_dir
-                full = fp if os.path.isabs(fp) else os.path.join(root, fp)
-                if os.path.exists(full):
-                    try:
-                        os.startfile(full)  # noqa: F821 — Windows
-                    except Exception:
-                        pass
+            await finish(result, allow_backfill=True)
         except Exception as e:
-            await emit({"type": "error", "message": str(e)})
+            # provider 400（典型原因：历史里有悬空 tool_call）：先用图内修复把历史补干净，
+            # 再用同一份用户输入重跑一次；仍然失败才把错误交给前端（失败/回填气泡）。
+            if (
+                user_input is not None
+                and bool(content)
+                and not proactive
+                and not sub_agent
+                and not clean_all
+                and _is_bad_request(e)
+            ):
+                logger.warning(
+                    "provider 400，先做图内 tool_call 修复再重跑一次 (agent_id=%s, thread_id=%s): %s",
+                    agent_id,
+                    thread_id,
+                    e,
+                )
+                # 修复会削掉这一轮的用户消息（它就是尾部那条 Human），下面重跑会重新写入。
+                await runtime.repair_tool_results(thread_id)
+                # 重跑是全新的一轮 run：换一个 RunControl，保证「停止」仍然可用。
+                control = RunControl()
+                started = asyncio.Event()
+                current_control, current_started = control, started
+                try:
+                    # echo_user=False：这一轮的用户气泡上一轮已经推过，别再推一遍。
+                    result = await runtime.run(
+                        thread_id,
+                        user_input,
+                        emit_checked,
+                        on_interrupt,
+                        control=control,
+                        echo_user=False,
+                    )
+                except Exception as e2:  # noqa: BLE001
+                    logger.exception(
+                        "400 修复后重跑仍然失败 (agent_id=%s, thread_id=%s)",
+                        agent_id,
+                        thread_id,
+                    )
+                    await emit({"type": "error", "message": str(e2)})
+                else:
+                    await finish(result, allow_backfill=True)
+            else:
+                await emit({"type": "error", "message": str(e)})
 
     async def _run_edit(
         request: dict,
@@ -302,6 +383,9 @@ async def chat_ws(websocket: WebSocket, agent_id: str, thread_id: str):
             result = await runtime.run(
                 thread_id, user_input, emit_checked, on_interrupt, control=control
             )
+            if result.drained:
+                # 编辑链路同样可能在 LLM 之后 / tool 之前被 drain：补一遍图内修复。
+                await runtime.repair_tool_results(thread_id)
             await emit(
                 {
                     "type": "done",
