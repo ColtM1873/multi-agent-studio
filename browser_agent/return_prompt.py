@@ -243,6 +243,20 @@ def new_tab_notice(opened: str, focus: str) -> str:
     )
 
 
+# 本函数于BID086引入
+# 作用：告知「为了界面简洁，已按 LRU 自动关掉了哪些标签页」。
+# 触发条件：一个浏览器进程里的标签页数超过「允许 Agent 保留的最大标签页数」，且本次
+#           工具（tool_01_click / tool_33_navigate，可能开新页）之后做了收敛。
+# 返回时机：最终表现层（整合 / 英文渲染）之后追加到 content——中文正文，英文模式下
+#           也不翻译，与 new_tab_notice 同口径。
+# 入参：closed 为被关闭标签页的显示名列表；为空表示没关任何标签页，返回空串。
+def auto_closed_tabs_notice(closed) -> str:
+    names = "、".join(name for name in (closed or []) if name)
+    if not names:
+        return ""
+    return f"为了界面简洁，已经自动关闭标签页：{names}"
+
+
 # 作用：告知当前标签页的标题发生了变化（常用于页面跳转后的辨识）。
 # 触发条件：操作前后标签页显示名发生变化。
 # 返回时机：作为全量/增量 content 的前缀（_run_scroll / _finish_interaction / interact_many /

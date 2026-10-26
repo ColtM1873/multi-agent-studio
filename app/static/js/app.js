@@ -231,6 +231,8 @@ const I18N_EN = {
   "点击查看完整内容": "Click to view the full content",
   "开启浏览器接管功能": "Enable browser takeover",
   "开启后，会向主 agent 注入一组浏览器接管工具（占用上下文）。只有需要让 agent 操作浏览器时才开启。": "When enabled, a set of browser-takeover tools is injected into the main agent (consuming context). Only turn it on when the agent needs to operate a browser.",
+  "允许 Agent保留的最大标签页数": "Max tabs the agent may keep",
+  "Agent 主动关闭标签页要花掉上下文，实际上很少这么做；于是「目前打开的标签页有哪些」会越列越长、白烧 token。这里设一个上限，超出的标签页按 LRU（最久未使用的先关）自动关闭，并在返回给模型的内容里注明关了哪些。<br/><br/>计数按浏览器进程算：同一个浏览器里的所有标签页都算在内（包括你自己手动打开的），当前聚焦的标签页永不关闭。两个 multi-agent 共用同一个浏览器时，按最近一次配置的 multi-agent 的值为准。<br/><br/>默认 4，最小 3（聚焦页不能关，1~2 会逼出「新页和聚焦页只能留一个」的死结），最大 50。": "Closing tabs costs the agent context, so it rarely does it — and the list of currently open tabs keeps growing, burning tokens for nothing. Set a cap here: tabs beyond it are closed automatically by LRU (least recently used first), and the reply to the model notes which ones were closed.<br/><br/>Tabs are counted per browser process: every tab in that browser counts (including ones you opened yourself), and the focused tab is never closed. If two multi-agents share one browser, the value configured most recently applies.<br/><br/>Default 4, minimum 3 (the focused tab cannot be closed; 1–2 would force a dead end where the new tab and the focused tab cannot coexist), maximum 50.",
   "开启记忆读取/写入功能": "Enable memory read/write",
   "开启后，会向主 agent 注入记忆读写工具（write_memory / read_memory），让 agent 能长期存取与检索信息；关闭后主 agent 不再拥有记忆读写工具。此设置影响图编译；「记忆吸附」是另一项功能，不受本开关影响。": "When enabled, memory read/write tools (write_memory / read_memory) are injected into the main agent so it can store and retrieve information long-term; when disabled the main agent no longer has memory read/write tools. This affects graph compilation; \"memory attachment\" is a separate feature and is not affected by this switch.",
   "显示浏览器接管说明弹窗": "Show the browser-takeover intro popup",
@@ -4554,6 +4556,7 @@ function buildForm(cfg, canEditSubs) {
   const htmlPrompt = main.html_report_prompt || DEFAULT_HTML_PROMPT;
   const reactPrompt = main.react_prompt !== false;
   const browserTakeover = !!main.browser_takeover;
+  const browserTabMax = Math.min(50, Math.max(3, parseInt(main.browser_tab_max_number, 10) || 4));
   const memoryTools = main.memory_tools_enabled !== false;
 
   form.innerHTML = `
@@ -4602,6 +4605,10 @@ function buildForm(cfg, canEditSubs) {
     <div class="form-card"><h4>${t("主 agent")}</h4><div class="form-grid">
       <div class="field full takeover-switch-field">
         <label style="flex-direction:row;align-items:center;gap:8px;"><input type="checkbox" id="f_browser_takeover" ${browserTakeover ? "checked" : ""}> 🌐 ${t("开启浏览器接管功能")} ${info("开启后，会向主 agent 注入一组浏览器接管工具（占用上下文）。只有需要让 agent 操作浏览器时才开启。")}</label>
+      </div>
+      <div class="field full" id="browserTabMaxField" style="${browserTakeover ? "" : "display:none;"}">
+        <label>${t("允许 Agent保留的最大标签页数")} ${info("Agent 主动关闭标签页要花掉上下文，实际上很少这么做；于是「目前打开的标签页有哪些」会越列越长、白烧 token。这里设一个上限，超出的标签页按 LRU（最久未使用的先关）自动关闭，并在返回给模型的内容里注明关了哪些。<br/><br/>计数按浏览器进程算：同一个浏览器里的所有标签页都算在内（包括你自己手动打开的），当前聚焦的标签页永不关闭。两个 multi-agent 共用同一个浏览器时，按最近一次配置的 multi-agent 的值为准。<br/><br/>默认 4，最小 3（聚焦页不能关，1~2 会逼出「新页和聚焦页只能留一个」的死结），最大 50。")}</label>
+        <input id="f_browser_tab_max" type="number" min="3" max="50" step="1" value="${esc(String(browserTabMax))}">
       </div>
       <div class="field full">
         <label style="flex-direction:row;align-items:center;gap:8px;"><input type="checkbox" id="f_memory_tools" ${memoryTools ? "checked" : ""}> 🧠 ${t("开启记忆读取/写入功能")} ${info("开启后，会向主 agent 注入记忆读写工具（write_memory / read_memory），让 agent 能长期存取与检索信息；关闭后主 agent 不再拥有记忆读写工具。此设置影响图编译；「记忆吸附」是另一项功能，不受本开关影响。")}</label>
@@ -4852,6 +4859,17 @@ function buildForm(cfg, canEditSubs) {
     htmlReportChk.addEventListener("change", () => {
       htmlPromptField.style.display = htmlReportChk.checked ? "" : "none";
     });
+  }
+
+  // 未启用浏览器接管时，隐藏「允许 Agent保留的最大标签页数」。
+  const browserTakeoverChk = $("#f_browser_takeover");
+  const browserTabMaxField = $("#browserTabMaxField");
+  if (browserTakeoverChk && browserTabMaxField) {
+    const applyBrowserTabMaxVisible = () => {
+      browserTabMaxField.style.display = browserTakeoverChk.checked ? "" : "none";
+    };
+    browserTakeoverChk.addEventListener("change", applyBrowserTabMaxVisible);
+    applyBrowserTabMaxVisible();
   }
 
   const subsBox = $("#subs");
@@ -5125,6 +5143,7 @@ function buildPayload(cfg) {
       html_report_prompt: val("f_html_prompt"),
       react_prompt: $("#f_react_prompt").checked,
       browser_takeover: $("#f_browser_takeover").checked,
+      browser_tab_max_number: Math.min(50, Math.max(3, parseInt(val("f_browser_tab_max"), 10) || 4)),
       memory_tools_enabled: $("#f_memory_tools").checked,
     },
     sub_agents: $$(".subagent-box").map(collectSubAgent),

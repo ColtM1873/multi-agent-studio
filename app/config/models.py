@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator  # BID086: field_validator
 
 from app.config.db_names import join_conn_string
 
@@ -112,9 +112,31 @@ class MainAgentConfig(BaseModel):
     # 浏览器接管：开启后向主 agent 注入一组浏览器接管工具（占用上下文，按需开启）。
     # 影响图编译（工具绑定），改动后由 update_agent 的 invalidate 触发重建。
     browser_takeover: bool = False
+    # 本字段于BID086引入
+    # 允许 Agent 保留的最大标签页数（只在开启浏览器接管时生效）。默认 4，最小 3：
+    # 聚焦中的标签页永远不能关，上限设成 1~2 就会逼出「新页和聚焦页只能留一个」的
+    # 死结。计数按**浏览器进程**（一个 CDP 端口一张 LRU 表），不按 agent / 会话分。
+    browser_tab_max_number: int = 4
     # 记忆读写：开启后向主 agent 注入记忆工具（write_memory / read_memory），
     # 让 agent 能长期存取信息。影响图编译（工具绑定），改动后由 update_agent 的 invalidate 触发重建。
     memory_tools_enabled: bool = True
+
+    # 本函数于BID086引入
+    @field_validator("browser_tab_max_number", mode="before")
+    @classmethod
+    def _coerce_browser_tab_max_number(cls, value):
+        """把前端/旧配置里的任意值收敛成 3~50 的整数（非法值回退默认值 4）。
+
+        前端提交的是字符串；旧配置里没有这个字段；手改 JSON 也可能填 0 / 999。
+        钳在 3~50 与 ``browser_agent.prefs`` 的口径保持一致，避免两边对不上。
+        """
+        if value is None or value == "":
+            return 4
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            return 4
+        return max(3, min(50, number))
 
 
 class SubAgentConfig(BaseModel):

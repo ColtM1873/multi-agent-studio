@@ -595,7 +595,9 @@ async def build_world(
     memory_tools = [write_memory, read_memory]
     # 浏览器接管：开启后把 browser_agent 的 14 个工具并入主 agent 的非子图工具，
     # 从而被 bind_tools 注入、并由 tool_node_front 执行（见 inner_docs/ID56）。
-    browser_tools = await return_browser_tools() if main_spec.browser_takeover else []
+    # BID086：把本 multi-agent 的「允许 Agent 保留的最大标签页数」交给工具层——
+    # click / navigate 的描述里要写这个数字，运行时也按它收敛标签页（浏览器进程级）。
+    browser_tools = await return_browser_tools(main_spec.browser_tab_max_number) if main_spec.browser_takeover else []  # BID086
     # 记忆读写：关闭后不把记忆工具并入主 agent 的工具集（模型无法读写记忆）。
     selected_memory_tools = memory_tools if main_spec.memory_tools_enabled else []
     non_agent_tools = selected_memory_tools + pass_in_tools + browser_tools

@@ -4,6 +4,7 @@ from langchain_core.tools import tool as langchain_tool
 from typing import Annotated
 
 from browser_agent.controller import BrowserController, NOT_CALLED
+from browser_agent import prefs as browser_prefs  # BID086
 from app.runtime.browser_tools_wrap_up import _wrap_up
 from app.runtime.browser_tools_privacy_mask import apply_sensitive_replacement
 
@@ -390,8 +391,25 @@ def _merged_elem_desc(category: str, sep: str, english: bool) -> str:
     )
 
 
+# 本常量于BID086引入
+# 会打开新标签页的工具：只有它们的描述里要注入「标签页数量上限」，也只有它们在
+# 返回前会做 LRU 收敛（见 controller._trim_tabs_after_reply）。
+_TAB_LIMIT_TOOLS = ("tool_01_click", "tool_33_navigate")
+
+# 本常量于BID086引入
+# 注入到上面两个工具描述末尾的说明。数字取当前 multi-agent 的
+# 「允许 Agent 保留的最大标签页数」，图编译时现拼——不能写死在 docstring 里，
+# 否则改了设置描述还停在旧数字。
+_TAB_LIMIT_NOTE = (
+    "\n为界面简洁考虑，浏览器只会保持 {tab_max_numbers} 个标签页，"
+    "超出的按照 LRU 逻辑关闭。"
+)
+
+
 # 本函数于BID084引入
-def _apply_tool_wording(merge: bool, sep: str, english: bool) -> None:
+def _apply_tool_wording(
+    merge: bool, sep: str, english: bool, tab_max: int
+) -> None:
     """按当前口径覆盖工具的 description 与元素参数说明（调用方：return_browser_tools）。"""
     for tool in _ALL_TOOLS:
         name = tool.name
@@ -402,6 +420,8 @@ def _apply_tool_wording(merge: bool, sep: str, english: bool) -> None:
             desc = desc + (
                 _MERGE_NOTE_EN if english else _MERGE_NOTE_CN
             ).format(sep=sep)
+        if name in _TAB_LIMIT_TOOLS:  # BID086: click / navigate 注入标签页上限
+            desc = desc + _TAB_LIMIT_NOTE.format(tab_max_numbers=tab_max)  # BID086
         # 注意顺序：先写 description，再写参数说明。StructuredTool 的
         # ``description`` 赋值会让基于 args_schema 的 JSON schema 缓存失效；
         # 若先改参数说明，随后的 description 赋值会把参数说明刷回原文（实测）。
@@ -436,7 +456,20 @@ def _apply_tool_wording(merge: bool, sep: str, english: bool) -> None:
                     )
 
 
-async def return_browser_tools():
+async def return_browser_tools(tab_max: int | None = None):
+    """返回浏览器工具列表，并按当前口径写好描述。
+
+    BID086：``tab_max`` 是**该 multi-agent 配置**里的「允许 Agent 保留的最大标签页
+    数」（由 ``graph_builder.build_world`` 传入，未传时用默认值 4）。这里把它写进
+    click / navigate 的描述，同时交给 ``prefs.configure_tab_limit`` 作为**浏览器
+    进程级**的运行值——标签页 LRU 表按 CDP 端口（浏览器进程）分，不按 agent 或
+    会话分；同一个浏览器被多个 agent 共用时，以最近一次配置的值为准。
+    """
     merge, sep, english = _load_wording_options()  # BID084
-    _apply_tool_wording(merge, sep, english)  # BID084
+    browser_prefs.configure_tab_limit(  # BID086
+        browser_prefs.DEFAULT_TAB_LIMIT if tab_max is None else tab_max
+    )
+    _apply_tool_wording(  # BID084
+        merge, sep, english, browser_prefs.tab_limit()  # BID086
+    )
     return _ALL_TOOLS  # BID084

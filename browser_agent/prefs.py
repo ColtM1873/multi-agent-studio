@@ -66,3 +66,43 @@ def interactive_merge_separator() -> str:
 def interactive_english_enabled() -> bool:
     """当前可交互元素是否使用英文标签渲染。"""
     return _english_enabled
+
+
+# 本常量于BID086引入
+# 「允许 Agent 保留的最大标签页数」的默认值与上下限。
+# 下限取 3：当前聚焦的标签页永远不能被关（它就是本次返回内容的来源），上限若是
+# 1~2，一旦后台又开出一个新页，「新页」和「聚焦页」只能留一个，没有正确答案，
+# 3 起步才留出正常操作的余地。
+DEFAULT_TAB_LIMIT = 4
+MIN_TAB_LIMIT = 3
+MAX_TAB_LIMIT = 50
+
+# 本变量于BID086引入
+# 当前生效的「允许 Agent 保留的最大标签页数」。它和 ``image_tags`` / 整合开关一样
+# 是**进程级**的一档值——因为标签页是**浏览器进程**的资源（一个 CDP 端口一张 LRU
+# 表），上限自然也按浏览器算，不按 agent、也不按会话分别记账。app 层在图编译时用
+# ``configure_tab_limit()`` 写入（取自当前 multi-agent 配置），工具调用时现读。
+_tab_limit: int = DEFAULT_TAB_LIMIT
+
+
+# 本函数于BID086引入
+def _coerce_tab_limit(value) -> int:
+    """把任意输入收敛成 3~50 的整数（非法值回退默认值）。"""
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return DEFAULT_TAB_LIMIT
+    return max(MIN_TAB_LIMIT, min(MAX_TAB_LIMIT, number))
+
+
+# 本函数于BID086引入
+def configure_tab_limit(limit) -> None:
+    """设置「允许 Agent 保留的最大标签页数」（clamp 到 3~50），调用时现读。"""
+    global _tab_limit
+    _tab_limit = _coerce_tab_limit(limit)
+
+
+# 本函数于BID086引入
+def tab_limit() -> int:
+    """当前生效的「允许 Agent 保留的最大标签页数」（3~50）。"""
+    return _tab_limit
