@@ -4,7 +4,6 @@ from langchain_core.tools import tool as langchain_tool
 from typing import Annotated
 
 from browser_agent.controller import BrowserController, NOT_CALLED
-from browser_agent import prefs as browser_prefs  # BID086
 from app.runtime.browser_tools_wrap_up import _wrap_up
 from app.runtime.browser_tools_privacy_mask import apply_sensitive_replacement
 
@@ -328,18 +327,6 @@ _MERGE_NOTE_EN = (
     "`<Scroll elem N>` is the only exception and stays paired."
 )
 
-# 本常量于BID086引入
-# 会打开新标签页的工具（只在它们的描述里注入「标签页数量上限」）。
-_TAB_LIMIT_TOOLS = ("tool_01_click", "tool_33_navigate")
-
-# 本常量于BID086引入
-# 注入到上面两个工具描述末尾的说明（与返回给 LLM 的自动关闭提示同一口径，
-# 中文正文 + 具体数字，数字取当前 multi-agent 的「允许 Agent 保留的最大标签页数」）。
-_TAB_LIMIT_NOTE = (
-    "\n为界面简洁考虑，浏览器只会保持 {tab_max_numbers} 个标签页，"
-    "超出的按照 LRU 逻辑关闭。"
-)
-
 
 # 本函数于BID084引入
 def _load_wording_options() -> tuple[bool, str, bool]:
@@ -404,10 +391,8 @@ def _merged_elem_desc(category: str, sep: str, english: bool) -> str:
 
 
 # 本函数于BID084引入
-def _apply_tool_wording(merge: bool, sep: str, english: bool, tab_max: int = 0) -> None:
+def _apply_tool_wording(merge: bool, sep: str, english: bool) -> None:
     """按当前口径覆盖工具的 description 与元素参数说明（调用方：return_browser_tools）。"""
-    if not tab_max:  # BID086
-        tab_max = browser_prefs.DEFAULT_TAB_LIMIT  # BID086
     for tool in _ALL_TOOLS:
         name = tool.name
         desc = _EN_DESC.get(name, _BASE_DESC[name]) if english else _BASE_DESC[name]
@@ -417,8 +402,6 @@ def _apply_tool_wording(merge: bool, sep: str, english: bool, tab_max: int = 0) 
             desc = desc + (
                 _MERGE_NOTE_EN if english else _MERGE_NOTE_CN
             ).format(sep=sep)
-        if name in _TAB_LIMIT_TOOLS:  # BID086: click / navigate 注入标签页上限
-            desc = desc + _TAB_LIMIT_NOTE.format(tab_max_numbers=tab_max)  # BID086
         # 注意顺序：先写 description，再写参数说明。StructuredTool 的
         # ``description`` 赋值会让基于 args_schema 的 JSON schema 缓存失效；
         # 若先改参数说明，随后的 description 赋值会把参数说明刷回原文（实测）。
@@ -453,15 +436,7 @@ def _apply_tool_wording(merge: bool, sep: str, english: bool, tab_max: int = 0) 
                     )
 
 
-async def return_browser_tools(tab_max: int | None = None):
-    """返回浏览器工具列表，并按当前口径写好描述。
-
-    BID086：``tab_max`` 为当前 multi-agent 的「允许 Agent 保留的最大标签页数」，
-    由 ``graph_builder.build_world`` 传入（未传时用默认值 4）。它同时决定 click /
-    navigate 工具描述里的数字——运行时行为由 ``prefs.tab_limit_scope`` 提供。
-    """
+async def return_browser_tools():
     merge, sep, english = _load_wording_options()  # BID084
-    if tab_max is None:  # BID086
-        tab_max = browser_prefs.DEFAULT_TAB_LIMIT  # BID086
-    _apply_tool_wording(merge, sep, english, tab_max)  # BID086
+    _apply_tool_wording(merge, sep, english)  # BID084
     return _ALL_TOOLS  # BID084

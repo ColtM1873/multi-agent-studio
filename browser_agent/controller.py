@@ -14,7 +14,6 @@ from typing import Optional
 from . import debug, studio_marker, timing
 from . import bid065_trace  # BID065
 from . import finalize as finalize_output  # BID084
-from . import prefs as runtime_prefs  # BID086
 from .actions import (
     ActionError,
     ActionExecutor,
@@ -381,28 +380,6 @@ def _finalize_llm_output(func):
     return wrapper
 
 
-# 本函数于BID086引入
-def _trim_tabs_after_reply(func):
-    """公开工具方法返回前的最后一步：按 LRU 收敛标签页并追加提示。
-
-    必须叠在 ``_finalize_llm_output`` **外层**（写在它上方一行），因为需求是「在英文
-    转换层之后」再追加这条中文提示；此时 content 已定稿，追加的文字不会再被整合/英文
-    渲染改写。只用在**可能打开新标签页**的工具上（``tool_01_click`` /
-    ``tool_33_navigate``），其余工具不判断、也不关标签页。
-
-    调用前先拍下「当前活动标签页集合」当基线：动作之后新出现的标签页就是本次开出来的，
-    会被记进本对话的 LRU 表（后台新标签页从没被激活过，不记账就永远不计入上限）。
-    """
-
-    @functools.wraps(func)
-    def wrapper(self, *args, **kwargs):
-        baseline = self._tab_baseline_before_call()
-        result = func(self, *args, **kwargs)
-        return self._trim_tabs_and_notice(result, baseline)
-
-    return wrapper
-
-
 class _ContainerScroller:
     """Scrolls an element-level scroll container (``[可滚动元素 eN]``)."""
 
@@ -490,13 +467,6 @@ class BrowserController:
         self._name_counter = NameCounter()
         self._prev_trees: dict[str, EnhancedTree] = {}
         self._tab_registry = TabRegistry()
-        # 本属性于BID086引入
-        # 「每个对话一张」的标签页 LRU 表：{对话标识: [标签页 targetId, ...]}，
-        # 每张表都是「最久未使用的在前」。进程内只有一个浏览器、标签页是它唯一的
-        # 真实资源，但**计数按对话各算各的**：一张表里只有本对话激活过 / 开出来的
-        # 标签页，别的对话（或用户自己）开着的标签页既不计入上限，也不会被关掉。
-        # 已关闭的标签页由 ``_conv_tab_order`` 惰性剔除，空表直接删掉。
-        self._tab_lru_by_conv: dict[str, list[str]] = {}
         self._last_error: str = ""
         # 连续「死点击」计数：key=(doc_token, frame_id, backend_node_id) → 连续
         # 点击后前后 DOM 逐字节一致的次数。用于在 LLM 反复点击同一个非功能性元素
@@ -639,196 +609,6 @@ class BrowserController:
 
     def tab_labels(self) -> list[str]:
         return self._tab_registry.names(self._live_targets())
-
-    # ------------------------------------------------------------------ #
-    # 标签页 LRU（BID086：按「对话」分桶）
-    # ------------------------------------------------------------------ #
-    # 本函数于BID086引入
-    def _conversation_key(self) -> str:
-        """当前对话的 LRU 桶名（由 app 层在每次工具调用时用 contextvar 提供）。"""
-        return runtime_prefs.conversation_id() or ""
-
-    # 本函数于BID086引入
-    def _tab_baseline_before_call(self) -> Optional[set]:
-        """给「本次调用新开了哪些标签页」取基线：连接后的活动标签页集合。
-
-        取不到（连不上浏览器）时返回 ``None``：此时不把任何标签页记成本次新开，
-        宁可不计数，也不能把用户/别的对话原有的标签页当成「本对话开的」而关掉。
-        """
-        try:
-            self.ensure_connected()
-            return {t["targetId"] for t in self._page_targets()}
-        except Exception:  # noqa: BLE001
-            return None
-
-    # 本函数于BID086引入
-    def _prune_conv_tables(self, live: set) -> None:
-        """清理别的对话桶里已经关闭的标签页（表空了就整桶删掉，避免无限增长）。"""
-        if len(self._tab_lru_by_conv) <= 8:
-            return
-        for conv in list(self._tab_lru_by_conv):
-            kept = [tid for tid in self._tab_lru_by_conv[conv] if tid in live]
-            if kept:
-                self._tab_lru_by_conv[conv] = kept
-            else:
-                self._tab_lru_by_conv.pop(conv, None)
-
-    # 本函数于BID086引入
-    def _conv_tab_order(self, live: Optional[set] = None) -> list[str]:
-        """当前对话的 LRU 顺序（最久未使用的在前），只含**本对话**用过/开过的标签页。
-
-        桶里已经关闭的标签页会被剔除。注意这里**不**把「本来就在浏览器里、本对话没
-        碰过」的标签页收进来——它们属于别的对话（或用户自己开着），不该由本对话计数
-        或关闭。这也是「每个对话各算各的」的落点。
-        """
-        if live is None:
-            live = {t["targetId"] for t in self._live_targets()}
-        conv = self._conversation_key()
-        order = [tid for tid in self._tab_lru_by_conv.get(conv, []) if tid in live]
-        if order:
-            self._tab_lru_by_conv[conv] = order
-        elif conv in self._tab_lru_by_conv:
-            self._tab_lru_by_conv.pop(conv, None)
-        self._prune_conv_tables(live)
-        return order
-
-    # 本函数于BID086引入
-    def _touch_tab_lru(self, target_id: str) -> None:
-        """把某个标签页记成「本对话最近使用」（已在表里则移到表尾）。"""
-        if not target_id:
-            return
-        conv = self._conversation_key()
-        order = self._tab_lru_by_conv.setdefault(conv, [])
-        if target_id in order:
-            order.remove(target_id)
-        order.append(target_id)
-
-    # 本函数于BID086引入
-    def _remember_opened_tabs(self, baseline: Optional[set]) -> None:
-        """把本次调用期间新开出来的标签页记进当前对话的 LRU 表（视为最新）。
-
-        典型来源：点击 ``target=_blank`` 链接后由页面异步打开的**后台**标签页——它
-        从没被激活过，若不显式记账就永远不会被本对话计数。
-        """
-        if baseline is None or self.client is None:
-            return
-        for target in self._page_targets():
-            target_id = target.get("targetId")
-            if target_id and target_id not in baseline:
-                self._touch_tab_lru(target_id)
-
-    # 本函数于BID086引入
-    def _forget_target(self, target_id: str) -> None:
-        """清除某个标签页在控制器里的全部登记（标签页关闭后调用）。"""
-        self._registries.pop(target_id, None)
-        self._prev_trees.pop(target_id, None)
-        self._studio_marked_targets.discard(target_id)
-        self._tab_registry.forget(target_id)
-        for conv in list(self._tab_lru_by_conv):
-            kept = [tid for tid in self._tab_lru_by_conv[conv] if tid != target_id]
-            if kept:
-                self._tab_lru_by_conv[conv] = kept
-            else:
-                self._tab_lru_by_conv.pop(conv, None)
-        if self.focused_target_id == target_id:
-            self.focused_target_id = None
-
-    # 本函数于BID086引入
-    def _wait_targets_closed(self, target_ids, timeout: Optional[float] = None) -> None:
-        """有界等待给定标签页从活动列表里消失（不做无限轮询）。"""
-        pending = {tid for tid in target_ids if tid}
-        if not pending:
-            return
-        cfg = timing.get().ready
-        if timeout is None:
-            timeout = cfg.close_timeout
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            live = {t["targetId"] for t in self._page_targets()}
-            if not (pending & live):
-                return
-            time.sleep(cfg.close_poll_interval)
-
-    # 本函数于BID086引入
-    def _enforce_tab_limit(self) -> list[str]:
-        """本对话的标签页超过「允许 Agent 保留的最大标签页数」时，按 LRU 关闭最旧的。
-
-        触发时机：只在**可能打开新标签页**的工具之后（``tool_01_click`` /
-        ``tool_33_navigate``，见 ``_trim_tabs_after_reply``），不会因为滚动/读取等
-        只读工具而关掉用户正在看的页面。
-
-        计数口径：**每个对话各算各的**——只统计本对话激活过 / 开出来的标签页，
-        别的对话（或用户自己）开着的标签页既不计入上限、也不会被本对话关闭。
-        返回被关闭标签页的显示名列表（``<title><NNN>``）；未关闭任何标签页时为空。
-        两条硬约束：当前聚焦标签页永不关闭（它正是本次返回内容的来源）；关不掉的目标
-        只被踢出 LRU 表，不会拖成死循环，最终让本次工具调用正常返回。
-        """
-        limit = runtime_prefs.tab_limit()
-        if self.client is None:
-            return []
-        live = {t["targetId"] for t in self._live_targets()}
-        order = self._conv_tab_order(live)
-        excess = len(order) - limit
-        if excess <= 0:
-            return []
-        focused = self.focused_target_id
-        conv = self._conversation_key()
-        closed: list[str] = []
-        closed_ids: list[str] = []
-        for target_id in list(order):
-            if excess <= 0:
-                break
-            if target_id == focused:
-                continue
-            name = self._name_for_target(target_id) or target_id
-            try:
-                self.client.send("Target.closeTarget", {"targetId": target_id})
-            except CDPError as exc:
-                logger.debug("自动关闭标签页失败 (%s): %s", target_id, exc)
-                kept = [tid for tid in self._tab_lru_by_conv.get(conv, []) if tid != target_id]
-                if kept:
-                    self._tab_lru_by_conv[conv] = kept
-                else:
-                    self._tab_lru_by_conv.pop(conv, None)
-                continue
-            closed.append(name)
-            closed_ids.append(target_id)
-            self._forget_target(target_id)
-            excess -= 1
-        if closed_ids:
-            self._wait_targets_closed(closed_ids)
-        return closed
-
-    # 本函数于BID086引入
-    def _trim_tabs_and_notice(self, result, baseline=None):
-        """按 LRU 收敛标签页，并把「已经自动关闭标签页：…」追加到返回内容。
-
-        由 ``_trim_tabs_after_reply`` 在最终表现层之后调用。收敛失败绝不影响本次
-        工具结果（它只是省上下文的优化）。``baseline`` 是本次调用前抓到的标签页
-        集合，用来识别「这次新开了哪些标签页」并记进本对话的 LRU 表。
-        """
-        if not isinstance(result, dict):
-            return result
-        try:
-            with self._op_lock:  # 与其它浏览器操作串行，避免并发关掉同一批标签页
-                self._remember_opened_tabs(baseline)
-                closed = self._enforce_tab_limit()
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("标签页数量收敛失败: %s", exc)
-            return result
-        notice = rp.auto_closed_tabs_notice(closed)
-        if not notice:
-            return result
-        out = dict(result)
-        content = out.get("content")
-        if isinstance(content, str) and content and content != rp.EMPTY_CONTENT:
-            out["content"] = content + "\n\n" + notice
-        else:
-            out["content"] = notice
-        if "tabs" in out:
-            # 被关掉的可能正是本结果里列出的标签页：重列一次，别给 LLM 过期名单。
-            out["tabs"] = self.tab_labels()
-        return out
 
     @_finalize_llm_output  # BID084
     def tab_url_map(self) -> dict:
@@ -1015,7 +795,6 @@ class BrowserController:
         except CDPError:
             pass
         self.focused_target_id = target_id
-        self._touch_tab_lru(target_id)  # BID086: 每次激活都算「最近使用」
         return True
 
     # ------------------------------------------------------------------ #
@@ -1890,7 +1669,6 @@ class BrowserController:
             error=fill_error or rp.NO_ERROR, include_tabs=False,
         )
 
-    @_trim_tabs_after_reply  # BID086
     @_finalize_llm_output  # BID084
     def interact_click(self, name: str) -> dict:
         """与单个『可点击元素』互动，返回增量 DOM。"""
@@ -3174,11 +2952,20 @@ class BrowserController:
             self.client.send("Target.closeTarget", {"targetId": target_id})
         except CDPError as exc:
             return {"tabs": self.tab_labels(), "error": str(exc)}
-        self._wait_targets_closed([target_id])  # BID086: 抽出有界等待
-        self._forget_target(target_id)  # BID086: 统一清理（含 LRU 表）
+        cfg = timing.get().ready
+        deadline = time.time() + cfg.close_timeout
+        while time.time() < deadline:
+            if target_id not in {t["targetId"] for t in self._page_targets()}:
+                break
+            time.sleep(cfg.close_poll_interval)
+        self._registries.pop(target_id, None)
+        self._prev_trees.pop(target_id, None)
+        self._studio_marked_targets.discard(target_id)
+        self._tab_registry.forget(target_id)
+        if self.focused_target_id == target_id:
+            self.focused_target_id = None
         return {"tabs": self.tab_labels()}
 
-    @_trim_tabs_after_reply  # BID086
     @_finalize_llm_output  # BID084
     def navigate(self, url: str) -> dict:
         """tool_33_navigate: open a new tab at the given URL, return its full DOM."""

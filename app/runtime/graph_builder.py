@@ -37,7 +37,6 @@ from app.runtime.message_repair import repair_tool_pairs
 from app.services import snapshot as snapshot_service
 
 from browser_agent import bid065_trace  # BID065
-from browser_agent import prefs as browser_prefs  # BID086
 
 logger = logging.getLogger(__name__)
 
@@ -67,23 +66,6 @@ async def _try_capture_snapshot(runnable_config, conn_string: str, agent_id: str
         await snapshot_service.capture_snapshot(conn_string, thread_id, agent_id)
     except Exception:  # noqa: BLE001
         logger.exception("生成快照失败 (agent_id=%s)", agent_id)
-
-
-# 本函数于BID086引入
-def _conversation_key(runnable_config, agent_id: str) -> str:
-    """浏览器工具「当前对话」的桶名：``<agent_id>::<thread_id>``。
-
-    线程（会话）名是用户自己起的（``新会话名称``），不同 multi-agent 之间完全可能同名，
-    而浏览器（以及标签页）是跨 multi-agent 共享的，所以必须带 agent 前缀，否则两个
-    agent 的同名会话会共用一张标签页 LRU 表。
-    """
-    try:
-        configurable = (runnable_config or {}).get("configurable", {})
-        thread_id = str(configurable.get("thread_id") or "")
-    except Exception:  # noqa: BLE001
-        thread_id = ""
-    return f"{agent_id}::{thread_id}"
-
 
 def make_sub_agent_tool(name: str, description: str) -> StructuredTool:
     if not name or not name.strip():
@@ -613,12 +595,7 @@ async def build_world(
     memory_tools = [write_memory, read_memory]
     # 浏览器接管：开启后把 browser_agent 的 14 个工具并入主 agent 的非子图工具，
     # 从而被 bind_tools 注入、并由 tool_node_front 执行（见 inner_docs/ID56）。
-    # BID086：本 multi-agent 的「允许 Agent 保留的最大标签页数」——既写进 click /
-    # navigate 的工具描述，也在下面每个工具调用前用 tab_limit_scope 提供给运行时
-    # （标签页 LRU 自动关闭）。用 contextvar 而非进程级全局，故不同 agent 并发也不会串台。
-    browser_tab_max_number = main_spec.browser_tab_max_number  # BID086
-    browser_agent_id = config.agent_id  # BID086: 标签页 LRU 的对话桶前缀（浏览器跨 agent 共享）
-    browser_tools = await return_browser_tools(browser_tab_max_number) if main_spec.browser_takeover else []  # BID086
+    browser_tools = await return_browser_tools() if main_spec.browser_takeover else []
     # 记忆读写：关闭后不把记忆工具并入主 agent 的工具集（模型无法读写记忆）。
     selected_memory_tools = memory_tools if main_spec.memory_tools_enabled else []
     non_agent_tools = selected_memory_tools + pass_in_tools + browser_tools
@@ -1057,10 +1034,9 @@ async def build_world(
         bid065_trace.mark_elapsed("node produce_html_call_llm LLM调用", _bid065_t0)  # BID065
         return {"messages": [response]}
 
-    async def tool_node_front(state, config: RunnableConfig):
+    async def tool_node_front(state):
         _bid065_node_t0 = bid065_trace.perf()  # BID065
         bid065_trace.mark("node tool_node_front START")  # BID065
-        conversation_key = _conversation_key(config, browser_agent_id)  # BID086
         result = []
         for tool_call in state["messages"][-1].tool_calls:
             tool_name = tool_call["name"]
@@ -1079,9 +1055,7 @@ async def build_world(
             _bid065_tc0 = bid065_trace.perf()  # BID065
             bid065_trace.mark(f"tool START {tool_name}")  # BID065
             try:
-                with browser_prefs.tab_limit_scope(browser_tab_max_number):  # BID086
-                    with browser_prefs.conversation_scope(conversation_key):  # BID086
-                        observation = await tool.ainvoke(tool_call["args"])  # BID086
+                observation = await tool.ainvoke(tool_call["args"])
                 result.append(ToolMessage(content=observation, tool_call_id=tool_call["id"], name=tool_name))
             except Exception as e:
                 result.append(ToolMessage(content=str(e), tool_call_id=tool_call["id"], name=tool_name))
@@ -1089,10 +1063,9 @@ async def build_world(
         bid065_trace.mark_elapsed("node tool_node_front END", _bid065_node_t0)  # BID065
         return {"messages": result}
 
-    async def tool_node(state, config: RunnableConfig):
+    async def tool_node(state):
         _bid065_node_t0 = bid065_trace.perf()  # BID065
         bid065_trace.mark("node tool_node START")  # BID065
-        conversation_key = _conversation_key(config, browser_agent_id)  # BID086
         result = []
         for tool_call in state["messages"][-1].tool_calls:
             tool_name = tool_call["name"]
@@ -1109,9 +1082,7 @@ async def build_world(
             _bid065_tc0 = bid065_trace.perf()  # BID065
             bid065_trace.mark(f"tool START {tool_name}")  # BID065
             try:
-                with browser_prefs.tab_limit_scope(browser_tab_max_number):  # BID086
-                    with browser_prefs.conversation_scope(conversation_key):  # BID086
-                        observation = await tool.ainvoke(tool_call["args"])  # BID086
+                observation = await tool.ainvoke(tool_call["args"])
                 result.append(ToolMessage(content=observation, tool_call_id=tool_call["id"], name=tool_name))
             except Exception as e:
                 result.append(ToolMessage(content=str(e), tool_call_id=tool_call["id"], name=tool_name))
