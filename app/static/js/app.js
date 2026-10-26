@@ -230,6 +230,8 @@ const I18N_EN = {
   "点击查看完整内容": "Click to view the full content",
   "开启浏览器接管功能": "Enable browser takeover",
   "开启后，会向主 agent 注入一组浏览器接管工具（占用上下文）。只有需要让 agent 操作浏览器时才开启。": "When enabled, a set of browser-takeover tools is injected into the main agent (consuming context). Only turn it on when the agent needs to operate a browser.",
+  "允许 Agent保留的最大标签页数": "Max tabs the agent may keep",
+  "Agent 主动关闭标签页需要耗费上下文，而且常常不会主动关闭，于是「目前打开了哪些标签页」这份信息会越来越臃肿、持续消耗 token。<br/><br/>因此这里限制 Agent 最多保留多少个标签页：超出后，浏览器会按 LRU（最近最少使用）逻辑自动关闭最久没用的标签页，并在工具返回里说明「为了界面简洁，已经自动关闭标签页：…」。<br/><br/>每个对话各算各的：只统计本对话打开/用过的标签页，不会去关别的对话或你自己开着的标签页。<br/><br/>默认 4，最小 3，最大 50（留空按 4 处理）；若在默认配置里设置了本项，新建的 multi-agent 会跟着默认配置走。": "Agents rarely close tabs on their own (closing one costs context), so the \"which tabs are open\" information keeps growing and burning tokens.<br/><br/>This limits how many tabs the agent may keep: once exceeded, the browser automatically closes the least-recently-used tabs (LRU) and reports \"tabs auto-closed for a tidy UI: …\" in the tool result.<br/><br/>Each conversation counts on its own: only the tabs opened/used by that conversation are counted, and tabs opened by other conversations or by you are never closed.<br/><br/>Default 4, minimum 3, maximum 50 (an empty value means 4); if you set it in the default configuration, newly created multi-agents follow that default.",
   "开启记忆读取/写入功能": "Enable memory read/write",
   "开启后，会向主 agent 注入记忆读写工具（write_memory / read_memory），让 agent 能长期存取与检索信息；关闭后主 agent 不再拥有记忆读写工具。此设置影响图编译；「记忆吸附」是另一项功能，不受本开关影响。": "When enabled, memory read/write tools (write_memory / read_memory) are injected into the main agent so it can store and retrieve information long-term; when disabled the main agent no longer has memory read/write tools. This affects graph compilation; \"memory attachment\" is a separate feature and is not affected by this switch.",
   "显示浏览器接管说明弹窗": "Show the browser-takeover intro popup",
@@ -4553,6 +4555,9 @@ function buildForm(cfg, canEditSubs) {
   const htmlPrompt = main.html_report_prompt || DEFAULT_HTML_PROMPT;
   const reactPrompt = main.react_prompt !== false;
   const browserTakeover = !!main.browser_takeover;
+  // BID086：允许 Agent 保留的最大标签页数（默认 4，最小 3；新建时按默认配置预填）。
+  // 模板字符串内不能写注释，故下面的输入框（#browserTabMaxField / #f_browser_tab_max）在此标注。
+  const browserTabMax = Math.min(50, Math.max(3, parseInt(main.browser_tab_max_number, 10) || 4));
   const memoryTools = main.memory_tools_enabled !== false;
 
   form.innerHTML = `
@@ -4601,6 +4606,10 @@ function buildForm(cfg, canEditSubs) {
     <div class="form-card"><h4>${t("主 agent")}</h4><div class="form-grid">
       <div class="field full takeover-switch-field">
         <label style="flex-direction:row;align-items:center;gap:8px;"><input type="checkbox" id="f_browser_takeover" ${browserTakeover ? "checked" : ""}> 🌐 ${t("开启浏览器接管功能")} ${info("开启后，会向主 agent 注入一组浏览器接管工具（占用上下文）。只有需要让 agent 操作浏览器时才开启。")}</label>
+      </div>
+      <div class="field full" id="browserTabMaxField" style="${browserTakeover ? "" : "display:none;"}">
+        <label>${t("允许 Agent保留的最大标签页数")} ${info("Agent 主动关闭标签页需要耗费上下文，而且常常不会主动关闭，于是「目前打开了哪些标签页」这份信息会越来越臃肿、持续消耗 token。<br/><br/>因此这里限制 Agent 最多保留多少个标签页：超出后，浏览器会按 LRU（最近最少使用）逻辑自动关闭最久没用的标签页，并在工具返回里说明「为了界面简洁，已经自动关闭标签页：…」。<br/><br/>每个对话各算各的：只统计本对话打开/用过的标签页，不会去关别的对话或你自己开着的标签页。<br/><br/>默认 4，最小 3，最大 50（留空按 4 处理）；若在默认配置里设置了本项，新建的 multi-agent 会跟着默认配置走。")}</label>
+        <input id="f_browser_tab_max" type="number" min="3" max="50" step="1" value="${esc(String(browserTabMax))}">
       </div>
       <div class="field full">
         <label style="flex-direction:row;align-items:center;gap:8px;"><input type="checkbox" id="f_memory_tools" ${memoryTools ? "checked" : ""}> 🧠 ${t("开启记忆读取/写入功能")} ${info("开启后，会向主 agent 注入记忆读写工具（write_memory / read_memory），让 agent 能长期存取与检索信息；关闭后主 agent 不再拥有记忆读写工具。此设置影响图编译；「记忆吸附」是另一项功能，不受本开关影响。")}</label>
@@ -4843,6 +4852,17 @@ function buildForm(cfg, canEditSubs) {
   }
 
   $("#resetHtmlBtn").onclick = () => { $("#f_html_prompt").value = DEFAULT_HTML_PROMPT; };
+
+  // BID086：只有勾选「开启浏览器接管功能」时才显示「允许 Agent 保留的最大标签页数」。
+  const browserTakeoverChk = $("#f_browser_takeover");
+  const browserTabMaxField = $("#browserTabMaxField");
+  if (browserTakeoverChk && browserTabMaxField) {
+    const applyBrowserTabMaxVisible = () => {
+      browserTabMaxField.style.display = browserTakeoverChk.checked ? "" : "none";
+    };
+    browserTakeoverChk.addEventListener("change", applyBrowserTabMaxVisible);
+    applyBrowserTabMaxVisible();
+  }
 
   // 未启用 HTML 报告时，隐藏「HTML 报告生成 prompt」设置项。
   const htmlReportChk = $("#f_html_report");
@@ -5124,6 +5144,8 @@ function buildPayload(cfg) {
       html_report_prompt: val("f_html_prompt"),
       react_prompt: $("#f_react_prompt").checked,
       browser_takeover: $("#f_browser_takeover").checked,
+      // BID086：3~50 的整数，空值/非法值回退默认 4（下限 3 与后端一致）。
+      browser_tab_max_number: Math.min(50, Math.max(3, parseInt(val("f_browser_tab_max"), 10) || 4)),
       memory_tools_enabled: $("#f_memory_tools").checked,
     },
     sub_agents: $$(".subagent-box").map(collectSubAgent),

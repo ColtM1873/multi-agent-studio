@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator  # BID086: field_validator
 
 from app.config.db_names import join_conn_string
 
@@ -112,9 +112,33 @@ class MainAgentConfig(BaseModel):
     # 浏览器接管：开启后向主 agent 注入一组浏览器接管工具（占用上下文，按需开启）。
     # 影响图编译（工具绑定），改动后由 update_agent 的 invalidate 触发重建。
     browser_takeover: bool = False
+    # 本字段于BID086引入
+    # 浏览器接管：允许 Agent 保留的最大标签页数（默认 4，最小 3，最大 50）。
+    # 超出后浏览器按 LRU 自动关闭「本对话」最久未使用的标签页，避免「目前打开了哪些
+    # 标签页」这份信息越来越臃肿、持续消耗 token。默认配置模板里改了本项，新建的
+    # multi-agent 会跟着默认配置走（表单按默认配置预填）。影响工具描述与运行时行为，
+    # 改动后由 update_agent 的 invalidate 触发重建。
+    browser_tab_max_number: int = 4
     # 记忆读写：开启后向主 agent 注入记忆工具（write_memory / read_memory），
     # 让 agent 能长期存取信息。影响图编译（工具绑定），改动后由 update_agent 的 invalidate 触发重建。
     memory_tools_enabled: bool = True
+
+    # 本函数于BID086引入
+    @field_validator("browser_tab_max_number", mode="before")
+    @classmethod
+    def _coerce_browser_tab_max_number(cls, value):
+        """把「最大标签页数」收敛成 3~50 的整数（空/非法值回退默认 4）。
+
+        旧配置文件没有这个字段时 pydantic 直接用默认值，不会走到这里；这里只负责
+        兜住前端手填的空串 / 0 / 负数 / 超大值，避免保存进磁盘后才在运行时出错。
+        下限 3 与 ``browser_agent.prefs.MIN_TAB_LIMIT`` 保持一致：上限 1~2 会逼出
+        「刚打开的标签页与当前聚焦页只能留一个」这种没有正确答案的取舍。
+        """
+        try:
+            number = int(float(str(value).strip())) if value not in (None, "") else 4
+        except (TypeError, ValueError):
+            number = 4
+        return max(3, min(50, number))
 
 
 class SubAgentConfig(BaseModel):

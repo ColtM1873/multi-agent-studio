@@ -230,6 +230,25 @@ def focus_mismatch_notice(requested: str, actual: str) -> str:
     )
 
 
+# 本函数于BID086引入
+def auto_closed_tabs_notice(closed: list) -> str:
+    """告知 LLM「为了界面简洁，浏览器按 LRU 自动关掉了哪些标签页」。
+
+    作用：Agent 主动关闭标签页要花上下文、常常干脆不关，于是「目前打开了哪些标签页」
+    这份信息会越来越臃肿。超出「允许 Agent 保留的最大标签页数」后由控制器自动关闭本
+    对话最久未使用的标签页，并把本条追加到工具返回内容的末尾，让 LLM 知道这些名字已失效。
+    触发条件：工具执行后**本对话**的活动标签页数超过上限（只在可能打开新标签页的工具上
+    判断：tool_01_click / tool_33_navigate）；每个对话各算各的，别的对话的标签页不受影响。
+    返回时机：**最终表现层（整合 + 英文渲染）之后**追加到 content 末尾；
+    与 ``new_tab_notice`` 一致，正文说明保持中文（英文化只换标签与术语）。
+    入参：closed 为被关闭标签页的显示名列表（``<title><NNN>``）。
+    """
+    names = "、".join(name for name in (closed or []) if name)
+    if not names:
+        return ""
+    return f"为了界面简洁，已经自动关闭标签页：{names}"
+
+
 # 作用：提示「本次互动在当前聚焦标签页之外新开了标签页，但聚焦页未变」，引导 LLM 切换过去。
 # 触发条件：点击/批量操作后发现新增了标签页，而聚焦标签页没有改变。
 # 返回时机：_finish_interaction / interact_many 中 opened_names 非空时，作为（或追加到）content。
