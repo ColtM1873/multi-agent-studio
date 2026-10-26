@@ -211,11 +211,14 @@ const I18N_EN = {
   "新增常用prompt": "Add common prompt",
   "已保存常用 prompt": "Common prompt saved",
   "确定删除这条常用 prompt？删除后，指向它的会话会回到「未设置」。": "Delete this common prompt? Sessions pointing to it will go back to \"not set\".",
+  "确定删除这条常用 prompt（当前会话正在使用）？删除后，本会话和所有指向它的会话都会回到「未设置」。": "Delete this common prompt (currently used by this session)? This session and every session pointing to it will go back to \"not set\".",
   "已删除该条常用 prompt": "Common prompt deleted",
+  "已删除该条常用 prompt，当前会话已回到「未设置」": "Common prompt deleted; this session is back to \"not set\"",
+  "这条常用 prompt 已不存在，请关闭后重新打开": "This common prompt no longer exists. Close and reopen this dialog.",
   "常用 prompt 内容": "Common prompt content",
   "例如：请用简体中文回答，先给结论再给理由。": "e.g. Answer in Simplified Chinese; give the conclusion first, then the reasoning.",
   "直接输入": "Enter manually",
-  "从下方全局库中选取一条，作为当前会话的常用 prompt。保存的是「指向该条的指针」：以后在主界面改了这一条，本会话会跟着一起变（该条被删除则本会话回到「未设置」）。": "Pick one entry from the global library below as this session's common prompt. What is saved is a pointer to that entry: editing it on the main screen updates this session too (if that entry is deleted, this session goes back to \"not set\").",
+  "从下方全局库中选取一条，作为当前会话的常用 prompt。保存的是「指向该条的指针」：以后在主界面改了这一条，本会话会跟着一起变（该条被删除则本会话回到「未设置」）。每条右侧的「编辑」「删除」会直接修改全局库，删除后所有指向它的会话都会回到「未设置」。": "Pick one entry from the global library below as this session's common prompt. What is saved is a pointer to that entry: editing it on the main screen updates this session too (if that entry is deleted, this session goes back to \"not set\"). The \"Edit\" and \"Delete\" buttons on each row modify the global library directly; once an entry is deleted, every session pointing to it goes back to \"not set\".",
   "直接输入常用prompt": "Type a common prompt",
   "新增常用 prompt 失败": "Failed to add the common prompt",
   "全局常用prompt库为空：可点「直接输入」新建一条，或先到主界面「编辑全局常用prompt」新增条目。": "The global common-prompt library is empty. Click \"Enter manually\" to create one, or add entries via \"Edit global common prompts\" on the main screen first.",
@@ -258,6 +261,7 @@ const I18N_EN = {
   "例如 张三": "e.g. John Doe",
   "删除本行": "Delete this row",
   "在下方新增一行": "Add a new row below",
+  "确定删除这一行敏感信息吗？": "Delete this sensitive-info row?",
   "注入 敏感信息替换列表": "Inject sensitive-info replacement list",
   "敏感信息替换列表：": "Sensitive-info replacement list:",
   "📋 敏感信息替换列表 注入块": "📋 Sensitive-info replacement list injection block",
@@ -3041,7 +3045,14 @@ async function openSensitiveForm() {
       <input class="sens-value" placeholder="${t("例如 张三")}" value="${esc(value)}">
       <button class="btn small sens-minus" type="button" title="${t("删除本行")}">−</button>
       <button class="btn small sens-plus" type="button" title="${t("在下方新增一行")}">+</button>`;
-    row.querySelector(".sens-minus").onclick = () => row.remove();
+    row.querySelector(".sens-minus").onclick = async () => {
+      // 破坏性操作：删行也要再确认一次（确认后才从表单移除；点「保存」才真正落盘）
+      const ans = await askConfirm(t("确定删除这一行敏感信息吗？"), {
+        buttons: [{ v: "no", label: t("取消") }, { v: "yes", label: t("删除"), danger: true }],
+      });
+      if (ans !== "yes") return;
+      row.remove();
+    };
     row.querySelector(".sens-plus").onclick = () => addRow("", "", row);
     if (afterEl && afterEl.parentNode === rowsEl) afterEl.after(row);
     else rowsEl.appendChild(row);
@@ -3122,7 +3133,7 @@ async function openGlobalPromptModal() {
     <div class="modal common-prompt-modal" data-modal-key="globalPrompt">
       <h3>📝 ${t("编辑全局常用prompt")}</h3>
       <div class="muted" style="margin-bottom:10px;">${esc(t("每条常用 prompt 显示为一个预览框（最多三行，超出部分不显示）；点框内内容会打开一个独立的编辑窗口，在编辑窗口里点「保存」即生效。"))}</div>
-      <div class="common-prompt-head"><span>${t("常用 prompt 内容")}</span><span></span><span></span></div>
+      <div class="common-prompt-head"><span>${t("常用 prompt 内容")}</span><span></span></div>
       <div id="globalPromptRows"></div>
       <div class="modal-actions">
         <button class="btn small" id="gpAdd">+ ${t("新增一条")}</button>
@@ -3143,7 +3154,7 @@ async function openGlobalPromptModal() {
       rowsEl.innerHTML = `<div class="muted" style="padding:6px 2px;">${esc(t("全局常用prompt库为空：点下方「+ 新增一条」添加。"))}</div>`;
       return;
     }
-    items.forEach((entry, i) => {
+    items.forEach((entry) => {
       const row = document.createElement("div");
       row.className = "common-prompt-row";
 
@@ -3163,21 +3174,14 @@ async function openGlobalPromptModal() {
         if (e.key === "Enter" || e.key === " ") { e.preventDefault(); editEntry(entry); }
       };
 
-      const minus = document.createElement("button");
-      minus.className = "btn small cp-minus";
-      minus.type = "button";
-      minus.textContent = "−";
-      minus.title = t("删除本行");
-      minus.onclick = () => removeEntry(entry);
+      // 删除：文字按钮（不再用「−」图标）；新增统一走底部「+ 新增一条」。
+      const del = document.createElement("button");
+      del.className = "btn small danger cp-del";
+      del.type = "button";
+      del.textContent = t("删除");
+      del.onclick = () => removeEntry(entry);
 
-      const plus = document.createElement("button");
-      plus.className = "btn small cp-plus";
-      plus.type = "button";
-      plus.textContent = "+";
-      plus.title = t("在下方新增一行");
-      plus.onclick = () => addEntry(i + 1);
-
-      row.append(box, minus, plus);
+      row.append(box, del);
       rowsEl.appendChild(row);
     });
   }
@@ -3232,23 +3236,24 @@ async function openGlobalPromptModal() {
   paint();
 }
 
-/* ================= 会话常用 prompt（从全局库选取 / 直接输入新建一条） ================= */
+/* ================= 会话常用 prompt（从全局库选取 / 行内编辑·删除 / 直接输入新建一条） ================= */
 
 async function openSessionPromptModal(currentRef, onSaved) {
   if (!S.agentId || !S.threadId) return;
   let s;
   try { s = await getSettings(); } catch (e) { toast(e.message, true); return; }
-  const lib = (Array.isArray(s.common_prompts) ? s.common_prompts : [])
+  // 全局库每次都从 s 现算：行内「编辑」「删除」直接改全局库，会话侧只存「指向哪一条」的指针。
+  const lib = () => (Array.isArray(s.common_prompts) ? s.common_prompts : [])
     .filter(p => p && String(p.text || "").trim());
-  const curRef = String(currentRef || "");
-  let selected = lib.findIndex(p => p.id === curRef);
+  const curRef = String(currentRef || "");          // 打开时会话指向哪一条（只有点「保存」才改指针）
+  let selectedId = lib().some(p => p.id === curRef) ? curRef : "";
 
   const mask = document.createElement("div");
   mask.className = "modal-mask";
   mask.innerHTML = `
     <div class="modal common-prompt-modal" data-modal-key="sessionPrompt">
       <h3>📝 ${t("编辑会话常用prompt")}</h3>
-      <div class="muted" style="margin-bottom:8px;">${esc(t("从下方全局库中选取一条，作为当前会话的常用 prompt。保存的是「指向该条的指针」：以后在主界面改了这一条，本会话会跟着一起变（该条被删除则本会话回到「未设置」）。"))}</div>
+      <div class="muted" style="margin-bottom:8px;">${esc(t("从下方全局库中选取一条，作为当前会话的常用 prompt。保存的是「指向该条的指针」：以后在主界面改了这一条，本会话会跟着一起变（该条被删除则本会话回到「未设置」）。每条右侧的「编辑」「删除」会直接修改全局库，删除后所有指向它的会话都会回到「未设置」。"))}</div>
       <div class="common-prompt-list" id="cpList"></div>
       <div class="modal-actions">
         <button class="btn" id="cpDirect">✏️ ${t("直接输入")}</button>
@@ -3264,19 +3269,83 @@ async function openSessionPromptModal(currentRef, onSaved) {
 
   function paintList() {
     listEl.innerHTML = "";
-    if (!lib.length) {
+    const items = lib();
+    if (!items.length) {
       listEl.innerHTML = `<div class="muted">${esc(t("全局常用prompt库为空：可点「直接输入」新建一条，或先到主界面「编辑全局常用prompt」新增条目。"))}</div>`;
       return;
     }
-    lib.forEach((entry, i) => {
+    items.forEach((entry) => {
       const item = document.createElement("div");
-      item.className = "common-prompt-item" + (i === selected ? " sel" : "");
-      item.textContent = String(entry.text || "");
-      item.onclick = () => { selected = i; paintList(); };
+      item.className = "common-prompt-item" + (entry.id === selectedId ? " sel" : "");
+
+      // 点文本 = 选取（与原逻辑一致）；行内按钮 stopPropagation，不会误触选取
+      const txt = document.createElement("div");
+      txt.className = "cp-item-text";
+      txt.textContent = String(entry.text || "");
+
+      const edit = document.createElement("button");
+      edit.className = "btn small cp-item-edit";
+      edit.type = "button";
+      edit.textContent = t("编辑");
+      edit.onclick = (e) => { e.stopPropagation(); editEntry(entry); };
+
+      const del = document.createElement("button");
+      del.className = "btn small danger cp-item-del";
+      del.type = "button";
+      del.textContent = t("删除");
+      del.onclick = (e) => { e.stopPropagation(); removeEntry(entry); };
+
+      const acts = document.createElement("div");
+      acts.className = "cp-item-actions";
+      acts.append(edit, del);
+
+      item.append(txt, acts);
+      item.onclick = () => { selectedId = entry.id; paintList(); };
       listEl.appendChild(item);
     });
   }
   paintList();
+
+  // 行内「编辑」：直接改全局库里的这一条（指针不变，所有指向它的会话一起变）
+  function editEntry(entry) {
+    openCommonPromptEditor({
+      title: t("编辑常用prompt"),
+      initialText: entry.text,
+      onSave: async (text) => {
+        const cur = await getSettings();     // 取最新整份设置，spread 全量保存（ID06/ID87）
+        const all = Array.isArray(cur.common_prompts) ? cur.common_prompts.slice() : [];
+        const idx = all.findIndex(p => p.id === entry.id);
+        if (idx < 0) throw new Error(t("这条常用 prompt 已不存在，请关闭后重新打开"));
+        all[idx] = { ...all[idx], text };
+        s = await saveSettings({ ...cur, common_prompts: all });
+        paintList();
+        // 本会话正指向这一条：指针没变，只是内容变了 —— 同步聊天页的灰字提示
+        if (entry.id === curRef && onSaved) onSaved(entry.id, text);
+        toast(t("已保存常用 prompt"));
+      },
+    });
+  }
+
+  // 行内「删除」：从全局库删除（多弹一次确认）；当前会话若正指向它，回到「未设置」
+  async function removeEntry(entry) {
+    const isCur = entry.id === curRef;
+    const ans = await askConfirm(
+      isCur
+        ? t("确定删除这条常用 prompt（当前会话正在使用）？删除后，本会话和所有指向它的会话都会回到「未设置」。")
+        : t("确定删除这条常用 prompt？删除后，指向它的会话会回到「未设置」。"),
+      { buttons: [{ v: "no", label: t("取消") }, { v: "yes", label: t("删除"), danger: true }] },
+    );
+    if (ans !== "yes") return;
+    try {
+      const cur = await getSettings();
+      const all = Array.isArray(cur.common_prompts) ? cur.common_prompts : [];
+      s = await saveSettings({ ...cur, common_prompts: all.filter(p => p.id !== entry.id) });
+      if (selectedId === entry.id) selectedId = "";
+      paintList();
+      if (isCur && onSaved) onSaved("", "");   // 指针解析不到 = 未设置（不需要清理任何其它会话）
+      toast(isCur ? t("已删除该条常用 prompt，当前会话已回到「未设置」") : t("已删除该条常用 prompt"));
+    } catch (e) { toast(e.message, true); }
+  }
 
   const close = () => mask.remove();
   mask.querySelector("#cpCancel").onclick = close;
@@ -3321,8 +3390,8 @@ async function openSessionPromptModal(currentRef, onSaved) {
   };
 
   mask.querySelector("#cpSave").onclick = async () => {
-    if (selected < 0) { toast(t("请先选取一条常用 prompt"), true); return; }
-    const entry = lib[selected];
+    const entry = lib().find(p => p.id === selectedId);
+    if (!entry) { toast(t("请先选取一条常用 prompt"), true); return; }
     try {
       await putRef(entry.id);
       close();

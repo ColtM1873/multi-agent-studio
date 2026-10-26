@@ -320,7 +320,16 @@ html[data-style-danger="solid"] .card-btn-danger:hover { filter: brightness(.92)
 .sensitive-head { font-size: 12px; color: var(--text-muted); padding: 0 2px 6px; }
 .sensitive-row { margin-bottom: 8px; }
 .sensitive-row input { width: 100%; }
-.sensitive-row .sens-minus, .sensitive-row .sens-plus { width: 34px; padding: 0; font-size: 16px; line-height: 1; }
+/* 「−」「+」：固定方钮 + flex 居中（以前只写了 width/padding:0，缺 justify-content，
+   符号会贴左显示，看起来偏出按钮中心）；减号为红色、加号为蓝色。 */
+.sensitive-row .sens-minus, .sensitive-row .sens-plus {
+  width: 34px; height: 30px; padding: 0; font-size: 18px; line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.sensitive-row .sens-minus { color: var(--danger); border-color: #fecaca; }
+.sensitive-row .sens-minus:hover { background: #fef2f2; border-color: #fca5a5; }
+.sensitive-row .sens-plus { color: #2563eb; border-color: #bfdbfe; }
+.sensitive-row .sens-plus:hover { background: #eff6ff; border-color: #93c5fd; }
 
 /* ── 常用 prompt ───────────────────────── */
 /* 会话常用 prompt 的灰色只读提示行：接在日期提示行下方（同款灰字、可选中复制）；
@@ -332,10 +341,10 @@ html[data-style-danger="solid"] .card-btn-danger:hover { filter: brightness(.92)
 .input-pane .common-prompt-hint:hover { color: var(--primary); }
 /* 「注入常用prompt」开关：开启后长亮绿灯（发送后自动关闭）；未设置时禁用置灰 */
 #commonPromptInjectBtn.on .date-dot { background: #22c55e; }
-/* 全局 / 会话常用 prompt 弹窗：全局库每条一个只读预览框 +「−」「+」 */
+/* 全局 / 会话常用 prompt 弹窗：全局库每条一个只读预览框 + 文字「删除」 */
 .modal.common-prompt-modal { width: min(680px, calc(100vw - 32px)); }
-.common-prompt-head { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; font-size: 12px; color: var(--text-muted); padding: 0 2px 6px; }
-.common-prompt-row { display: grid; grid-template-columns: 1fr auto auto; gap: 8px; align-items: start; margin-bottom: 8px; }
+.common-prompt-head { display: grid; grid-template-columns: 1fr auto; gap: 8px; font-size: 12px; color: var(--text-muted); padding: 0 2px 6px; }
+.common-prompt-row { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; margin-bottom: 8px; }
 /* 预览框：只读、固定三行高；超过三行只显示前三行（点击打开独立编辑弹窗）。
    注意：三行裁切必须放在「没有 padding 的内层」上——Chromium 的 overflow 裁切边界是
    padding 盒，若把 -webkit-line-clamp 直接放在带内边距的外层，第 4 行会露出 8px（半行残字）。 */
@@ -351,12 +360,15 @@ html[data-style-danger="solid"] .card-btn-danger:hover { filter: brightness(.92)
 }
 .common-prompt-row .cp-box:hover { border-color: var(--primary); }
 .common-prompt-row .cp-box:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
-.common-prompt-row .cp-minus, .common-prompt-row .cp-plus { width: 34px; padding: 0; font-size: 16px; line-height: 1; }
 .common-prompt-list { max-height: 46vh; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; scrollbar-gutter: stable; }
 .common-prompt-item {
   border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px;
   cursor: pointer; white-space: pre-wrap; font-size: 13px; line-height: 1.5;
+  display: flex; align-items: flex-start; gap: 10px;
 }
+/* 会话弹窗每行：文本撑满（点它 = 选取），右侧「编辑」「删除」靠右且不换行 */
+.common-prompt-item .cp-item-text { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.common-prompt-item .cp-item-actions { flex: 0 0 auto; display: flex; gap: 6px; }
 .common-prompt-item:hover { border-color: var(--primary); }
 .common-prompt-item.sel { border-color: var(--primary); background: var(--bg); box-shadow: inset 0 0 0 1px var(--primary); }
 /* 常用 prompt 独立编辑弹窗：文本域撑满剩余高度，「保存 / 取消」固定在底部；
