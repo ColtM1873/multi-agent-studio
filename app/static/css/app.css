@@ -264,6 +264,12 @@ html[data-style-danger="solid"] .card-btn-danger:hover { filter: brightness(.92)
 }
 #sendBtn { flex: 0 0 auto; }
 #sendBtn:disabled { opacity: .5; cursor: not-allowed; }
+/* 软取消进行中：停止按钮变灰、显示「停止中」，不可再点 */
+#stopBtn.stopping,
+#stopBtn:disabled {
+  background: #e5e7eb; border-color: #d1d5db; color: var(--text-muted);
+  cursor: not-allowed; opacity: 1;
+}
 /* 右列：浏览器工具四按键，同样贴住底界；column-reverse 让收缩时从上方折叠 */
 .browser-takeover-actions {
   display: none; flex: 0 0 auto; flex-direction: column-reverse; gap: 6px;

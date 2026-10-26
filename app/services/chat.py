@@ -112,7 +112,14 @@ class AgentRuntime:
         self.graph = graph
         self._stack = stack
 
-    async def run(self, thread_id: str, user_input: dict, emit, on_interrupt=None) -> str:
+    async def run(
+        self,
+        thread_id: str,
+        user_input: dict,
+        emit,
+        on_interrupt=None,
+        control=None,
+    ):
         config_dict = {"configurable": {"thread_id": thread_id}}
         return await run_agent_stream(
             self.graph,
@@ -122,6 +129,7 @@ class AgentRuntime:
             on_interrupt,
             sub_agent_names={s.name for s in self.config.sub_agents},
             sub_agent_state_keys={s.name: s.state_messages_key for s in self.config.sub_agents},
+            control=control,
         )
 
     async def close(self) -> None:

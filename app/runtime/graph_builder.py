@@ -33,6 +33,7 @@ from app.runtime.prompts import (
     browser_tools_debug_phrase_prompt,
 )
 from app.runtime.state_factory import make_main_state, make_sub_agent_state
+from app.runtime.message_repair import repair_tool_pairs
 from app.services import snapshot as snapshot_service
 
 from browser_agent import bid065_trace  # BID065
@@ -214,7 +215,7 @@ async def build_sub_agent(
     react_prompt = ReAct_system_prompt if spec.react_prompt else ""
 
     async def call_llm(state):
-        existing = state.get(state_messages_key, [])
+        existing = repair_tool_pairs(state.get(state_messages_key, []))
         concate = [SystemMessage(content=agent_system_prompt + react_prompt)] + existing
         response = await model_with_tools.ainvoke(concate)
         return {state_messages_key: [response]}
@@ -812,7 +813,7 @@ async def build_world(
     async def call_main_llm(state):
         _bid065_t0 = bid065_trace.perf()  # BID065
         bid065_trace.mark("node call_main_llm START")  # BID065
-        existing = state.get("messages", [])
+        existing = repair_tool_pairs(state.get("messages", []))
         subagent_call_prompt_here = subagent_call_prompt if sub_agent_dict else ""
         react_prompt = ReAct_system_prompt if main_spec.react_prompt else ""
         browser_tools_debug_phrase_prompt_here = browser_tools_debug_phrase_prompt if main_spec.browser_takeover else ""
@@ -1047,7 +1048,7 @@ async def build_world(
     async def produce_html_call_llm(state):
         _bid065_t0 = bid065_trace.perf()  # BID065
         bid065_trace.mark("node produce_html_call_llm START")  # BID065
-        existing = state.get("messages", [])
+        existing = repair_tool_pairs(state.get("messages", []))
         subagent_call_prompt_here = subagent_call_prompt if sub_agent_dict else ""
         react_prompt = ReAct_system_prompt if main_spec.react_prompt else ""
         browser_tools_debug_phrase_prompt_here = browser_tools_debug_phrase_prompt if main_spec.browser_takeover else ""

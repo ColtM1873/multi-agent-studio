@@ -113,6 +113,7 @@ const I18N_EN = {
   "保存": "Save",
   "修改未保存时提醒": "Warn on unsaved changes",
   "停止": "Stop",
+  "停止中": "Stopping…",
   "共": "Total",
   "创建后不可增删改名": "Sub-agents cannot be added/removed/renamed after creation",
   "创建后不可更改": "Cannot be changed after creation",
@@ -7302,7 +7303,12 @@ async function renderChatView() {
     sel.disabled = r;
     updateSendState();
     if (r) setStatusIndicator(status, actor || t("主 agent")); else setStatusIndicator("idle");
-    if (r) stopBtn.style.display = ""; else stopBtn.style.display = "none";
+    // 停止按钮：运行时显示；每次进入/退出都复位「停止」文案与可点状态，
+    // 避免上一轮「停止中」的灰态残留到下一轮。
+    stopBtn.style.display = r ? "" : "none";
+    stopBtn.disabled = false;
+    stopBtn.textContent = t("停止");
+    stopBtn.classList.remove("stopping");
   }
 
   function showDoneBubble() {
@@ -7399,10 +7405,11 @@ async function renderChatView() {
       if (takeoverHintOn && takeoverHintReset) takeoverHintReset();
       if (sensitiveInjectOn && sensitiveInjectReset) sensitiveInjectReset();
       if (injectCommon) resetCommonPrompt();
-      showDoneBubble();
+      // 软取消（停止中 → 本轮回 done）不播「回复已完成」气泡与提示音。
+      if (!ok.stopped) showDoneBubble();
     } else {
-      // 失败/被中断（含点击「停止」）：气泡提示是否回填原发送信息。
-      // 输入框保持用户此间自己写的内容，与失败消息回填相互独立。
+      // 真正的失败（连接断开 / 后端 error）：气泡提示是否回填原发送信息。
+      // 软取消不再走这里（会正常收到 done）。
       showFailBubble(userText);
     }
   }
@@ -7547,7 +7554,23 @@ async function renderChatView() {
     input.value = input.value.slice(0, start) + "\n" + input.value.slice(end);
     input.selectionStart = input.selectionEnd = start + 1;
   };
-  stopBtn.onclick = () => { if (ws) ws.send(JSON.stringify({ type: "stop" })); };
+  // 软取消：点一次后进入「停止中」（灰、不可点），等后端把当前节点跑完、
+  // 图在 superstep 边界停下并回 done 后，再由 setRunning(false) 恢复「发送」。
+  stopBtn.onclick = () => {
+    if (!ws || stopBtn.disabled) return;
+    stopBtn.disabled = true;
+    stopBtn.textContent = t("停止中");
+    stopBtn.classList.add("stopping");
+    const sock = ws;
+    const payload = JSON.stringify({ type: "stop" });
+    try {
+      if (sock.readyState === WebSocket.OPEN) sock.send(payload);
+      else if (sock.readyState === WebSocket.CONNECTING) {
+        // 还在建连（如首次加载 embedding 阶段）：等 open 之后再发，避免 InvalidStateError。
+        sock.addEventListener("open", () => { try { sock.send(payload); } catch (e) { /* 已断 */ } }, { once: true });
+      }
+    } catch (e) { /* 连接已断：交给 onclose 收尾 */ }
+  };
   const failRestoreBtn = $("#failRestoreBtn"), failCancelBtn = $("#failCancelBtn");
   if (failRestoreBtn) failRestoreBtn.onclick = () => {
     const msg = pendingFailedMsg;
@@ -7898,8 +7921,19 @@ function openChatWs(content, proactive = false, subAgent = null, summaryPercent 
         case "snapshot_saved":
           toast(t("已归档为快照（{n} 条消息）").replace("{n}", String(msg.total_messages || 0)));
           break;
+        case "stopping": {
+          // 后端已收到停止请求：按钮进入「停止中」灰态，等本轮回 done 再复原。
+          const b = $("#stopBtn");
+          if (b) {
+            b.disabled = true;
+            b.textContent = t("停止中");
+            b.classList.add("stopping");
+          }
+          break;
+        }
         case "done":
-          resolve(true);
+          // 软取消（drain）结束时也走 done，但 stopped=true：不弹「回复已完成」。
+          resolve({ stopped: !!msg.stopped });
           break;
         case "error":
           pushMain("tool", `\n\n> ⚠️ ${brk(msg.message)}\n\n`);

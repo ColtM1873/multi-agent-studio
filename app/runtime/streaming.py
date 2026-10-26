@@ -7,16 +7,94 @@ emit: async callable，接收事件 dict；on_interrupt: async callable，接收
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from typing import Any
 
+from langgraph.errors import GraphDrained
 from langgraph.graph.state import CompiledStateGraph
+from langgraph.runtime import RunControl
 from langgraph.types import Command
 
 from browser_agent import bid065_trace  # BID065
+from app.runtime.message_repair import (
+    CANCELLED_TOOL_CONTENT,
+    make_cancelled_tool_message,
+    missing_tail_tool_calls,
+)
+
+logger = logging.getLogger(__name__)
 
 Emit = Callable[[dict[str, Any]], Awaitable[None]]
 InterruptHandler = Callable[[str], Awaitable[str]]
+
+
+@dataclass
+class RunResult:
+    """一次 run 的结果：文本 + 是否被「软取消（drain）」提前结束。"""
+
+    text: str
+    drained: bool = False
+
+
+async def _state_text(main_agent: CompiledStateGraph, thread_id_config: dict) -> str:
+    try:
+        snapshot = await main_agent.aget_state(thread_id_config)
+        return str((snapshot.values or {}))
+    except Exception:  # noqa: BLE001
+        logger.exception("读取 drain 后的 state 失败")
+        return ""
+
+
+async def _repair_drained_tail(
+    main_agent: CompiledStateGraph,
+    thread_id_config: dict,
+    *,
+    messages_key: str = "messages",
+    checkpoint_ns: str | None = None,
+) -> list[dict]:
+    """drain 结束后修「最后一条 AI 消息的尾巴」。
+
+    为什么需要：drain 只在 superstep 边界生效。若 drain 落在 call_llm 之后、tool 节点之前，
+    AI 的 tool_calls 已提交、ToolMessage 永远不会有 → 下一次调用 provider 会 400。
+    这里给这些 call 追加一条「已取消」结果，历史与下一轮都干净。
+
+    `checkpoint_ns` 不为空时修的是某个子图的 checkpoint（子 agent 的 drain 会下沉到
+    它自己的 superstep 边界，同样可能留下悬空）。
+
+    返回成功写入的 tool_call 列表（用于给前端补一条 tool_result 事件）。
+    """
+    config = thread_id_config
+    if checkpoint_ns:
+        config = {
+            **thread_id_config,
+            "configurable": {
+                **(thread_id_config.get("configurable") or {}),
+                "checkpoint_ns": checkpoint_ns,
+            },
+        }
+    try:
+        snapshot = await main_agent.aget_state(config)
+        messages = (snapshot.values or {}).get(messages_key, [])
+        missing = missing_tail_tool_calls(messages)
+        if not missing:
+            return []
+        synthetic = [
+            msg
+            for msg in (make_cancelled_tool_message(tc) for tc in missing)
+            if msg is not None
+        ]
+        if not synthetic:
+            return []
+        # 只追加、不重写；messages 是 add_messages，追加即可（此时 AI 消息就是最后一条）。
+        await main_agent.aupdate_state(config, {messages_key: synthetic})
+        return missing
+    except Exception:  # noqa: BLE001
+        logger.exception(
+            "drain 后修复悬空 tool_call 失败（ns=%s，不影响停止本身）", checkpoint_ns
+        )
+        return []
 
 
 async def run_agent_stream(
@@ -27,7 +105,8 @@ async def run_agent_stream(
     on_interrupt: InterruptHandler | None = None,
     sub_agent_names: set[str] | None = None,
     sub_agent_state_keys: dict[str, str] | None = None,
-) -> str:
+    control: RunControl | None = None,
+) -> RunResult:
     """运行一次 agent 调用，把 token/子图/tool 事件流式 emit 出去。
 
     sub_agent_names: 主图里作为「工具」暴露的子 agent 名字集合，用于把主 agent 正在
@@ -36,22 +115,69 @@ async def run_agent_stream(
     sub_agent_state_keys: 子 agent 名 → 该子图 state 里消息列表的键（`state_messages_key`），
     用于从子图状态快照里抠出子 agent 自己的 tool_call / tool_result。
 
-    返回最终的 state 字符串（与旧 stream_ainvoke 一致）。
+    control: 每次 run 新建的 `RunControl`。调用方（WebSocket）在用户点「停止」时调用
+    `control.request_drain(...)`，图会在**当前节点跑完之后的下一个 superstep 边界**停下，
+    而不是把正在跑的工作硬掐断。
+
+    返回 `RunResult`（文本 + 是否 drained）。
     """
     sub_names = sub_agent_names or set()
     sub_state_keys = sub_agent_state_keys or {}
     while True:
-        stream = await main_agent.astream_events(input=user_input, config=thread_id_config, version="v3")
+        stream = await main_agent.astream_events(
+            input=user_input,
+            config=thread_id_config,
+            version="v3",
+            control=control,
+        )
 
-        await asyncio.gather(
+        # 不能用默认的 gather：drain 时三路消费协程都会抛 GraphDrained，
+        # 默认 gather 只取第一个异常，其余异常会变成 "never retrieved" 警告。
+        results = await asyncio.gather(
             _consume_messages(stream, emit, sub_names),
             _consume_subgraphs(stream, emit, sub_names, sub_state_keys),
             _consume_values(stream.values, emit),
+            return_exceptions=True,
         )
+
+        if any(isinstance(r, GraphDrained) for r in results):
+            missing = await _repair_drained_tail(main_agent, thread_id_config)
+            # 前端已经渲染了这条 AI 的 tool_call；补一条 tool_result，避免界面看起来断掉。
+            for tool_call in missing:
+                try:
+                    await emit(
+                        {
+                            "type": "tool_result",
+                            "source": "main",
+                            "name": tool_call.get("name") or "unknown",
+                            "content": CANCELLED_TOOL_CONTENT,
+                        }
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.exception("补发 drain 的 tool_result 失败")
+            # drain 会继承到子图：子 agent 也可能停在自己的「LLM 之后、tool 之前」，
+            # 于是子图 namespace 里留下悬空 tool_call。逐个补一条取消结果。
+            # 这里不补前端事件（子图分区此时通常已 subgraph_end，补事件会多出一个分区；
+            # 刷新历史即可看到；400 由请求前 repair_tool_pairs 双保险）。
+            for sub_name in sorted(sub_names):
+                sub_key = sub_state_keys.get(sub_name)
+                if not sub_key:
+                    continue
+                await _repair_drained_tail(
+                    main_agent,
+                    thread_id_config,
+                    messages_key=sub_key,
+                    checkpoint_ns=sub_name,
+                )
+            return RunResult(text=await _state_text(main_agent, thread_id_config), drained=True)
+
+        errors = [r for r in results if isinstance(r, BaseException)]
+        if errors:
+            raise errors[0]
 
         if not await stream.interrupted():
             final_state = await stream.output()
-            return str(final_state)
+            return RunResult(text=str(final_state))
 
         interrupt_info = (await stream.interrupts())[0].value
         if on_interrupt is None:
@@ -228,8 +354,29 @@ async def _consume_values(
     """
     seen_tool_ids: set[str] = set()
     seen_tool_result_ids: set[str] = set()
+    first_snapshot = True
     async for snapshot in values_iter:
         msgs = snapshot.get(messages_key, [])
+        if first_snapshot:
+            # 第一个 values 快照是「本轮开始前的状态」（含历史）。把历史里已经存在的
+            # tool_call / tool_result 记为已见，避免下一轮把它们当成本轮新事件再发一遍：
+            # 典型场景是「上一轮停止时补了一条取消 ToolMessage」，用户再发消息时前端
+            # 会先闪出一条旧的工具结果。
+            # 只对主图做：子图的 values 首帧不保证是「输入前状态」，跳过可能丢首帧工具事件。
+            first_snapshot = False
+            if emit_phase:
+                for msg in msgs:
+                    mtype = getattr(msg, "type", "")
+                    if mtype == "tool":
+                        rid = getattr(msg, "tool_call_id", None) or getattr(msg, "id", None)
+                        if rid:
+                            seen_tool_result_ids.add(rid)
+                    elif mtype == "ai":
+                        for tc in (getattr(msg, "tool_calls", None) or []):
+                            tid = tc.get("id")
+                            if tid:
+                                seen_tool_ids.add(tid)
+                continue
         if not msgs:
             continue
         last = msgs[-1]

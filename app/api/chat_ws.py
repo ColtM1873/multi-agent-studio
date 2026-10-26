@@ -11,7 +11,8 @@
                                        archive=true 时先按「主动全量总结」的方式落一份快照，
                                        再执行删除（归档失败则中止删除）
   {"type": "resume", "value": "yes"}   回复 interrupt 中断
-  {"type": "stop"}                     关闭
+  {"type": "stop"}                     软取消：请求 drain，当前节点跑完后在 superstep 边界停下
+                                       （不中断正在执行的工具/LLM；连接保持，直到本轮回 done）
 
 服务端→客户端事件：
   {"type": "text", "source": "main"|"sub:<name>", "text": token}
@@ -27,7 +28,8 @@
   {"type": "status", "status": "loading"}  运行时构建中（embedding 模型加载等）
   {"type": "status", "status": "ready"}    运行时已就绪，图/LLM 即将开始
   {"type": "sub_agents", "names": [...]}   配置里的子 agent 名单（前端分区渲染用）
-  {"type": "done", "final_state"}
+  {"type": "stopping"}                     已收到停止请求，正在等当前节点收尾
+  {"type": "done", "final_state", "stopped"}  stopped=true 表示本轮是软取消结束
   {"type": "error", "message"}
 """
 
@@ -37,6 +39,7 @@ import asyncio
 import logging
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from langgraph.runtime import RunControl
 
 from app.deps import chat_manager
 from app.services import snapshot as snapshot_service
@@ -174,6 +177,12 @@ async def chat_ws(websocket: WebSocket, agent_id: str, thread_id: str):
     send_lock = asyncio.Lock()
     resume_future: asyncio.Future | None = None
     current_run: asyncio.Task | None = None
+    # 当前这一轮 run 的软取消控制器：用户点「停止」时 request_drain()，
+    # 图在当前节点跑完后的 superstep 边界停下（不等价于硬 cancel）。
+    current_control: RunControl | None = None
+    # 本轮 run 是否已经「真正开始」（收到图的第一条事件）。
+    # 用来避免 stop 抢在任务启动之前 drain —— 那样连用户消息都不会落库。
+    current_started: asyncio.Event | None = None
 
     async def emit(event: dict):
         async with send_lock:
@@ -192,12 +201,16 @@ async def chat_ws(websocket: WebSocket, agent_id: str, thread_id: str):
         summary_percent: float | None = None,
         clean_all: bool = False,
         clean_all_archive: bool = False,
+        control: RunControl | None = None,
+        started: asyncio.Event | None = None,
     ):
         import os
 
         html_files: list[str] = []
 
         async def emit_checked(event: dict):
+            if started is not None and not started.is_set():
+                started.set()
             if event.get("type") == "tool_call":
                 name = event.get("name") or ""
                 args = event.get("args") or {}
@@ -246,10 +259,16 @@ async def chat_ws(websocket: WebSocket, agent_id: str, thread_id: str):
                 user_input = make_proactive_summary_input(summary_percent)
             else:
                 user_input = make_user_input(content)
-            final_state = await runtime.run(
-                thread_id, user_input, emit_checked, on_interrupt
+            result = await runtime.run(
+                thread_id, user_input, emit_checked, on_interrupt, control=control
             )
-            await emit({"type": "done", "final_state": final_state})
+            await emit(
+                {
+                    "type": "done",
+                    "final_state": result.text,
+                    "stopped": result.drained,
+                }
+            )
 
             # HTML 报告生成后，用系统默认程序打开
             for fp in html_files:
@@ -263,7 +282,16 @@ async def chat_ws(websocket: WebSocket, agent_id: str, thread_id: str):
         except Exception as e:
             await emit({"type": "error", "message": str(e)})
 
-    async def _run_edit(request: dict):
+    async def _run_edit(
+        request: dict,
+        control: RunControl | None = None,
+        started: asyncio.Event | None = None,
+    ):
+        async def emit_checked(event: dict):
+            if started is not None and not started.is_set():
+                started.set()
+            await emit(event)
+
         try:
             user_input = make_edit_input(
                 request_for_subagent=bool(request.get("request_for_subagent")),
@@ -271,8 +299,16 @@ async def chat_ws(websocket: WebSocket, agent_id: str, thread_id: str):
                 msg_indice=int(request.get("msg_indice", -1)),
                 substitute_msg_dict=request.get("substitute_msg") or {},
             )
-            final_state = await runtime.run(thread_id, user_input, emit, on_interrupt)
-            await emit({"type": "done", "final_state": final_state})
+            result = await runtime.run(
+                thread_id, user_input, emit_checked, on_interrupt, control=control
+            )
+            await emit(
+                {
+                    "type": "done",
+                    "final_state": result.text,
+                    "stopped": result.drained,
+                }
+            )
         except Exception as e:
             logger.exception(
                 "编辑历史消息失败 (agent_id=%s, thread_id=%s)", agent_id, thread_id
@@ -288,46 +324,93 @@ async def chat_ws(websocket: WebSocket, agent_id: str, thread_id: str):
                 if current_run and not current_run.done():
                     await emit({"type": "error", "message": "上一轮仍在运行"})
                     continue
-                current_run = asyncio.create_task(_run(data.get("content", "")))
+                control = RunControl()
+                started = asyncio.Event()
+                current_control, current_started = control, started
+                current_run = asyncio.create_task(
+                    _run(data.get("content", ""), control=control, started=started)
+                )
             elif mtype == "proactive_summarize":
                 if current_run and not current_run.done():
                     await emit({"type": "error", "message": "上一轮仍在运行"})
                     continue
+                control = RunControl()
+                started = asyncio.Event()
+                current_control, current_started = control, started
                 current_run = asyncio.create_task(
-                    _run("", proactive=True, summary_percent=_to_percent(data.get("percent")))
+                    _run(
+                        "",
+                        proactive=True,
+                        summary_percent=_to_percent(data.get("percent")),
+                        control=control,
+                        started=started,
+                    )
                 )
             elif mtype == "proactive_summarize_sub":
                 if current_run and not current_run.done():
                     await emit({"type": "error", "message": "上一轮仍在运行"})
                     continue
+                control = RunControl()
+                started = asyncio.Event()
+                current_control, current_started = control, started
                 current_run = asyncio.create_task(
                     _run(
                         "",
                         sub_agent=data.get("sub_agent", ""),
                         summary_percent=_to_percent(data.get("percent")),
+                        control=control,
+                        started=started,
                     )
                 )
             elif mtype == "edit":
                 if current_run and not current_run.done():
                     await emit({"type": "error", "message": "上一轮仍在运行"})
                     continue
-                current_run = asyncio.create_task(_run_edit(data.get("request", {})))
+                control = RunControl()
+                started = asyncio.Event()
+                current_control, current_started = control, started
+                current_run = asyncio.create_task(
+                    _run_edit(data.get("request", {}), control=control, started=started)
+                )
             elif mtype == "clean_all":
                 if current_run and not current_run.done():
                     await emit({"type": "error", "message": "上一轮仍在运行"})
                     continue
+                control = RunControl()
+                started = asyncio.Event()
+                current_control, current_started = control, started
                 current_run = asyncio.create_task(
                     _run(
                         "",
                         clean_all=True,
                         clean_all_archive=bool(data.get("archive")),
+                        control=control,
+                        started=started,
                     )
                 )
             elif mtype == "resume":
                 if resume_future and not resume_future.done():
                     resume_future.set_result(data.get("value", ""))
             elif mtype == "stop":
-                break
+                # 软取消：只请求 drain，不 break、不 cancel。图会在当前节点跑完后的
+                # 下一个 superstep 边界停下（工具会跑完并把 ToolMessage 落库）。
+                if current_run and not current_run.done() and current_control is not None:
+                    # 若 run 还没真正开始（例如刚发完消息、还在建运行时），先等它的
+                    # 第一条事件。否则 drain 会抢在输入 checkpoint 之前，连用户消息都不落库。
+                    started = current_started
+                    if started is not None and not started.is_set():
+                        try:
+                            await asyncio.wait_for(started.wait(), timeout=2.0)
+                        except asyncio.TimeoutError:
+                            pass
+                    if current_run.done():
+                        continue
+                    current_control.request_drain("user")
+                    try:
+                        await emit({"type": "stopping"})
+                    except Exception:  # noqa: BLE001
+                        # 连接已断时不要让「通知前端」失败反过来把 run 硬取消掉。
+                        logger.exception("发送 stopping 事件失败")
     except WebSocketDisconnect:
         pass
     finally:
