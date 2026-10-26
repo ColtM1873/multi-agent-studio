@@ -10,12 +10,26 @@ bid065_trace.set_provider(_debug_enabled)  # BID065: 时间戳探针只在「浏
 _paused: bool = False
 PAUSE_PROMPT = "用户已中止你的浏览器操作。请立即中止任何形式的工具调用，迅速结束。"
 
-def is_paused() -> bool:
+def _legacy_is_paused() -> bool:
+    """单实例兼容路径的暂停标志（没有会话上下文时使用）。"""
     return _paused
 
 
+def is_paused() -> bool:
+    """当前上下文是否暂停。
+
+    有会话上下文（ID91 多实例）时读该会话自己的暂停标志；否则回退旧的全局标志。
+    """
+    try:
+        from app.deps import browser_session_manager
+
+        return browser_session_manager.is_current_paused()
+    except Exception:  # noqa: BLE001
+        return _paused
+
+
 def set_paused(value: bool) -> None:
-    """设置全局暂停标志（用户点「停止」为 True，点「继续」为 False）。"""
+    """设置全局暂停标志（单实例兼容路径；按会话暂停走 BrowserSessionManager）。"""
     global _paused
     _paused = bool(value)
 
@@ -94,7 +108,7 @@ def _apply_browser_interactive_prefs() -> None:
 
 
 async def _wrap_up(sync_func , **kwargs) -> str:
-    if _paused:
+    if is_paused():
         return PAUSE_PROMPT
     _bid065_t0 = bid065_trace.perf()  # BID065
     bid065_trace.mark(f"_wrap_up START {getattr(sync_func, '__name__', sync_func)}")  # BID065

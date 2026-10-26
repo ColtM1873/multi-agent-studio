@@ -665,6 +665,153 @@ body.floating-dragging { user-select: none; cursor: grabbing; }
 .thread-row .meta { color: var(--text-muted); font-size: 13px; flex: 1; }
 .thread-row .meta small { display: inline-block; margin-right: 14px; }
 
+/* ── 多实例：会话行状态（ID91） ───────────────────────────── */
+.thread-row .thread-run-state {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 76px;
+  max-width: 76px;
+  height: 22px;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 999px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.thread-row .thread-run-state.running {
+  color: #2563eb;
+  background: #eff6ff;
+}
+.thread-row .thread-run-state.done {
+  color: #16a34a;
+  background: #f0fdf4;
+  padding: 0 8px;
+}
+.thread-run-viewport {
+  display: inline-block;
+  width: 60px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.thread-run-track {
+  display: inline-flex;
+  gap: 16px;
+  animation: thread-run-marquee 1.8s linear infinite;
+  will-change: transform;
+}
+.thread-run-track > span { display: inline-block; }
+@keyframes thread-run-marquee {
+  from { transform: translateX(-50%); }
+  to { transform: translateX(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .thread-run-track { animation: none; transform: none; }
+}
+.thread-row .btn:disabled {
+  opacity: .45;
+  cursor: not-allowed;
+  filter: grayscale(1);
+}
+
+/* ── 多实例：WebView2 内应用悬浮球（ID91） ─────────────────── */
+.session-ball-wrap {
+  position: fixed;
+  z-index: 1200;
+  pointer-events: none;
+}
+.session-ball {
+  pointer-events: auto;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 390px;
+  padding: 11px 16px;
+  border: none;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #4f46e5, #7c3aed);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 650;
+  box-shadow: 0 10px 30px rgba(79, 70, 229, .38), 0 2px 8px rgba(0,0,0,.18);
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+  animation: session-ball-in .18s ease-out;
+}
+.session-ball:active { cursor: grabbing; }
+.session-ball.has-done {
+  background: linear-gradient(135deg, #2563eb, #16a34a);
+  box-shadow: 0 10px 30px rgba(22, 163, 74, .34), 0 2px 8px rgba(0,0,0,.18);
+}
+.session-ball-text {
+  max-width: 350px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.session-ball-glow {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #a7f3d0;
+  box-shadow: 0 0 0 0 rgba(167, 243, 208, .8);
+  animation: session-ball-pulse 1.6s ease-out infinite;
+  flex: 0 0 auto;
+}
+@keyframes session-ball-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(167, 243, 208, .75); }
+  70% { box-shadow: 0 0 0 8px rgba(167, 243, 208, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(167, 243, 208, 0); }
+}
+@keyframes session-ball-in {
+  from { transform: scale(.92); opacity: .6; }
+  to { transform: scale(1); opacity: 1; }
+}
+.session-ball-panel {
+  pointer-events: auto;
+  position: absolute;
+  bottom: 0;
+  width: 320px;
+  max-height: 56vh;
+  overflow: auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: var(--shadow-lg);
+  padding: 8px;
+}
+.session-ball-panel.panel-left { right: calc(100% + 10px); }
+.session-ball-panel.panel-right { left: calc(100% + 10px); }
+.session-ball-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background .12s;
+}
+.session-ball-row:hover { background: #f3f4f6; }
+.session-ball-row-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  color: var(--text);
+}
+.session-ball-row-state {
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 600;
+}
+.session-ball-row.running .session-ball-row-state { color: #2563eb; }
+.session-ball-row.done .session-ball-row-state { color: #16a34a; }
+
 /* ── 齿轮按钮 ───────────────────────────── */
 .gear-btn { width: 34px; height: 34px; border: 1px solid var(--border); background: var(--surface); border-radius: 10px; cursor: pointer; font-size: 17px; display: inline-flex; align-items: center; justify-content: center; }
 .gear-btn:hover { border-color: var(--primary); box-shadow: var(--shadow); }

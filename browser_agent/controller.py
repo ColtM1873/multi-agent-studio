@@ -1,4 +1,8 @@
-"""Process-wide browser session state (hidden state behind the tool API)."""
+"""Browser session state behind the tool API.
+
+ID91：默认仍提供进程内单例 ``BrowserController.instance()``；app 层也可以为每个
+会话显式创建独立实例（独立 profile / CDP 端口），互不共享标签页 LRU 或暂停状态。
+"""
 
 from __future__ import annotations
 
@@ -471,8 +475,11 @@ class _InteractContext:
 class BrowserController:
     _instance: Optional["BrowserController"] = None
 
-    def __init__(self) -> None:
-        self.launcher = BrowserLauncher()
+    def __init__(self, launcher: Optional[BrowserLauncher] = None) -> None:
+        self.launcher = launcher or BrowserLauncher()
+        # ID91：按会话隔离时，本 controller 所属 multi-agent 的标签页上限。
+        # 标签页 LRU 仍是「一个浏览器进程一张表」；这里只覆盖上限这个标量。
+        self.tab_limit_override: Optional[int] = None
         self.client: Optional[CDPClient] = None
         self.focused_target_id: Optional[str] = None
         self._registries: dict[str, NameRegistry] = {}
@@ -512,6 +519,13 @@ class BrowserController:
         if cls._instance is None:
             cls._instance = BrowserController()
         return cls._instance
+
+    def browser_port(self) -> Optional[int]:
+        """该 controller 对应浏览器进程的 CDP 端口（不启动浏览器）。"""
+        try:
+            return self.launcher.current_port()
+        except Exception:  # noqa: BLE001
+            return None
 
     # ------------------------------------------------------------------ #
     # connection
@@ -738,7 +752,7 @@ class BrowserController:
         """
         if self.client is None:
             return []
-        limit = runtime_prefs.tab_limit()
+        limit = self.tab_limit_override or runtime_prefs.tab_limit()
         live = self._live_targets()
         order = self._tab_order(live)
         excess = len(order) - limit

@@ -39,6 +39,7 @@ from app.api import (
     export_html,
     local_md,
     memories,
+    sessions,
     settings,
     snapshots,
     store_migrations,
@@ -52,7 +53,15 @@ from app.config.settings import (
     seed_global_sub_summary,
     seed_global_summary,
 )
-from app.deps import BASE_DIR, common_prompt_store, config_store, draft_store, ui_prefs_store
+from app.deps import (
+    BASE_DIR,
+    browser_session_manager,
+    common_prompt_store,
+    config_store,
+    draft_store,
+    session_hub,
+    ui_prefs_store,
+)
 from app.services import store_migrations as store_migration_service
 from app.services import identity_migration
 from app.services.common_prompts import migrate_legacy_session_refs
@@ -157,7 +166,23 @@ async def lifespan(_app: FastAPI):
     threading.Thread(
         target=_autostart_pg_services, name="pg-autostart", daemon=True
     ).start()
+    # ID91：系统级暂停球的数据源改为“按会话的浏览器实例”。
+    try:
+        from app.runtime.floating_stop import FloatingStop
+
+        FloatingStop.instance().set_provider(browser_session_manager.floating_entries)
+    except Exception:  # noqa: BLE001
+        logger.exception("初始化系统级暂停悬浮球失败")
     yield
+    # 取消仍在跑的会话（程序退出才终止；关闭前台窗口到托盘不经过这里）。
+    try:
+        await session_hub.shutdown()
+    except Exception:  # noqa: BLE001
+        logger.exception("关闭会话中枢失败")
+    try:
+        browser_session_manager.shutdown()
+    except Exception:  # noqa: BLE001
+        pass
     # 退出托盘程序时兜底把未发送消息缓存 / 会话常用 prompt 再落盘一次
     for store in (draft_store, common_prompt_store):
         try:
@@ -273,6 +298,7 @@ app.include_router(snapshots.router)
 app.include_router(snapshots.deleted_router)
 app.include_router(store_migrations.router)
 app.include_router(chat_ws.router)
+app.include_router(sessions.router)
 app.include_router(settings.router)
 app.include_router(downloads.router)
 app.include_router(export_html.router)

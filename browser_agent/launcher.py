@@ -3,6 +3,9 @@
 Key requirements (see ID03):
   * ``--remote-debugging-port=0`` -> real port is written to ``DevToolsActivePort``.
   * ``--user-data-dir`` must point to a NON-default directory (Chrome 136+).
+
+ID91：传入 ``profile_dir`` 时为该会话独立启动；只读写这个 profile 的
+``DevToolsActivePort``，不碰全局 ``last_port``。
 """
 
 from __future__ import annotations
@@ -25,12 +28,18 @@ class BrowserLaunchError(RuntimeError):
 
 
 class BrowserLauncher:
-    def __init__(self) -> None:
+    def __init__(
+        self, profile_dir: Optional[str] = None, persist_global: bool = True
+    ) -> None:
         self.process: Optional[subprocess.Popen] = None
         self.port: Optional[int] = None
         self.ws_url: Optional[str] = None
         self.cdp_url: Optional[str] = None
         self.user_data_dir: Optional[str] = None
+        # ID91：按会话隔离浏览器时，每个实例有自己的 profile / 端口；
+        # 不读写全局 config.json 的 last_port（那是单实例兼容路径）。
+        self.profile_dir = str(profile_dir) if profile_dir else None
+        self.persist_global = bool(persist_global)
 
     # ------------------------------------------------------------------ #
     # public API
@@ -44,7 +53,8 @@ class BrowserLauncher:
 
     def launch(self) -> dict:
         browser_path, browser_type = cfgmod.discover_browser()
-        user_data_dir = cfgmod.get_user_data_dir()
+        user_data_dir = self.profile_dir or cfgmod.get_user_data_dir()
+        Path(user_data_dir).mkdir(parents=True, exist_ok=True)
         self.user_data_dir = user_data_dir
 
         studio_marker.apply_profile_theme(user_data_dir, browser_type)
@@ -107,11 +117,12 @@ class BrowserLauncher:
         ws_url = self._wait_until_ready(port, timeout=timing.get().launch.ready_timeout)
         self.ws_url = ws_url
 
-        cfgmod.update_config(
-            last_port=port,
-            last_cdp_url=self.cdp_url,
-            browser_path=browser_path,
-        )
+        if self.persist_global:
+            cfgmod.update_config(
+                last_port=port,
+                last_cdp_url=self.cdp_url,
+                browser_path=browser_path,
+            )
         return {"port": port, "cdp_url": self.cdp_url, "ws_url": ws_url}
 
     def close(self) -> None:
@@ -129,8 +140,11 @@ class BrowserLauncher:
         if self.port and self.ws_url and self._is_port_ready(self.port):
             return {"port": self.port, "cdp_url": self.cdp_url, "ws_url": self.ws_url}
 
-        cfg = cfgmod.load_config()
-        port = cfg.get("last_port")
+        if self.profile_dir:
+            port = self._port_from_profile()
+        else:
+            cfg = cfgmod.load_config()
+            port = cfg.get("last_port")
         if isinstance(port, int) and self._is_port_ready(port):
             try:
                 ws_url = self._wait_until_ready(port, timeout=timing.get().launch.reuse_timeout)
@@ -140,6 +154,37 @@ class BrowserLauncher:
             self.cdp_url = f"http://127.0.0.1:{port}/"
             self.ws_url = ws_url
             return {"port": port, "cdp_url": self.cdp_url, "ws_url": ws_url}
+        return None
+
+    def _port_from_profile(self) -> Optional[int]:
+        """从该 profile 的 ``DevToolsActivePort`` 读出端口；不依赖全局 last_port。"""
+        if not self.profile_dir:
+            return None
+        path = Path(self.profile_dir) / "DevToolsActivePort"
+        try:
+            if not path.is_file():
+                return None
+            first = path.read_text(encoding="utf-8").splitlines()[0].strip()
+            return int(first) if first.isdigit() else None
+        except Exception:  # noqa: BLE001
+            return None
+
+    def current_port(self) -> Optional[int]:
+        """返回该 launcher 当前可用端口（不启动浏览器）。"""
+        if self.port and self._is_port_ready(self.port):
+            return self.port
+        port = self._port_from_profile() if self.profile_dir else None
+        if isinstance(port, int) and self._is_port_ready(port):
+            self.port = port
+            self.cdp_url = f"http://127.0.0.1:{port}/"
+            return port
+        if not self.profile_dir:
+            cfg = cfgmod.load_config()
+            port = cfg.get("last_port")
+            if isinstance(port, int) and self._is_port_ready(port):
+                self.port = port
+                self.cdp_url = f"http://127.0.0.1:{port}/"
+                return port
         return None
 
     @staticmethod

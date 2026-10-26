@@ -1,14 +1,12 @@
-"""浏览器接管控制 REST API。
+"""浏览器接管控制 REST API（ID91：按会话实例）。
 
-浏览器为**全局单例**（跨会话/跨 agent 存活），暂停标志也是全局的。
-所有端点用同步 ``def`` 定义：FastAPI 会在线程池执行，避免阻塞事件循环
-（browser_agent 的工具是阻塞式同步调用）。
-
-系统级「停止/继续」浮动按钮由后端 ``FloatingStop``（tkinter 置顶窗口）负责，
-不依赖网页；这里提供打开/显示/隐藏它的入口。
+每个 ``agent_id + thread_id`` 对应一个独立 Chromium profile / CDP 端口 / 暂停标志。
+不传这两个参数时保持旧的单实例兼容路径（供未升级的调用方 / 单会话回归）。
 """
 
 from __future__ import annotations
+
+from contextlib import contextmanager
 
 from fastapi import APIRouter
 from pydantic import BaseModel
@@ -26,8 +24,7 @@ from app.runtime.browser_tools_api import (
     browser_status,
     warmup_browser,
 )
-
-
+from app.runtime.browser_sessions import current_browser_controller, use_browser_session
 from app.runtime.floating_stop import FloatingStop
 
 router = APIRouter(prefix="/api/browser", tags=["browser"])
@@ -35,21 +32,26 @@ router = APIRouter(prefix="/api/browser", tags=["browser"])
 
 class AgentBody(BaseModel):
     agent_id: str | None = None
-    # 前端「实时预览」轮询时传 False：浏览器未连接则直接返回，避免轮询触发自动启动。
+    thread_id: str | None = None
     allow_open: bool = True
 
 
 class PauseBody(BaseModel):
     paused: bool
+    agent_id: str | None = None
+    thread_id: str | None = None
 
 
 class FloatingBody(BaseModel):
     agent_id: str | None = None
+    thread_id: str | None = None
     show: bool = True
 
 
 class OpenUrlBody(BaseModel):
     url: str
+    agent_id: str | None = None
+    thread_id: str | None = None
 
 
 def _resolve_agent_name(agent_id: str | None) -> str:
@@ -72,33 +74,60 @@ def _floating_pos_path():
         return None
 
 
-def _show_floating(agent_id: str | None) -> None:
-    FloatingStop.instance().show(_resolve_agent_name(agent_id), _floating_pos_path())
+@contextmanager
+def _browser_ctx(agent_id: str | None, thread_id: str | None):
+    if agent_id and thread_id:
+        with use_browser_session(agent_id, thread_id):
+            yield True
+    else:
+        yield False
+
+
+def _controller():
+    return current_browser_controller()
 
 
 @router.get("/status")
-def get_status():
-    """浏览器连接状态 + 当前暂停状态（前端据此置灰按钮 / 同步提示按钮）。"""
+def get_status(agent_id: str | None = None, thread_id: str | None = None):
+    if agent_id and thread_id:
+        from app.deps import browser_session_manager
+
+        state = browser_session_manager.status(agent_id, thread_id)
+        return {
+            "connected": state["connected"],
+            "port": state["port"],
+            "paused": state["paused"],
+            "agent_id": agent_id,
+            "thread_id": thread_id,
+        }
     connected, port = browser_status()
     return {"connected": connected, "port": port, "paused": is_paused()}
 
 
 @router.post("/open")
 def open_browser(body: AgentBody | None = None):
-    """打开（或复用）浏览器，并显示系统级浮动按钮。返回是否就绪与实际端口。"""
+    body = body or AgentBody()
     try:
-        from browser_agent.controller import BrowserController
+        if body.agent_id and body.thread_id:
+            from app.deps import browser_session_manager
 
-        _apply_browser_timing()
-        # 只做「连接/复用浏览器」——不要在这里抓取整页 DOM：启动时浏览器往往是
-        # 空白页，full_dom 会空等 15s 才返回，使「打开浏览器」卡住约半分钟。
-        # 页面内容由随后的「提示接管」预览（viewport-dom）按需抓取。
-        BrowserController.instance().ensure_connected()
-        # 提前完成首次互动所需的一次性加载/准备（预导入、attach、轻量 evaluate）。
-        warmup_browser()
-        connected, port = browser_status()
+            existing = browser_session_manager.peek(body.agent_id, body.thread_id)
+            if existing is not None and not browser_session_manager.probe(existing)["connected"]:
+                # 上一次浏览器已经关闭：重新打开时不应沿用旧的暂停状态。
+                existing.paused = False
+        with _browser_ctx(body.agent_id, body.thread_id):
+            _apply_browser_timing()
+            _controller().ensure_connected()
+            warmup_browser(body.agent_id, body.thread_id)
+            if body.agent_id and body.thread_id:
+                from app.deps import browser_session_manager
+
+                fresh = browser_session_manager.peek(body.agent_id, body.thread_id)
+                if fresh is not None:
+                    fresh._probe_at = 0.0
+            connected, port = browser_status(body.agent_id, body.thread_id)
         if connected:
-            _show_floating(body.agent_id if body else None)
+            _show_floating(body.agent_id, body.thread_id)
         return {
             "ok": connected,
             "port": port,
@@ -110,28 +139,29 @@ def open_browser(body: AgentBody | None = None):
 
 @router.post("/pause")
 def pause(body: PauseBody):
-    """客户点「停止」→ paused=true；点「继续」→ paused=false。"""
+    """会话级暂停：只影响该会话自己的浏览器实例。"""
+    if body.agent_id and body.thread_id:
+        from app.deps import browser_session_manager
+
+        paused = browser_session_manager.set_paused(
+            body.agent_id, body.thread_id, body.paused
+        )
+        return {"paused": paused}
     set_paused(body.paused)
     return {"paused": is_paused()}
 
 
 @router.post("/open-url")
 def open_url(body: OpenUrlBody):
-    """聊天里点链接时调用：有受控（CDP）浏览器就在其中新开标签页，否则用默认浏览器打开。
-
-    绝不在应用窗口（WebView2）内导航/渲染网页——它没有返回等浏览器通用功能，
-    一旦在窗口里打开外部站点，用户就无法回到应用（只能重启）。
-    """
     url = (body.url or "").strip()
     if not url:
         return {"ok": False, "mode": "none", "error": "空 URL"}
-    connected, port = browser_status()
+    connected, port = browser_status(body.agent_id, body.thread_id)
     if connected:
         try:
-            from browser_agent.controller import BrowserController
-
-            _apply_browser_timing()
-            result = BrowserController.instance().open_url(url)
+            with _browser_ctx(body.agent_id, body.thread_id):
+                _apply_browser_timing()
+                result = _controller().open_url(url)
             if result.get("ok"):
                 return {"ok": True, "mode": "browser", "port": port}
         except Exception:  # noqa: BLE001 — 受控浏览器打开失败则回退默认浏览器
@@ -145,11 +175,19 @@ def open_url(body: OpenUrlBody):
         return {"ok": False, "mode": "external", "error": f"{type(exc).__name__}: {exc}"}
 
 
+def _show_floating(agent_id: str | None, thread_id: str | None = None) -> None:
+    """唤醒系统级暂停球（数据由 FloatingStop 的 provider 提供）。
+
+    仍调用 ``show`` 以清除之前 ``hide`` 留下的手动隐藏状态；provider 模式下
+    窗口内容/行数完全由 BrowserSessionManager 快照决定。
+    """
+    FloatingStop.instance().show(_resolve_agent_name(agent_id), _floating_pos_path())
+
+
 @router.post("/floating")
 def floating(body: FloatingBody):
-    """显示 / 隐藏系统级浮动按钮（进入会话且浏览器已连接时调用，保证按钮出现）。"""
     if body.show:
-        _show_floating(body.agent_id)
+        _show_floating(body.agent_id, body.thread_id)
     else:
         FloatingStop.instance().hide()
     return {"ok": True}
@@ -157,35 +195,42 @@ def floating(body: FloatingBody):
 
 @router.post("/viewport-dom")
 def viewport_dom(body: AgentBody | None = None):
-    """返回当前聚焦标签页 viewport 的全量 DOM（前端拼进输入框）。"""
-    if is_paused():
-        return {"ok": False, "content": "", "error": PAUSE_PROMPT}
-    allow_open = True if body is None else body.allow_open
-    if not allow_open:
-        connected, port = browser_status()
-        if not connected:
-            return {"ok": False, "content": "", "error": "浏览器未打开", "port": port}
-    try:
-        from browser_agent.controller import BrowserController,NOT_CALLED
+    body = body or AgentBody()
+    with _browser_ctx(body.agent_id, body.thread_id):
+        if body.agent_id and body.thread_id:
+            from app.deps import browser_session_manager
 
-        _apply_browser_timing()
-        _apply_browser_image_tags()  # BID080：预览块与工具返回共用同一「图片标签」口径
-        _apply_browser_interactive_prefs()  # BID084：整合/英文渲染口径与工具返回一致
-        result = BrowserController.instance().full_dom(action_ok=NOT_CALLED)
-        if browser_status()[0]:
-            _show_floating(body.agent_id if body else None)
-        content = result.get("content") or ""
-        error = result.get("error") or ""
-        # 隐私遮蔽模式：预览块会随用户消息一起发给 LLM，同样需要遮蔽真实敏感值。
-        mask = make_sensitive_masker()
-        if mask is not None:
-            content = mask(content)
-            error = mask(error)
-        return {
-            "ok": result.get("action_ok") != "失败",
-            "content": content,
-            "error": error,
-            "port": browser_status()[1],
-        }
-    except Exception as exc:  # noqa: BLE001
-        return {"ok": False, "content": "", "error": f"{type(exc).__name__}: {exc}"}
+            state = browser_session_manager.status(body.agent_id, body.thread_id)
+            if state["paused"]:
+                return {"ok": False, "content": "", "error": PAUSE_PROMPT}
+        elif is_paused():
+            return {"ok": False, "content": "", "error": PAUSE_PROMPT}
+        allow_open = body.allow_open
+        if not allow_open:
+            connected, port = browser_status(body.agent_id, body.thread_id)
+            if not connected:
+                return {"ok": False, "content": "", "error": "浏览器未打开", "port": port}
+        try:
+            from browser_agent.controller import NOT_CALLED
+
+            _apply_browser_timing()
+            _apply_browser_image_tags()  # BID080
+            _apply_browser_interactive_prefs()  # BID084
+            result = _controller().full_dom(action_ok=NOT_CALLED)
+            connected, port = browser_status(body.agent_id, body.thread_id)
+            if connected:
+                _show_floating(body.agent_id, body.thread_id)
+            content = result.get("content") or ""
+            error = result.get("error") or ""
+            mask = make_sensitive_masker()
+            if mask is not None:
+                content = mask(content)
+                error = mask(error)
+            return {
+                "ok": result.get("action_ok") != "失败",
+                "content": content,
+                "error": error,
+                "port": port,
+            }
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "content": "", "error": f"{type(exc).__name__}: {exc}"}

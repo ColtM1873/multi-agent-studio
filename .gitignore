@@ -38,6 +38,7 @@ INNER_DOCS_GUIDE.md
 # 浏览器接管运行时产物（browser_agent 在仓库根生成，本地保留，不入库）
 /config.json
 /.chrome-profile/
+/.chrome-profiles/
 /browser_takeover_debug_logs/
 /browser_tools_DEBUG_logs/
 # 浏览器工具计时 / 卡死看门狗诊断日志（BROWSER_TOOL_TIMING=1 时生成，不入库）

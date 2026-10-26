@@ -3,8 +3,9 @@ import re  # BID084
 from langchain_core.tools import tool as langchain_tool
 from typing import Annotated
 
-from browser_agent.controller import BrowserController, NOT_CALLED
+from browser_agent.controller import NOT_CALLED
 from browser_agent import prefs as browser_prefs  # BID086
+from app.runtime.browser_sessions import current_browser_controller
 from app.runtime.browser_tools_wrap_up import _wrap_up
 from app.runtime.browser_tools_privacy_mask import apply_sensitive_replacement
 
@@ -40,7 +41,7 @@ async def tool_01_click(
     elem_mark: Annotated[str, "<可点击元素 eN>的标识符eN。例如<可点击元素 e23>，这里就传入e23。"],
 ) -> str|dict:
     """用于点击当前页面中所有仍然生效的<可点击元素>。通常互动之后，会返回当前页面因为互动而产生的变化"""
-    sync_func_here = BrowserController.instance().interact_click
+    sync_func_here = current_browser_controller().interact_click
     return await   _wrap_up(sync_func_here , name = _normalize_elem_mark(elem_mark))  # BID084
 
 
@@ -52,7 +53,7 @@ async def tool_02_type_in_content(
 ) -> str|dict:
     """用于在当前页面中所有仍然生效的<可输入元素>的位置，输入你需要输入的内容。
 通常会返回这一次输入的内容本身"""
-    sync_func_here = BrowserController.instance().interact_fill_in
+    sync_func_here = current_browser_controller().interact_fill_in
     type_in_cotent = apply_sensitive_replacement(str(type_in_cotent))
     return await   _wrap_up(sync_func_here ,name =  _normalize_elem_mark(elem_mark), fill =  type_in_cotent ,press_enter = press_enter)  # BID084
 
@@ -68,7 +69,7 @@ async def tool_03_scroll(
 通常，滚动本身不会导致『可互动元素』丢失，即使你滚动使得当前的视口（viewport）使得滚动之前的『可互动元素』不再可见，
 在你调用时 工具会自动滚回相应可互动元素的位置。
 而如果 可互动元素 出现在了各种浏览器相关工具返回的『丢失的可互动元素列表』中，那就是真的无法再互动了"""
-    sync_func_here = BrowserController.instance().interact_scroll
+    sync_func_here = current_browser_controller().interact_scroll
     return await   _wrap_up(sync_func_here , name = _normalize_elem_mark(elem_mark), scroll_delta = times_to_scroll)  # BID084
 
 @langchain_tool
@@ -77,7 +78,7 @@ async def tool_04_drag(
     drag_percentage: Annotated[int, "拖动到哪一个百分比，用数字表示，范围0到100"],
 ) -> str|dict:
     """用于拖动页面中的<可拖动元素>，常见于网页的各种滑条（如声音调节拖动条）"""
-    sync_func_here = BrowserController.instance().interact_drag
+    sync_func_here = current_browser_controller().interact_drag
     return await   _wrap_up(sync_func_here ,name =  _normalize_elem_mark(elem_mark), drag_pct = drag_percentage)  # BID084
 
 @langchain_tool
@@ -86,7 +87,7 @@ async def tool_05_type_in_select(
     type_in_cotent_to_match: Annotated[str, "输入选项中的一个以达成匹配"],
 ) -> str|dict:
     """<可选择元素> 对于输入的值有匹配要求，只能输入备选项中的一个。第一次调用可以使用空字符串来得到候选项列表。"""
-    sync_func_here = BrowserController.instance().interact_select
+    sync_func_here = current_browser_controller().interact_select
     type_in_cotent_to_match = apply_sensitive_replacement(str(type_in_cotent_to_match))
     return await   _wrap_up(sync_func_here ,name =  _normalize_elem_mark(elem_mark), fill =  type_in_cotent_to_match)  # BID084
 
@@ -98,7 +99,7 @@ async def tool_06_interact_sequence(
 ) -> str|dict:
     """用于一次性在多个地方进行填入，并可选性的在末尾附加一个点击
 附加点击时，type_in_cotent_list  的长度比  elem_mark_list  多一；否则，两者长度应当相等。"""
-    sync_func_here = BrowserController.instance().interact_many
+    sync_func_here = current_browser_controller().interact_many
     type_in_cotent_list = [apply_sensitive_replacement(str(arg_here)) for arg_here in type_in_cotent_list ]
     name_list = [_normalize_elem_mark(value) for value in (elem_mark_list or [])]  # BID084
     return await   _wrap_up(sync_func_here , name_list = name_list, fill_list = type_in_cotent_list)  # BID084
@@ -116,7 +117,7 @@ async def tool_07_searchable_dropdown(
 必须要点击下拉选单中的项（调用tool_01_click）才能真正作数。
 拿不准选单内容时，可以填入空字符串，用于获得完整候选表单。
 """
-    sync_func_here = BrowserController.instance().interact_searchable_fill_in
+    sync_func_here = current_browser_controller().interact_searchable_fill_in
     type_in_to_filter = apply_sensitive_replacement(str(type_in_to_filter))
     return await   _wrap_up(sync_func_here , name = _normalize_elem_mark(elem_mark), fill = type_in_to_filter)  # BID084
 
@@ -126,7 +127,7 @@ async def tool_08_click_dropdown(
 ) -> str|dict:
     """用于跟<可点击下拉元素>进行交互，交互后通常会弹出一个下拉列表（候选项），需要再调用tool_01_click进行选择，
 本工具只用于点击相关元素，使得下拉框弹出"""
-    sync_func_here = BrowserController.instance().interact_click_dropdown
+    sync_func_here = current_browser_controller().interact_click_dropdown
     return await   _wrap_up(sync_func_here , name = _normalize_elem_mark(elem_mark))  # BID084
 
 
@@ -136,13 +137,13 @@ async def tool_10_get_full_viewport() -> str|dict:
 普通交互工具通常只返回 交互后 相对于交互前 的新增值（交互后新出现的内容），
 但是对于 交互后 相对于交互前 的减少值，只会以『本次互动后丢失的可互动元素列表』的方式提及
 调用这个工具，返回的是 过往工具结果 的一个汇总，并不会获得新的信息。"""
-    sync_func_here = BrowserController.instance().full_dom
+    sync_func_here = current_browser_controller().full_dom
     return await   _wrap_up(sync_func_here , action_ok=NOT_CALLED)  
 
 @langchain_tool
 async def tool_20_list_tabs() -> dict:
     """获得当前由你接管的浏览器里面，所有标签页的title，以及相应的全局唯一序列号"""
-    sync_func_here = BrowserController.instance().list_tabs
+    sync_func_here = current_browser_controller().list_tabs
     return await   _wrap_up(sync_func_here )  
 
 
@@ -152,7 +153,7 @@ async def tool_21_switch_tab(
 ) -> dict:
     """用于切换标签页，通常会返回全量内容。
 如果忘记 打开了哪些标签页，可以先调用tool_6_list_tabs查看"""
-    sync_func_here = BrowserController.instance().switch_tab
+    sync_func_here = current_browser_controller().switch_tab
     return await   _wrap_up(sync_func_here , tab_id =  tab_id_to_switch_to)  
 
 @langchain_tool
@@ -160,7 +161,7 @@ async def tool_30_go_back() -> dict:
     """浏览器内置『返回』功能，即回到当前标签页的上一个历史记录。
 通常会返回全量内容。
 无历史可回退时，action_ok=失败。"""
-    sync_func_here = BrowserController.instance().go_back
+    sync_func_here = current_browser_controller().go_back
     return await   _wrap_up(sync_func_here )  
 
 
@@ -168,7 +169,7 @@ async def tool_30_go_back() -> dict:
 async def tool_31_refresh() -> dict:
     """浏览器内置『刷新』功能。除非当前页面显式提醒刷新，否则不要调用。
 必定导致已经填写内容丢失"""
-    sync_func_here = BrowserController.instance().refresh
+    sync_func_here = current_browser_controller().refresh
     return await   _wrap_up(sync_func_here )  
 
 @langchain_tool
@@ -176,7 +177,7 @@ async def tool_32_close_tab(
     tab_id_to_close: Annotated[str, "需要关闭哪一个标签页。直接传入三位数字序列号。例如“百度百科023”，就直接传入023（字符串）"],
 ) -> dict:
     """用于关闭指定标签页"""
-    sync_func_here = BrowserController.instance().close_tab
+    sync_func_here = current_browser_controller().close_tab
     return await   _wrap_up(sync_func_here , tab_id = tab_id_to_close)  
 
 @langchain_tool
@@ -185,13 +186,13 @@ async def tool_33_navigate(
 ) -> dict:
     """新开一个标签页并访问给定地址（相当于在地址栏输入并回车）。
 通常会返回全量内容。"""
-    sync_func_here = BrowserController.instance().navigate
+    sync_func_here = current_browser_controller().navigate
     return await   _wrap_up(sync_func_here ,url =  url_here)  
 
 @langchain_tool
 async def tool_40_return_urls_of_opened_tags() -> dict:
     """返回当前所有已打开标签页的title到实际 url 的映射。"""
-    sync_func_here = BrowserController.instance().tab_url_map
+    sync_func_here = current_browser_controller().tab_url_map
     return await   _wrap_up(sync_func_here )  
 
 

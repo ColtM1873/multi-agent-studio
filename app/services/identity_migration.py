@@ -324,12 +324,37 @@ def _migrate_store_migration_agents(config_dir: Path, old: str, new: str) -> boo
     return changed
 
 
+def _migrate_browser_profiles(config_dir: Path, old: str, new: str) -> bool:
+    """ID91：agent 改名时同步按会话浏览器 profile 映射的 agent_id / 键。"""
+    path = Path(config_dir) / "browser_profiles.json"
+    if old == new or not path.exists():
+        return False
+    data = _load_json(path, None)
+    if not isinstance(data, dict):
+        return False
+    marker = "\u241f"
+    changed = False
+    for pkey, item in list(data.items()):
+        if not pkey.startswith(old + marker):
+            continue
+        thread_id = pkey[len(old) + 1:]
+        data.pop(pkey, None)
+        if isinstance(item, dict):
+            item["agent_id"] = new
+        data[new + marker + thread_id] = item
+        changed = True
+    if changed:
+        _write_json(path, data)
+    return changed
+
+
 def _migrate_local_data(config_dir: Path, old: str, new: str) -> None:
     _rename_json_key(Path(config_dir) / "drafts.json", old, new)
     _rename_json_key(Path(config_dir) / "common_prompts.json", old, new)
     _migrate_ui_prefs(Path(config_dir) / "ui_prefs.json", old, new)
     _migrate_store_migration_agents(Path(config_dir), old, new)
     _migrate_snapshot_dir(old, new)
+    _migrate_browser_profiles(config_dir, old, new)
 
 
 def _rewrite_config(config_store: ConfigStore, old_cfg, new_id: str) -> None:

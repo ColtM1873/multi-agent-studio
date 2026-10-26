@@ -783,6 +783,17 @@ const I18N_EN = {
   "所以这里只需填「前缀 + 后缀」即可，checkpoint 数据库名由每个 multi-agent 的名称自动生成；也可以直接粘贴整条连接串，程序会自动帮你切出前缀与后缀（其中的数据库名会被忽略）。": "So you only need to fill in 'prefix + suffix' here; each multi-agent's checkpoint database name is derived from its name. Alternatively, paste the whole connection string and the app extracts the prefix and suffix automatically (the database name in it is ignored).",
   "迁移前会先按连接前缀识别服务器（host:port）：同一 host:port 才是同一台 PostgreSQL；pgAdmin 里的「服务器」名字只是连接配置的显示名，不改变数据位置。": "Before migrating, the app identifies the server from the connection prefix (host:port): only the same host:port is the same PostgreSQL instance. The 'server' names in pgAdmin are just display names for connection profiles and do not change where data lives.",
   "（未知）": "(unknown)",
+  "正在进行的对话": "Ongoing conversations",
+  "查看正在进行的对话": "View ongoing conversations",
+  "当前有 {a} 个对话正在进行": "{a} conversation(s) in progress",
+  "当前有 {a} 个对话正在进行，{b} 个已经完工": "{a} conversation(s) in progress, {b} completed",
+  "正在进行": "In progress",
+  "已经完工": "Completed",
+  "任务完成": "Completed",
+  "该会话正在进行": "This conversation is in progress",
+  "该会话正在运行或等待验收，暂时不能隐藏或删除": "This conversation is running or awaiting acceptance and cannot be hidden or deleted yet.",
+  "该会话的浏览器已打开（每个会话使用独立浏览器实例）": "This conversation's browser is open (each conversation uses an independent browser instance)",
+  "该会话正在运行或等待验收，暂时不能删除。请等它完成并验收后再删除。": "This conversation is running or awaiting acceptance and cannot be deleted yet. Please wait until it is completed and accepted.",
 };
 const t = (s) => (lang === "zh" || !I18N_EN[s]) ? s : I18N_EN[s];
 function setLang(l) {
@@ -2248,6 +2259,241 @@ let settingsCache = null;
 let pgConnMode = "split";
 let pinned = localStorage.getItem("pin-follow") === "1";
 
+/* ================= 多实例会话（ID91） ================= */
+// 每个 (agent_id, thread_id) 一个 SessionStream；切视图只解绑 DOM，不丢 WebSocket/
+// 缓冲；页面刷新后靠后端 run_id+seq 回放重建。
+const sessionStreams = new Map();
+let activeSessionStream = null;
+let sessionSnapshot = { sessions: [], counts: { running: 0, completed: 0 } };
+let sessionPollTimer = null;
+let sessionBallOpen = false;
+let threadsStatusTimer = null;
+
+function sessionKeyOf(agentId, threadId) { return String(agentId) + "\u0000" + String(threadId); }
+function getSessionStream(agentId, agentName, threadId) {
+  const key = sessionKeyOf(agentId, threadId);
+  let stream = sessionStreams.get(key);
+  if (!stream) {
+    stream = new SessionStream(agentId, agentName, threadId);
+    sessionStreams.set(key, stream);
+  } else if (agentName) {
+    stream.agentName = agentName;
+  }
+  return stream;
+}
+function sessionInfoOf(agentId, threadId) {
+  return (sessionSnapshot.sessions || []).find(
+    (s) => s.agent_id === agentId && s.thread_id === threadId
+  ) || null;
+}
+function isSessionPending(info) {
+  if (!info) return false;
+  return ["starting", "running", "stopping", "waiting"].includes(info.status)
+    || (info.status === "completed" && !info.accepted);
+}
+
+async function refreshSessions() {
+  try {
+    sessionSnapshot = await api("/api/sessions");
+  } catch (e) {
+    return sessionSnapshot;
+  }
+  updateSessionBall();
+  return sessionSnapshot;
+}
+
+async function acceptSession(agentId, threadId) {
+  try {
+    const r = await api(`/api/sessions/${encodeURIComponent(agentId)}/threads/${encodeURIComponent(threadId)}/accept`, { method: "POST" });
+    await refreshSessions();
+    return !!r.ok;
+  } catch (e) {
+    return false;
+  }
+}
+
+function reportActiveView(agentId, threadId) {
+  api("/api/sessions/active", {
+    method: "POST",
+    body: JSON.stringify({
+      agent_id: agentId || null,
+      thread_id: threadId || null,
+      visible: document.visibilityState === "visible",
+    }),
+  }).catch(() => {});
+}
+
+/* ---------- 应用内悬浮球（WebView2 DOM，非 OS 窗口） ---------- */
+function clampSessionBallPos(pos) {
+  const w = 400, h = 58, m = 8;
+  return {
+    x: Math.min(Math.max(m, pos.x), Math.max(m, window.innerWidth - w - m)),
+    y: Math.min(Math.max(m, pos.y), Math.max(m, window.innerHeight - h - m)),
+  };
+}
+function loadSessionBallPos() {
+  try {
+    const p = JSON.parse(localStorage.getItem("session-ball-pos") || "null");
+    if (p && typeof p.x === "number" && typeof p.y === "number") return clampSessionBallPos(p);
+  } catch (e) {}
+  return clampSessionBallPos({ x: window.innerWidth - 400, y: Math.round(window.innerHeight * 0.55) });
+}
+function applySessionBallPos(pos) {
+  const wrap = $("#sessionBallWrap");
+  if (!wrap) return;
+  wrap.style.left = pos.x + "px";
+  wrap.style.top = pos.y + "px";
+}
+function ensureSessionBall() {
+  if ($("#sessionBallWrap")) return;
+  const wrap = document.createElement("div");
+  wrap.id = "sessionBallWrap";
+  wrap.className = "session-ball-wrap";
+  wrap.style.display = "none";
+  wrap.innerHTML = `
+    <div class="session-ball-panel" id="sessionBallPanel" style="display:none;"></div>
+    <button type="button" class="session-ball" id="sessionBallBtn" title="${t("查看正在进行的对话")}">
+      <span class="session-ball-glow"></span>
+      <span class="session-ball-text" id="sessionBallText"></span>
+    </button>`;
+  document.body.appendChild(wrap);
+  applySessionBallPos(loadSessionBallPos());
+
+  const btn = $("#sessionBallBtn");
+  const panel = $("#sessionBallPanel");
+  btn.onclick = (e) => {
+    e.stopPropagation();
+    if (btn.dataset.dragged === "1") { btn.dataset.dragged = "0"; return; }
+    sessionBallOpen = !sessionBallOpen;
+    panel.style.display = sessionBallOpen ? "" : "none";
+    updateSessionBallPanel();
+    if (sessionBallOpen) requestAnimationFrame(positionSessionBallPanel);
+  };
+  panel.onclick = (e) => e.stopPropagation();
+  document.addEventListener("pointerdown", (e) => {
+    if (!sessionBallOpen) return;
+    if (wrap.contains(e.target)) return;
+    sessionBallOpen = false;
+    panel.style.display = "none";
+  });
+
+  let drag = null;
+  btn.addEventListener("pointerdown", (e) => {
+    if (e.button !== 0) return;
+    const r = wrap.getBoundingClientRect();
+    drag = { sx: e.clientX, sy: e.clientY, x: r.left, y: r.top, moved: false };
+    btn.dataset.dragged = "0";
+    btn.setPointerCapture(e.pointerId);
+  });
+  btn.addEventListener("pointermove", (e) => {
+    if (!drag) return;
+    const dx = e.clientX - drag.sx, dy = e.clientY - drag.sy;
+    if (!drag.moved && (Math.abs(dx) > 4 || Math.abs(dy) > 4)) drag.moved = true;
+    if (!drag.moved) return;
+    const pos = clampSessionBallPos({ x: drag.x + dx, y: drag.y + dy });
+    applySessionBallPos(pos);
+    drag.pos = pos;
+  });
+  btn.addEventListener("pointerup", (e) => {
+    if (!drag) return;
+    if (drag.moved && drag.pos) {
+      localStorage.setItem("session-ball-pos", JSON.stringify(drag.pos));
+      btn.dataset.dragged = "1";
+      setTimeout(() => { btn.dataset.dragged = "0"; }, 30);
+    }
+    try { btn.releasePointerCapture(e.pointerId); } catch (err) {}
+    drag = null;
+  });
+  window.addEventListener("resize", () => {
+    const wrap2 = $("#sessionBallWrap");
+    if (!wrap2 || wrap2.style.display === "none") return;
+    const r = wrap2.getBoundingClientRect();
+    applySessionBallPos(clampSessionBallPos({ x: r.left, y: r.top }));
+  });
+}
+
+function positionSessionBallPanel() {
+  const panel = $("#sessionBallPanel");
+  if (!panel || panel.style.display === "none") return;
+  panel.style.bottom = "0";
+  panel.style.top = "auto";
+  const r = panel.getBoundingClientRect();
+  if (r.top < 8) {
+    panel.style.bottom = "auto";
+    panel.style.top = "0";
+  }
+}
+
+function updateSessionBallPanel() {
+  const panel = $("#sessionBallPanel");
+  if (!panel) return;
+  const list = sessionSnapshot.sessions || [];
+  if (!list.length) { panel.innerHTML = ""; return; }
+  panel.innerHTML = list.map((s) => {
+    const done = s.status === "completed";
+    const statusText = done ? t("已经完工") : t("正在进行");
+    return `<div class="session-ball-row ${done ? "done" : "running"}" data-a="${esc(s.agent_id)}" data-t="${esc(s.thread_id)}">
+      <span class="session-ball-row-name">@${esc(s.agent_name || s.agent_id)} - ${esc(s.thread_id)}</span>
+      <span class="session-ball-row-state">${statusText}</span>
+    </div>`;
+  }).join("");
+  $$("#sessionBallPanel .session-ball-row").forEach((row) => {
+    row.onclick = () => {
+      sessionBallOpen = false;
+      panel.style.display = "none";
+      goChat(row.dataset.a, (list.find((x) => x.agent_id === row.dataset.a) || {}).agent_name || row.dataset.a, row.dataset.t);
+    };
+  });
+}
+
+function updateSessionBall() {
+  ensureSessionBall();
+  const wrap = $("#sessionBallWrap");
+  const panel = $("#sessionBallPanel");
+  const textEl = $("#sessionBallText");
+  if (!wrap || !textEl) return;
+  const running = Number(sessionSnapshot.counts && sessionSnapshot.counts.running) || 0;
+  const completed = Number(sessionSnapshot.counts && sessionSnapshot.counts.completed) || 0;
+  const list = sessionSnapshot.sessions || [];
+  // 用户就在唯一的那个“正在进行”会话里：悬浮球按需求保持隐藏；点返回后 render()
+  // 会立即重算并显示。若还有其它待验收/进行中的会话，则仍显示以便跳转。
+  const onlyCurrent = list.length === 1
+    && S.view === "chat"
+    && S.agentId === list[0].agent_id
+    && S.threadId === list[0].thread_id;
+  if (!list.length || onlyCurrent) {
+    wrap.style.display = "none";
+    sessionBallOpen = false;
+    if (panel) panel.style.display = "none";
+    return;
+  }
+  wrap.style.display = "";
+  const label = completed > 0
+    ? t("当前有 {a} 个对话正在进行，{b} 个已经完工").replace("{a}", running).replace("{b}", completed)
+    : t("当前有 {a} 个对话正在进行").replace("{a}", running);
+  textEl.textContent = label;
+  const btn = $("#sessionBallBtn");
+  if (btn) {
+    btn.title = label;
+    btn.classList.toggle("has-done", completed > 0);
+  }
+  const r = wrap.getBoundingClientRect();
+  const onLeft = r.left < window.innerWidth / 2;
+  panel.classList.toggle("panel-right", onLeft);
+  panel.classList.toggle("panel-left", !onLeft);
+  if (sessionBallOpen) {
+    panel.style.display = "";
+    updateSessionBallPanel();
+    requestAnimationFrame(positionSessionBallPanel);
+  }
+}
+
+function startSessionPolling() {
+  if (sessionPollTimer) return;
+  refreshSessions();
+  sessionPollTimer = setInterval(refreshSessions, 2000);
+}
+
 /* ================= 顶栏 ================= */
 function topbar(backLabel, backAction) {
   const back = backAction ? `<button class="btn small" id="backBtn">← ${t(backLabel || "返回")}</button>` : "";
@@ -2263,6 +2509,12 @@ function bindBack(cb) { const b = $("#backBtn"); if (b) b.onclick = cb; }
 function render() {
   flushCurrentDraft();
   if (findState.open) findClose();
+  // 切视图只解绑当前会话的 DOM；后台 SessionStream / 浏览器运行继续。
+  if (activeSessionStream) {
+    activeSessionStream.detachView();
+    activeSessionStream = null;
+  }
+  if (S.view !== "chat") reportActiveView(null, null);
   app.innerHTML = "";
   $$(".edit-popup").forEach(p => p.remove());
   const errWrap = $(".edit-error-wrap");
@@ -2273,6 +2525,10 @@ function render() {
   else if (S.view === "threads") renderThreadsView();
   else if (S.view === "chat") renderChatView();
   else if (S.view === "snapshot") renderSnapshotView();
+  ensureSessionBall();
+  updateSessionBall();
+  // 离开聊天视图时立刻补一次状态，避免等 2s 轮询才看到悬浮球/线程状态。
+  if (S.view !== "chat") refreshSessions();
 }
 function goAgents() { S.view = "agents"; S.agentId = null; S.agentName = null; S.threadId = null; S.snapshotId = null; S.snapshotFromDeleted = false; render(); }
 function goThreads(agentId, agentName) { S.view = "threads"; S.agentId = agentId; S.agentName = agentName; S.threadId = null; S.snapshotId = null; S.snapshotFromDeleted = false; render(); }
@@ -5201,6 +5457,7 @@ async function saveConfig(cfg, isNew, isDefault) {
 
 /* ================= 视图3：Thread 列表 ================= */
 async function renderThreadsView() {
+  if (threadsStatusTimer) { clearInterval(threadsStatusTimer); threadsStatusTimer = null; }
   app.innerHTML = topbar("返回", () => goAgents());
   const view = document.createElement("div");
   view.className = "view";
@@ -5267,6 +5524,7 @@ async function renderThreadsView() {
   const hiddenKey = "hidden_threads_" + S.agentId;
   const showKey = "show_hidden_" + S.agentId;
   const hiddenSet = new Set(JSON.parse(localStorage.getItem(hiddenKey) || "[]"));
+  await refreshSessions();
 
   // 快照列表：用于决定「快照」按钮是否显示（没有快照就不显示按钮）
   let snapshots = [];
@@ -5297,9 +5555,28 @@ async function renderThreadsView() {
   }
 
   // 复用已加载的 threads，仅原地重绘列表，避免整页 flash /「加载中」闪屏
+  function threadStateOf(tid) {
+    return (sessionSnapshot.sessions || []).find(
+      (s) => s.agent_id === S.agentId && s.thread_id === tid
+    ) || null;
+  }
+
+  function threadStateHtml(info) {
+    if (!info) return "";
+    if (info.status === "completed") {
+      return `<span class="thread-run-state done">${t("任务完成")}</span>`;
+    }
+    return `<span class="thread-run-state running" title="${t("该会话正在进行")}">
+      <span class="thread-run-viewport"><span class="thread-run-track"><span>${t("正在进行")}</span><span>${t("正在进行")}</span></span></span>
+    </span>`;
+  }
+
   function drawThreadsBox() {
     const showNow = localStorage.getItem(showKey) === "1";
-    const vis = showNow ? threads : threads.filter(t => !hiddenSet.has(t.thread_id));
+    const vis = showNow ? threads : threads.filter(t => {
+      const info = threadStateOf(t.thread_id);
+      return !hiddenSet.has(t.thread_id) || isSessionPending(info);
+    });
     const hiddenCnt = threads.filter(t => hiddenSet.has(t.thread_id)).length;
     updateThreadsFooter();
     if (!vis.length) {
@@ -5312,12 +5589,16 @@ async function renderThreadsView() {
           ${vis.map(th => {
             const hidden = hiddenSet.has(th.thread_id);
             const cpText = th.checkpoints ? `${th.checkpoints} checkpoints` : t("未发送消息");
+            const info = threadStateOf(th.thread_id);
+            const locked = !!info;
+            const lockTitle = locked ? t("该会话正在运行或等待验收，暂时不能隐藏或删除") : "";
             return `
             <div class="thread-row ${hidden ? "thread-hidden" : ""}" data-tid="${esc(th.thread_id)}">
               <span class="tid">${esc(th.thread_id)}</span>
+              ${threadStateHtml(info)}
               <span class="meta"><small>${esc(cpText)}</small><small>${esc(th.last_updated || "")}</small>${hidden ? `<small class="hidden-tag">${t("已隐藏")}</small>` : ""}</span>
-              <button class="btn card-btn card-btn-hide small" data-hide="${esc(th.thread_id)}">${hidden ? t("取消隐藏") : t("隐藏")}</button>
-              <button class="btn card-btn card-btn-danger small" data-del="${esc(th.thread_id)}">${t("删除")}</button>
+              <button class="btn card-btn card-btn-hide small" data-hide="${esc(th.thread_id)}" ${locked ? "disabled" : ""} title="${lockTitle}">${hidden ? t("取消隐藏") : t("隐藏")}</button>
+              <button class="btn card-btn card-btn-danger small" data-del="${esc(th.thread_id)}" ${locked ? "disabled" : ""} title="${lockTitle}">${t("删除")}</button>
             </div>`;
           }).join("")}
         </div>`;
@@ -5325,8 +5606,10 @@ async function renderThreadsView() {
       $$("#threadsBox .thread-row").forEach(row => {
         const tid = row.dataset.tid;
         row.onclick = () => goChat(S.agentId, S.agentName, tid);
-        row.querySelector("[data-del]").onclick = (e) => { e.stopPropagation(); deleteThread(tid); };
-        row.querySelector("[data-hide]").onclick = (e) => {
+        const delBtn = row.querySelector("[data-del]");
+        const hideBtn = row.querySelector("[data-hide]");
+        if (delBtn && !delBtn.disabled) delBtn.onclick = (e) => { e.stopPropagation(); deleteThread(tid); };
+        if (hideBtn && !hideBtn.disabled) hideBtn.onclick = (e) => {
           e.stopPropagation();
           if (hiddenSet.has(tid)) hiddenSet.delete(tid);
           else hiddenSet.add(tid);
@@ -5337,6 +5620,21 @@ async function renderThreadsView() {
     }
   }
   drawThreadsBox();
+  // 正在运行 / 完工状态来自后端会话中枢；只在状态签名变化时原地重绘，避免闪烁。
+  let lastThreadStatusSig = JSON.stringify((sessionSnapshot.sessions || [])
+    .filter(s => s.agent_id === S.agentId)
+    .map(s => [s.thread_id, s.status, s.accepted]));
+  threadsStatusTimer = setInterval(async () => {
+    if (!$("#threadsBox")) { clearInterval(threadsStatusTimer); threadsStatusTimer = null; return; }
+    await refreshSessions();
+    const sig = JSON.stringify((sessionSnapshot.sessions || [])
+      .filter(s => s.agent_id === S.agentId)
+      .map(s => [s.thread_id, s.status, s.accepted]));
+    if (sig !== lastThreadStatusSig) {
+      lastThreadStatusSig = sig;
+      drawThreadsBox();
+    }
+  }, 2000);
 
   $("#showHiddenChk").onchange = (e) => { localStorage.setItem(showKey, e.target.checked ? "1" : "0"); drawThreadsBox(); };
   $("#showHiddenZone").onclick = (e) => {
@@ -6005,7 +6303,7 @@ async function renderChatView() {
       try {
         const r = await api("/api/browser/viewport-dom", {
           method: "POST",
-          body: JSON.stringify({ agent_id: S.agentId, allow_open: !!allowOpen }),
+          body: JSON.stringify({ agent_id: S.agentId, thread_id: S.threadId, allow_open: !!allowOpen }),
         });
         if (takeoverHintOn && r && r.ok && r.content) {
           takeoverPreviewText = wrapDom(r.content);
@@ -6079,20 +6377,20 @@ async function renderChatView() {
     function showFloating() {
       return api("/api/browser/floating", {
         method: "POST",
-        body: JSON.stringify({ agent_id: S.agentId, show: true }),
+        body: JSON.stringify({ agent_id: S.agentId, thread_id: S.threadId, show: true }),
       }).catch(() => {});
     }
 
     async function refreshBrowserUI() {
       let st = { connected: false, port: null, paused: false };
-      try { st = await api("/api/browser/status"); } catch (e) {}
+      try { st = await api(`/api/browser/status?agent_id=${encodeURIComponent(S.agentId)}&thread_id=${encodeURIComponent(S.threadId)}`); } catch (e) {}
       const wasConnected = lastConnected;
       lastConnected = !!st.connected;
       paused = !!st.paused;
       if (st.connected) {
         openBtn.classList.add("on");
         openBtn.classList.add("is-disabled");
-        openBtn.title = t("浏览器已打开（当前只支持接管一个浏览器）");
+        openBtn.title = t("该会话的浏览器已打开（每个会话使用独立浏览器实例）");
       } else {
         openBtn.classList.remove("on");
         openBtn.classList.remove("is-disabled");
@@ -6139,7 +6437,7 @@ async function renderChatView() {
     openBtn.onclick = async () => {
       if (openBtn.classList.contains("is-disabled")) return;
       try {
-        const r = await api("/api/browser/open", { method: "POST", body: JSON.stringify({ agent_id: S.agentId }) });
+        const r = await api("/api/browser/open", { method: "POST", body: JSON.stringify({ agent_id: S.agentId, thread_id: S.threadId }) });
         if (!r.ok) { toast(r.error || t("打开浏览器失败"), true); return; }
         await refreshBrowserUI();
         await showFloating();
@@ -6983,6 +7281,7 @@ async function renderChatView() {
       const s = new WebSocket(`${proto}://${location.host}/api/agents/${encodeURIComponent(S.agentId)}/threads/${encodeURIComponent(S.threadId)}/chat`);
       let settled = false;
       let writeTimer = null;
+      let editSent = false;
       const finish = (res) => {
         if (settled) return;
         settled = true;
@@ -6998,13 +7297,29 @@ async function renderChatView() {
           EDIT_WRITE_TIMEOUT_MS,
         );
       };
-      s.onopen = () => s.send(JSON.stringify({ type: "edit", request: req }));
+      s.onopen = () => s.send(JSON.stringify({ type: "attach", run_id: "", since: 0 }));
       s.onmessage = (ev) => {
         let m;
         try { m = JSON.parse(ev.data); } catch (e) { return; }
-        if (m.type === "status" && m.status === "loading") {
+        // 编辑请求也走会话中枢：先 attach（拿到当前运行快照/回放），
+        // replay_done 后再发 edit；若当前有运行，后端会返回「上一轮仍在运行」。
+        if (m.type === "replay_done") {
+          if (!editSent) {
+            editSent = true;
+            try { s.send(JSON.stringify({ type: "edit", request: req })); }
+            catch (e) { finish({ ok: false, reason: t("连接已断开，写入未完成。") }); }
+          }
+          return;
+        }
+        if (m.type === "run_state" || m.type === "text" || m.type === "reasoning"
+          || m.type === "phase" || m.type === "tool_call" || m.type === "tool_result"
+          || m.type === "subgraph_start" || m.type === "subgraph_end"
+          || m.type === "sub_agents" || m.type === "stopping" || m.type === "backfill") {
+          return;
+        }
+        if (m.type === "status" && editSent && m.status === "loading") {
           if (onStage) onStage("loading");
-        } else if (m.type === "status" && m.status === "ready") {
+        } else if (m.type === "status" && editSent && m.status === "ready") {
           if (onStage) onStage("writing");
           startWriteTimer();
         } else if (m.type === "done") {
@@ -7231,6 +7546,9 @@ async function renderChatView() {
   });
 
   const historyEl = $("#historyMd");
+  // 本会话的持久流：切出视图时不销毁，回来时复用同一份 DOM / 缓冲。
+  const stream = getSessionStream(S.agentId, S.agentName, S.threadId);
+  activeSessionStream = stream;
   const scrollToLastUserMsg = () => {
     const blocks = historyEl.querySelectorAll(".user-msg-block");
     if (blocks.length) {
@@ -7245,10 +7563,19 @@ async function renderChatView() {
     pane.scrollTop = Math.max(0, pane.scrollTop + (sr.top - pr.top) - pane.clientHeight);
   };
   try {
-    const h = await api(`/api/agents/${encodeURIComponent(S.agentId)}/threads/${encodeURIComponent(S.threadId)}/history`);
-    historyEl.innerHTML = renderMd(h.markdown);
-    injectExportButtons(historyEl);
-    scrollToLastUserMsg();
+    if (stream.baseHtml != null) {
+      // 同一页面内切走再回来：直接用离开时的静态基线 + 仍在持有的流式 DOM，
+      // 避免把当前这一轮的流式内容再从 /history 渲染一遍。
+      historyEl.innerHTML = stream.baseHtml;
+      injectExportButtons(historyEl);
+      if (stream.replyEl) historyEl.appendChild(stream.replyEl);
+      stream.renderStream();
+    } else {
+      const h = await api(`/api/agents/${encodeURIComponent(S.agentId)}/threads/${encodeURIComponent(S.threadId)}/history`);
+      historyEl.innerHTML = renderMd(h.markdown);
+      injectExportButtons(historyEl);
+      scrollToLastUserMsg();
+    }
   } catch (e) { historyEl.innerHTML = `<div class="muted">${t("（无历史）")}</div>`; }
 
   const sel = $("#subgraphSel");
@@ -7388,22 +7715,20 @@ async function renderChatView() {
     saveDraft(S.agentId, "");
     hideFailBubble();
     setRunning(true);
-    currentReplyEl = null;
-    appendReplyHeader();
+    stream.beginRun(historyEl);
     // 发送后自动下滑到最新消息并跟随流式输出；鼠标上滑后 atBottom 变 false，自动停止跟随
     if (!(settingsCache && settingsCache.auto_scroll_on_send === false)) {
       const pane = $("#historyPane");
       if (pane) pane.scrollTop = pane.scrollHeight;
     }
     const ok = await openChatWs(content);
-    setRunning(false);
     if (ok) {
       // 浏览器接管提示 / 敏感信息替换列表 / 常用 prompt 为「一次性状态」：发送成功后自动关闭
       if (takeoverHintOn && takeoverHintReset) takeoverHintReset();
       if (sensitiveInjectOn && sensitiveInjectReset) sensitiveInjectReset();
       if (injectCommon) resetCommonPrompt();
       // 软取消（停止中 → 本轮回 done）不播「回复已完成」气泡与提示音。
-      if (!ok.stopped) showDoneBubble();
+      // 正常完成的气泡由 SessionStream 的 done → view.onDone 统一触发（即使从别处触发也能提示）。
       // 停止后修复削掉了还没被消费的用户消息：提示是否回填（复用失败回填气泡）。
       if (ok.backfill) showFailBubble(userText);
     } else {
@@ -7436,12 +7761,11 @@ async function renderChatView() {
   async function triggerProactiveSummary(summaryPercent = null) {
     if (isRunning) return;
     setRunning(true, "loading");
-    currentReplyEl = null;
-    appendReplyHeader();
+    stream.beginRun(historyEl);
     const ok = await openChatWs("", true, null, summaryPercent);
     if (ok) {
       // 原地刷新历史，避免整页 render() 造成闪屏
-      currentReplyEl = null;
+      stream.releaseReply();
       try {
         const h = await api(`/api/agents/${encodeURIComponent(S.agentId)}/threads/${encodeURIComponent(S.threadId)}/history`);
         historyEl.innerHTML = renderMd(h.markdown);
@@ -7465,11 +7789,10 @@ async function renderChatView() {
     if (isRunning) return;
     if (!subAgent) { toast(t("请先选择要总结的子 agent"), true); return; }
     setRunning(true, "loading");
-    currentReplyEl = null;
-    appendReplyHeader();
+    stream.beginRun(historyEl);
     const ok = await openChatWs("", false, subAgent, summaryPercent);
     if (ok) {
-      currentReplyEl = null;
+      stream.releaseReply();
       try {
         const h = await api(`/api/agents/${encodeURIComponent(S.agentId)}/threads/${encodeURIComponent(S.threadId)}/subgraphs/${encodeURIComponent(subAgent)}/history`);
         historyEl.innerHTML = renderMd(h.markdown);
@@ -7503,12 +7826,11 @@ async function renderChatView() {
     // 待删除的历史中包含编辑态正在编辑的消息，直接退出编辑模式（放弃未提交的改动）。
     if (editModeOn) leaveEditMode();
     setRunning(true, "loading");
-    currentReplyEl = null;
-    appendReplyHeader();
+    stream.beginRun(historyEl);
     const ok = await openChatWs("", false, null, null, archive ? "archive" : true);
     if (ok) {
       // 原地刷新历史，避免整页 render() 造成闪屏
-      currentReplyEl = null;
+      stream.releaseReply();
       try {
         const h = await api(`/api/agents/${encodeURIComponent(S.agentId)}/threads/${encodeURIComponent(S.threadId)}/history`);
         historyEl.innerHTML = renderMd(h.markdown);
@@ -7556,19 +7878,11 @@ async function renderChatView() {
   // 软取消：点一次后进入「停止中」（灰、不可点），等后端把当前节点跑完、
   // 图在 superstep 边界停下并回 done 后，再由 setRunning(false) 恢复「发送」。
   stopBtn.onclick = () => {
-    if (!ws || stopBtn.disabled) return;
+    if (stopBtn.disabled || !stream.isBusy()) return;
     stopBtn.disabled = true;
     stopBtn.textContent = t("停止中");
     stopBtn.classList.add("stopping");
-    const sock = ws;
-    const payload = JSON.stringify({ type: "stop" });
-    try {
-      if (sock.readyState === WebSocket.OPEN) sock.send(payload);
-      else if (sock.readyState === WebSocket.CONNECTING) {
-        // 还在建连（如首次加载 embedding 阶段）：等 open 之后再发，避免 InvalidStateError。
-        sock.addEventListener("open", () => { try { sock.send(payload); } catch (e) { /* 已断 */ } }, { once: true });
-      }
-    } catch (e) { /* 连接已断：交给 onclose 收尾 */ }
+    stream.stop();
   };
   const failRestoreBtn = $("#failRestoreBtn"), failCancelBtn = $("#failCancelBtn");
   if (failRestoreBtn) failRestoreBtn.onclick = () => {
@@ -7582,6 +7896,20 @@ async function renderChatView() {
     input.focus();
   };
   if (failCancelBtn) failCancelBtn.onclick = () => hideFailBubble();
+
+  // 把本会话的持久流绑定到当前 DOM：若它仍在后台运行，会在这里接回当前内容；
+  // 若是页面刷新后的新流，会向后端 attach 并按 run_id+seq 回放。
+  await stream.attachView({
+    historyEl,
+    setRunning: (r, status, actor) => setRunning(r, status, actor),
+    markStopping: () => {
+      stopBtn.disabled = true;
+      stopBtn.textContent = t("停止中");
+      stopBtn.classList.add("stopping");
+    },
+    updateSendState,
+    onDone: (result) => { if (!result.stopped) showDoneBubble(); },
+  });
   updateSendState();
 }
 
@@ -7666,290 +7994,672 @@ async function renderSnapshotView() {
   };
 }
 
-function appendReplyHeader() {
-  const historyEl = $("#historyMd");
-  if (!currentReplyEl || currentReplyEl.parentElement !== historyEl) {
-    currentReplyEl = document.createElement("div");
-    currentReplyEl.className = "current-reply md-body markdown-body";
-    historyEl.appendChild(currentReplyEl);
+class SessionStream {
+  constructor(agentId, agentName, threadId) {
+    this.agentId = agentId;
+    this.agentName = agentName || agentId;
+    this.threadId = threadId;
+    this.ws = null;
+    this.runId = "";
+    this.lastSeq = 0;
+    this.status = "idle";
+    this.endReason = "";
+    this.accepted = true;
+    this.backfill = false;
+    this.stopping = false;
+    this.phase = "";
+    this.historyMarkdown = "";
+    this.baseHtml = null;
+    this.replyEl = null;
+    this.buffers = this._freshBuffers();
+    this.view = null;
+    this.viewState = { scrollTop: null, pinned: false };
+    this.pendingInterrupt = null;
+    this._interrupting = false;
+    this._attachPromise = null;
+    this._attachResolve = null;
+    this._replayDone = false;
+    this._commandPromise = null;
+    this._commandResolve = null;
+    this._startingCommand = false;
+    this._accepting = false;
+    this._historyPending = false;
+    this._disposed = false;
+    this._reconnectTimer = null;
+    this._reconnectAttempts = 0;
+    this._rafPending = false;
+  }
+
+  _freshBuffers() {
+    return {
+      main_user: "",
+      segments: [],
+      configuredSubs: [],
+      featureEnabled: false,
+      _domOwner: null,
+    };
+  }
+
+  isBusy(status = this.status) {
+    return ["starting", "running", "stopping", "waiting"].includes(status);
+  }
+
+  beginRun(historyEl) {
+    if (this.view && this.view.historyEl) historyEl = this.view.historyEl;
+    this.baseHtml = historyEl ? historyEl.innerHTML : this.baseHtml;
+    // 旧 replyEl 已经显示在页面上，作为历史的一部分保留；只把引用换成新的。
+    this.replyEl = null;
+    this.buffers = this._freshBuffers();
+    this.runId = "";
+    this.lastSeq = 0;
+    this.status = "starting";
+    this.endReason = "";
+    this.accepted = false;
+    this.backfill = false;
+    this.stopping = false;
+    this.phase = "";
+    this.historyMarkdown = "";
+    this.pendingInterrupt = null;
+    this._interrupting = false;
+    this._historyPending = false;
+    this._startingCommand = true;
+    this._ensureReplyEl();
+  }
+
+  releaseReply() {
+    this.replyEl = null;
+    this.buffers = this._freshBuffers();
+    this.status = "idle";
+    this.stopping = false;
+    this.phase = "";
+    this.pendingInterrupt = null;
+    this._startingCommand = false;
+  }
+
+  _ensureReplyEl() {
+    if (!this.replyEl) {
+      this.replyEl = document.createElement("div");
+      this.replyEl.className = "current-reply md-body markdown-body";
+    }
+    if (this.view && this.view.historyEl && this.replyEl.parentElement !== this.view.historyEl) {
+      this.view.historyEl.appendChild(this.replyEl);
+    }
+    if (this.view) currentReplyEl = this.replyEl;
+    return this.replyEl;
+  }
+
+  attachView(view) {
+    this.view = view;
+    if (view.historyEl) {
+      if (this.baseHtml != null) {
+        view.historyEl.innerHTML = this.baseHtml;
+        injectExportButtons(view.historyEl);
+      } else if (this.historyMarkdown) {
+        view.historyEl.innerHTML = renderMd(this.historyMarkdown);
+        injectExportButtons(view.historyEl);
+      }
+      if (!this.replyEl && this.isBusy()) this._ensureReplyEl();
+      if (this.replyEl) view.historyEl.appendChild(this.replyEl);
+      this.renderStream();
+    }
+    this.reportActive();
+    const attach = this.connect();
+    attach.finally(() => {
+      this.syncView();
+      if (this.view && this.view.historyEl) {
+        const pane = $("#historyPane");
+        if (pane && this.viewState.scrollTop != null) pane.scrollTop = this.viewState.scrollTop;
+      }
+      if (this.pendingInterrupt) this._showInterrupt();
+      if (this.status === "completed" && !this.accepted) this.maybeAccept();
+    });
+    return attach;
+  }
+
+  detachView() {
+    if (!this.view) return;
+    const pane = $("#historyPane");
+    if (pane) {
+      this.viewState.scrollTop = pane.scrollTop;
+      this.viewState.pinned = pane.scrollHeight - pane.scrollTop - pane.clientHeight < 48;
+    }
+    if (!this.isBusy()) {
+      // 已结束：把当前完整 DOM（含最后回复）作为静态基线；下次进入直接恢复，
+      // 不再重复拉 /history，也不会把同一段回复渲染两遍。
+      if (this.view.historyEl) this.baseHtml = this.view.historyEl.innerHTML;
+      this.replyEl = null;
+    } else if (this.replyEl) {
+      this.replyEl.remove();
+    }
+    this.view = null;
+    if (currentReplyEl) currentReplyEl = null;
+  }
+
+  dispose() {
+    this._disposed = true;
+    if (this._reconnectTimer) { clearTimeout(this._reconnectTimer); this._reconnectTimer = null; }
+    try { if (this.ws) this.ws.close(); } catch (e) {}
+    this.ws = null;
+  }
+
+  reportActive() {
+    if (S.view === "chat" && S.agentId === this.agentId && S.threadId === this.threadId) {
+      reportActiveView(this.agentId, this.threadId);
+    }
+  }
+
+  connect() {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN && this._replayDone) {
+      return Promise.resolve();
+    }
+    if (this._attachPromise) return this._attachPromise;
+    this._disposed = false;
+    this._attachPromise = new Promise((resolve) => { this._attachResolve = resolve; });
+    const proto = location.protocol === "https:" ? "wss" : "ws";
+    let sock;
+    try {
+      sock = new WebSocket(`${proto}://${location.host}/api/agents/${encodeURIComponent(this.agentId)}/threads/${encodeURIComponent(this.threadId)}/chat`);
+    } catch (e) {
+      this._resolveAttach();
+      return Promise.resolve();
+    }
+    this.ws = sock;
+    sock.onopen = () => {
+      this._reconnectAttempts = 0;
+      try {
+        sock.send(JSON.stringify({ type: "attach", run_id: this.runId || "", since: this.lastSeq || 0 }));
+      } catch (e) {
+        this._resolveAttach();
+      }
+    };
+    sock.onmessage = (ev) => {
+      let msg;
+      try { msg = JSON.parse(ev.data); } catch (e) { return; }
+      this._handleMessage(msg).catch((err) => console.error(err));
+    };
+    sock.onerror = () => {};
+    sock.onclose = () => {
+      if (this.ws === sock) this.ws = null;
+      this._replayDone = false;
+      this._resolveAttach();
+      if (this._disposed) return;
+      if (this._reconnectTimer) return;
+      this._reconnectAttempts += 1;
+      const delay = Math.min(5000, 700 * this._reconnectAttempts);
+      this._reconnectTimer = setTimeout(() => {
+        this._reconnectTimer = null;
+        if (!this._disposed) this.connect();
+      }, delay);
+    };
+    return this._attachPromise;
+  }
+
+  _resolveAttach() {
+    this._attachPromise = null;
+    if (this._attachResolve) {
+      const fn = this._attachResolve;
+      this._attachResolve = null;
+      fn();
+    }
+  }
+
+  _resolveCommand(value) {
+    if (this._commandResolve) {
+      const fn = this._commandResolve;
+      this._commandResolve = null;
+      this._commandPromise = null;
+      fn(value);
+    }
+    this._startingCommand = false;
+    if (value === false) refreshSessions();
+  }
+
+  async sendCommand(command) {
+    this._commandPromise = new Promise((resolve) => { this._commandResolve = resolve; });
+    this._startingCommand = true;
+    const attached = await this.connect();
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      this._resolveCommand(false);
+      return false;
+    }
+    try { this.ws.send(JSON.stringify(command)); }
+    catch (e) { this._resolveCommand(false); return false; }
+    return await this._commandPromise;
+  }
+
+  async sendRaw(command) {
+    await this.connect();
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      try { this.ws.send(JSON.stringify(command)); } catch (e) {}
+    }
+  }
+
+  async stop() {
+    this.stopping = true;
+    this.status = "stopping";
+    this.syncView();
+    await this.sendRaw({ type: "stop" });
+  }
+
+  async _loadFinalHistory(runId) {
+    try {
+      const h = await api(`/api/agents/${encodeURIComponent(this.agentId)}/threads/${encodeURIComponent(this.threadId)}/history`);
+      if (this.runId === runId && this.status === "completed") {
+        this.historyMarkdown = h.markdown || "";
+        this.baseHtml = null;
+        this.replyEl = null;
+        if (this.view && this.view.historyEl) {
+          this.view.historyEl.innerHTML = renderMd(this.historyMarkdown);
+          injectExportButtons(this.view.historyEl);
+          this.syncView();
+        }
+      }
+    } catch (e) { /* 历史拉取失败时保留当前 DOM，不影响验收 */ }
+    finally {
+      this._historyPending = false;
+      this.maybeAccept();
+    }
+  }
+
+  async maybeAccept() {
+    if (this._historyPending) return;
+    if (this.status !== "completed" || this.accepted || this._accepting) return;
+    if (!(this.view && S.view === "chat" && S.agentId === this.agentId && S.threadId === this.threadId)) return;
+    if (document.visibilityState !== "visible") return;
+    this._accepting = true;
+    const ok = await acceptSession(this.agentId, this.threadId);
+    this._accepting = false;
+    if (ok) {
+      this.accepted = true;
+      this.status = "idle";
+      this.endReason = "";
+      this.backfill = false;
+      this.syncView();
+    }
+  }
+
+  syncView() {
+    if (!this.view) return;
+    const busy = this.isBusy();
+    const mode = this.status === "waiting" ? "waiting" : (this.phase || "thinking");
+    this.view.setRunning(busy, mode);
+    if (this.status === "stopping") this.view.markStopping();
+    this.view.updateSendState();
+  }
+
+  async _handleMessage(msg) {
+    if (msg.type === "run_state") {
+      this._handleRunState(msg);
+      return;
+    }
+    if (msg.type === "replay_done") {
+      this.lastSeq = Math.max(this.lastSeq, Number(msg.seq) || 0);
+      this._replayDone = true;
+      this._resolveAttach();
+      this.syncView();
+      if (this.status === "completed" && this._commandPromise) {
+        // 断线期间 run 已经完成：completed 快照不会再回放 done，必须在这里收尾，
+        // 否则发送按钮会一直等一个永远不来的 done。
+        const result = { stopped: this.endReason === "stopped", backfill: !!this.backfill };
+        this._resolveCommand(result);
+        if (this.view && !result.stopped && this.view.onDone) this.view.onDone(result);
+        refreshSessions();
+      } else if (!this.isBusy() && this.status === "idle" && this._commandPromise) {
+        // 命令在断线时丢了：没有 run 可等，直接按失败处理。
+        this._resolveCommand(false);
+      }
+      if (this.status === "completed" && !this.accepted) this.maybeAccept();
+      return;
+    }
+    if (msg.run_id && typeof msg.seq === "number") {
+      if (msg.run_id === this.runId && msg.seq <= this.lastSeq) return;
+      if (msg.run_id === this.runId || !this.runId) {
+        this.runId = this.runId || msg.run_id;
+        this.lastSeq = Math.max(this.lastSeq, msg.seq);
+      }
+    }
+    await this._handleEvent(msg);
+  }
+
+  _handleRunState(msg) {
+    const wasStatus = this.status;
+    const wasCompleted = wasStatus === "completed";
+    if (msg.run_id && msg.run_id !== this.runId) {
+      const ours = this._startingCommand;
+      this.runId = msg.run_id;
+      if (!ours) {
+        if (this.view && this.view.historyEl) {
+          this.baseHtml = this.view.historyEl.innerHTML;
+          this.replyEl = null;
+        }
+        this.buffers = this._freshBuffers();
+        this.lastSeq = 0;
+        if (["starting", "running", "stopping", "waiting"].includes(msg.status)) {
+          this._ensureReplyEl();
+        }
+      }
+      this._startingCommand = false;
+    }
+    this.status = msg.status || this.status;
+    this.endReason = msg.end_reason || "";
+    this.accepted = !!msg.accepted;
+    this.backfill = !!msg.backfill;
+    this.stopping = this.status === "stopping";
+    if (Array.isArray(msg.sub_agents) && msg.sub_agents.length) {
+      this.buffers.configuredSubs = msg.sub_agents;
+      this.buffers.featureEnabled = msg.sub_agents.length >= 2;
+    }
+    if (msg.snapshot) {
+      this.lastSeq = 0;
+      if (this.status === "completed") {
+        this.lastSeq = Number(msg.seq) || 0;
+        this.historyMarkdown = msg.history_markdown || "";
+        this.baseHtml = null;
+        if (this.view && this.view.historyEl && !wasCompleted) {
+          if (this.historyMarkdown) {
+            this.replyEl = null;
+            this.view.historyEl.innerHTML = renderMd(this.historyMarkdown);
+            injectExportButtons(this.view.historyEl);
+          } else {
+            // 断线期间完成、后端不回放事件：重新拉一次最终历史，否则只看到断线前
+            // 的半截回复。拉完之前不要自动验收，避免把半截内容当成已读。
+            this._historyPending = true;
+            this._loadFinalHistory(msg.run_id);
+          }
+        }
+      } else if (this.isBusy()) {
+        this.historyMarkdown = msg.history_markdown || "";
+        if (this.view && this.view.historyEl && this.historyMarkdown
+          && (!this.replyEl || this.replyEl.childElementCount === 0)) {
+          this.baseHtml = null;
+          this.view.historyEl.innerHTML = renderMd(this.historyMarkdown);
+          injectExportButtons(this.view.historyEl);
+          this._ensureReplyEl();
+          this.renderStream();
+        } else if (this.view && this.view.historyEl && !this.replyEl) {
+          // 运行时还在构建、基线尚未拿到：保留 renderChatView 已加载的 /history。
+          this._ensureReplyEl();
+        }
+      } else {
+        this.lastSeq = Number(msg.seq) || 0;
+      }
+      if (msg.interrupt_prompt) this.pendingInterrupt = msg.interrupt_prompt;
+    }
+    this.syncView();
+    if (this.isBusy()) {
+      // 让 2s 轮询之外也能立刻把“正在进行”写进悬浮球/线程列表的全局快照。
+      refreshSessions();
+    }
+    if (
+      !msg.snapshot
+      && this.status === "completed"
+      && this.endReason === "error"
+      && !this.accepted
+    ) {
+      // 失败也属于“本轮结束”；用户正看着该会话且页面可见时按验收处理。
+      this.maybeAccept();
+    }
+  }
+
+  _handleEvent(msg) {
+    switch (msg.type) {
+      case "text":
+        if (msg.source === "main" || msg.source.startsWith("sub:")) this._leaveLoading("answering", msg.source);
+        if (msg.source === "main_user") this.buffers.main_user += msg.text;
+        else if (msg.source === "main") this._pushMain("text", msg.text);
+        else this._pushSub(msg.source.replace(/^sub:/, ""), "text", msg.text);
+        this._schedule();
+        break;
+      case "reasoning":
+        this._leaveLoading("thinking", msg.source);
+        if (msg.source === "main") this._pushMain("reasoning", msg.text);
+        else this._pushSub(msg.source.replace(/^sub:/, ""), "reasoning", msg.text);
+        this._schedule();
+        break;
+      case "sub_agents":
+        this.buffers.configuredSubs = msg.names || [];
+        this.buffers.featureEnabled = this.buffers.configuredSubs.length >= 2;
+        this._schedule();
+        break;
+      case "subgraph_start": {
+        let seg = this._lastSeg();
+        if (!seg || seg.kind !== "sub") {
+          seg = { kind: "sub", subs: {}, order: [], marks: {}, selected: null };
+          this.buffers.segments.push(seg);
+        }
+        if (!seg.subs[msg.name]) { seg.subs[msg.name] = []; seg.order.push(msg.name); }
+        seg.marks[msg.name] = "running";
+        if (!seg.selected) seg.selected = msg.name;
+        this._schedule();
+        break;
+      }
+      case "subgraph_end": {
+        for (let i = this.buffers.segments.length - 1; i >= 0; i--) {
+          const seg = this.buffers.segments[i];
+          if (seg.kind === "sub" && seg.marks[msg.name] === "running") { seg.marks[msg.name] = "done"; break; }
+        }
+        this._schedule();
+        break;
+      }
+      case "phase":
+        this.phase = msg.phase || "";
+        if (this.view) setStatusIndicator(msg.phase, this._actorOf(msg.source));
+        break;
+      case "tool_call": {
+        const isSub = typeof msg.source === "string" && msg.source.startsWith("sub:");
+        if (isSub && settingsCache && settingsCache.show_sub_agent_tools === false) break;
+        this._leaveLoading("thinking", msg.source || "main");
+        let tcHtml = `\n\n🔧 **${t("工具调用")}**: \`${esc(msg.name)}\`\n\n`;
+        if (msg.args && Object.keys(msg.args).length) tcHtml += "```json\n" + JSON.stringify(msg.args, null, 2) + "\n```\n\n";
+        if (isSub) this._pushSub(msg.source.replace(/^sub:/, ""), "tool", tcHtml);
+        else this._pushMain("tool", tcHtml);
+        this._schedule();
+        break;
+      }
+      case "tool_result": {
+        const isSub = typeof msg.source === "string" && msg.source.startsWith("sub:");
+        if (isSub && settingsCache && settingsCache.show_sub_agent_tools === false) break;
+        this._leaveLoading("thinking", msg.source || "main");
+        const rHtml = buildToolResultHtml(msg.name, msg.content);
+        if (isSub) this._pushSub(msg.source.replace(/^sub:/, ""), "tool_result", rHtml);
+        else this._pushMain("tool_result", rHtml);
+        this._schedule();
+        break;
+      }
+      case "interrupt":
+        this.pendingInterrupt = msg.prompt || "";
+        if (this.view) this._showInterrupt();
+        break;
+      case "status":
+        if (msg.status === "loading" && this.view) setStatusIndicator("loading");
+        else if (msg.status === "ready") this._leaveLoading("thinking", "main");
+        break;
+      case "snapshot_saved":
+        toast(t("已归档为快照（{n} 条消息）").replace("{n}", String(msg.total_messages || 0)));
+        break;
+      case "stopping":
+        this.status = "stopping";
+        this.stopping = true;
+        this.syncView();
+        break;
+      case "backfill":
+        this.backfill = true;
+        break;
+      case "done": {
+        this.status = "completed";
+        this.endReason = msg.stopped ? "stopped" : "done";
+        this.stopping = false;
+        this.phase = "";
+        this.syncView();
+        const result = { stopped: !!msg.stopped, backfill: !!this.backfill };
+        this._resolveCommand(result);
+        if (this.view) {
+          if (!result.stopped && this.view.onDone) this.view.onDone(result);
+        }
+        refreshSessions();
+        this.maybeAccept();
+        break;
+      }
+      case "error":
+        this._pushMain("tool", `\n\n> ⚠️ ${brk(msg.message)}\n\n`);
+        this._schedule();
+        this._resolveCommand(false);
+        break;
+    }
+  }
+
+  _actorOf(source) {
+    return source === "main" ? t("主 agent") : String(source || "").replace(/^sub:/, "");
+  }
+
+  _leaveLoading(next, source) {
+    if (this.view && statusMode === "loading") setStatusIndicator(next, this._actorOf(source));
+  }
+
+  _lastSeg() { return this.buffers.segments[this.buffers.segments.length - 1]; }
+
+  _pushMain(type, content) {
+    let seg = this._lastSeg();
+    if (!seg || seg.kind !== "main") { seg = { kind: "main", blocks: [] }; this.buffers.segments.push(seg); }
+    const last = seg.blocks[seg.blocks.length - 1];
+    if (last && last.type === type) last.content += content;
+    else seg.blocks.push({ type, content });
+  }
+
+  _pushSub(name, type, content) {
+    let seg = this._lastSeg();
+    if (!seg || seg.kind !== "sub") {
+      seg = { kind: "sub", subs: {}, order: [], marks: {}, selected: null };
+      this.buffers.segments.push(seg);
+    }
+    if (!seg.subs[name]) { seg.subs[name] = []; seg.order.push(name); if (!(name in seg.marks)) seg.marks[name] = "running"; }
+    const arr = seg.subs[name];
+    const last = arr[arr.length - 1];
+    if (last && last.type === type) last.content += content;
+    else arr.push({ type, content });
+  }
+
+  _schedule() {
+    if (this._rafPending) return;
+    this._rafPending = true;
+    requestAnimationFrame(() => { this._rafPending = false; this.renderStream(); });
+  }
+
+  _reasoningBlock(txt) {
+    return txt
+      ? `<details class="reasoning-block" open><summary>🧠 ${t("思考过程")}</summary><div class="reasoning-body reasoning-md">${renderMd(txt)}</div></details>`
+      : "";
+  }
+
+  _renderBlock(b) {
+    if (b.type === "reasoning") return this._reasoningBlock(b.content);
+    if (b.type === "tool_result") return b.content;
+    return `<div class="ai-msg-block">${renderMd(b.content)}</div>`;
+  }
+
+  _renderBlocks(blocks) { return (blocks || []).map((b) => this._renderBlock(b)).join(""); }
+
+  _subOptionLabel(seg, name) {
+    return name + (seg.marks[name] === "running" ? " ●" : seg.marks[name] === "done" ? " ✓" : "");
+  }
+
+  _subContentHtml(seg, name) {
+    if (!name) return "";
+    if (!(name in seg.marks)) return `<div class="sub-placeholder">${t("未调用")}</div>`;
+    const blocks = seg.subs[name];
+    if (!blocks || !blocks.length) return `<div class="sub-placeholder">${t("等待输出…")}</div>`;
+    return this._renderBlocks(blocks);
+  }
+
+  _buildSegmentEl(seg) {
+    seg._el = document.createElement("div");
+    if (seg.kind === "main") { seg._el.className = "seg-main"; return; }
+    seg._el.className = "seg-sub";
+    seg._el.innerHTML = `<div class="sub-stream-divider"><select class="sub-stream-select" title="${t("选择子 agent")}"></select></div><div class="sub-stream-content"></div>`;
+    seg._dividerEl = seg._el.querySelector(".sub-stream-divider");
+    seg._selectEl = seg._el.querySelector(".sub-stream-select");
+    seg._contentEl = seg._el.querySelector(".sub-stream-content");
+    seg._selectEl.onchange = () => { seg.selected = seg._selectEl.value; this.renderStream(); };
+  }
+
+  renderStream() {
+    if (!this.view || !this.replyEl) return;
+    const replyEl = this.replyEl;
+    const pane = $("#historyPane");
+    const atBottom = pane && (pane.scrollHeight - pane.scrollTop - pane.clientHeight < 48);
+    if (this.buffers._domOwner !== replyEl) {
+      this.buffers._domOwner = replyEl;
+      for (const seg of this.buffers.segments) { seg._el = null; seg._dividerEl = null; seg._selectEl = null; seg._contentEl = null; }
+    }
+    if (this.buffers.main_user) {
+      if (!replyEl._userEl || replyEl._userEl.parentElement !== replyEl) {
+        replyEl._userEl = document.createElement("div");
+        replyEl._userEl.className = "user-msg-block";
+        replyEl.insertBefore(replyEl._userEl, replyEl.firstChild);
+      }
+      const { text: userText, memory: userMem } = splitUserMemory(this.buffers.main_user);
+      const memBtn = userMem ? `<button type="button" class="mem-attach-btn" title="${t("查看本条消息自动附着的记忆")}">🔖 ${t("记忆附着")}</button>` : "";
+      const memPanel = userMem ? `<div class="mem-attach-panel" hidden>${esc(userMem).replace(/\n/g, "<br>")}</div>` : "";
+      replyEl._userEl.innerHTML = `<div class="user-msg-head">🧑 <strong>${t("用户")}</strong></div><blockquote class="user-msg-quote${userMem ? " has-mem" : ""}">${memBtn}${esc(userText).replace(/\n/g, "<br>")}</blockquote>${memPanel}`;
+    }
+    for (const seg of this.buffers.segments) {
+      if (!seg._el || seg._el.parentElement !== replyEl) {
+        this._buildSegmentEl(seg);
+        replyEl.appendChild(seg._el);
+      }
+      if (seg.kind === "main") {
+        seg._el.innerHTML = this._renderBlocks(seg.blocks);
+        continue;
+      }
+      const showRegion = this.buffers.featureEnabled;
+      seg._dividerEl.style.display = showRegion ? "" : "none";
+      if (showRegion) {
+        const opts = this.buffers.configuredSubs.length ? this.buffers.configuredSubs : seg.order;
+        const sig = opts.join("\u0001");
+        if (seg._selectEl._sig !== sig) {
+          seg._selectEl._sig = sig;
+          seg._selectEl.innerHTML = opts.map((n) => `<option value="${esc(n)}">${esc(this._subOptionLabel(seg, n))}</option>`).join("");
+        }
+        for (const o of Array.from(seg._selectEl.options)) {
+          const label = this._subOptionLabel(seg, o.value);
+          if (o.textContent !== label) o.textContent = label;
+        }
+        if (seg.selected == null) seg.selected = seg.order[0] || this.buffers.configuredSubs[0] || null;
+        if (seg._selectEl.value !== (seg.selected || "")) seg._selectEl.value = seg.selected || "";
+        seg._contentEl.innerHTML = this._subContentHtml(seg, seg.selected);
+      } else {
+        const tag = seg.order.length ? `<div class="sub-tag">🧩 ${t("子 agent")} · ${esc(seg.order.join("、"))}</div>` : "";
+        seg._contentEl.innerHTML = tag + this._renderBlocks(seg.order.flatMap((n) => seg.subs[n] || []));
+      }
+    }
+    if (pane && (pinned || atBottom)) pane.scrollTop = pane.scrollHeight;
+  }
+
+  async _showInterrupt() {
+    if (this._interrupting || !this.pendingInterrupt) return;
+    this._interrupting = true;
+    const prompt = this.pendingInterrupt;
+    this.pendingInterrupt = null;
+    const ans = await askConfirm(prompt || t("请确认"), null);
+    this._interrupting = false;
+    if (ans === "yes" && this.view) setStatusIndicator("thinking", t("主 agent"));
+    await this.sendRaw({ type: "resume", value: ans });
+    this.pendingInterrupt = null;
   }
 }
 
+// 兼容旧调用点：直接使用当前聊天视图的流。
 function openChatWs(content, proactive = false, subAgent = null, summaryPercent = null, cleanAll = false) {
-  return new Promise((resolve) => {
-    const proto = location.protocol === "https:" ? "wss" : "ws";
-    ws = new WebSocket(`${proto}://${location.host}/api/agents/${encodeURIComponent(S.agentId)}/threads/${encodeURIComponent(S.threadId)}/chat`);
-
-    const buffers = {
-      main_user: "",
-      // 段序列：{kind:"main",blocks:[]} | {kind:"sub",subs,order,marks,selected,...}
-      // 「末段是否为 main」用于判定新一轮委派，保证严格时间顺序（多轮 = 多分区）。
-      segments: [],
-      configuredSubs: [],   // 配置里的全部子 agent
-      featureEnabled: false, // 配置子 agent ≥2 才启用分区+下拉
-      _domOwner: null,
-    };
-    let rafPending = false;
-    let lastPhaseKey = "";
-    // 停止后图内修复削掉了末尾的用户消息：后端发 backfill，done 时提示是否回填。
-    let backfillNeeded = false;
-    const actorOf = (source) => source === "main" ? t("主 agent") : source.replace(/^sub:/, "");
-    // 流式输出时是否渲染子 agent 的工具调用 / 工具结果（进阶设置，默认开启）。
-    // 后端始终会下发这些事件，这里只决定是否渲染。
-    const showSubTools = !(settingsCache && settingsCache.show_sub_agent_tools === false);
-    // 后端会持续下发 {"type":"phase","source","phase"} 精确驱动状态栏；
-    // leaveLoading 只是「没收到 phase 时」的兜底：仅在仍处于 loading 时推进。
-    const leaveLoading = (next, source) => { if (statusMode === "loading") setStatusIndicator(next, actorOf(source)); };
-    const flush = () => { rafPending = false; renderStream(); };
-    const schedule = () => { if (!rafPending) { rafPending = true; requestAnimationFrame(flush); } };
-
-    const lastSeg = () => buffers.segments[buffers.segments.length - 1];
-
-    // 主 agent 内容：末段非 main 就新开一段
-    const pushMain = (type, content) => {
-      let seg = lastSeg();
-      if (!seg || seg.kind !== "main") { seg = { kind: "main", blocks: [] }; buffers.segments.push(seg); }
-      const last = seg.blocks[seg.blocks.length - 1];
-      if (last && last.type === type) last.content += content;
-      else seg.blocks.push({ type, content });
-    };
-
-    // 子 agent 内容：末段非 sub 就新开一个「本轮委派分区」
-    const pushSub = (name, type, content) => {
-      let seg = lastSeg();
-      if (!seg || seg.kind !== "sub") {
-        seg = { kind: "sub", subs: {}, order: [], marks: {}, selected: null };
-        buffers.segments.push(seg);
-      }
-      if (!seg.subs[name]) { seg.subs[name] = []; seg.order.push(name); if (!(name in seg.marks)) seg.marks[name] = "running"; }
-      const arr = seg.subs[name];
-      const last = arr[arr.length - 1];
-      if (last && last.type === type) last.content += content;
-      else arr.push({ type, content });
-    };
-
-    const reasoningBlock = (txt) => txt
-      ? `<details class="reasoning-block" open><summary>🧠 ${t("思考过程")}</summary><div class="reasoning-body reasoning-md">${renderMd(txt)}</div></details>`
-      : "";
-
-    const renderBlock = (b) =>
-      b.type === "reasoning"
-        ? reasoningBlock(b.content)
-        : b.type === "tool_result"
-          ? b.content
-          : `<div class="ai-msg-block">${renderMd(b.content)}</div>`;
-    const renderBlocks = (blocks) => (blocks || []).map(renderBlock).join("");
-
-    const subOptionLabel = (seg, name) =>
-      name + (seg.marks[name] === "running" ? " ●" : seg.marks[name] === "done" ? " ✓" : "");
-
-    const subContentHtml = (seg, name) => {
-      if (!name) return "";
-      if (!(name in seg.marks)) return `<div class="sub-placeholder">${t("未调用")}</div>`;
-      const blocks = seg.subs[name];
-      if (!blocks || !blocks.length) return `<div class="sub-placeholder">${t("等待输出…")}</div>`;
-      return renderBlocks(blocks);
-    };
-
-    const syncSelectOptions = (seg) => {
-      const selEl = seg._selectEl;
-      if (!selEl) return;
-      const opts = buffers.configuredSubs.length ? buffers.configuredSubs : seg.order;
-      const sig = opts.join("\u0001");
-      if (selEl._sig !== sig) {
-        selEl._sig = sig;
-        selEl.innerHTML = opts.map(n => `<option value="${esc(n)}">${esc(subOptionLabel(seg, n))}</option>`).join("");
-      }
-    };
-
-    const refreshSelectMarks = (seg) => {
-      const selEl = seg._selectEl;
-      if (!selEl) return;
-      for (const o of Array.from(selEl.options)) {
-        const label = subOptionLabel(seg, o.value);
-        if (o.textContent !== label) o.textContent = label;
-      }
-    };
-
-    const buildSegmentEl = (seg) => {
-      seg._el = document.createElement("div");
-      if (seg.kind === "main") { seg._el.className = "seg-main"; return; }
-      seg._el.className = "seg-sub";
-      seg._el.innerHTML = `<div class="sub-stream-divider"><select class="sub-stream-select" title="${t("选择子 agent")}"></select></div><div class="sub-stream-content"></div>`;
-      seg._dividerEl = seg._el.querySelector(".sub-stream-divider");
-      seg._selectEl = seg._el.querySelector(".sub-stream-select");
-      seg._contentEl = seg._el.querySelector(".sub-stream-content");
-      seg._selectEl.onchange = () => { seg.selected = seg._selectEl.value; renderStream(); };
-    };
-
-    function renderStream() {
-      if (!currentReplyEl) return;
-      const pane = $("#historyPane");
-      const atBottom = pane && (pane.scrollHeight - pane.scrollTop - pane.clientHeight < 48);
-
-      // currentReplyEl 被 appendReplyHeader 重建时，作废缓存的段 DOM 引用
-      if (buffers._domOwner !== currentReplyEl) {
-        buffers._domOwner = currentReplyEl;
-        for (const seg of buffers.segments) { seg._el = null; seg._dividerEl = null; seg._selectEl = null; seg._contentEl = null; }
-      }
-
-      if (buffers.main_user) {
-        if (!currentReplyEl._userEl || currentReplyEl._userEl.parentElement !== currentReplyEl) {
-          currentReplyEl._userEl = document.createElement("div");
-          currentReplyEl._userEl.className = "user-msg-block";
-          currentReplyEl.insertBefore(currentReplyEl._userEl, currentReplyEl.firstChild);
-        }
-        const { text: userText, memory: userMem } = splitUserMemory(buffers.main_user);
-        const memBtn = userMem ? `<button type="button" class="mem-attach-btn" title="${t("查看本条消息自动附着的记忆")}">🔖 ${t("记忆附着")}</button>` : "";
-        const memPanel = userMem ? `<div class="mem-attach-panel" hidden>${esc(userMem).replace(/\n/g, "<br>")}</div>` : "";
-        currentReplyEl._userEl.innerHTML = `<div class="user-msg-head">🧑 <strong>${t("用户")}</strong></div><blockquote class="user-msg-quote${userMem ? " has-mem" : ""}">${memBtn}${esc(userText).replace(/\n/g, "<br>")}</blockquote>${memPanel}`;
-      }
-
-      for (const seg of buffers.segments) {
-        if (!seg._el || seg._el.parentElement !== currentReplyEl) {
-          buildSegmentEl(seg);
-          currentReplyEl.appendChild(seg._el);
-        }
-        if (seg.kind === "main") {
-          seg._el.innerHTML = renderBlocks(seg.blocks);
-          continue;
-        }
-        const showRegion = buffers.featureEnabled;
-        seg._dividerEl.style.display = showRegion ? "" : "none";
-        if (showRegion) {
-          syncSelectOptions(seg);
-          refreshSelectMarks(seg);
-          if (seg.selected == null) seg.selected = seg.order[0] || buffers.configuredSubs[0] || null;
-          if (seg._selectEl.value !== (seg.selected || "")) seg._selectEl.value = seg.selected || "";
-          seg._contentEl.innerHTML = subContentHtml(seg, seg.selected);
-        } else {
-          const tag = seg.order.length ? `<div class="sub-tag">🧩 ${t("子 agent")} · ${esc(seg.order.join("、"))}</div>` : "";
-          seg._contentEl.innerHTML = tag + renderBlocks(seg.order.flatMap(n => seg.subs[n] || []));
-        }
-      }
-
-      if (pane && (pinned || atBottom)) pane.scrollTop = pane.scrollHeight;
-    }
-
-    ws.onopen = () => ws.send(JSON.stringify(
-      cleanAll ? { type: "clean_all", archive: cleanAll === "archive" }
-        : subAgent ? { type: "proactive_summarize_sub", sub_agent: subAgent, percent: summaryPercent }
-          : proactive ? { type: "proactive_summarize", percent: summaryPercent }
-            : { type: "send", content }
-    ));
-
-    ws.onmessage = async (ev) => {
-      const msg = JSON.parse(ev.data);
-      switch (msg.type) {
-        case "text":
-          if (msg.source === "main" || msg.source.startsWith("sub:")) leaveLoading("answering", msg.source);
-          if (msg.source === "main_user") buffers.main_user += msg.text;
-          else if (msg.source === "main") pushMain("text", msg.text);
-          else { const n = msg.source.replace(/^sub:/, ""); pushSub(n, "text", msg.text); }
-          schedule();
-          break;
-        case "reasoning":
-          leaveLoading("thinking", msg.source);
-          if (msg.source === "main") pushMain("reasoning", msg.text);
-          else { const n = msg.source.replace(/^sub:/, ""); pushSub(n, "reasoning", msg.text); }
-          schedule();
-          break;
-        case "sub_agents":
-          buffers.configuredSubs = msg.names || [];
-          buffers.featureEnabled = buffers.configuredSubs.length >= 2;
-          schedule();
-          break;
-        case "subgraph_start": {
-          let seg = lastSeg();
-          if (!seg || seg.kind !== "sub") {
-            seg = { kind: "sub", subs: {}, order: [], marks: {}, selected: null };
-            buffers.segments.push(seg);
-          }
-          if (!seg.subs[msg.name]) { seg.subs[msg.name] = []; seg.order.push(msg.name); }
-          seg.marks[msg.name] = "running";
-          if (!seg.selected) seg.selected = msg.name;
-          schedule();
-          break;
-        }
-        case "subgraph_end": {
-          for (let i = buffers.segments.length - 1; i >= 0; i--) {
-            const seg = buffers.segments[i];
-            if (seg.kind === "sub" && seg.marks[msg.name] === "running") { seg.marks[msg.name] = "done"; break; }
-          }
-          schedule();
-          break;
-        }
-        case "phase": {
-          const key = msg.source + ":" + msg.phase;
-          if (key !== lastPhaseKey) {
-            lastPhaseKey = key;
-            setStatusIndicator(msg.phase, actorOf(msg.source));
-          }
-          break;
-        }
-        case "tool_call": {
-          const isSub = typeof msg.source === "string" && msg.source.startsWith("sub:");
-          if (isSub && !showSubTools) break;
-          leaveLoading("thinking", msg.source || "main");
-          let tcHtml = `\n\n🔧 **${t("工具调用")}**: \`${esc(msg.name)}\`\n\n`;
-          if (msg.args && Object.keys(msg.args).length) tcHtml += "```json\n" + JSON.stringify(msg.args, null, 2) + "\n```\n\n";
-          if (isSub) pushSub(msg.source.replace(/^sub:/, ""), "tool", tcHtml);
-          else pushMain("tool", tcHtml);
-          schedule();
-          break;
-        }
-        case "tool_result": {
-          const isSub = typeof msg.source === "string" && msg.source.startsWith("sub:");
-          if (isSub && !showSubTools) break;
-          leaveLoading("thinking", msg.source || "main");
-          const rHtml = buildToolResultHtml(msg.name, msg.content);
-          if (isSub) pushSub(msg.source.replace(/^sub:/, ""), "tool_result", rHtml);
-          else pushMain("tool_result", rHtml);
-          schedule();
-          break;
-        }
-        case "interrupt": {
-          setStatusIndicator("waiting");
-          const ans = await askConfirm(msg.prompt || t("请确认"), subAgent ? { pink: true } : null);
-          if (ans === "yes") setStatusIndicator("thinking", t("主 agent"));
-          ws.send(JSON.stringify({ type: "resume", value: ans }));
-          break;
-        }
-        case "status":
-          if (msg.status === "loading") setStatusIndicator("loading");
-          else if (msg.status === "ready") leaveLoading("thinking", "main");
-          break;
-        case "snapshot_saved":
-          toast(t("已归档为快照（{n} 条消息）").replace("{n}", String(msg.total_messages || 0)));
-          break;
-        case "stopping": {
-          // 后端已收到停止请求：按钮进入「停止中」灰态，等本轮回 done 再复原。
-          const b = $("#stopBtn");
-          if (b) {
-            b.disabled = true;
-            b.textContent = t("停止中");
-            b.classList.add("stopping");
-          }
-          break;
-        }
-        case "backfill":
-          // 停止后修复把末尾还没被消费的用户消息删掉了：等 done 后提示回填。
-          backfillNeeded = true;
-          break;
-        case "done":
-          // 软取消（drain）结束时也走 done，但 stopped=true：不弹「回复已完成」。
-          resolve({ stopped: !!msg.stopped, backfill: backfillNeeded });
-          break;
-        case "error":
-          pushMain("tool", `\n\n> ⚠️ ${brk(msg.message)}\n\n`);
-          schedule();
-          resolve(false);
-          break;
-      }
-    };
-    ws.onerror = () => { toast(t("WebSocket 连接失败"), true); resolve(false); };
-    ws.onclose = () => resolve(false);
-  });
+  const stream = activeSessionStream;
+  if (!stream) return Promise.resolve(false);
+  const command = cleanAll
+    ? { type: "clean_all", archive: cleanAll === "archive" }
+    : subAgent
+      ? { type: "proactive_summarize_sub", sub_agent: subAgent, percent: summaryPercent }
+      : proactive
+        ? { type: "proactive_summarize", percent: summaryPercent }
+        : { type: "send", content };
+  return stream.sendCommand(command);
 }
 
 /* ================= 模型下载进度横幅 ================= */
@@ -8011,7 +8721,11 @@ async function openExternalLink(url) {
   try {
     await api("/api/browser/open-url", {
       method: "POST",
-      body: JSON.stringify({ url }),
+      body: JSON.stringify({
+        url,
+        agent_id: S.view === "chat" ? S.agentId : null,
+        thread_id: S.view === "chat" ? S.threadId : null,
+      }),
     });
   } catch (e) {
     toast(t("打开链接失败") + "：" + (e && e.message ? e.message : e), true);
@@ -8233,5 +8947,12 @@ document.addEventListener("keydown", (e) => {
 applyColors();
 applyCardSettings();
 render();
+startSessionPolling();
+document.addEventListener("visibilitychange", () => {
+  if (S.view === "chat" && activeSessionStream) {
+    reportActiveView(S.agentId, S.threadId);
+    if (document.visibilityState === "visible") activeSessionStream.maybeAccept();
+  }
+});
 // 旧版 store 数据库迁移提示（只弹一次；数据库服务可能还在启动，函数内部会重试）
 maybePromptStoreMigration();

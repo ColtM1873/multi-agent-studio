@@ -43,6 +43,13 @@ async def create_thread(agent_id: str, body: CreateThreadBody):
 @router.delete("/{thread_id}")
 async def delete_thread(agent_id: str, thread_id: str):
     _load(agent_id)
+    from app.deps import session_hub
+
+    if session_hub.is_pending(agent_id, thread_id):
+        raise HTTPException(
+            status_code=409,
+            detail="该会话正在运行或等待验收，暂时不能删除。请等它完成并验收后再删除。",
+        )
     await chat_manager.delete_thread(agent_id, thread_id)
     return {"ok": True}
 
