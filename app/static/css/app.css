@@ -121,6 +121,9 @@ html[data-card-ribbon="0"] .agent-ribbons { display: none; }
 .agent-card .meta { color: var(--card-meta, var(--text-muted)); font-size: 13px; line-height: 1.6; }
 .agent-card .meta code { background: var(--card-code-bg, #f1f5f9); padding: 1px 6px; border-radius: 5px; font-size: 12px; }
 .agent-card .hidden-tag { background: var(--card-code-bg, #f1f5f9); color: var(--card-meta, var(--text-muted)); }
+.agent-card-state { margin: 2px 0 8px; }
+.agent-card-state:empty { display: none; }
+.agent-card .actions .card-btn:disabled { opacity: .45; cursor: not-allowed; filter: grayscale(1); }
 .agent-card .actions { margin-top: 14px; display: flex; gap: 8px; }
 .card-btn { color: var(--c); border-color: var(--c); background: var(--surface); }
 .card-btn:hover { border-color: var(--c); filter: brightness(.96); }
@@ -666,7 +669,8 @@ body.floating-dragging { user-select: none; cursor: grabbing; }
 .thread-row .meta small { display: inline-block; margin-right: 14px; }
 
 /* ── 多实例：会话行状态（ID91） ───────────────────────────── */
-.thread-row .thread-run-state {
+.thread-row .thread-run-state,
+.agent-card .thread-run-state {
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
@@ -680,11 +684,13 @@ body.floating-dragging { user-select: none; cursor: grabbing; }
   white-space: nowrap;
   overflow: hidden;
 }
-.thread-row .thread-run-state.running {
+.thread-row .thread-run-state.running,
+.agent-card .thread-run-state.running {
   color: #2563eb;
   background: #eff6ff;
 }
-.thread-row .thread-run-state.done {
+.thread-row .thread-run-state.done,
+.agent-card .thread-run-state.done {
   color: #16a34a;
   background: #f0fdf4;
   padding: 0 8px;

@@ -792,6 +792,8 @@ const I18N_EN = {
   "任务完成": "Completed",
   "该会话正在进行": "This conversation is in progress",
   "该会话正在运行或等待验收，暂时不能隐藏或删除": "This conversation is running or awaiting acceptance and cannot be hidden or deleted yet.",
+  "该 multi-agent 还有进行中或待验收的会话，暂时不能编辑、隐藏或删除": "This multi-agent still has an in-progress or unaccepted conversation and cannot be edited, hidden, or deleted yet.",
+  "该 multi-agent 有会话正在进行": "A conversation of this multi-agent is in progress",
   "该会话的浏览器已打开（每个会话使用独立浏览器实例）": "This conversation's browser is open (each conversation uses an independent browser instance)",
   "该会话正在运行或等待验收，暂时不能删除。请等它完成并验收后再删除。": "This conversation is running or awaiting acceptance and cannot be deleted yet. Please wait until it is completed and accepted.",
 };
@@ -2292,6 +2294,42 @@ function isSessionPending(info) {
     || (info.status === "completed" && !info.accepted);
 }
 
+// 卡片状态：只要该 multi-agent 还有任意一个未验收会话，就整体锁住卡片操作。
+// 多个会话里只要有一个仍在跑，就优先显示「正在进行」；全部完工待验收才显示「任务完成」。
+function agentSessionState(agentId) {
+  const list = (sessionSnapshot.sessions || []).filter(
+    (s) => s.agent_id === agentId && isSessionPending(s)
+  );
+  if (!list.length) return "";
+  return list.some((s) => s.status !== "completed") ? "running" : "done";
+}
+
+function runStateTagHtml(state, title) {
+  if (state === "done") return `<span class="thread-run-state done">${t("任务完成")}</span>`;
+  if (state === "running") {
+    return `<span class="thread-run-state running" title="${esc(title || t("该会话正在进行"))}">
+      <span class="thread-run-viewport"><span class="thread-run-track"><span>${t("正在进行")}</span><span>${t("正在进行")}</span></span></span>
+    </span>`;
+  }
+  return "";
+}
+
+function syncAgentCardStates() {
+  if (S.view !== "agents") return;
+  $$(".agent-card").forEach((card) => {
+    const state = agentSessionState(card.dataset.id);
+    const holder = $(".agent-card-state", card);
+    if (holder) holder.innerHTML = runStateTagHtml(state, t("该 multi-agent 有会话正在进行"));
+    const locked = !!state;
+    $$("button[data-act]", card).forEach((btn) => {
+      if (!["edit", "hide", "del"].includes(btn.dataset.act)) return;
+      btn.disabled = locked;
+      if (locked) btn.title = t("该 multi-agent 还有进行中或待验收的会话，暂时不能编辑、隐藏或删除");
+      else btn.removeAttribute("title");
+    });
+  });
+}
+
 async function refreshSessions() {
   try {
     sessionSnapshot = await api("/api/sessions");
@@ -2299,6 +2337,7 @@ async function refreshSessions() {
     return sessionSnapshot;
   }
   updateSessionBall();
+  syncAgentCardStates();
   return sessionSnapshot;
 }
 
@@ -2324,8 +2363,26 @@ function reportActiveView(agentId, threadId) {
 }
 
 /* ---------- 应用内悬浮球（WebView2 DOM，非 OS 窗口） ---------- */
-function clampSessionBallPos(pos) {
-  const w = 400, h = 58, m = 8;
+function sessionBallSize() {
+  const wrap = $("#sessionBallWrap");
+  if (wrap && wrap.style.display !== "none") {
+    // offsetWidth/Height 不受入场缩放动画影响，避免刚显示时量到缩小后的尺寸而夹偏。
+    if (wrap.offsetWidth > 0 && wrap.offsetHeight > 0) {
+      return { w: wrap.offsetWidth, h: wrap.offsetHeight };
+    }
+  }
+  return { w: 320, h: 40 };
+}
+function sessionBallLayoutPos(wrap) {
+  const left = Number.parseFloat(wrap.style.left);
+  const top = Number.parseFloat(wrap.style.top);
+  if (Number.isFinite(left) && Number.isFinite(top)) return { x: left, y: top };
+  const r = wrap.getBoundingClientRect();
+  return { x: r.left, y: r.top };
+}
+function clampSessionBallPos(pos, size) {
+  const dims = size || sessionBallSize();
+  const w = dims.w || 320, h = dims.h || 40, m = 8;
   return {
     x: Math.min(Math.max(m, pos.x), Math.max(m, window.innerWidth - w - m)),
     y: Math.min(Math.max(m, pos.y), Math.max(m, window.innerHeight - h - m)),
@@ -2334,9 +2391,10 @@ function clampSessionBallPos(pos) {
 function loadSessionBallPos() {
   try {
     const p = JSON.parse(localStorage.getItem("session-ball-pos") || "null");
-    if (p && typeof p.x === "number" && typeof p.y === "number") return clampSessionBallPos(p);
+    if (p && typeof p.x === "number" && typeof p.y === "number") return p;
   } catch (e) {}
-  return clampSessionBallPos({ x: window.innerWidth - 400, y: Math.round(window.innerHeight * 0.55) });
+  // 先放在右边缘，等悬浮球真正显示、量到实际宽度后再夹紧（避免用猜测宽度留出空隙）。
+  return { x: window.innerWidth - 8, y: Math.round(window.innerHeight * 0.55) };
 }
 function applySessionBallPos(pos) {
   const wrap = $("#sessionBallWrap");
@@ -2380,8 +2438,8 @@ function ensureSessionBall() {
   let drag = null;
   btn.addEventListener("pointerdown", (e) => {
     if (e.button !== 0) return;
-    const r = wrap.getBoundingClientRect();
-    drag = { sx: e.clientX, sy: e.clientY, x: r.left, y: r.top, moved: false };
+    const p = sessionBallLayoutPos(wrap);
+    drag = { sx: e.clientX, sy: e.clientY, x: p.x, y: p.y, moved: false };
     btn.dataset.dragged = "0";
     btn.setPointerCapture(e.pointerId);
   });
@@ -2407,8 +2465,7 @@ function ensureSessionBall() {
   window.addEventListener("resize", () => {
     const wrap2 = $("#sessionBallWrap");
     if (!wrap2 || wrap2.style.display === "none") return;
-    const r = wrap2.getBoundingClientRect();
-    applySessionBallPos(clampSessionBallPos({ x: r.left, y: r.top }));
+    applySessionBallPos(clampSessionBallPos(sessionBallLayoutPos(wrap2)));
   });
 }
 
@@ -2477,8 +2534,8 @@ function updateSessionBall() {
     btn.title = label;
     btn.classList.toggle("has-done", completed > 0);
   }
-  const r = wrap.getBoundingClientRect();
-  const onLeft = r.left < window.innerWidth / 2;
+  applySessionBallPos(clampSessionBallPos(sessionBallLayoutPos(wrap), sessionBallSize()));
+  const onLeft = sessionBallLayoutPos(wrap).x < window.innerWidth / 2;
   panel.classList.toggle("panel-right", onLeft);
   panel.classList.toggle("panel-left", !onLeft);
   if (sessionBallOpen) {
@@ -2624,21 +2681,28 @@ async function renderAgents() {
 
     $("#agentGrid").innerHTML = vis.map(a => {
       const hidden = hiddenSet.has(a.agent_id);
+      const state = agentSessionState(a.agent_id);
+      const locked = !!state;
+      const lockAttr = locked
+        ? ` disabled title="${esc(t("该 multi-agent 还有进行中或待验收的会话，暂时不能编辑、隐藏或删除"))}"`
+        : "";
+      const subLine = a.sub_agents.length
+        ? `${t("子 agent")}：${a.sub_agents.length} ${t("个")}（${a.sub_agents.map(s => esc(s.name)).join(t("、"))}）<br/>`
+        : "";
       return `
       <div class="agent-card ${hidden ? "agent-hidden" : ""}" data-id="${esc(a.agent_id)}">
         ${agentRibbonsHTML()}
         <h3>${esc(a.name)}${hidden ? ` <span class="hidden-tag">${t("已隐藏")}</span>` : ""}</h3>
+        <div class="agent-card-state">${runStateTagHtml(state, t("该 multi-agent 有会话正在进行"))}</div>
         <div class="meta">
-          ${t("checkpoint 库")}：<code>${esc(a.postgres.checkpoint_database)}</code><br/>
           ${t("namespace")}：<code>${esc((a.postgres.store_namespace || []).join(",") || "—")}</code><br/>
-          ${t("子 agent")}：${a.sub_agents.length} ${t("个")}（${a.sub_agents.map(s => esc(s.name)).join(t("、")) || t("无")}）<br/>
-          ${t("主模型")}：<code>${esc(a.main_agent.llm_provider_name)}</code>
+          ${subLine}${t("主模型")}：<code>${esc(a.main_agent.llm_provider_name)}</code>
         </div>
         <div class="actions">
-          <button class="btn card-btn card-btn-edit small" data-act="edit">${t("编辑")}</button>
+          <button class="btn card-btn card-btn-edit small" data-act="edit"${lockAttr}>${t("编辑")}</button>
           <button class="btn card-btn card-btn-default small" data-act="default">${t("设为默认")}</button>
-          <button class="btn card-btn card-btn-hide small" data-act="hide">${hidden ? t("取消隐藏") : t("隐藏")}</button>
-          <button class="btn card-btn card-btn-danger small" data-act="del">${t("删除")}</button>
+          <button class="btn card-btn card-btn-hide small" data-act="hide"${lockAttr}>${hidden ? t("取消隐藏") : t("隐藏")}</button>
+          <button class="btn card-btn card-btn-danger small" data-act="del"${lockAttr}>${t("删除")}</button>
         </div>
       </div>`;
     }).join("");
@@ -5563,12 +5627,7 @@ async function renderThreadsView() {
 
   function threadStateHtml(info) {
     if (!info) return "";
-    if (info.status === "completed") {
-      return `<span class="thread-run-state done">${t("任务完成")}</span>`;
-    }
-    return `<span class="thread-run-state running" title="${t("该会话正在进行")}">
-      <span class="thread-run-viewport"><span class="thread-run-track"><span>${t("正在进行")}</span><span>${t("正在进行")}</span></span></span>
-    </span>`;
+    return runStateTagHtml(info.status === "completed" ? "done" : "running");
   }
 
   function drawThreadsBox() {
