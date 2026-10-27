@@ -6,6 +6,10 @@
 #   * 需要安装 pgvector（写入 PostgreSQL 安装目录）。
 # 提权重跑会带上 -Mode / -LiteStorage / -OriginalUser / -OriginalSid，跳过版本菜单；
 # 退出提权后再由原登录用户的进程创建桌面快捷方式。
+#
+# Python：安装前会检测本机是否有可用的 Python 3.13（Microsoft Store 的 0 字节占位别名不算）。
+# 没有的话，脚本自动下载 python.org 官方安装包并按当前用户静默安装（不需要管理员），
+# 官方源不通时回退阿里云同版本镜像；安装包会先校验 Authenticode 签名再执行。
 
 param(
     [string]$Mode = '',
@@ -194,6 +198,247 @@ function Stop-InstallStep {
     exit 1
 }
 
+# ---------- Python 检测与自动安装 ----------
+# 满足「用户机器上根本没有 Python」的场景，避免让客户自己去官网下载安装：
+#   * 判定「没有」的口径：找不到任何可用的解释器，或只找到低于 3.13 的版本；
+#   * Microsoft Store 的「应用执行别名」是不足百字节（实测 0 字节）的占位文件，
+#     直接运行会拉起微软商店，必须按文件长度排除，否则检测会被它骗过去；
+#   * 安装走 python.org 官方安装包，官方源不通时回退阿里云同版本镜像；
+#   * 安装前校验 Authenticode 签名（签名者必须是 Python Software Foundation）；
+#   * 按当前用户安装（InstallAllUsers=0），不触发 UAC，符合本脚本「默认不提权」的策略；
+#   * 装完不重开窗口，靠刷新 PATH 与绝对路径继续后面的步骤。
+$PythonRequiredMajor = 3
+$PythonRequiredMinor = 13
+# 候选版本（新 → 旧）：官方与镜像未必同步最新补丁版，逐个版本尝试即可。
+$PythonInstallerVersions = @('3.13.17', '3.13.16', '3.13.15')
+# {0} = 版本号；按顺序尝试，前一个失败才试下一个（官方优先，镜像只作回退）。
+$PythonDownloadSources = @(
+    'https://www.python.org/ftp/python/{0}/python-{0}-amd64.exe'
+    'https://mirrors.aliyun.com/python-release/windows/python-{0}-amd64.exe'
+)
+
+function Test-PythonVersionAtLeast313 {
+    param([string]$Version)
+    if ([string]::IsNullOrWhiteSpace($Version)) { return $false }
+    $m = [regex]::Match($Version, '^\s*(\d+)\.(\d+)')
+    if (-not $m.Success) { return $false }
+    $major = [int]$m.Groups[1].Value
+    $minor = [int]$m.Groups[2].Value
+    return (($major -gt $PythonRequiredMajor) -or (($major -eq $PythonRequiredMajor) -and ($minor -ge $PythonRequiredMinor)))
+}
+
+function Get-PythonExeVersion {
+    # 返回 "3.13" 形式的版本号；路径不是能跑起来的解释器时返回 $null。
+    param([string]$ExePath)
+    if ([string]::IsNullOrWhiteSpace($ExePath)) { return $null }
+    if (-not (Test-Path -LiteralPath $ExePath -PathType Leaf)) { return $null }
+    try {
+        $item = Get-Item -LiteralPath $ExePath -Force -ErrorAction Stop
+        if ($item.Length -eq 0) { return $null }
+        # WindowsApps 根目录下的 python.exe / python3.exe 是「应用执行别名」（占位存根），
+        # 运行会拉起微软商店；真正的商店版 Python 位于 WindowsApps 下的包目录里，父目录名不是 WindowsApps。
+        if ((Split-Path -Leaf (Split-Path -Parent $ExePath)) -eq 'WindowsApps') { return $null }
+    } catch {
+        return $null
+    }
+    try {
+        $out = & $ExePath -c "import sys; sys.stdout.write('%d.%d' % (sys.version_info[0], sys.version_info[1]))" 2>$null
+        if ($LASTEXITCODE -ne 0) { return $null }
+        $text = ([string]($out | Select-Object -Last 1)).Trim()
+        if ($text -match '^\d+\.\d+$') { return $text }
+    } catch {
+    }
+    return $null
+}
+
+function Get-PythonCandidatePaths {
+    # 枚举可能的 python.exe（去重）：PATH → py launcher → 注册表 → 常见安装目录。
+    $found = New-Object System.Collections.Generic.List[string]
+    $add = {
+        param([string]$Path)
+        if ([string]::IsNullOrWhiteSpace($Path)) { return }
+        if ($found -notcontains $Path) { $found.Add($Path) }
+    }
+
+    foreach ($name in @('python', 'python3')) {
+        foreach ($cmd in @(Get-Command $name -All -ErrorAction SilentlyContinue)) {
+            if ($cmd.Source) { & $add $cmd.Source }
+        }
+    }
+
+    $pyLauncher = Get-Command py -ErrorAction SilentlyContinue
+    if ($pyLauncher) {
+        try {
+            foreach ($line in @(& $pyLauncher.Source -0p 2>$null)) {
+                $m = [regex]::Match([string]$line, '([A-Za-z]:\\[^\*]*?\.exe)')
+                if ($m.Success) { & $add $m.Groups[1].Value.Trim() }
+            }
+        } catch {
+        }
+    }
+
+    foreach ($root in @(
+        'HKLM:\SOFTWARE\Python\PythonCore'
+        'HKLM:\SOFTWARE\WOW6432Node\Python\PythonCore'
+        'HKCU:\SOFTWARE\Python\PythonCore'
+    )) {
+        if (-not (Test-Path -LiteralPath $root)) { continue }
+        foreach ($key in @(Get-ChildItem -LiteralPath $root -ErrorAction SilentlyContinue)) {
+            $installKey = "$root\$($key.PSChildName)\InstallPath"
+            try {
+                $installDir = (Get-ItemProperty -LiteralPath $installKey -ErrorAction Stop).'(default)'
+            } catch {
+                continue
+            }
+            if ($installDir) { & $add (Join-Path $installDir 'python.exe') }
+        }
+    }
+
+    if ($env:LOCALAPPDATA) { & $add (Join-Path $env:LOCALAPPDATA 'Programs\Python\Python313\python.exe') }
+    if ($env:ProgramFiles) { & $add (Join-Path $env:ProgramFiles 'Python313\python.exe') }
+    if (${env:ProgramFiles(x86)}) { & $add (Join-Path ${env:ProgramFiles(x86)} 'Python313\python.exe') }
+    & $add 'C:\Python313\python.exe'
+
+    return $found
+}
+
+function Find-UsablePython {
+    # 返回 @{ Usable = 满足 3.13 的解释器; Outdated = 找到但版本偏低的解释器 }。
+    $result = [pscustomobject]@{ Usable = $null; Outdated = $null }
+    foreach ($candidate in @(Get-PythonCandidatePaths)) {
+        $version = Get-PythonExeVersion -ExePath $candidate
+        if (-not $version) { continue }
+        $info = [pscustomobject]@{ Path = $candidate; Version = $version }
+        if (Test-PythonVersionAtLeast313 -Version $version) {
+            $result.Usable = $info
+            return $result
+        }
+        if (-not $result.Outdated) { $result.Outdated = $info }
+    }
+    return $result
+}
+
+function Save-PythonInstallerPackage {
+    # 按「来源顺序」尝试下载；成功返回所用 URL，全部失败返回 $null。
+    param([string]$Version, [string]$DestinationPath)
+    foreach ($template in $PythonDownloadSources) {
+        $url = $template -f $Version
+        Write-Host "       来源：$url"
+        $oldProgress = $ProgressPreference
+        $ProgressPreference = 'SilentlyContinue'
+        try {
+            $requestArgs = @{ Uri = $url; OutFile = $DestinationPath; TimeoutSec = 600 }
+            if ($PSVersionTable.PSVersion.Major -le 5) { $requestArgs['UseBasicParsing'] = $true }
+            Invoke-WebRequest @requestArgs
+            if ((Test-Path -LiteralPath $DestinationPath) -and ((Get-Item -LiteralPath $DestinationPath).Length -gt 1048576)) {
+                return $url
+            }
+            Write-Host '       [提示] 下载结果不完整，换下一个来源重试。'
+        } catch {
+            Write-Host "       [提示] 该来源下载失败：$($_.Exception.Message)"
+        } finally {
+            $ProgressPreference = $oldProgress
+        }
+        if (Test-Path -LiteralPath $DestinationPath) {
+            Remove-Item -LiteralPath $DestinationPath -Force -ErrorAction SilentlyContinue
+        }
+    }
+    return $null
+}
+
+function Install-Python313 {
+    # 逐个「版本 × 来源」尝试：下载 → 签名校验 → 静默安装 → 轮询等待解释器可用。
+    # 成功返回 @{Path; Version}，全部失败返回 $null。
+    $cacheDir = Join-Path $PSScriptRoot 'build\python-installer'
+    try {
+        New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null
+    } catch {
+        Write-Host "       [警告] 无法创建下载目录 $cacheDir：$($_.Exception.Message)"
+        return $null
+    }
+    Write-Host '       正在下载 Python 安装包（约 30 MB；官方源较慢时会自动回退到国内镜像）...'
+
+    foreach ($version in $PythonInstallerVersions) {
+        $installerPath = Join-Path $cacheDir "python-$version-amd64.exe"
+        $sourceUrl = Save-PythonInstallerPackage -Version $version -DestinationPath $installerPath
+        if (-not $sourceUrl) { continue }
+
+        $signatureOk = $false
+        try {
+            $signature = Get-AuthenticodeSignature -LiteralPath $installerPath -ErrorAction Stop
+            if ($signature -and $signature.Status -eq 'Valid' -and $signature.SignerCertificate) {
+                $signatureOk = ([string]$signature.SignerCertificate.Subject) -match 'Python Software Foundation'
+            }
+        } catch {
+        }
+        if (-not $signatureOk) {
+            Write-Host "       [警告] Python $version 安装包签名校验未通过，已丢弃并换下一个来源重试。"
+            Remove-Item -LiteralPath $installerPath -Force -ErrorAction SilentlyContinue
+            continue
+        }
+        Write-Host "       安装包已校验（来源：$sourceUrl）"
+        Write-Host '       正在静默安装 Python 3.13（仅当前用户，约 1~3 分钟，请耐心等待）...'
+
+        $installerArgs = @(
+            '/quiet'
+            'InstallAllUsers=0'
+            'PrependPath=1'
+            'Include_test=0'
+            'Include_doc=0'
+            'Include_pip=1'
+            'Include_tcltk=1'
+            'Include_launcher=1'
+            'InstallLauncherAllUsers=0'
+        )
+        $exitCode = $null
+        try {
+            $proc = Start-Process -FilePath $installerPath -ArgumentList $installerArgs -Wait -PassThru
+            $exitCode = $proc.ExitCode
+            if ($exitCode -ne 0 -and $exitCode -ne 3010) {
+                Write-Host "       [警告] 安装程序返回退出码 $exitCode，继续等待并重新检测。"
+            }
+        } catch {
+            Write-Host "       [警告] 启动安装程序失败：$($_.Exception.Message)"
+        }
+
+        # 官方安装包是 bootstrapper：主进程可能先退出、MSI 仍在后台写入，所以按「解释器可用」轮询。
+        # 安装器已明确返回错误码时只需短等，避免用户白等 4 分钟。
+        $waitSeconds = if ($null -ne $exitCode -and $exitCode -ne 0 -and $exitCode -ne 3010) { 60 } else { 240 }
+        $deadline = (Get-Date).AddSeconds($waitSeconds)
+        while ((Get-Date) -lt $deadline) {
+            Start-Sleep -Seconds 3
+            $probe = Find-UsablePython
+            if ($probe.Usable) {
+                Remove-Item -LiteralPath $installerPath -Force -ErrorAction SilentlyContinue
+                return $probe.Usable
+            }
+        }
+        Write-Host "       [警告] Python $version 安装完成后仍未检测到可用解释器，换下一个版本重试。"
+        if (Test-Path -LiteralPath $installerPath) {
+            Remove-Item -LiteralPath $installerPath -Force -ErrorAction SilentlyContinue
+        }
+    }
+    return $null
+}
+
+function Update-ProcessPath {
+    # 安装器写的是注册表里的用户 PATH；当前进程仍持旧快照，这里合并刷新（不丢已有条目）。
+    # 注册表里的 PATH 常含 %USERPROFILE% 之类未展开的变量，先展开再拼，否则条目不可用。
+    $entries = New-Object System.Collections.Generic.List[string]
+    foreach ($scope in @('Machine', 'User')) {
+        $value = [Environment]::GetEnvironmentVariable('Path', $scope)
+        if (-not $value) { continue }
+        $value = [Environment]::ExpandEnvironmentVariables($value)
+        foreach ($entry in ($value -split ';')) {
+            if ($entry -and ($entries -notcontains $entry)) { $entries.Add($entry) }
+        }
+    }
+    foreach ($entry in @($env:Path -split ';')) {
+        if ($entry -and ($entries -notcontains $entry)) { $entries.Add($entry) }
+    }
+    $env:Path = ($entries -join ';')
+}
+
 $interactive = [string]::IsNullOrWhiteSpace($Mode)
 if ($interactive) {
     Write-Host ''
@@ -294,17 +539,49 @@ if ($isAdmin) {
 }
 Write-Host ''
 
-# ---------- 1. 检查 Python ----------
+# ---------- 1. 检查 Python（缺失或版本过低时自动安装）----------
 Write-Host '[1/8] 检查 Python...'
-$py = Get-Command python -ErrorAction SilentlyContinue
-if (-not $py) {
+$python = Find-UsablePython
+if (-not $python.Usable) {
+    if ($python.Outdated) {
+        Write-Host "       检测到 Python $($python.Outdated.Version)（$($python.Outdated.Path)），低于本项目需要的 3.13。"
+    } else {
+        Write-Host '       未检测到可用的 Python（Microsoft Store 的占位别名不算已安装）。'
+    }
     Write-Host ''
-    Write-Host '[错误] 未检测到 Python！'
-    Write-Host '请先到 https://www.python.org/downloads/ 安装 Python 3.13，'
-    Write-Host '安装时请勾选 "Add python.exe to PATH"，然后重新运行本脚本。'
-    exit 1
+    Write-Host '  安装脚本可以自动安装 Python 3.13：'
+    Write-Host '    · 使用 python.org 官方安装包（约 30 MB），官方源不通时自动回退国内镜像；'
+    Write-Host '    · 只安装到当前用户目录，不需要管理员权限；会写入用户 PATH。'
+    Write-Host ''
+    $installPython = $true
+    if ($interactive) {
+        $pyAns = Read-Host '       直接回车开始自动安装；输入 N 跳过并退出 [Y/n]'
+        if ($pyAns -match '^\s*n(o)?\s*$') { $installPython = $false }
+    }
+    if (-not $installPython) {
+        Write-Host ''
+        Write-Host '[提示] 已跳过自动安装。请手动安装 Python 3.13 后重新运行本脚本：'
+        Write-Host '       https://www.python.org/downloads/windows/'
+        Write-Host '       安装时请勾选 "Add python.exe to PATH"，并勾选 "tcl/tk and IDLE"。'
+        exit 1
+    }
+    Write-Host ''
+    $installed = Install-Python313
+    if (-not $installed) {
+        Write-Host ''
+        Write-Host '[错误] Python 自动安装未成功（可能是网络问题或系统限制）。'
+        Write-Host '       请手动安装 Python 3.13 后重新运行本脚本：'
+        Write-Host '       https://www.python.org/downloads/windows/'
+        Write-Host '       安装时请勾选 "Add python.exe to PATH"，并勾选 "tcl/tk and IDLE"。'
+        exit 1
+    }
+    Write-Host ''
+    Write-Host "       Python $($installed.Version) 已安装：$($installed.Path)"
+    Update-ProcessPath
+    $python = [pscustomobject]@{ Usable = $installed; Outdated = $null }
 }
-python --version
+$pyExe = $python.Usable.Path
+& $pyExe --version
 
 # ---------- 2. 启用长路径（优先，但不再强制提权）----------
 # 长路径对 torch 这类依赖很关键，但普通用户改不了 HKLM。这里先只读检测：
@@ -359,7 +636,8 @@ try {
 # ---------- 3. 创建虚拟环境 ----------
 Write-Host '[3/8] 创建虚拟环境 venv...'
 if (-not (Test-Path "$PSScriptRoot\venv")) {
-    python -m venv "$PSScriptRoot\venv"
+    # 用 [1/8] 确认过的解释器绝对路径，不依赖 PATH（刚装完 Python 时 PATH 还没刷新）。
+    & $pyExe -m venv "$PSScriptRoot\venv"
     if ($LASTEXITCODE -ne 0) {
         Stop-InstallStep -Message '[错误] 创建虚拟环境失败，请截图上方报错信息反馈。' -Reason '创建虚拟环境失败（可能是权限或长路径限制）'
     }
