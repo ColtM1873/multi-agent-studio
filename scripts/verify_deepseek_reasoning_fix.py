@@ -24,18 +24,15 @@ def main() -> None:
         AIMessage(content="hello", additional_kwargs={"reasoning_content": "think!"}),
     ]
 
-    off = _init_model("deepseek:deepseek-v4-pro", "fake", ModelConfig())
-    p_off = off._get_request_payload(msgs)
-    assert "reasoning_content" not in p_off["messages"][1], p_off["messages"][1]
-    print("[OK] 未开启：reasoning_content 未被回填（复现官方行为）")
-
-    on = _init_model(
-        "deepseek:deepseek-v4-pro", "fake",
-        ModelConfig(preserve_reasoning_content=True),
-    )
+    on = _init_model("deepseek:deepseek-v4-pro", "fake", ModelConfig())
     p_on = on._get_request_payload(msgs)
     assert p_on["messages"][1].get("reasoning_content") == "think!", p_on["messages"][1]
-    print("[OK] 开启：reasoning_content 被回填")
+    print("[OK] DeepSeek 自动识别：无需配置开关即回填 reasoning_content")
+
+    other = _init_model("openai:gpt-5", "fake", ModelConfig())
+    p_other = other._get_request_payload(msgs)
+    assert "reasoning_content" not in p_other["messages"][1], p_other["messages"][1]
+    print("[OK] 非 DeepSeek：不受影响")
 
     tool_msgs = [
         HumanMessage(content="weather?"),
@@ -58,8 +55,24 @@ def main() -> None:
         "deepseek-v4-pro",
         ModelConfig(provider_mode="openai_compatible", base_url="https://api.deepseek.com/v1"),
     )
+    assert is_deepseek_config(
+        "deepseek-v4-pro",
+        ModelConfig(provider_mode="openai_compatible", provider_name="DeepSeek"),
+    )
     assert not is_deepseek_config("openai:gpt-5", ModelConfig())
-    print("[OK] DeepSeek 配置识别（官方前缀 / 兼容 base_url）")
+    print("[OK] DeepSeek 配置识别（官方前缀 / 兼容 provider_name / 兼容 base_url）")
+
+    compat = _init_model(
+        "deepseek-v4-pro", "fake",
+        ModelConfig(
+            provider_mode="openai_compatible",
+            provider_name="DeepSeek",
+            base_url="https://api.deepseek.com/v1",
+        ),
+    )
+    p_compat = compat._get_request_payload(msgs)
+    assert p_compat["messages"][1].get("reasoning_content") == "think!", p_compat["messages"][1]
+    print("[OK] OpenAI 兼容模式的 DeepSeek 也会自动回填")
 
 
 if __name__ == "__main__":

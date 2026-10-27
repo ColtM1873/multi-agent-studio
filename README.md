@@ -6,13 +6,64 @@
 
 ## 目录
 
+- [快速开始](#快速开始)
+- [版本迁移（升级到新版本）](#版本迁移升级到新版本)
 - [特性](#特性)
 - [界面预览](#界面预览)
 - [架构](#架构)
-- [快速开始](#快速开始)
-- [版本迁移（升级到新版本）](#版本迁移升级到新版本)
 - [本地 MCP](#本地-mcp)
 - [许可证](#许可证)
+
+## 快速开始
+
+### 第一步：前置软件
+
+1. **Python**：如果没有的话（本项目要求3.13以上版本），需要到 https://www.python.org/downloads/ 下载并安装
+   安装时**请勾选「Add python.exe to PATH」**。
+2. **PostgreSQL**：程序用它保存会话历史和长期记忆。
+
+### 第二步：下载
+
+1. 打开本仓库页面，点右侧 **Releases**，在最新版本下点击 **Source code (zip)** 下载（或者直接git clone）。
+
+### 第三步：解压
+
+1. 把 zip 解压，得到一个 `multi-agent-studio-*` 文件夹。
+
+### 第四步：进入项目文件夹
+
+1. 双击点进去，一直点到能看到 `setup.bat`、`build_exe.bat` 的那一层。
+
+### 第五步：一键安装 + 打包
+
+1. 双击 `setup.bat`。
+2. 会先跑一个cmd黑色窗口，然后再跑一个蓝色背景的powershell窗口。请不要在安装完成前关闭黑色窗口（或者蓝色窗口）。
+3. 安装过程中可能会要求提权，说明没有开启长路径支持，支持库安装失败，此时请授权。
+4. 对于非轻量版，会提示一键安装 pgvector ，可以考虑一键安装。
+5. 安装完成后，可以在桌面看见Studio的快捷方式，双击即可开始使用
+
+### 第六步：使用说明
+
+1. 安装PostgreSQL时，会让填写密码，以及端口号，请不要乱填。
+   程序新建 multi-agent配置时，需要填入 安装PostgreSQL时的密码和端口号（以及用户名）（需要这些信息来连接数据库）
+2. postgres连接设置中，连接串模板  postgresql://用户名:密码@localhost:端口号/?sslmode=disable  （默认本地数据库情景）
+3. 每个选项旁边的 小圆圈，一个感叹号，里面都有比较详细的解释，可以把鼠标移过去查看
+
+
+## 版本迁移（升级到新版本）
+
+1. 下载最新版本release的源码（或者直接克隆库），解压后，点到有“setup.bat”那一层，全选，复制
+2. 到你实际使用的Studio的本地文件，也点到有“setup.bat”那一层，粘贴，相同的文件选择全部覆盖（替换）
+3. 通常情况下升级就完成了，可以直接点桌面的快捷方式进行运行
+4. 如果跑起来有问题，再考虑到实际使用的Studio的本地文件夹里，把exe文件（MultiAgentStudio.exe 或者 MultiAgentStudio-Lite.exe）删掉，然后双击setup.bat重新生成
+
+### 用户配置名录
+
+| 文件 / 目录 | 说明 |
+|---|---|
+| `configs/` | 所有 multi-agent 配置（`<agent_id>.json`、`default.json`）与全局设置（`settings.json`）。含 API key、system prompt、数据库连接、阈值等。 |
+| `snapshots/` | 全量总结前自动保存的会话快照（若生成过）。 |
+| `.chrome-profile/` | 浏览器接管使用的自动化 Chrome profile（用过浏览器接管才有）。保留可复用网站登录态；不保留则需重新登录。 |
 
 ## 特性
 
@@ -35,10 +86,10 @@
 
 ### 模型与提供商
 
-- **官方 provider** —— 内置 openai / anthropic / deepseek / google_genai，直接以 `provider:model` 选择。
-- **任意 OpenAI 兼容模型** —— 填写模型名 + base_url 即可接入第三方端点。
+- **模型供应商 + 模型名称** —— 分别填写供应商与模型名称（例如 `deepseek` + `deepseek-v4-pro`），程序自动拼接为 `provider:model`。
+- **自动识别接入方式** —— 内置供应商（openai / anthropic / deepseek / google_genai）直接使用官方端点，不显示 `base_url`；其他供应商自动按 OpenAI 兼容协议接入，并显示 `base_url`。
 - **精细采样参数** —— temperature / top_k / top_p / max_tokens / repetition_penalty 逐项可选。
-- **DeepSeek 思考模式修复** —— 一键开启 reasoning_content 回填，规避思考模式 + 工具调用下的间歇性 400。
+- **DeepSeek 思考模式修复** —— 检测到 DeepSeek 自动启用 reasoning_content 回填，无需手动勾选，规避思考模式 + 工具调用下的间歇性 400。
 
 ### 长期记忆
 
@@ -118,86 +169,6 @@ Supervisor（主 agent）                    Workers（子 agent）
 - 主 agent 是负责调度规划的 Supervisor；每个子 agent 是一个 `checkpointer=True` 编译的**子图**，作为节点挂载，在线程内跨调用保持记忆。
 - 主图与各子图共享 `subagents_reports_submit` / `instructions_for_subagents`（故意同名）用于报告 / 指令穿透，而各自的消息通道键必须唯一。
 
-## 快速开始
-
-### 第一步：安装前置软件
-
-1. **安装 Python 3.13**：到 https://www.python.org/downloads/ 下载并安装，安装时**请勾选「Add python.exe to PATH」**。
-2. **安装 PostgreSQL**：程序用它保存会话历史和长期记忆。
-
-### 第二步：下载
-
-1. 打开本仓库页面，点右侧 **Releases**，在最新版本下点击 **Source code (zip)** 下载。
-
-### 第三步：解压
-
-1. 把 zip 解压到**任意位置**，得到一个 `multi-agent-studio-*` 文件夹。
-
-### 第四步：进入项目文件夹
-
-1. 双击点进去，一直点到能看到 `setup.bat`、`build_exe.bat` 的那一层。
-
-### 第五步：一键安装 + 打包
-
-1. 双击 `setup.bat`（或在文件夹空白处**右键** →「**在终端中打开**」→ 输入 `setup.bat` 回车）。
-2. 首次会弹出「用户账户控制」，点「**是**」——这是为了启用 Windows 长路径支持，防止安装时报「路径过长」。
-3. 脚本会自动：创建虚拟环境 → 安装全部依赖（首次约几分钟）→ 询问是否一键安装 pgvector → 打包出 `MultiAgentStudio.exe`。
-4. 看到「安装完成！已生成 MultiAgentStudio.exe」，则exe运行文件打包成功。
-
-> 安装脚本会自动启用 Windows 长路径，因此项目解压到任意目录都能正常安装，不必特意放到 C 盘根目录。
-
-5. **安装 pgvector 扩展**（PostgreSQL 不自带，必须单独安装）：安装 PostgreSQL 后，双击项目里的 `install_pgvector.bat` 即可**一键安装**（或者在3.中选择一键安装pgvector）——它会自动识别 PostgreSQL 目录、自动寻找 Visual Studio 编译环境并**从官方源码编译**；若没有编译环境，会提示是否使用社区预编译包（会有风险提示）。装好后**无需打开 psql、也无需手动执行 `CREATE EXTENSION`**，程序会在首次聊天时自动创建。
-
-> 没有安装 Visual Studio 也不影响：`install_pgvector.bat` 会自动回退到预编译包，并明确提示相关风险。
-### 第六步：启动
-
-1. 双击项目文件夹里的 `MultiAgentStudio.exe`。
-2. 浏览器会自动打开界面，同时右下角出现托盘图标（右键图标可「打开 / 查看状态 / 退出」）。
-
-> 从源码运行（开发用）：`python run.py --console`（前台，自动开浏览器 + 控制台日志）。
-
-### 第七步：开始使用
-
-1. 点「＋ 新建 multi-agent」填表单（API key、system prompt、子 agent、MCP、PostgreSQL 库）。
-2. 先在 pgAdmin 建好 checkpoint 库（表单会提醒并做连通预检）。
-3. 打开某个 agent → 选 / 建线程 → 开始流式对话。
-
-> 每个 multi-agent 的身份绑定 `checkpoint_database`。创建后子 agent 不可增删 / 改名，但其 prompt / description / MCP 工具 / 模型仍可改。
-
-## 版本迁移（升级到新版本）
-
-升级时只需**保留少数「你的数据」，其余代码文件全部覆盖为新版本**即可。PostgreSQL 里的会话历史与长期记忆（checkpoint 库 / store 库）存在数据库里、不在此文件夹中，覆盖文件不会影响它们。
-
-> ⚠️ **重要**：升级后**务必重新运行 `setup.bat`** 生成新的 `MultiAgentStudio.exe`。不要直接沿用旧版的 `MultiAgentStudio.exe`——部分版本更迭中，旧 exe 因打包的前端/后端代码与新版不匹配，会出现错误行为。
-
-### 必须保留（覆盖前先备份，或复制到新版本目录）
-
-| 文件 / 目录 | 说明 |
-|---|---|
-| `configs/` | 所有 multi-agent 配置（`<agent_id>.json`、`default.json`）与全局设置（`settings.json`）。含 API key、system prompt、数据库连接、阈值等。 |
-| `snapshots/` | 全量总结前自动保存的会话快照（若生成过）。 |
-| `.env` | 本地 MCP 服务器读取的 token 等环境变量。 |
-| `.chrome-profile/` | 浏览器接管使用的自动化 Chrome profile（用过浏览器接管才有）。保留可复用网站登录态；不保留则需重新登录。 |
-
-### 可以直接覆盖（用新版本替换）
-
-`app/`、`browser_agent/`、`run.py`、`tray.py`、`launcher.py`、`scripts/`、`folder_of_MCPs/`、`md2print/`（源码）、`requirements.txt`、`setup.bat`、`setup.ps1`、`build_exe.py`、`build_exe.bat`、`icon.ico`、`.env.example`、`README.md`、`LICENSE` 等。
-
-### 会自动重新生成（无需手动保留）
-
-`venv/`（`setup.bat` 重建）、`MultiAgentStudio.exe` / `dist/` / `build/`（打包生成）、`logs/`（服务日志）、`__pycache__/` 等缓存。
-
-### 推荐迁移步骤
-
-1. 备份 `configs/`、`snapshots/`、`.env`。
-2. 用新版本覆盖其余文件（或把上述三个复制进新解压的文件夹）。
-3. **务必**运行 `setup.bat` 重新安装依赖并打包，生成新的 `MultiAgentStudio.exe`（不要沿用旧 exe）。
-4. 双击新生成的 `MultiAgentStudio.exe`，确认历史会话、记忆与快照都还在。
-
-## 本地 MCP
-
-`folder_of_MCPs/` 是独立的 FastMCP 服务器（彩云天气、高德地图）。单独启动后，在子 agent 的 `mcp_servers` 里以 `http` 或 `stdio` 方式引用；token 从环境变量读取，见 `.env.example`。
-
 
 ## 许可证
 
@@ -213,89 +184,137 @@ Supervisor（主 agent）                    Workers（子 agent）
 
 ## Table of Contents
 
+- [Quick Start](#quick-start)
+- [Version migration (upgrading)](#version-migration-upgrading)
 - [Features](#features)
 - [Screenshots](#screenshots)
 - [Architecture](#architecture)
-- [Quick Start](#quick-start)
-- [Version migration (upgrading)](#version-migration-upgrading)
 - [Local MCP servers](#local-mcp-servers)
 - [License](#license)
+
+## Quick Start
+
+### 1. Prerequisites
+
+1. **Python**: if it is not installed yet (this project requires 3.13 or newer), download and install it from https://www.python.org/downloads/. During installation, **check "Add python.exe to PATH"**.
+2. **PostgreSQL**: the app uses it to store conversation history and long-term memory.
+
+### 2. Download
+
+1. Open this repository page, click **Releases** on the right, and download **Source code (zip)** under the latest release (or `git clone` the repository).
+
+### 3. Extract
+
+1. Extract the zip; you will get a `multi-agent-studio-*` folder.
+
+### 4. Enter the project folder
+
+1. Open the folder and drill down until you see `setup.bat` and `build_exe.bat`.
+
+### 5. One-click install + build
+
+1. Double-click `setup.bat`.
+2. A black cmd window opens first, followed by a blue PowerShell window. Do not close either window before installation finishes.
+3. Installation may ask for elevation. This means Windows long-path support is not enabled and dependency installation failed; approve the prompt.
+4. For the non-Lite edition, you will be asked whether to install pgvector. Installing it in one click is recommended.
+5. When installation finishes, a Studio shortcut appears on the desktop. Double-click it to start.
+
+### 6. Usage notes
+
+1. When installing PostgreSQL, you will be asked for a password and a port. Do not enter arbitrary values. When creating a multi-agent config, you must enter the PostgreSQL username, password, and port (the app needs them to connect to the database).
+2. In the PostgreSQL connection settings, the connection string template is `postgresql://username:password@localhost:port/?sslmode=disable` (the typical local setup).
+3. Each option has a small circled exclamation mark with a detailed explanation; hover over it to read.
+
+## Version migration (upgrading)
+
+1. Download the source code of the latest release (or clone the repository). After extracting, open the folder containing `setup.bat`, select everything, and copy it.
+2. Open your actual Studio folder (also the one containing `setup.bat`), paste, and choose to overwrite/replace all matching files.
+3. This normally completes the upgrade. You can start the app from the desktop shortcut.
+4. If something breaks, delete the exe file (`MultiAgentStudio.exe` or `MultiAgentStudio-Lite.exe`) in your Studio folder, then double-click `setup.bat` to rebuild it.
+
+### User configuration files
+
+| File / directory | Notes |
+|---|---|
+| `configs/` | All multi-agent configs (`<agent_id>.json`, `default.json`) and global settings (`settings.json`). Contains API keys, system prompts, database connections, thresholds, etc. |
+| `snapshots/` | Conversation snapshots saved automatically before a full summary (if any were generated). |
+| `.chrome-profile/` | The automation Chrome profile used by browser takeover (present only if you used browser takeover). Keep it to reuse website logins; otherwise you will need to sign in again. |
 
 ## Features
 
 ### Multi-agent orchestration
 
-- **Visual configuration** — create / edit / delete multi-agent configs in the browser; each config is a JSON file bound to a PostgreSQL checkpoint database. Save any config as the default template.
-- **Supervisor–Worker architecture** — the main agent plans, delegates, and summarizes; each sub-agent is a subgraph compiled with `checkpointer=True`, keeping memory across calls within a thread.
-- **Sub-agents as tools** — each sub-agent is exposed to the main agent as a tool (name + description); several sub-agents can be dispatched in parallel in one turn and their reports collected.
-- **MCP tools** — attach `http` / `stdio` MCP servers per sub-agent, with a connectivity check in the config page.
+- **Visual configuration** — create / edit / delete multi-agent configs in the browser; each config is a JSON file bound to a PostgreSQL checkpoint database. Save a commonly used config as the default template.
+- **Supervisor–Worker architecture** — the main agent understands, decomposes, and summarizes tasks, delegating them to sub-agents; each sub-agent is a subgraph with a checkpointer and keeps memory across calls within a thread.
+- **Sub-agents as tools** — each sub-agent is exposed to the main agent as a "tool" (name + description); multiple sub-agents can be dispatched in parallel in one turn, and their reports are collected.
+- **MCP tool integration** — sub-agents can attach http / stdio MCP tool sources; the config page provides connectivity checks.
 
 ### Browser takeover
 
-- **Let the main agent drive a browser** — a built-in `browser_agent` lets the main agent operate the local Chrome/Edge: navigation, clicking, typing, dragging, scrolling and multi-tab management; designed for a **text-only LLM** (no multimodality / vision required).
-- **Token-friendly DOM** — the first frame returns a full DOM baseline; each later interaction returns only the new/changed content, rendered as landmarks + an indented tree with semantic tags (`<可点击元素 eN>` / `<可输入元素 eN>` / `<可拖动元素 eN>` / `<可滚动元素 eN>`), keeping heading levels.
-- **Whole-page & bidirectional scrolling** — the document-level scrollbar is exposed as a scrollable element; scrolling uses `scroll_delta` for direction (positive = down, negative = up, unit = step).
-- **Human-like interaction** — real mouse/keyboard event paths (not direct element API calls); controlled React/Vue inputs fall back to the native setter.
-- **Takeover-hint toggle** — the input area can show a live **read-only** preview of the focused tab's DOM, auto-attached to the message on send and closed after a successful send.
-- **Global stop** — a desktop-level always-on-top "Stop / Continue" floating ball (visible across apps); it auto-hides and resets when the browser closes.
-- **Sensitive-info desensitization** — the LLM uses `<name>` placeholders when filling; on tool call they are replaced with real values from the global "sensitive info form", keeping real secrets out of the model context.
+- **Let the main agent operate the browser directly** — the built-in `browser_agent` lets the main agent drive local Chrome/Edge to navigate, click, type, drag, scroll, and manage multiple tabs; designed for **text-only LLMs** (no multimodality / vision required).
+- **Token-efficient DOM** — the first frame sends a full DOM baseline; later interactions send only new / changed content, presented as landmarks + an indented tree + semantic tags (`<可点击元素 eN>` / `<可输入元素 eN>` / `<可拖动元素 eN>` / `<可滚动元素 eN>`), with heading hierarchy preserved.
+- **Whole-page and bidirectional scrolling** — the document-level scrollbar is exposed as a scrollable element; scrolling uses `scroll_delta` for direction (positive = down, negative = up, unit = steps).
+- **Human-like interaction** — real mouse / keyboard event trajectories (not direct element API calls); controlled React / Vue inputs fall back to the native setter.
+- **Takeover hint toggle** — the input area can preview the focused tab's **read-only** DOM in real time; the preview is attached automatically when sending and closed after a successful send.
+- **Global emergency stop** — a desktop-level always-on-top "Stop / Continue" floating ball (visible across apps); it auto-hides and resets when the browser closes.
+- **Sensitive-info masking** — the LLM uses `<name>` placeholders when filling; on tool calls they are replaced with real values from the global "sensitive info form", so real private data never enters the model context.
 
 ### Models & providers
 
-- **Built-in providers** — openai / anthropic / deepseek / google_genai via a `provider:model` prefix.
-- **Any OpenAI-compatible model** — enter a model name + base_url to use third-party endpoints.
+- **Model provider + model name** — enter the provider and model name separately (e.g. `deepseek` + `deepseek-v4-pro`); the app joins them into `provider:model` automatically.
+- **Automatic endpoint handling** — built-in providers (openai / anthropic / deepseek / google_genai) use their official endpoints and do not show a `base_url` field; other providers are automatically connected via the OpenAI-compatible protocol and show a `base_url` field.
 - **Fine-grained sampling** — opt in per parameter: temperature / top_k / top_p / max_tokens / repetition_penalty.
-- **DeepSeek thinking-mode fix** — one toggle to back-fill `reasoning_content`, avoiding intermittent 400s in thinking mode with tool calls.
+- **DeepSeek thinking-mode fix** — automatically enabled when a DeepSeek model is detected; it back-fills `reasoning_content` to avoid intermittent 400s in thinking mode with tool calls.
 
 ### Long-term memory
 
-- **Semantic memory** — BGE-M3 embeddings + PostgreSQL (pgvector) retrieval.
+- **Semantic memory** — BGE-M3 embeddings + PostgreSQL (pgvector) vector retrieval.
 - **Automatic memory attachment** — before each user message, relevant memories are retrieved and attached as context (count configurable).
-- **Memory tools** — the main agent can write / search long-term memory on its own.
-- **Model download progress** — the embedding model is downloaded on first use, with live progress in the UI and tray.
+- **Memory read/write tools** — the main agent can actively write / search long-term memory.
+- **Model download progress** — the embedding model is downloaded automatically on first use, with live progress in the UI and tray.
 
-### Chat & streaming UX
+### Chat & streaming experience
 
-- **Token-by-token streaming** — main / sub-agent output rendered live over WebSocket.
-- **Reasoning display** — thinking is shown in its own collapsible block, interleaved with the body in true order.
-- **Tool-call visualization** — tool calls and results are shown inline and de-duplicated.
-- **Parallel sub-agent partitions** — when several sub-agents run in parallel, output is split per round with a dropdown to switch between them.
-- **Granular status bar** — shows who is doing what in real time (thinking / answering / fetching tools / waiting for tools / loading model).
-- **Markdown + math** — markdown-it rendering, syntax highlighting, KaTeX math, plus optional bare-formula / aggressive formula detection.
-- **Reading comfort** — independent body / reasoning zoom, auto-follow on send, a draggable pin-to-bottom button, a reply-completed chime, and customizable send / newline keys.
-- **In-graph confirmation** — when the graph needs your decision, an in-app confirm dialog appears (sub-agent dialogs use a distinct style).
-- **Unsent draft persistence** — the input box is persisted per agent and survives leaving a thread, closing the browser, or quitting the tray app; cross-agent flow is configurable.
+- **Token-by-token streaming** — main / sub-agent output is rendered live over WebSocket.
+- **Thinking process** — reasoning content is shown in its own block and interleaved with the body in true order.
+- **Tool-call visualization** — tool calls and results are shown inline and de-duplicated automatically.
+- **Parallel sub-agent partitions** — when multiple sub-agents run in parallel, output is partitioned by round with a dropdown to switch between them.
+- **Fine-grained status bar** — shows who is doing what in real time (thinking / answering / fetching tools / waiting for tools / loading model).
+- **Markdown + math** — markdown-it rendering, syntax highlighting, and KaTeX math, plus optional bare-formula detection / aggressive math rendering.
+- **Reading comfort** — independent body / reasoning zoom, auto-follow after sending, a draggable pin-to-bottom button, a reply-completed chime, and customizable send / newline keys.
+- **In-graph confirmation** — when the graph needs a decision, an in-app confirm dialog appears (sub-agent dialogs use a distinct style).
+- **Unsent draft persistence** — input content is persisted per agent and survives leaving a thread, closing the browser, or quitting the tray app; cross-agent syncing is configurable.
 
 ### History, threads & snapshots
 
-- **Persistent threads** — list / resume / delete conversations; named-but-unused threads survive reloads too.
-- **Markdown history** — main / sub-agent history is shown read-only as Markdown, with message counts and token usage.
-- **Message directory** — a drawer lists user messages and expands each reply's headings for jump-to navigation.
-- **History editing** — enter edit mode to edit historical messages line by line (optionally any time / any type), submitted sequentially and applied instantly.
-- **Readable edit failures** — edit submission times out per stage (loading model / writing); on failure a persistent, dismissible reason is shown in the top-right, and submission stops.
-- **Snapshots** — before every full flush, main / sub-agent history is snapshotted automatically; browse read-only or delete.
+- **Thread persistence** — list / resume / delete conversations; named but unused empty threads are kept as well.
+- **Markdown history browsing** — main / sub-agent history is shown as read-only Markdown, with message counts and token usage.
+- **Message directory** — a dropdown directory expands by user message; click a heading to jump to the corresponding reply.
+- **History message editing** — after entering edit mode, edit historical messages line by line (optionally any time, any type), submit them one by one, and apply changes immediately.
+- **Readable edit errors** — edit submission times out by stage (loading model / writing); on failure, a persistent dismissible reason bar appears in the top-right, and submission stops.
+- **Snapshots** — before every full flush, main / sub-agent history snapshots are saved automatically; browse them read-only or delete them.
 - **Hide threads** — hide / show conversations independently per agent.
 
 ### Summary & history flush
 
-- **Staged summarization** — automatic summaries once a token threshold is reached, without interrupting the conversation.
+- **Staged summarization** — automatic summarization when a token threshold is reached, without interrupting the conversation.
 - **Automatic full flush** — at a higher threshold: snapshot, summarize, then clear (keeping a configurable number of recent turns).
-- **Proactive full summary** — manually trigger a full summary for the main agent or a chosen sub-agent.
+- **Proactive full summary** — manually trigger a full summary for the main agent or a specified sub-agent.
 
 ### File tools & export
 
-- **Custom file tools** — read (pagination + line numbers) / edit (precise mid-string edits) / write / search, plus directory, copy, move, delete; everything is sandboxed to the root directory.
-- **Rich-format reading** — PDF / Word / PPT / Excel / EPUB / HTML are converted to Markdown; PDFs additionally use pdfminer for text and pdfplumber for ruled-line tables, and a same-named editable `.md` copy is created on read.
+- **Custom file tools** — read (pagination + line numbers) / edit (precise mid-string edits) / write / search, plus directory, copy, move, and delete; all operations are confined to the root directory.
+- **Rich-format reading** — PDF / Word / PPT / Excel / EPUB / HTML are automatically converted to Markdown; PDFs additionally use pdfminer for text and pdfplumber for ruled-line tables, and an editable `.md` copy is created in the same directory on read.
 - **HTML report** — optionally generate an HTML report after a reply and open it automatically.
-- **Export** — one-click export of a single reply to a printable HTML (A4-optimized) or Markdown file.
+- **Export** — one-click export of a single reply to printable HTML (A4-optimized) or a Markdown file.
 
 ### Settings & installation
 
 - **Global settings** — memory attachment, export paths, history folding, edit mode, formula detection, and more, with a zh / EN language switch.
-- **One-click deploy** — `setup.bat` creates the venv, installs dependencies, and packages `MultiAgentStudio.exe`; the app lives in the Windows tray and opens the browser automatically.
-- **One-click pgvector install** — auto-detects PostgreSQL and a C++ toolchain, builds from official source first and falls back to a prebuilt package.
-- **Connection-string input** — fill PostgreSQL in steps or paste a full connection string.
-- **Card appearance & hiding** — configure the multi-agent card list's button colors/styles, corner ribbon and card background (local preference); configs can be hidden and revealed via a "show hidden" toggle.
+- **One-click deployment** — `setup.bat` automatically creates the virtual environment, installs dependencies, and packages `MultiAgentStudio.exe`; the app stays in the Windows tray and opens the browser automatically.
+- **One-click pgvector install** — automatically detects PostgreSQL and the build environment, prefers building from official source, and falls back to a prebuilt package on failure.
+- **Connection-string input** — fill in PostgreSQL step by step or paste a complete connection string.
+- **Card appearance & hiding** — configure the multi-agent card list's button colors / styles, corner ribbon, and card background (local preference); configs can be hidden and revealed via a "show hidden" toggle.
 
 ## Screenshots
 
@@ -323,87 +342,11 @@ Supervisor (main agent)                 Workers (sub-agents)
 ```
 
 - The main agent is a Supervisor that plans and delegates; each sub-agent is a **subgraph** compiled with `checkpointer=True` and mounted as a node, keeping memory across calls within a thread.
-- The main graph and each subgraph share `subagents_reports_submit` / `instructions_for_subagents` channels (intentionally same-named) for passing reports / instructions, while their message channels must be unique.
-
-## Quick Start
-
-### 1. Prerequisites
-
-1. Install **Python 3.13** from https://www.python.org/downloads/ — please check **"Add python.exe to PATH"**.
-2. Install **PostgreSQL** (for checkpoints and long-term memory).
-
-### 2. Download
-
-1. Open the **Releases** page and download the latest **Source code (zip)**.
-
-### 3. Extract
-
-1. Extract the zip anywhere — you'll get a `multi-agent-studio-*` folder.
-
-### 4. Enter the project folder
-
-1. Drill down until you see `setup.bat` and `build_exe.bat`.
-
-### 5. One-click install + build
-
-1. Double-click `setup.bat` (or right-click an empty area → **Open in Terminal** → run `setup.bat`).
-2. On the first UAC prompt, click **Yes** — this enables Windows long-path support so torch installs without the "path too long" error.
-3. The script creates the venv, installs all dependencies (a few minutes the first time), offers to install pgvector, and builds `MultiAgentStudio.exe`.
-4. Wait for "安装完成！已生成 MultiAgentStudio.exe".
-
-> The installer enables Windows long paths automatically, so the project can be extracted anywhere.
-
-5. Install the **pgvector** extension (PostgreSQL does not bundle it). After installing PostgreSQL, double-click `install_pgvector.bat` in the project (or confirm installing pgvector in 3.) — it auto-detects your PostgreSQL directory, finds the Visual Studio C++ toolchain, and **builds pgvector from the official source**. If no compiler is found, it offers to use a community prebuilt package (with an explicit risk warning). **No need to open psql or run `CREATE EXTENSION` manually** — the app creates it automatically on first chat.
-
-> Visual Studio is optional: `install_pgvector.bat` falls back to a prebuilt package and clearly warns about the associated risk.
-### 6. Launch
-
-1. Double-click `MultiAgentStudio.exe`.
-2. The browser opens automatically, and a tray icon appears (right-click for Open / Status / Quit).
-
-> Running from source (development): `python run.py --console` (foreground — auto-opens browser + console logs).
-
-### 7. Use
-
-1. Click **＋ New multi-agent** and fill in the form (API key, system prompts, sub-agents, MCP servers, PostgreSQL databases).
-2. Create the checkpoint database in pgAdmin first (the form reminds you and pre-checks connectivity).
-3. Open an agent → pick/create a thread → chat with streaming Markdown.
-
-> Each multi-agent's identity is bound to `checkpoint_database`. After creation, sub-agents cannot be added / removed / renamed, but their prompts / description / MCP tools / models can still be edited.
-
-## Version migration (upgrading)
-
-When upgrading, **keep only a handful of "your data" items and overwrite everything else with the new version**. Conversation history and long-term memory (checkpoint / store databases) live in PostgreSQL, not in this folder, so overwriting files does not affect them.
-
-> ⚠️ **Important**: after upgrading, you **must re-run `setup.bat`** to generate a new `MultiAgentStudio.exe`. Do not keep using the old `MultiAgentStudio.exe` — on some upgrades the old exe misbehaves because its bundled frontend/backend code is out of sync with the new version.
-
-### Must keep (back up first, or copy into the new version folder)
-
-| File / directory | Notes |
-|---|---|
-| `configs/` | All multi-agent configs (`<agent_id>.json`, `default.json`) and global settings (`settings.json`). Contains API keys, system prompts, DB connections, thresholds, etc. |
-| `snapshots/` | Conversation snapshots saved automatically before a full summary (if any were generated). |
-| `.env` | Environment variables (e.g. tokens) read by the local MCP servers. |
-| `.chrome-profile/` | The automation Chrome profile used by browser takeover (present only if you used it). Keep it to reuse website logins; otherwise you will need to sign in again. |
-
-### Safe to overwrite (replace with the new version)
-
-`app/`, `browser_agent/`, `run.py`, `tray.py`, `launcher.py`, `scripts/`, `folder_of_MCPs/`, `md2print/` (source), `requirements.txt`, `setup.bat`, `setup.ps1`, `build_exe.py`, `build_exe.bat`, `icon.ico`, `.env.example`, `README.md`, `LICENSE`, etc.
-
-### Regenerated automatically (no need to keep)
-
-`venv/` (rebuilt by `setup.bat`), `MultiAgentStudio.exe` / `dist/` / `build/` (built during packaging), `logs/` (server logs), `__pycache__/` and other caches.
-
-### Recommended migration steps
-
-1. Back up `configs/`, `snapshots/`, and `.env`.
-2. Overwrite the remaining files with the new version (or copy the three items above into the freshly extracted folder).
-3. **Must** run `setup.bat` to reinstall dependencies and rebuild a new `MultiAgentStudio.exe` (do not reuse the old exe).
-4. Double-click the newly built `MultiAgentStudio.exe` and confirm history, memory, and snapshots are all intact.
+- The main graph and each subgraph share the `subagents_reports_submit` / `instructions_for_subagents` channels (intentionally same-named) for passing reports / instructions, while their message channels must be unique.
 
 ## Local MCP servers
 
-`folder_of_MCPs/` contains standalone FastMCP servers (Caiyun weather, AMap). Run them separately and reference them in a sub-agent's `mcp_servers` via `http` or `stdio` transport. Their tokens are read from environment variables — see `.env.example`.
+`folder_of_MCPs/` contains standalone FastMCP servers (Caiyun weather, AMap). Start them separately and reference them in a sub-agent's `mcp_servers` via `http` or `stdio` transport. Their tokens are read from environment variables — see `.env.example`.
 
 ## License
 

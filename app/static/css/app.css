@@ -938,16 +938,22 @@ body.floating-dragging { user-select: none; cursor: grabbing; }
 .summary-percent-range { width: 100%; margin: 6px 0; accent-color: var(--primary); }
 .summary-token-preview { font-size: 13px; color: var(--text-muted); margin-top: 6px; line-height: 1.5; }
 
-/* 模型配置块 */
+/* 模型配置块：供应商 / 模型名称 / API Key 同一板块，base_url 按供应商条件显示 */
 .model-block { display: contents; }
 .model-source-card {
   grid-column: 1 / -1;
   border: 1px solid var(--border);
   border-radius: 12px;
   background: #fbfbfd;
-  padding: 12px 14px;
+  padding: 14px 16px;
 }
-.model-source-title { font-size: 13px; color: var(--text-muted); font-weight: 600; margin-bottom: 10px; }
+.model-source-title { font-size: 13px; color: var(--text-muted); font-weight: 600; margin-bottom: 12px; }
+.model-config-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(190px, 100%), 1fr)); gap: 14px; }
+.model-config-grid > .field { min-width: 0; }
+.model-ref-preview { margin-top: 10px; font-size: 12px; color: var(--text-muted); line-height: 1.6; }
+.model-ref-preview code { background: #f1f5f9; color: var(--text-muted); padding: 1px 6px; border-radius: 5px; font-size: 12px; word-break: break-all; }
+.model-source-card [data-baseurl-field],
+.model-source-card > .field.full { margin-top: 12px; }
 .radio-list { display: flex; flex-direction: column; gap: 10px; }
 .radio-item { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 14px; font-weight: 500; }
 .radio-item input { accent-color: var(--primary); }

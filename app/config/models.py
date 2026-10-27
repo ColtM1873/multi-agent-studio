@@ -61,24 +61,27 @@ class SubSummaryConfig(BaseModel):
 
 
 class ModelConfig(BaseModel):
-    """LLM 生成配置：模型来源分支 + 可选采样参数。
+    """LLM 生成配置：供应商/模型 + 可选采样参数。
 
     provider_mode 决定 init_chat_model 的构造方式：
     - official: 直接用 ``provider:model`` 前缀走内置 provider。
     - openai_compatible: 固定 model_provider="openai" 并携带 base_url，
       适配任意符合 OpenAI Chat Completion 协议的第三方模型。
+    provider_name 是非内置供应商的展示名（如 siliconflow）；内置供应商留空，
+    其供应商信息已包含在 ``llm_provider_name`` 的 ``provider:model`` 前缀里。
     采样参数为 None 表示不传（沿用模型默认值）。
     """
 
     provider_mode: Literal["official", "openai_compatible"] = "official"
+    provider_name: str = ""
     base_url: str = ""
     temperature: float | None = None
     top_k: int | None = None
     top_p: float | None = None
     max_tokens: int | None = None
     repetition_penalty: float | None = None
-    # DeepSeek 专用：开启后在请求里回填历史 assistant 的 reasoning_content，
-    # 规避 langchain_deepseek 丢弃该字段导致的间歇性 400（见 inner_docs/ID29）。
+    # 兼容旧配置的遗留字段。DeepSeek 修复现在由 graph_builder 自动启用，
+    # 不再需要用户勾选，因此该字段不再参与判断（见 inner_docs/ID29）。
     preserve_reasoning_content: bool = False
 
 

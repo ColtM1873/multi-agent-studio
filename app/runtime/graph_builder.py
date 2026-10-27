@@ -122,6 +122,7 @@ def _init_model(llm_provider_name: str, api_key: str, model_cfg: ModelConfig):
     - 非标准参数（top_k/repetition_penalty）通过 model_kwargs 透传，
       交由底层 API 自行解释（各 provider 支持程度不一）。
     - openai_compatible 模式固定 model_provider="openai" 并携带 base_url。
+    - 检测到 DeepSeek 时自动应用 reasoning_content 补丁（无需用户配置）。
     """
     kwargs: dict[str, Any] = {}
     if model_cfg.temperature is not None:
@@ -150,8 +151,9 @@ def _init_model(llm_provider_name: str, api_key: str, model_cfg: ModelConfig):
     else:
         model = init_chat_model(model=llm_provider_name, api_key=api_key, **kwargs)
 
-    # DeepSeek 可选修复：回填历史 assistant 的 reasoning_content（见 inner_docs/ID29）。
-    if model_cfg.preserve_reasoning_content and is_deepseek_config(llm_provider_name, model_cfg):
+    # DeepSeek 自动修复：检测到 DeepSeek 就回填历史 assistant 的 reasoning_content，
+    # 不再要求用户手动勾选（见 inner_docs/ID29）。
+    if is_deepseek_config(llm_provider_name, model_cfg):
         apply_deepseek_reasoning_fix(model)
 
     return model

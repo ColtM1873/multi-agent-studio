@@ -18,6 +18,30 @@ const SSL_OPTIONS = [
 
 // 已内置集成（requirements 已安装对应 langchain 包）的 provider 前缀
 const OFFICIAL_PROVIDERS = ["openai", "anthropic", "deepseek", "google_genai"];
+const isOfficialProvider = (name) => OFFICIAL_PROVIDERS.includes(String(name || "").trim().toLowerCase());
+
+/* 把历史配置里的 llm_provider_name 拆成「供应商 + 模型名」。
+ * 内置供应商存的是 provider:model；OpenAI 兼容模式只存裸模型名。 */
+function splitModelRef(ref) {
+  const raw = String(ref || "").trim();
+  const i = raw.indexOf(":");
+  if (i > 0) return { provider: raw.slice(0, i).trim(), model: raw.slice(i + 1).trim() };
+  return { provider: "", model: raw };
+}
+
+function modelDisplayParts(llmName, mc) {
+  mc = mc || {};
+  const isCompat = mc.provider_mode === "openai_compatible";
+  if (isCompat) {
+    // 兼容模式存的是裸模型名，不能按冒号拆分（模型名本身可能含冒号）。
+    // 旧版第三方配置没有单独的供应商字段，用 custom 兜底，避免误判成内置供应商。
+    return {
+      provider: String(mc.provider_name || "").trim() || "custom",
+      model: String(llmName || "").trim(),
+    };
+  }
+  return splitModelRef(llmName);
+}
 // 可选采样参数：int 标记是否取整（top_k / max_tokens 为整数）；desc/range 为提示文案
 const EXTRA_PARAMS = [
   {
@@ -302,6 +326,17 @@ const I18N_EN = {
   "本地连接，自动使用 sslmode=disable": "Local connection, auto sslmode=disable",
   "模型 provider": "Model provider",
   "模型来源": "Model source",
+  "模型配置": "Model configuration",
+  "模型供应商": "Model provider",
+  "模型名称": "Model name",
+  "模型标识": "Model ID",
+  "请填写模型供应商": "Please enter the model provider",
+  "请填写模型名称": "Please enter the model name",
+  "非内置供应商需要填写 base_url。": "A non-built-in provider requires base_url.",
+  "内置支持：openai / anthropic / deepseek / google_genai。填入其他供应商时，程序会自动按 OpenAI 兼容协议接入，并显示 base_url 选项。": "Built-in support: openai / anthropic / deepseek / google_genai. For any other provider, the app automatically uses the OpenAI-compatible protocol and shows the base_url option.",
+  "填写该供应商提供的模型 ID，例如 deepseek-v4-pro、gpt-5、claude-sonnet-4-5。": "Enter the model ID provided by this vendor, e.g. deepseek-v4-pro, gpt-5, or claude-sonnet-4-5.",
+  "例如：deepseek-v4-pro": "e.g. deepseek-v4-pro",
+  "非内置供应商需要填写；内置供应商会自动使用官方端点。": "Required for non-built-in providers; built-in providers use their official endpoint automatically.",
   "思考过程": "Thinking process",
   "思考字号（相对正文）": "Reasoning font size (relative to body)",
   "思考字号减小": "Decrease reasoning font size",
@@ -4671,10 +4706,16 @@ function unitField(id, val, unit, extraLabel, tip) {
     </div></div>`;
 }
 
-/* 模型配置块：入口分支（内置/第三方）+ base_url + 额外采样参数 */
-function modelBlockHTML(llmName, mc, group) {
+/* 模型配置块：模型供应商 + 模型名称 + API Key 同组；base_url 仅非内置供应商显示。
+ * 不再让用户选择「内置 / 第三方」，由供应商名称自动判断。 */
+function modelBlockHTML(llmName, mc, apiKey, apiKeyPlaceholderKey) {
   mc = mc || {};
-  const isCompat = mc.provider_mode === "openai_compatible";
+  const parts = modelDisplayParts(llmName, mc);
+  const provider = parts.provider;
+  const modelName = parts.model;
+  const official = isOfficialProvider(provider);
+  const shownProvider = official ? provider.toLowerCase() : provider;
+  const previewRef = shownProvider && modelName ? `${shownProvider}:${modelName}` : (shownProvider || modelName || "—");
   const v = (x) => esc(x == null ? "" : x);
   const optWarn = (label) => t("请确认你的模型 API 提供商支持 {param} 参数").replace("{param}", label);
 
@@ -4692,31 +4733,35 @@ function modelBlockHTML(llmName, mc, group) {
   return `
     <div class="model-block" data-model-block>
       <div class="model-source-card">
-        <div class="model-source-title">${t("模型来源")}</div>
-        <div class="radio-list">
-          <label class="radio-item"><input type="radio" name="${group}" value="official" ${!isCompat ? "checked" : ""}> ${t("内置模型")}</label>
-          <label class="radio-item"><input type="radio" name="${group}" value="openai_compatible" ${isCompat ? "checked" : ""}> ${t("任意第三方模型（OpenAI 协议）")}</label>
+        <div class="model-source-title">${t("模型配置")}</div>
+        <div class="model-config-grid">
+          <div class="field">
+            <label>${t("模型供应商")} <i class="info-icon">!<span class="tip">${t("内置支持：openai / anthropic / deepseek / google_genai。填入其他供应商时，程序会自动按 OpenAI 兼容协议接入，并显示 base_url 选项。")}</span></i></label>
+            <input data-mf="provider_name" value="${v(provider)}" placeholder="deepseek">
+          </div>
+          <div class="field">
+            <label>${t("模型名称")} <i class="info-icon">!<span class="tip">${t("填写该供应商提供的模型 ID，例如 deepseek-v4-pro、gpt-5、claude-sonnet-4-5。")}</span></i></label>
+            <input data-mf="model_name" value="${v(modelName)}" placeholder="deepseek-v4-pro">
+            <span class="hint">${t("例如：deepseek-v4-pro")}</span>
+          </div>
+          <div class="field">
+            <label>API Key ${info("该模型供应商的 API 密钥（明文存本地配置）。")}</label>
+            <input data-mf="api_key" value="${v(apiKey)}" type="password"${ph(apiKeyPlaceholderKey || "main_api_key")}>
+          </div>
         </div>
-      </div>
-      <div class="field">
-        <label><span data-model-label>${isCompat ? t("模型名") : t("模型 provider")}</span> <i class="info-icon">!<span class="tip" data-model-tip>${isCompat ? t("填纯模型名，不要带供应商前缀（如 deepseek:）。第三方模型的 llm-provider 固定为 openai，不能是其他。") : t("格式「供应商:模型名」，如 deepseek:deepseek-v4-pro。已内置集成：openai / anthropic / deepseek / google_genai。")}</span></i></label>
-        <input data-mf="llm_provider_name" value="${v(llmName)}">
-        <span class="warn-hint" data-official-warn style="display:none;">⚠ ${t("该 provider 未内置集成，建议切换为「任意第三方模型（OpenAI 协议）」")}</span>
-      </div>
-      <div class="field" data-baseurl-field style="${isCompat ? "" : "display:none;"}">
-        <label>base_url <i class="info-icon">!<span class="tip">${t("应指向 /v1 根路径，LangChain 会自动拼接 /chat/completions。不要把 /chat/completions 写进 base_url，否则会 404。")}</span></i></label>
-        <input data-mf="base_url" value="${v(mc.base_url)}" placeholder="https://api.openai.com/v1">
-      </div>
-      <div class="field" data-reasoning-fix-field style="display:none;">
-        <label style="flex-direction:row;align-items:center;gap:8px;"><input type="checkbox" data-mf="preserve_reasoning_content" ${mc.preserve_reasoning_content ? "checked" : ""}> ${t("启用 DeepSeek reasoning_content 保留修复")}</label>
-        <span class="hint">${t("DeepSeek 思考模式 + 工具调用时，官方 LangChain 会丢弃历史思考内容、可能偶发 400。勾选后在本项目内运行时回填该内容（不改动官方库）。")}</span>
-      </div>
-      <div class="field full">
-        <details class="db-help">
-          <summary>${t("额外选项")}</summary>
-          <div class="opt-checks">${optChecks}</div>
-          ${optFields}
-        </details>
+        <div class="model-ref-preview"><span class="model-ref-label">${t("模型标识")}：</span><code data-model-preview>${v(previewRef)}</code></div>
+        <div class="field" data-baseurl-field style="${official ? "display:none;" : ""}">
+          <label>base_url <i class="info-icon">!<span class="tip">${t("应指向 /v1 根路径，LangChain 会自动拼接 /chat/completions。不要把 /chat/completions 写进 base_url，否则会 404。")}</span></i></label>
+          <input data-mf="base_url" value="${v(mc.base_url)}" placeholder="https://api.openai.com/v1">
+          <span class="hint">${t("非内置供应商需要填写；内置供应商会自动使用官方端点。")}</span>
+        </div>
+        <div class="field full">
+          <details class="db-help">
+            <summary>${t("额外选项")}</summary>
+            <div class="opt-checks">${optChecks}</div>
+            ${optFields}
+          </details>
+        </div>
       </div>
     </div>`;
 }
@@ -4724,67 +4769,54 @@ function modelBlockHTML(llmName, mc, group) {
 function bindModelBlock(root) {
   const block = root.querySelector("[data-model-block]");
   if (!block) return;
-  const llmInput = block.querySelector('[data-mf="llm_provider_name"]');
+  const providerInput = block.querySelector('[data-mf="provider_name"]');
+  const modelInput = block.querySelector('[data-mf="model_name"]');
   const baseUrlField = block.querySelector("[data-baseurl-field]");
-  const label = block.querySelector("[data-model-label]");
-  const tip = block.querySelector("[data-model-tip]");
-  const warn = block.querySelector("[data-official-warn]");
-  const baseUrlInput = block.querySelector('[data-mf="base_url"]');
-  const reasoningFixField = block.querySelector("[data-reasoning-fix-field]");
-  let mode = block.querySelector('input[type="radio"]:checked').value;
+  const preview = block.querySelector("[data-model-preview]");
 
-  const isDeepseek = () => {
-    if (mode === "openai_compatible") {
-      return ((baseUrlInput && baseUrlInput.value) || "").toLowerCase().includes("deepseek");
-    }
-    return (llmInput.value || "").trim().toLowerCase().startsWith("deepseek:");
-  };
-  const updateDeepseekFix = () => {
-    if (reasoningFixField) reasoningFixField.style.display = isDeepseek() ? "" : "none";
+  // 供应商名称决定是否显示 base_url，并实时刷新灰字拼接结果。
+  // 必须在 bind 末尾主动跑一次：事件回调只覆盖「之后的变化」，不覆盖初始状态。
+  const updateModelBlock = () => {
+    const provider = (providerInput.value || "").trim();
+    const modelName = (modelInput.value || "").trim();
+    const official = isOfficialProvider(provider);
+    const shownProvider = official ? provider.toLowerCase() : provider;
+    if (baseUrlField) baseUrlField.style.display = official ? "none" : "";
+    if (preview) preview.textContent = shownProvider && modelName ? `${shownProvider}:${modelName}` : (shownProvider || modelName || "—");
   };
 
-  const checkOfficial = () => {
-    const raw = (llmInput.value || "").trim();
-    const prov = (raw.match(/^([^:\s]+):/) || [])[1] || "";
-    const ok = !prov || OFFICIAL_PROVIDERS.includes(prov.toLowerCase());
-    warn.style.display = ok ? "none" : "";
-  };
-
-  const setMode = (m) => {
-    mode = m;
-    const isCompat = m === "openai_compatible";
-    baseUrlField.style.display = isCompat ? "" : "none";
-    label.textContent = isCompat ? t("模型名") : t("模型 provider");
-    tip.textContent = isCompat
-      ? t("填纯模型名，不要带供应商前缀（如 deepseek:）。第三方模型的 llm-provider 固定为 openai，不能是其他。")
-      : t("格式「供应商:模型名」，如 deepseek:deepseek-v4-pro。已内置集成：openai / anthropic / deepseek / google_genai。");
-    if (isCompat) warn.style.display = "none";
-    else checkOfficial();
-    updateDeepseekFix();
-  };
-
-  block.querySelectorAll('input[type="radio"]').forEach(r => r.addEventListener("change", () => setMode(r.value)));
-  llmInput.addEventListener("input", () => { if (mode === "official") checkOfficial(); updateDeepseekFix(); });
-  llmInput.addEventListener("blur", () => { if (mode === "official") checkOfficial(); updateDeepseekFix(); });
-  if (baseUrlInput) baseUrlInput.addEventListener("input", updateDeepseekFix);
+  providerInput.addEventListener("input", updateModelBlock);
+  modelInput.addEventListener("input", updateModelBlock);
   block.querySelectorAll("[data-opt]").forEach(cb => cb.addEventListener("change", () => {
     const f = block.querySelector(`[data-optfield="${cb.dataset.opt}"]`);
     if (f) f.style.display = cb.checked ? "" : "none";
   }));
 
-  updateDeepseekFix();
+  updateModelBlock();
 }
 
-function collectModelCfg(root) {
+function collectModelBlock(root) {
   const block = root.querySelector("[data-model-block]");
-  if (!block) return { provider_mode: "official", base_url: "" };
-  const mode = block.querySelector('input[type="radio"]:checked').value;
+  if (!block) {
+    return {
+      llm_provider_name: "",
+      api_key: "",
+      model: { provider_mode: "official", provider_name: "", base_url: "" },
+    };
+  }
+  const provider = (block.querySelector('[data-mf="provider_name"]').value || "").trim();
+  const modelName = (block.querySelector('[data-mf="model_name"]').value || "").trim();
+  if (!provider) throw new Error(t("请填写模型供应商"));
+  if (!modelName) throw new Error(t("请填写模型名称"));
+  const official = isOfficialProvider(provider);
+  const baseUrl = official ? "" : (block.querySelector('[data-mf="base_url"]').value || "").trim();
+  if (!official && !baseUrl) throw new Error(t("非内置供应商需要填写 base_url。"));
+
   const out = {
-    provider_mode: mode,
-    base_url: mode === "openai_compatible" ? (block.querySelector('[data-mf="base_url"]').value || "").trim() : "",
+    provider_mode: official ? "official" : "openai_compatible",
+    provider_name: official ? "" : provider,
+    base_url: baseUrl,
   };
-  const reasoningFix = block.querySelector('[data-mf="preserve_reasoning_content"]');
-  out.preserve_reasoning_content = !!(reasoningFix && reasoningFix.checked);
   for (const p of EXTRA_PARAMS) {
     const cb = block.querySelector(`[data-opt="${p.key}"]`);
     if (cb && cb.checked) {
@@ -4793,7 +4825,11 @@ function collectModelCfg(root) {
       if (raw !== "" && !Number.isNaN(num)) out[p.key] = p.int ? Math.round(num) : num;
     }
   }
-  return out;
+  return {
+    llm_provider_name: official ? `${provider.toLowerCase()}:${modelName}` : modelName,
+    api_key: block.querySelector('[data-mf="api_key"]').value || "",
+    model: out,
+  };
 }
 
 function buildForm(cfg, canEditSubs) {
@@ -4933,8 +4969,7 @@ function buildForm(cfg, canEditSubs) {
       <div class="field full">
         <label style="flex-direction:row;align-items:center;gap:8px;"><input type="checkbox" id="f_memory_tools" ${memoryTools ? "checked" : ""}> 🧠 ${t("开启记忆读取/写入功能")} ${info("开启后，会向主 agent 注入记忆读写工具（write_memory / read_memory），让 agent 能长期存取与检索信息；关闭后主 agent 不再拥有记忆读写工具。此设置影响图编译；「记忆吸附」是另一项功能，不受本开关影响。")}</label>
       </div>
-      ${modelBlockHTML(main.llm_provider_name, main.model, "main_mode")}
-      <div class="field"><label>API Key ${info("该模型供应商的 API 密钥（明文存本地配置）。")}</label><input id="f_apikey" value="${esc(main.api_key)}" type="password"${ph("main_api_key")}></div>
+      ${modelBlockHTML(main.llm_provider_name, main.model, main.api_key, "main_api_key")}
       <div class="field"><label>${t("主Agent工作目录")} ${info("主Agent读写本地文件的根目录")}</label><input id="f_rootdir" value="${esc(ft.root_dir)}"${ph("root_dir")}></div>
       ${globalEmbSet ? `
       <div class="field full">
@@ -5220,8 +5255,7 @@ function subAgentBox(s, key, canEdit) {
     <div class="sub-head"><span class="name">🧩 ${t("子 agent")}</span>${canEdit ? `<button class="btn danger small" data-act="remove" type="button">${t("移除")}</button>` : ""}</div>
     <div class="form-grid">
       <div class="field"><label>${t("名称")} name ${info("子 agent 标识，会作为工具名呈现给主 agent，创建后不可更改。")}</label><input data-f="name" value="${esc(s.name)}" ${canEdit ? "" : "readonly"}${ph("sub_name")}></div>
-      ${modelBlockHTML(s.llm_provider_name, s.model, `sub_${key}_mode`)}
-      <div class="field"><label>API Key ${info("该子 agent 所用模型的 API 密钥（明文存本地配置）。")}</label><input data-f="api_key" value="${esc(s.api_key)}" type="password"${ph("sub_api_key")}></div>
+      ${modelBlockHTML(s.llm_provider_name, s.model, s.api_key, "sub_api_key")}
       ${globalSubSet ? `
       <div class="field full">
         <div class="global-toggle-row">
@@ -5332,6 +5366,7 @@ function mcpRow(m, key) {
 
 function collectSubAgent(box) {
   const get = f => box.querySelector(`[data-f="${f}"]`).value;
+  const modelBlock = collectModelBlock(box);
   const mcp = $$(".mcp-row", box).map(r => ({
     name: r.querySelector('[data-m="name"]').value,
     transport: r.querySelector('[data-m="transport"]').value,
@@ -5359,9 +5394,9 @@ function collectSubAgent(box) {
     name: get("name"),
     description: get("description"),
     system_prompt: get("system_prompt"),
-    api_key: get("api_key"),
-    llm_provider_name: box.querySelector('[data-mf="llm_provider_name"]').value,
-    model: collectModelCfg(box),
+    api_key: modelBlock.api_key,
+    llm_provider_name: modelBlock.llm_provider_name,
+    model: modelBlock.model,
     mcp_servers: mcp,
     summary,
     react_prompt: box.querySelector('[data-f="react_prompt"]').checked,
@@ -5441,6 +5476,7 @@ function buildPayload(cfg) {
       reserve_message_round: +val("f_sum_reserve"),
     };
   }
+  const mainModel = collectModelBlock($("#editorForm"));
   return {
     // 名称是唯一身份输入：agent_id 与 checkpoint 数据库都取同一个值（后端会再校验一次）。
     agent_id: name,
@@ -5453,9 +5489,9 @@ function buildPayload(cfg) {
     },
     main_agent: {
       system_prompt: val("f_prompt"),
-      api_key: val("f_apikey"),
-      llm_provider_name: $("#editorForm").querySelector('[data-mf="llm_provider_name"]').value,
-      model: collectModelCfg($("#editorForm")),
+      api_key: mainModel.api_key,
+      llm_provider_name: mainModel.llm_provider_name,
+      model: mainModel.model,
       file_tools: { root_dir: val("f_rootdir") },
       embedding,
       summary,

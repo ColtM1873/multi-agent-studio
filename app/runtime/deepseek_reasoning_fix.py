@@ -12,8 +12,8 @@
 
 实现原则
 --------
-不改动 ``venv/Lib/site-packages`` 下的官方库文件；只对启用该选项的 model **实例**做
-monkeypatch（opt-in、只影响该实例）。原始官方文件备份见 ``vendor_backup/langchain_deepseek/``。
+不改动 ``venv/Lib/site-packages`` 下的官方库文件；只在检测到 DeepSeek 配置时，对该 model
+**实例**做 monkeypatch（只影响该实例）。原始官方文件备份见 ``vendor_backup/langchain_deepseek/``。
 """
 
 from __future__ import annotations
@@ -35,13 +35,17 @@ def is_deepseek_config(llm_provider_name: str, model_cfg: ModelConfig) -> bool:
     """判断该模型配置是否指向 DeepSeek。
 
     - 官方内置：``deepseek:<model>``
-    - 第三方 OpenAI 兼容：``base_url`` 含 ``deepseek``（如 ``https://api.deepseek.com/v1``）
+    - 第三方 OpenAI 兼容：``provider_name`` 或 ``base_url`` 含 ``deepseek``
+      （如 ``https://api.deepseek.com/v1``）
     """
     name = (llm_provider_name or "").strip().lower()
     if name.startswith("deepseek:"):
         return True
     if model_cfg.provider_mode == "openai_compatible":
-        return "deepseek" in (model_cfg.base_url or "").lower()
+        return (
+            "deepseek" in (model_cfg.provider_name or "").lower()
+            or "deepseek" in (model_cfg.base_url or "").lower()
+        )
     return False
 
 
