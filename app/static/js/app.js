@@ -1826,12 +1826,14 @@ async function convertLocalMd(btn) {
 }
 
 function injectExportButtons(rootEl) {
+  // 先清掉从 innerHTML 快照（SessionStream 的 baseHtml、快照/编辑态恢复）带过来的
+  // 旧按钮行：快照不保留 onclick，留着就是点不动的死按钮。每次重建才能保证可点。
+  $$(".ai-msg-block .export-html-row", rootEl).forEach(el => el.remove());
   if (!settingsCache) return;
   const showHtml = settingsCache.export_html;
   const showMd = settingsCache.export_md;
   if (!showHtml && !showMd) return;
   $$(".ai-msg-block[data-md-b64]", rootEl).forEach(block => {
-    if (block.querySelector(".export-html-row")) return;
     const wrap = document.createElement("div");
     wrap.className = "export-html-row";
     if (showHtml) {
@@ -8461,9 +8463,14 @@ class SessionStream {
       this.viewState.pinned = pane.scrollHeight - pane.scrollTop - pane.clientHeight < 48;
     }
     if (!this.isBusy()) {
-      // 已结束：把当前完整 DOM（含最后回复）作为静态基线；下次进入直接恢复，
-      // 不再重复拉 /history，也不会把同一段回复渲染两遍。
-      if (this.view.historyEl) this.baseHtml = this.view.historyEl.innerHTML;
+      // 已结束：**不要**把当前 DOM 缓存成静态基线。
+      //   1) 本轮刚结束时历史可能还没接上，DOM 里是流式回复块（`.current-reply` 里的
+      //      `.ai-msg-block` 没有 data-md-b64），缓存后重进会停在「流式输出界面」，
+      //      而且没有「转换 HTML / 导出 md 文件」按钮；
+      //   2) innerHTML 快照恢复的按钮不保留 onclick，点了也没反应。
+      // 一律丢弃基线，下次进入重新用 /history 渲染（服务端权威、按钮可点）。
+      this.baseHtml = null;
+      this.historyMarkdown = "";
       this.replyEl = null;
     } else if (this.replyEl) {
       this.replyEl.remove();
@@ -8579,6 +8586,9 @@ class SessionStream {
   }
 
   async _loadFinalHistory(runId) {
+    const pane = $("#historyPane");
+    const prevTop = pane ? pane.scrollTop : 0;
+    const atBottom = pane ? (pane.scrollHeight - pane.scrollTop - pane.clientHeight < 48) : true;
     try {
       const h = await api(`/api/agents/${encodeURIComponent(this.agentId)}/threads/${encodeURIComponent(this.threadId)}/history`);
       if (this.runId === runId && this.status === "completed") {
@@ -8588,6 +8598,8 @@ class SessionStream {
         if (this.view && this.view.historyEl) {
           this.view.historyEl.innerHTML = renderMd(this.historyMarkdown);
           injectExportButtons(this.view.historyEl);
+          // 保持用户的阅读位置：原来贴底就跟到底，否则停在原处。
+          if (pane && pane.isConnected) pane.scrollTop = atBottom ? pane.scrollHeight : prevTop;
           this.syncView();
         }
       }
@@ -8834,7 +8846,14 @@ class SessionStream {
           if (!result.stopped && this.view.onDone) this.view.onDone(result);
         }
         refreshSessions();
-        this.maybeAccept();
+        // 本轮结束：把页面上这轮流式 DOM 换成 /history 的权威渲染 —— 历史界面的
+        // Checkpoint 信息块、折叠思考/工具块，以及每条助手回复下方的
+        // 「转换 HTML / 导出 md 文件」按钮都来自这条渲染路径；流式 DOM 里的回复块
+        // 不带 data-md-b64，导不出任何文件。之前只有「断线/基线缺失」才走这里，
+        // 于是正常跑完的会话重进会一直停在流式外观（用户没法导出 md/HTML）。
+        // _loadFinalHistory 收尾时再触发验收，避免把半截内容当成已读。
+        this._historyPending = true;
+        this._loadFinalHistory(msg.run_id || this.runId);
         break;
       }
       case "error":
