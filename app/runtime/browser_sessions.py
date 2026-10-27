@@ -355,13 +355,31 @@ class BrowserSessionManager:
         return out
 
     @staticmethod
+    def _launch_pending(session: BrowserSession) -> bool:
+        """浏览器进程已经拉起、但 CDP 端口还没就绪（或启动较慢）。
+
+        全新 profile 首次启动 Chrome 可能远超 30 秒；端口没就绪并不等于启动失败。
+        这时如果按「超过 30 秒就释放」处理，另一个会话会拿到同一个预设色（撞色）。
+        只要 ``launcher.process`` 还活着，就视为「仍在启动、继续占色」。
+        """
+        launcher = getattr(session.controller, "launcher", None)
+        process = getattr(launcher, "process", None)
+        if process is None:
+            return False
+        try:
+            return process.poll() is None
+        except Exception:  # noqa: BLE001
+            return False
+
+    @staticmethod
     def _used_borders(sessions, exclude: BrowserSession | None = None) -> set[str]:
         """只统计「确实还占着」的颜色。
 
         * 端口已连上：占用；
-        * 刚分配、浏览器还在启动（还没连上）：30 秒内算占用，避免启动期撞色；
+        * 刚分配、浏览器还在启动（还没连上）：30 秒内占用，避免启动期撞色；
+          进程仍活着时继续占用（慢启动不能算失败）；
         * 曾经连上、之后关闭：连续两次探测失败后就不再占用，让预设色能尽快复用；
-        * 从未连上且超过 30 秒：视为启动失败，释放。
+        * 从未连上且超过 30 秒（且进程已退出）：视为启动失败，释放。
         """
         now = time.monotonic()
         used: set[str] = set()
@@ -374,8 +392,11 @@ class BrowserSessionManager:
                     # 曾经连上过：连续两次探测失败才视为真正关闭。
                     occupied = item._disconnect_count < 2
                 else:
-                    # 还没连上：30 秒启动宽限，不能被启动期的探测次数提前打破。
-                    occupied = (now - item.theme_at <= 30.0)
+                    # 还没连上：30 秒启动宽限 + 进程仍存活时继续占色，
+                    # 不能被启动期的探测次数提前打破。
+                    occupied = (
+                        now - item.theme_at <= 30.0
+                    ) or BrowserSessionManager._launch_pending(item)
             if not occupied:
                 continue
             border = item.theme.get("border_color")
@@ -606,12 +627,15 @@ class BrowserSessionManager:
         else:
             # 浏览器关闭：暂停状态复位，下次重新打开时不会仍被短路。
             session.paused = False
-            session._disconnect_count += 1
+            # 浏览器进程还活着（只是 CDP 端口尚未就绪 / 启动较慢）时不算「断开」，
+            # 否则慢启动会被误判成启动失败并释放颜色，导致两个会话撞色。
+            if not self._launch_pending(session):
+                session._disconnect_count += 1
             # 同时释放颜色，让后续会话可以按优先级重新使用它。
             # - 浏览器真正连过：连续两次探测失败即可释放（约 3 秒），
             #   不要让它继续白占预设色；
             # - 还没连上：给 30 秒启动宽限（覆盖 launch ready_timeout=25s），
-            #   超过仍连不上才视为启动失败并释放。
+            #   超过仍连不上且进程已退出才视为启动失败并释放。
             if session._disconnect_count >= 2:
                 if session._theme_connected or (
                     time.monotonic() - session.theme_at > 30.0

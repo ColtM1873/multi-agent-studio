@@ -4302,6 +4302,21 @@ function browserColorTint(border, alpha) {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
+// 会话行是浅色底：第二色（text_color）如果是白/很亮的颜色，直接画左边条与圆点
+// 几乎看不见。保持色相、按亮度等比压暗到可读范围；正常深浅的颜色原样返回。
+function browserColorAccent(color) {
+  const hex = browserColorNorm(color, BROWSER_COLOR_DEFAULT.text_color);
+  const digits = hex.slice(1);
+  const r = parseInt(digits.slice(0, 2), 16);
+  const g = parseInt(digits.slice(2, 4), 16);
+  const b = parseInt(digits.slice(4, 6), 16);
+  const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+  if (lum <= 190) return hex;
+  const scale = 150 / lum;
+  const toHex = v => Math.max(0, Math.min(255, Math.round(v * scale))).toString(16).padStart(2, "0");
+  return "#" + toHex(r) + toHex(g) + toHex(b);
+}
+
 function browserHslToHex(h, s, l) {
   const hue2rgb = (p, q, x) => {
     if (x < 0) x += 1;
@@ -5873,7 +5888,11 @@ async function renderThreadsView() {
       .sort((a, b) => String(a[0]).localeCompare(String(b[0])));
     const browsers = (sessionSnapshot.browsers || [])
       .filter(b => b.agent_id === S.agentId)
-      .map(b => [b.thread_id, String(b.border_color || "").toLowerCase()])
+      .map(b => [
+        b.thread_id,
+        String(b.border_color || "").toLowerCase(),
+        String(b.text_color || "").toLowerCase(),
+      ])
       .sort((a, b) => String(a[0]).localeCompare(String(b[0])));
     return JSON.stringify([sessions, browsers]);
   }
@@ -5904,11 +5923,17 @@ async function renderThreadsView() {
             const browserBorder = browserTheme
               ? browserColorNorm(browserTheme.border_color, BROWSER_COLOR_DEFAULT.border_color)
               : "";
+            // 左边条与圆点用第二种颜色（字体主题色），浅底仍用边框主色；
+            // 太亮的第二色先自动压暗（否则浅底上几乎看不见）；
+            // 极旧的 profile 没有 text_color 时回退主色（同样走一遍压暗）。
+            const browserAccent = browserTheme
+              ? browserColorAccent(browserTheme.text_color || browserBorder)
+              : "";
             const browserStyle = browserTheme
-              ? `--thread-browser-color:${browserBorder};--thread-browser-tint:${browserColorTint(browserBorder, 0.07)};--thread-browser-tint-hover:${browserColorTint(browserBorder, 0.14)};`
+              ? `--thread-browser-color:${browserBorder};--thread-browser-accent:${browserAccent};--thread-browser-tint:${browserColorTint(browserBorder, 0.07)};--thread-browser-tint-hover:${browserColorTint(browserBorder, 0.14)};`
               : "";
             return `
-            <div class="thread-row ${hidden ? "thread-hidden" : ""}${browserTheme ? " thread-browser-open" : ""}" data-tid="${esc(th.thread_id)}"${browserTheme ? ` data-browser-open="1" data-browser-border="${browserBorder}"` : ""}${browserStyle ? ` style="${browserStyle}"` : ""}>
+            <div class="thread-row ${hidden ? "thread-hidden" : ""}${browserTheme ? " thread-browser-open" : ""}" data-tid="${esc(th.thread_id)}"${browserTheme ? ` data-browser-open="1" data-browser-border="${browserBorder}" data-browser-accent="${browserAccent}"` : ""}${browserStyle ? ` style="${browserStyle}"` : ""}>
               ${browserTheme ? `<span class="thread-browser-dot" role="img" title="${esc(browserTitle)}" aria-label="${esc(browserTitle)}"></span>` : ""}
               <span class="tid">${esc(th.thread_id)}</span>
               ${threadStateHtml(info)}

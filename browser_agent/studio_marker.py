@@ -281,6 +281,14 @@ def apply_profile_theme(
             pref_theme[key] = value
             changed = True
 
+    # Chrome 156 实测：profile 里一旦存在这个「主题 pref 已完成 synced → non-syncing
+    # 迁移」标记，Chrome 就会忽略 browser.theme 的 user_color*，窗口回退到默认主题
+    # （表现为默认蓝色/浅紫），而会话列表用的还是我们自己的 border_color，于是出现
+    # 「列表是青的、浏览器是蓝的」。删掉标记后 Chrome 每次启动都会重新迁移并应用种子色，
+    # 所以这里必须把它一并清掉（不能只在首次创建 profile 时依赖迁移）。
+    if prefs.pop("syncing_theme_prefs_migrated_to_non_syncing", None) is not None:
+        changed = True
+
     if not changed:
         return True
 
