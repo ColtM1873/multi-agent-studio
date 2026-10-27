@@ -4,11 +4,12 @@
 # 只有遇到确实需要管理员才能完成的步骤时才提示提权并重跑本脚本：
 #   * 依赖安装 / 打包等步骤因权限或长路径限制失败；
 #   * 需要安装 pgvector（写入 PostgreSQL 安装目录）。
-# 提权重跑会带上 -Mode / -OriginalUser / -OriginalSid，跳过版本菜单；
+# 提权重跑会带上 -Mode / -LiteStorage / -OriginalUser / -OriginalSid，跳过版本菜单；
 # 退出提权后再由原登录用户的进程创建桌面快捷方式。
 
 param(
     [string]$Mode = '',
+    [string]$LiteStorage = '',
     [string]$OriginalUser = '',
     [string]$OriginalSid = '',
     [switch]$InstallPgvector
@@ -64,6 +65,11 @@ function Start-ElevatedSetupChild {
         '-OriginalSid'
         $origUserSid
     )
+    if (-not [string]::IsNullOrWhiteSpace($LiteStorage)) {
+        # 只在有值时传：空字符串会让子进程把下一个参数当成它的值。
+        $elevArgList += '-LiteStorage'
+        $elevArgList += $LiteStorage
+    }
     if ($InstallPgvector) {
         $elevArgList += '-InstallPgvector'
     }
@@ -202,6 +208,7 @@ if ($interactive) {
     Write-Host '  [2] Lite 轻量版'
     Write-Host '      占用更少：无需下载 embedding 模型，运行库也更小。'
     Write-Host '      不含长期记忆、记忆读写、记忆吸附与记忆库管理；'
+    Write-Host '      会话历史默认存为本地 SQLite 文件（也可选 PostgreSQL），'
     Write-Host '      其余功能与普通版一致。'
     Write-Host ''
     Write-Host '  请按数字键 1 或 2 选择版本（只接受 1 或 2），选好后按回车确认。'
@@ -219,9 +226,45 @@ if ($Mode -notin @('Full', 'Lite')) {
 $modeLabel = if ($Mode -eq 'Lite') { 'Lite 轻量版' } else { '普通版' }
 $exeName = if ($Mode -eq 'Lite') { 'MultiAgentStudio-Lite.exe' } else { 'MultiAgentStudio.exe' }
 
+# ---------- Lite 版会话历史存储方式（SQLite / PostgreSQL）----------
+# 交互安装时再问一次；提权子进程通过 -LiteStorage 继承父进程的选择。
+# 非交互（脚本直接 -Mode Lite）且未指定时按 PostgreSQL 处理，保持旧行为。
+if ($Mode -eq 'Lite') {
+    if ([string]::IsNullOrWhiteSpace($LiteStorage)) {
+        if ($interactive) {
+            Write-Host ''
+            Write-Host '================================================='
+            Write-Host '  Lite 版会话历史存储方式'
+            Write-Host '================================================='
+            Write-Host ''
+            Write-Host '  [1] SQLite（推荐）'
+            Write-Host '      会话历史保存为本地文件（configs\lite\sqlite\），'
+            Write-Host '      不需要安装 PostgreSQL，也不占用数据库服务。'
+            Write-Host ''
+            Write-Host '  [2] PostgreSQL'
+            Write-Host '      与普通版一致，会话历史存到 PostgreSQL 数据库。'
+            Write-Host ''
+            do {
+                $storageAns = Read-Host '  1=SQLite，2=PostgreSQL'
+            } until ($storageAns -match '^\s*[12]\s*$')
+            $LiteStorage = if ($storageAns -match '^\s*2\s*$') { 'Postgres' } else { 'SQLite' }
+        } else {
+            $LiteStorage = 'Postgres'
+        }
+    }
+    if ($LiteStorage -notin @('SQLite', 'Postgres')) {
+        Write-Host "[错误] 未知的 Lite 存储方式：$LiteStorage（可选 SQLite / Postgres）"
+        exit 1
+    }
+}
+$storageLabel = if ($Mode -eq 'Lite') {
+    if ($LiteStorage -eq 'SQLite') { 'SQLite' } else { 'PostgreSQL' }
+} else { '' }
+$selectedLabel = if ($Mode -eq 'Lite') { "$modeLabel（会话历史：$storageLabel）" } else { $modeLabel }
+
 if ($interactive) {
     Write-Host ''
-    Write-Host "  已选择：$modeLabel"
+    Write-Host "  已选择：$selectedLabel"
     do {
         $confirmAns = Read-Host '  请按回车键开始安装（直接关闭窗口可取消）'
         if ($confirmAns) {
@@ -241,7 +284,7 @@ $isAdmin = ([Security.Principal.WindowsPrincipal]$origIdentity).IsInRole([Securi
 
 Write-Host ''
 Write-Host '================================================'
-Write-Host "  Multi-Agent Studio 一键安装（$modeLabel）"
+Write-Host "  Multi-Agent Studio 一键安装（$selectedLabel）"
 Write-Host '================================================'
 Write-Host ''
 if ($isAdmin) {
@@ -397,10 +440,29 @@ if ($LASTEXITCODE -ne 0) {
     Write-Host '             可在重装 Python 时勾选 "tcl/tk and IDLE" 修复该组件。'
 }
 
+# ---------- 4.4 记录 Lite 版会话历史存储方式 ----------
+# 程序（lite/app/main_lite.py）启动时读 configs/lite/storage.json：
+#   {"backend": "sqlite"}   → 会话历史落本地文件，不依赖 PostgreSQL
+#   {"backend": "postgres"} → 与普通版一致
+if ($Mode -eq 'Lite') {
+    Write-Host ''
+    Write-Host '[4.4/8] 记录会话历史存储方式...'
+    $liteDataDir = Join-Path $PSScriptRoot 'configs\lite'
+    New-Item -ItemType Directory -Force -Path $liteDataDir | Out-Null
+    $backend = if ($LiteStorage -eq 'SQLite') { 'sqlite' } else { 'postgres' }
+    $storageJson = '{"backend": "' + $backend + '"}'
+    Set-Content -LiteralPath (Join-Path $liteDataDir 'storage.json') -Value $storageJson -Encoding ASCII
+    Write-Host "       已记录：$storageLabel"
+}
+
 # ---------- 4.5 检测旧版 store 数据库（只记录迁移源，不迁移、不删库）----------
 # 旧版本每个 multi-agent 可以填不同的 store 数据库。新版本统一使用全局 store 数据库
 # （默认 Long_Term_Memory）。这里把配置里的旧库名落盘成迁移源，程序启动后会弹窗询问
 # 是否迁移；也可以在「系统设置 → 全局配置设置」里随时迁移。脚本只读配置、不碰数据库。
+if ($Mode -eq 'Lite' -and $LiteStorage -eq 'SQLite') {
+    Write-Host ''
+    Write-Host '[4.5/8] SQLite 存储模式：跳过旧版 store 数据库检查。'
+} else {
 Write-Host ''
 Write-Host '[4.5/8] 检查旧版 store 数据库...'
 & "$PSScriptRoot\venv\Scripts\python.exe" "$PSScriptRoot\scripts\detect_store_migrations.py"
@@ -409,6 +471,7 @@ if ($LASTEXITCODE -eq 0) {
 } else {
     Write-Host '       [提示] 旧版 store 数据库检查未完成；程序启动后也会自动检测。'
 }
+}  # end: 非 SQLite 模式的旧库检查
 
 # ---------- 5. 可选：一键安装 pgvector（已安装 / 无 PostgreSQL 则跳过询问）----------
 # pgvector 必须写入 PostgreSQL 安装目录，是真正需要管理员的步骤。
@@ -485,6 +548,9 @@ if ($Mode -eq 'Lite') {
 # 进入程序的会话界面就会连不上数据库。这里把检测到的 PostgreSQL 服务设为「自动」
 # 并立即启动。修改服务配置需要管理员：普通权限下只检测并给出提示，不阻断安装
 #（运行期程序还会兜底拉起服务，见 app/services/pg_service.py）。
+if ($Mode -eq 'Lite' -and $LiteStorage -eq 'SQLite') {
+    Write-Host '[6/8] SQLite 存储模式：不需要 PostgreSQL 服务，跳过开机自启配置。'
+} else {
 Write-Host '[6/8] 配置 PostgreSQL 服务开机自启...'
 $pgServiceNeedsAdmin = $false
 try {
@@ -529,6 +595,7 @@ if ($pgServiceNeedsAdmin) {
     Write-Host '             程序启动时仍会自动拉起服务（可能弹一次 UAC）。'
     Write-Host '             如需开机自启，请稍后右键 setup.bat 选择「以管理员身份运行」。'
 }
+}  # end: 非 SQLite 模式的 PostgreSQL 服务自启配置
 
 # ---------- 7. 打包 exe ----------
 Write-Host "[7/8] 打包 $exeName（首次会自动安装打包工具）..."
@@ -577,7 +644,7 @@ if ($sameUser) {
 
 Write-Host ''
 Write-Host '================================================'
-Write-Host "  安装完成！已生成 $exeName（$modeLabel）。"
+Write-Host "  安装完成！已生成 $exeName（$selectedLabel）。"
 if ($sameUser) {
     if ($shortcutCreated) {
         Write-Host '  桌面快捷方式「MultiAgent Studio」已创建。'
@@ -591,9 +658,14 @@ if ($sameUser) {
 Write-Host '================================================'
 Write-Host ''
 
-if ($pgvSkipped) {
+if ($pgvSkipped -and $Mode -ne 'Lite') {
     Write-Host '提示：本次未安装 pgvector，长期记忆功能会不可用；'
     Write-Host '      可随时双击 install_pgvector.bat 单独安装。'
+    Write-Host ''
+}
+if ($Mode -eq 'Lite' -and $LiteStorage -eq 'SQLite') {
+    Write-Host '提示：本次 Lite 版使用 SQLite 保存会话历史，不需要 PostgreSQL。'
+    Write-Host '      数据文件位于 configs\lite\sqlite\；删除该目录会清空全部会话历史。'
     Write-Host ''
 }
 if (-not $longPathsEnabled) {

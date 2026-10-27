@@ -19,6 +19,8 @@
     };
   }
 
+  const isSqliteStorage = () => window.__LITE_STORAGE_BACKEND === "sqlite";
+
   const hideField = (id) => {
     const el = document.getElementById(id);
     if (!el) return;
@@ -43,6 +45,15 @@
       document.querySelectorAll("#editorForm details.db-help li").forEach((li) => {
         if (li.textContent.includes("pgvector")) li.remove();
       });
+      if (isSqliteStorage()) {
+        // SQLite 模式不需要任何 PostgreSQL 连接配置：整张「数据库连接」卡直接隐藏。
+        // 字段保留在 DOM 里，保存处理器仍能读到它们的值（切回 PostgreSQL 不丢配置）。
+        const anchor =
+          document.getElementById("f_prefix") ||
+          document.getElementById("f_conn_full");
+        const card = anchor && anchor.closest(".form-card");
+        if (card) card.style.display = "none";
+      }
       return result;
     };
   }
@@ -100,6 +111,11 @@
       const result = await originalOpenGlobalConfig.apply(this, arguments);
       const embeddingBtn = document.getElementById("gcEmb");
       if (embeddingBtn) embeddingBtn.style.display = "none";
+      if (isSqliteStorage()) {
+        // SQLite 模式没有 PostgreSQL 连接设置。
+        const pgBtn = document.getElementById("gcPg");
+        if (pgBtn) pgBtn.style.display = "none";
+      }
       return result;
     };
   }

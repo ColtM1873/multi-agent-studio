@@ -16,6 +16,13 @@ EXCLUDE = {
     "langchain-community",
 }
 
+# Lite 专有依赖（根 requirements.txt 里没有）。
+# langgraph-checkpoint-sqlite 提供 AsyncSqliteSaver：Lite 安装时若选 SQLite，
+# 会话历史直接落本地文件，不需要 PostgreSQL；选 PostgreSQL 时该包仍保留（体积很小）。
+EXTRA = [
+    "langgraph-checkpoint-sqlite==3.1.0",
+]
+
 
 def package_name(line: str) -> str:
     match = re.match(r"\s*([A-Za-z0-9_.-]+)", line)
@@ -29,6 +36,7 @@ def main() -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
 
     lines: list[str] = ["# 由 lite/make_requirements.py 从 requirements.txt 自动生成"]
+    present: set[str] = set()
     for raw in SOURCE.read_text(encoding="utf-8").splitlines():
         stripped = raw.strip()
         if not stripped:
@@ -37,9 +45,17 @@ def main() -> None:
         if stripped.startswith("#"):
             lines.append(raw)
             continue
-        if package_name(stripped) in EXCLUDE:
+        name = package_name(stripped)
+        if name in EXCLUDE:
             continue
+        present.add(name)
         lines.append(raw)
+
+    extra = [item for item in EXTRA if package_name(item) not in present]
+    if extra:
+        lines.append("")
+        lines.append("# Lite 专有依赖（会话历史可选用 SQLite）")
+        lines.extend(extra)
 
     output.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
     print(f"已生成 Lite 依赖清单：{output}")

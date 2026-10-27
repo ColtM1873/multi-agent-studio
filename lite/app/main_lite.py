@@ -29,7 +29,7 @@ if sys.platform == "win32":
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from psycopg import OperationalError as PgOperationalError
@@ -42,23 +42,36 @@ from app.api import (
     common_prompts,
     drafts,
     export_html,
+    sessions,
     settings,
     snapshots,
     threads,
     ui_prefs,
 )
+from app.config import storage_backend as storage
 from app.config.settings import (
     seed_global_embedding,
     seed_global_postgres,
     seed_global_sub_summary,
     seed_global_summary,
 )
+from lite.app import sqlite_store
 from lite.app.deps_lite import BASE_DIR, common_prompt_store, config_store, draft_store
 
 logger = logging.getLogger("app.lite")
 
+CONFIG_DIR = BASE_DIR / "configs"
+# 安装时决定（configs/lite/storage.json）；缺省 postgres，保持旧行为。
+SQLITE_MODE = storage.is_sqlite(CONFIG_DIR)
+
 NORMAL_STATIC_DIR = BASE_DIR / "app" / "static"
 LITE_STATIC_DIR = Path(__file__).resolve().parents[1] / "static"
+
+# SQLite 模式下快照数据源换成 SQLite（graph_builder / session_hub 通过模块属性调用）。
+if SQLITE_MODE:
+    from app.services import snapshot as snapshot_service
+
+    snapshot_service.capture_snapshot = sqlite_store.capture_snapshot
 
 
 def _autostart_pg_services() -> None:
@@ -84,10 +97,14 @@ async def lifespan(_app: FastAPI):
     except Exception:  # noqa: BLE001
         pass
 
-    threading.Thread(
-        target=_autostart_pg_services, name="pg-autostart", daemon=True
-    ).start()
+    if not SQLITE_MODE:
+        # SQLite 模式不依赖 PostgreSQL：不拉起本机 PG 服务。
+        threading.Thread(
+            target=_autostart_pg_services, name="pg-autostart", daemon=True
+        ).start()
     yield
+    if SQLITE_MODE:
+        await sqlite_store.close_all()
     for store in (draft_store, common_prompt_store):
         try:
             store.flush()
@@ -192,6 +209,7 @@ app.include_router(agents.router)
 app.include_router(threads.router)
 app.include_router(snapshots.router)
 app.include_router(snapshots.deleted_router)
+app.include_router(sessions.router)
 app.include_router(chat_ws.router)
 app.include_router(settings.router)
 app.include_router(export_html.router)
@@ -243,6 +261,13 @@ if LITE_STATIC_DIR.exists():
 @app.get("/")
 def index():
     index_path = LITE_STATIC_DIR / "index.html"
-    if index_path.exists():
-        return FileResponse(str(index_path))
-    return {"app": "Multi-Agent Studio Lite", "hint": "Lite 前端文件缺失"}
+    if not index_path.exists():
+        return {"app": "Multi-Agent Studio Lite", "hint": "Lite 前端文件缺失"}
+    html = index_path.read_text(encoding="utf-8")
+    # 同步告诉前端当前存储后端（首屏即生效，避免先显示 PostgreSQL 表单再隐藏）。
+    marker = (
+        '<script>window.__LITE_STORAGE_BACKEND = "sqlite";</script>\n'
+        if SQLITE_MODE
+        else ""
+    )
+    return HTMLResponse(html.replace("<!--LITE_STORAGE-->", marker))

@@ -17,6 +17,21 @@ def get_settings():
     return load_settings(config_store._dir).model_dump()
 
 
+def _is_sqlite_storage() -> bool:
+    """Lite + SQLite 模式：没有 PostgreSQL store 库可改名/迁移。
+
+    普通版恒为 False（即使 configs/lite/storage.json 是此前 Lite 安装留下的）。
+    """
+    if not chat_manager.__class__.__module__.startswith("lite."):
+        return False
+    try:
+        from app.config import storage_backend
+
+        return storage_backend.is_sqlite(config_store._dir)
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _deep_merge(base: dict, override: dict) -> dict:
     out = dict(base)
     for key, value in (override or {}).items():
@@ -57,7 +72,7 @@ async def put_settings(body: Settings):
     body.browser_interactive_merge_separator = sep  # BID084
 
     store_db_changed = old_store_db != new_store_db
-    if store_db_changed:
+    if store_db_changed and not _is_sqlite_storage():
         # 先关闭所有运行时，释放对旧 store 库的连接，才能 ALTER DATABASE ... RENAME
         await chat_manager.invalidate_all()
 

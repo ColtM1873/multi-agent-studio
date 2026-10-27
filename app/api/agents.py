@@ -76,6 +76,23 @@ def _is_lite() -> bool:
     return chat_manager.__class__.__module__.startswith("lite.")
 
 
+def _is_sqlite_storage() -> bool:
+    """Lite 版是否使用 SQLite 存会话历史（安装时决定；普通版恒为 False）。
+
+    必须先判断 ``_is_lite()``：``configs/lite/storage.json`` 是安装时留下的，
+    用户可能先装 Lite+SQLite、之后改装普通版；普通版仍用 PostgreSQL，不能因为
+    残留文件就跳过建库/连接校验。
+    """
+    if not _is_lite():
+        return False
+    try:
+        from app.config import storage_backend
+
+        return storage_backend.is_sqlite(config_store._dir)
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _normalize_namespace(value) -> tuple[str, ...]:
     """校验并归一化记忆命名空间（逗号分隔的多层级）。
 
@@ -130,6 +147,9 @@ def _ensure_name_is_free(name: str) -> None:
 
 async def _ensure_agent_databases(cfg: MultiAgentConfig) -> None:
     """按用户给的连接串自动创建 checkpoint / store 数据库（不要求用户先建库）。"""
+    if _is_sqlite_storage():
+        # SQLite 模式不需要创建 PostgreSQL 数据库；文件在首次使用时自动建立。
+        return
     databases = [cfg.postgres.checkpoint_database]
     if not _is_lite():
         databases.append(cfg.postgres.store_database)
@@ -169,12 +189,13 @@ async def create_agent(cfg: MultiAgentConfig):
     await _ensure_agent_databases(cfg)
 
     # 建库后验证连接（账号密码 / SSL / 端口是否真的可用）
-    ok, err = await threads_service.test_connection(cfg.checkpoint_conn_string)
-    if not ok:
-        raise HTTPException(
-            status_code=400,
-            detail=f"数据库已自动创建，但仍无法连接 [{name}]。请检查连接前缀、端口、账号密码与 SSL 设置。原始错误: {err}",
-        )
+    if not _is_sqlite_storage():
+        ok, err = await threads_service.test_connection(cfg.checkpoint_conn_string)
+        if not ok:
+            raise HTTPException(
+                status_code=400,
+                detail=f"数据库已自动创建，但仍无法连接 [{name}]。请检查连接前缀、端口、账号密码与 SSL 设置。原始错误: {err}",
+            )
 
     # 生成并锁定子 agent 的消息通道键（落盘后永久固定，与历史绑定）
     assign_state_messages_keys(cfg)
@@ -297,6 +318,9 @@ def set_default(cfg: MultiAgentConfig):
 
 @router.post("/check-db")
 async def check_db(body: CheckDbBody):
+    if _is_sqlite_storage():
+        # SQLite 模式不使用 PostgreSQL 连接，前端也不会显示该检查入口。
+        return {"ok": True, "error": ""}
     ok, err = await threads_service.test_connection(body.conn_string)
     return {"ok": ok, "error": err}
 
