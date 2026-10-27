@@ -650,10 +650,11 @@ const I18N_EN = {
   "代码·变量": "Code variable",
   "浏览器交互延迟设置": "Browser interaction delay settings",
   "浏览器颜色自定义": "Browser color presets",
-  "为每个会话的浏览器指定边框色与字体主题色。按列表顺序依次分配；列表用完后自动生成不重复的随机颜色。": "Set a border color and a text theme color for each session's browser. Colors are assigned in list order; when the list runs out, unique random colors are generated.",
+  "为每个会话的浏览器指定边框色与字体主题色。按列表顺序依次分配；仍开着浏览器的会话会占用其颜色，已占用的会跳过；列表用完或全部被占用时自动生成不重复的随机颜色。": "Set a border color and a text theme color for each session's browser. Colors are assigned in list order; colors held by sessions whose browser is still open are skipped. When the list runs out, or every color is occupied, unique random colors are generated.",
   "浏览器边框颜色": "Browser border color",
   "浏览器字体主题色": "Browser text theme color",
   "优先级": "Priority",
+  "使用中": "In use",
   "新增配色": "Add color",
   "上移": "Move up",
   "下移": "Move down",
@@ -2313,7 +2314,7 @@ let pinned = localStorage.getItem("pin-follow") === "1";
 // 缓冲；页面刷新后靠后端 run_id+seq 回放重建。
 const sessionStreams = new Map();
 let activeSessionStream = null;
-let sessionSnapshot = { sessions: [], counts: { running: 0, completed: 0 } };
+let sessionSnapshot = { sessions: [], counts: { running: 0, completed: 0 }, browsers: [] };
 let sessionPollTimer = null;
 let sessionBallOpen = false;
 let threadsStatusTimer = null;
@@ -2333,6 +2334,11 @@ function getSessionStream(agentId, agentName, threadId) {
 function sessionInfoOf(agentId, threadId) {
   return (sessionSnapshot.sessions || []).find(
     (s) => s.agent_id === agentId && s.thread_id === threadId
+  ) || null;
+}
+function browserThemeOf(agentId, threadId) {
+  return (sessionSnapshot.browsers || []).find(
+    (b) => b.agent_id === agentId && b.thread_id === threadId
   ) || null;
 }
 function isSessionPending(info) {
@@ -4288,6 +4294,14 @@ function browserColorAutoText(border) {
   return (0.299 * r + 0.587 * g + 0.114 * b) < 150 ? "#ffffff" : "#1f2937";
 }
 
+function browserColorTint(border, alpha) {
+  const digits = browserColorNorm(border, BROWSER_COLOR_DEFAULT.border_color).slice(1);
+  const r = parseInt(digits.slice(0, 2), 16);
+  const g = parseInt(digits.slice(2, 4), 16);
+  const b = parseInt(digits.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
 function browserHslToHex(h, s, l) {
   const hue2rgb = (p, q, x) => {
     if (x < 0) x += 1;
@@ -4323,6 +4337,14 @@ function browserRandomColor(usedBorders) {
 async function openBrowserColorSettings(back) {
   let s;
   try { s = await getSettings(); } catch (e) { toast(e.message, true); return; }
+  // 已开着浏览器的会话会占用颜色；在列表里标出来，避免误以为预设没生效。
+  let activeBorders = new Set();
+  try {
+    const live = await api("/api/sessions");
+    activeBorders = new Set((live.browsers || [])
+      .map(b => browserColorNorm(b.border_color, "").toLowerCase())
+      .filter(Boolean));
+  } catch (e) { /* 状态接口失败不影响配色编辑 */ }
   let presets = Array.isArray(s.browser_color_presets)
     ? s.browser_color_presets.map(item => ({
         border_color: browserColorNorm(item && item.border_color, BROWSER_COLOR_DEFAULT.border_color),
@@ -4335,7 +4357,7 @@ async function openBrowserColorSettings(back) {
   mask.innerHTML = `
     <div class="modal browser-color-modal" style="width:620px;max-height:84vh;overflow:auto;" data-modal-key="browserColors">
       <h3>🎨 ${t("浏览器颜色自定义")}</h3>
-      <div class="muted" style="margin-bottom:6px;line-height:1.65;">${t("为每个会话的浏览器指定边框色与字体主题色。按列表顺序依次分配；列表用完后自动生成不重复的随机颜色。")}</div>
+      <div class="muted" style="margin-bottom:6px;line-height:1.65;">${t("为每个会话的浏览器指定边框色与字体主题色。按列表顺序依次分配；仍开着浏览器的会话会占用其颜色，已占用的会跳过；列表用完或全部被占用时自动生成不重复的随机颜色。")}</div>
       <div class="browser-color-list" id="browserColorList"></div>
       <div class="browser-color-add-row">
         <button class="btn small" id="browserColorAdd">＋ ${t("新增配色")}</button>
@@ -4355,6 +4377,7 @@ async function openBrowserColorSettings(back) {
   const rowHtml = (p, index) => `
     <div class="browser-color-row" data-index="${index}">
       <span class="browser-color-priority" title="${t("优先级")}">${index + 1}</span>
+      <span class="browser-color-inuse" style="${activeBorders.has(p.border_color.toLowerCase()) ? "" : "display:none;"}">${t("使用中")}</span>
       <span class="browser-color-chip" style="background:${p.border_color};color:${p.text_color}">Aa</span>
       <div class="browser-color-fields">
         <label class="browser-color-field"><span>${t("浏览器边框颜色")}</span><input type="color" data-field="border_color" value="${p.border_color}"></label>
@@ -4388,6 +4411,10 @@ async function openBrowserColorSettings(back) {
     if (chip) {
       chip.style.background = presets[index].border_color;
       chip.style.color = presets[index].text_color;
+    }
+    const badge = row.querySelector(".browser-color-inuse");
+    if (badge) {
+      badge.style.display = activeBorders.has(presets[index].border_color.toLowerCase()) ? "" : "none";
     }
   });
   listEl.addEventListener("click", e => {
@@ -5838,6 +5865,19 @@ async function renderThreadsView() {
     return runStateTagHtml(info.status === "completed" ? "done" : "running");
   }
 
+  // 运行状态与浏览器颜色任一变化都要原地重绘；否则浏览器关掉后颜色会留在列表上。
+  function threadStatusSignature() {
+    const sessions = (sessionSnapshot.sessions || [])
+      .filter(s => s.agent_id === S.agentId)
+      .map(s => [s.thread_id, s.status, s.accepted])
+      .sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+    const browsers = (sessionSnapshot.browsers || [])
+      .filter(b => b.agent_id === S.agentId)
+      .map(b => [b.thread_id, String(b.border_color || "").toLowerCase()])
+      .sort((a, b) => String(a[0]).localeCompare(String(b[0])));
+    return JSON.stringify([sessions, browsers]);
+  }
+
   function drawThreadsBox() {
     const showNow = localStorage.getItem(showKey) === "1";
     const vis = showNow ? threads : threads.filter(t => {
@@ -5859,8 +5899,17 @@ async function renderThreadsView() {
             const info = threadStateOf(th.thread_id);
             const locked = !!info;
             const lockTitle = locked ? t("该会话正在运行或等待验收，暂时不能隐藏或删除") : "";
+            const browserTheme = browserThemeOf(S.agentId, th.thread_id);
+            const browserTitle = browserTheme ? t("该会话的浏览器已打开（每个会话使用独立浏览器实例）") : "";
+            const browserBorder = browserTheme
+              ? browserColorNorm(browserTheme.border_color, BROWSER_COLOR_DEFAULT.border_color)
+              : "";
+            const browserStyle = browserTheme
+              ? `--thread-browser-color:${browserBorder};--thread-browser-tint:${browserColorTint(browserBorder, 0.07)};--thread-browser-tint-hover:${browserColorTint(browserBorder, 0.14)};`
+              : "";
             return `
-            <div class="thread-row ${hidden ? "thread-hidden" : ""}" data-tid="${esc(th.thread_id)}">
+            <div class="thread-row ${hidden ? "thread-hidden" : ""}${browserTheme ? " thread-browser-open" : ""}" data-tid="${esc(th.thread_id)}"${browserTheme ? ` data-browser-open="1" data-browser-border="${browserBorder}"` : ""}${browserStyle ? ` style="${browserStyle}"` : ""}>
+              ${browserTheme ? `<span class="thread-browser-dot" role="img" title="${esc(browserTitle)}" aria-label="${esc(browserTitle)}"></span>` : ""}
               <span class="tid">${esc(th.thread_id)}</span>
               ${threadStateHtml(info)}
               <span class="meta"><small>${esc(cpText)}</small><small>${esc(th.last_updated || "")}</small>${hidden ? `<small class="hidden-tag">${t("已隐藏")}</small>` : ""}</span>
@@ -5888,15 +5937,11 @@ async function renderThreadsView() {
   }
   drawThreadsBox();
   // 正在运行 / 完工状态来自后端会话中枢；只在状态签名变化时原地重绘，避免闪烁。
-  let lastThreadStatusSig = JSON.stringify((sessionSnapshot.sessions || [])
-    .filter(s => s.agent_id === S.agentId)
-    .map(s => [s.thread_id, s.status, s.accepted]));
+  let lastThreadStatusSig = threadStatusSignature();
   threadsStatusTimer = setInterval(async () => {
     if (!$("#threadsBox")) { clearInterval(threadsStatusTimer); threadsStatusTimer = null; return; }
     await refreshSessions();
-    const sig = JSON.stringify((sessionSnapshot.sessions || [])
-      .filter(s => s.agent_id === S.agentId)
-      .map(s => [s.thread_id, s.status, s.accepted]));
+    const sig = threadStatusSignature();
     if (sig !== lastThreadStatusSig) {
       lastThreadStatusSig = sig;
       drawThreadsBox();

@@ -609,6 +609,11 @@ html[data-style-danger="solid"] .card-btn-danger:hover { filter: brightness(.92)
   align-items: center; justify-content: center; font-size: 12px; font-weight: 700;
   color: var(--primary); background: #eef2ff; border: 1px solid #c7d2fe;
 }
+.browser-color-inuse {
+  flex: 0 0 auto; padding: 2px 7px; border-radius: 999px;
+  font-size: 11px; font-weight: 600; color: #16a34a; background: #f0fdf4;
+  border: 1px solid #bbf7d0; white-space: nowrap;
+}
 .browser-color-chip {
   flex: 0 0 42px; height: 30px; border-radius: 8px; display: flex;
   align-items: center; justify-content: center; font-size: 13px; font-weight: 700;
@@ -703,6 +708,25 @@ body.floating-dragging { user-select: none; cursor: grabbing; }
 .thread-row .tid { font-weight: 600; color: var(--primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 50%; }
 .thread-row .meta { color: var(--text-muted); font-size: 13px; flex: 1; }
 .thread-row .meta small { display: inline-block; margin-right: 14px; }
+
+/* ── 会话行：该会话的 CDP 浏览器仍开着（颜色与浏览器主色一致） ───────── */
+.thread-row.thread-browser-open {
+  background: var(--thread-browser-tint, transparent);
+  box-shadow: inset 4px 0 0 var(--thread-browser-color, transparent);
+}
+.thread-row.thread-browser-open:hover {
+  background: var(--thread-browser-tint-hover, #eef2ff);
+  box-shadow: inset 4px 0 0 var(--thread-browser-color, var(--primary));
+}
+.thread-row .thread-browser-dot {
+  flex: 0 0 auto;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--thread-browser-color, var(--primary));
+  border: 1px solid rgba(15, 23, 42, .12);
+  box-shadow: 0 0 0 2px var(--thread-browser-tint, rgba(79, 70, 229, .15));
+}
 
 /* ── 多实例：会话行状态（ID91） ───────────────────────────── */
 .thread-row .thread-run-state,

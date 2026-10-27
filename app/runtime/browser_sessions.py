@@ -124,6 +124,9 @@ class BrowserSession:
     theme: dict | None = None
     # 最近一次分配/确认配色的时间；probe 用它给「浏览器正在启动」留出宽限期。
     theme_at: float = 0.0
+    # 该配色是否已经被一个真正连上的浏览器确认过。启动期（还没连上）和
+    # 运行后再关闭要区别对待：前者保留 30 秒宽限，后者连续两次探测失败即可释放。
+    _theme_connected: bool = False
     created_at: str = field(default_factory=_now)
     _probe_at: float = 0.0
     _probe_connected: bool = False
@@ -192,7 +195,13 @@ class BrowserSessionManager:
         self._profiles: dict[str, dict] = {}
         self._monitor_thread: threading.Thread | None = None
         self._monitor_stop = threading.Event()
+        # 程序重启后，内存里的 ``_sessions`` 是空的，但浏览器进程可能还活着。
+        # 启动时后台扫一遍带主题的 profile，把「仍在监听」的浏览器找回来，
+        # 这样会话列表不必先进入会话再染色。条目只用于 UI 查询，不创建 controller。
+        self._live_profiles: dict[SessionKey, dict] = {}
+        self._discovery_thread: threading.Thread | None = None
         self._load_profiles()
+        self._start_profile_discovery()
 
     # ------------------------------------------------------------------ #
     # profile 映射
@@ -222,6 +231,88 @@ class BrowserSessionManager:
             os.replace(tmp, self._profiles_path)
         except Exception:  # noqa: BLE001
             logger.exception("保存 browser_profiles.json 失败")
+
+    @staticmethod
+    def _profile_path(profile_dir: object) -> Path | None:
+        text = str(profile_dir or "").strip()
+        if not text:
+            return None
+        path = Path(text)
+        return path if path.is_absolute() else (ROOT / path)
+
+    @classmethod
+    def _port_from_profile_dir(cls, profile_dir: object) -> int | None:
+        """从某个 profile 的 DevToolsActivePort 读端口（只读文件，不发请求）。"""
+        path = cls._profile_path(profile_dir)
+        if path is None:
+            return None
+        active = path / "DevToolsActivePort"
+        try:
+            if not active.is_file():
+                return None
+            first = active.read_text(encoding="utf-8").splitlines()[0].strip()
+            return int(first) if first.isdigit() else None
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _start_profile_discovery(self) -> None:
+        if self._monitor_stop.is_set():
+            return
+        if self._discovery_thread is not None and self._discovery_thread.is_alive():
+            return
+        if not any(_normalize_theme(item.get("theme")) for item in self._profiles.values()):
+            return
+        self._discovery_thread = threading.Thread(
+            target=self._discover_live_profiles,
+            name="browser-profile-discovery",
+            daemon=True,
+        )
+        self._discovery_thread.start()
+
+    def _discover_live_profiles(self) -> None:
+        """找出程序重启后仍在监听的会话浏览器（后台线程，慢一点没关系）。"""
+        try:
+            with self._lock:
+                items = [(pkey, dict(item)) for pkey, item in self._profiles.items()]
+            for pkey, item in items:
+                if self._monitor_stop.is_set():
+                    return
+                theme = _normalize_theme(item.get("theme"))
+                if not theme:
+                    continue
+                agent_id = str(item.get("agent_id") or "")
+                thread_id = str(item.get("thread_id") or "")
+                if (not agent_id or not thread_id) and "\u241f" in pkey:
+                    agent_id, thread_id = pkey.split("\u241f", 1)
+                if not agent_id or not thread_id:
+                    continue
+                key = (agent_id, thread_id)
+                with self._lock:
+                    if key in self._sessions or key in self._live_profiles:
+                        continue
+                port = self._port_from_profile_dir(item.get("profile_dir"))
+                if port is None:
+                    continue
+                try:
+                    connected = BrowserLauncher._is_port_ready(port)
+                except Exception:  # noqa: BLE001
+                    connected = False
+                if not connected:
+                    continue
+                with self._lock:
+                    if key in self._sessions or key in self._live_profiles:
+                        continue
+                    self._live_profiles[key] = {
+                        "agent_id": agent_id,
+                        "thread_id": thread_id,
+                        "port": port,
+                        "theme": theme,
+                        "checked_at": time.monotonic(),
+                    }
+                # 发现存活浏览器后让后台监控持续复核，关掉时及时释放颜色。
+                self._ensure_monitor()
+        except Exception:  # noqa: BLE001
+            logger.exception("扫描重启后仍存活的浏览器 profile 失败")
 
     def _profile_dir_for(self, agent_id: str, thread_id: str, agent_name: str) -> str:
         pkey = self._profile_key(agent_id, thread_id)
@@ -265,9 +356,27 @@ class BrowserSessionManager:
 
     @staticmethod
     def _used_borders(sessions, exclude: BrowserSession | None = None) -> set[str]:
+        """只统计「确实还占着」的颜色。
+
+        * 端口已连上：占用；
+        * 刚分配、浏览器还在启动（还没连上）：30 秒内算占用，避免启动期撞色；
+        * 曾经连上、之后关闭：连续两次探测失败后就不再占用，让预设色能尽快复用；
+        * 从未连上且超过 30 秒：视为启动失败，释放。
+        """
+        now = time.monotonic()
         used: set[str] = set()
         for item in sessions:
             if item is exclude or not item.theme:
+                continue
+            occupied = bool(item._probe_connected)
+            if not occupied:
+                if item._theme_connected:
+                    # 曾经连上过：连续两次探测失败才视为真正关闭。
+                    occupied = item._disconnect_count < 2
+                else:
+                    # 还没连上：30 秒启动宽限，不能被启动期的探测次数提前打破。
+                    occupied = (now - item.theme_at <= 30.0)
+            if not occupied:
                 continue
             border = item.theme.get("border_color")
             if border:
@@ -291,10 +400,17 @@ class BrowserSessionManager:
         """优先按用户列表顺序取一个未占用的边框色；否则生成随机色。"""
         with self._lock:
             used = self._used_borders(self._sessions.values(), exclude=session)
+            # 程序重启后发现的存活浏览器不在 _sessions 里，但颜色仍被它们占着。
+            for item in self._live_profiles.values():
+                theme = _normalize_theme(item.get("theme"))
+                if theme:
+                    used.add(theme["border_color"].lower())
             current = _normalize_theme(session.theme)
             if current and current["border_color"].lower() not in used:
                 session.theme = current
                 session.theme_at = time.monotonic()
+                session._theme_connected = False
+                session._disconnect_count = 0
                 return current
 
             for preset in self._color_presets():
@@ -302,12 +418,16 @@ class BrowserSessionManager:
                     continue
                 session.theme = preset
                 session.theme_at = time.monotonic()
+                session._theme_connected = False
+                session._disconnect_count = 0
                 self._save_profile_theme(session, preset)
                 return preset
 
             theme = _random_browser_theme(used)
             session.theme = theme
             session.theme_at = time.monotonic()
+            session._theme_connected = False
+            session._disconnect_count = 0
             self._save_profile_theme(session, theme)
             return theme
 
@@ -358,6 +478,8 @@ class BrowserSessionManager:
                     if saved and self._browser_connected(session.controller):
                         session.theme = saved
                         session.theme_at = time.monotonic()
+                        session._theme_connected = True
+                        session._disconnect_count = 0
                         session.controller.launcher.theme = saved
                 if session.controller.launcher.theme_provider is None:
                     session.controller.launcher.theme_provider = (
@@ -388,9 +510,12 @@ class BrowserSessionManager:
             if saved and self._browser_connected(controller):
                 session.theme = saved
                 session.theme_at = time.monotonic()
+                session._theme_connected = True
+                session._disconnect_count = 0
                 launcher.theme = saved
             launcher.theme_provider = lambda s=session: self._allocate_theme(s)
             self._sessions[key] = session
+            self._live_profiles.pop(key, None)
             self._ensure_monitor()
             try:
                 from app.runtime.floating_stop import FloatingStop
@@ -416,10 +541,36 @@ class BrowserSessionManager:
                     self.probe(session, max_age=0.0)
                 except Exception:  # noqa: BLE001
                     pass
+            try:
+                self._refresh_live_profiles()
+            except Exception:  # noqa: BLE001
+                pass
             self._monitor_stop.wait(1.5)
+
+    def _refresh_live_profiles(self) -> None:
+        """复核程序重启后发现的浏览器；关掉后不能继续占着颜色。"""
+        with self._lock:
+            items = list(self._live_profiles.items())
+        now = time.monotonic()
+        for key, item in items:
+            if now - float(item.get("checked_at") or 0.0) < 1.0:
+                continue
+            try:
+                connected = BrowserLauncher._is_port_ready(int(item["port"]))
+            except Exception:  # noqa: BLE001
+                connected = False
+            item["checked_at"] = now
+            if not connected:
+                with self._lock:
+                    self._live_profiles.pop(key, None)
 
     def shutdown(self) -> None:
         self._monitor_stop.set()
+        thread = self._discovery_thread
+        if thread is not None and thread.is_alive():
+            # 启动扫描最多卡在一次 HTTP 探测上；退出时等一小会儿，避免
+            # 临时目录/测试环境已经销毁后线程还在读 profile。
+            thread.join(timeout=2.0)
 
     def peek(self, agent_id: str, thread_id: str) -> BrowserSession | None:
         return self._sessions.get((agent_id, thread_id))
@@ -451,20 +602,23 @@ class BrowserSessionManager:
         session._probe_port = port
         if connected:
             session._disconnect_count = 0
+            session._theme_connected = True
         else:
             # 浏览器关闭：暂停状态复位，下次重新打开时不会仍被短路。
             session.paused = False
             session._disconnect_count += 1
             # 同时释放颜色，让后续会话可以按优先级重新使用它。
-            # 刚分配完色、浏览器还在启动时端口尚不可用，给 30 秒宽限期
-            # （覆盖 launch ready_timeout=25s）；连接探测也可能瞬时失败，
-            # 因此连续两次判离线才真正释放。
-            if (
-                session._disconnect_count >= 2
-                and time.monotonic() - session.theme_at > 30.0
-            ):
-                session.theme = None
-                session.theme_at = 0.0
+            # - 浏览器真正连过：连续两次探测失败即可释放（约 3 秒），
+            #   不要让它继续白占预设色；
+            # - 还没连上：给 30 秒启动宽限（覆盖 launch ready_timeout=25s），
+            #   超过仍连不上才视为启动失败并释放。
+            if session._disconnect_count >= 2:
+                if session._theme_connected or (
+                    time.monotonic() - session.theme_at > 30.0
+                ):
+                    session.theme = None
+                    session.theme_at = 0.0
+                    session._theme_connected = False
         return {"connected": connected, "port": port, "paused": session.paused}
 
     def status(self, agent_id: str, thread_id: str) -> dict:
@@ -473,8 +627,73 @@ class BrowserSessionManager:
             return {"connected": False, "port": None, "paused": False}
         return self.probe(session)
 
+    def browser_theme_entries(self) -> list[dict]:
+        """返回「浏览器仍开着」的会话及其配色，供会话列表着色。
+
+        连接状态以 ``probe()`` 的实时结果为准：浏览器一关，条目立即消失。
+        配色占用则由 ``_used_borders()`` 区分「启动期宽限」与「连上后关闭」，
+        避免关闭的浏览器继续白占用户预设色。
+        """
+        entries: list[dict] = []
+        seen: set[SessionKey] = set()
+        for session in sorted(self.sessions(), key=lambda s: s.created_at):
+            seen.add(session.key)
+            try:
+                state = self.probe(session, max_age=1.0)
+            except Exception:  # noqa: BLE001
+                continue
+            if not state.get("connected"):
+                continue
+            theme = _normalize_theme(session.theme)
+            if theme is None:
+                # 兼容旧 profile / 程序重启后尚未触发 launch 的极少数情况。
+                theme = self._saved_theme(session.agent_id, session.thread_id)
+                if theme is None:
+                    continue
+                session.theme = theme
+                session.theme_at = time.monotonic()
+                session._theme_connected = True
+            entries.append(
+                {
+                    "agent_id": session.agent_id,
+                    "thread_id": session.thread_id,
+                    "border_color": theme["border_color"],
+                    "text_color": theme["text_color"],
+                }
+            )
+        # 程序重启后发现的存活浏览器：不创建 BrowserSession，只做列表着色。
+        with self._lock:
+            discovered = list(self._live_profiles.items())
+        now = time.monotonic()
+        for key, item in discovered:
+            if key in seen:
+                continue
+            if now - float(item.get("checked_at") or 0.0) >= 1.0:
+                try:
+                    connected = BrowserLauncher._is_port_ready(int(item["port"]))
+                except Exception:  # noqa: BLE001
+                    connected = False
+                item["checked_at"] = now
+                if not connected:
+                    with self._lock:
+                        self._live_profiles.pop(key, None)
+                    continue
+            theme = _normalize_theme(item.get("theme"))
+            if theme is None:
+                continue
+            entries.append(
+                {
+                    "agent_id": item["agent_id"],
+                    "thread_id": item["thread_id"],
+                    "border_color": theme["border_color"],
+                    "text_color": theme["text_color"],
+                }
+            )
+        return entries
+
     def sessions(self) -> list[BrowserSession]:
-        return list(self._sessions.values())
+        with self._lock:
+            return list(self._sessions.values())
 
     def toggle_pause(self, agent_id: str, thread_id: str) -> bool:
         session = self.peek(agent_id, thread_id)

@@ -1,6 +1,7 @@
-"""离线验证按会话隔离的浏览器 profile / 端口 / 暂停 / 标签页上限。
+"""离线验证按会话隔离的浏览器 profile / 端口 / 暂停 / 标签页上限 / 配色。
 
-不启动真实浏览器：只验证 manager 的实例划分与状态逻辑。
+不启动真实浏览器：只验证 manager 的实例划分、状态逻辑、重启后发现存活
+profile，以及「存活浏览器继续占用自己的边框色」。
 运行：venv\\Scripts\\python.exe scripts\\verify_browser_sessions.py
 """
 
@@ -9,6 +10,7 @@ from __future__ import annotations
 import json
 import sys
 import tempfile
+import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -92,6 +94,67 @@ def main() -> int:
                 assert s1["port"] != s2["port"]
                 assert a1.theme == t1 and a2.theme == t2
 
+                # 会话列表着色数据：只返回仍连接、已有配色的会话。
+                by_thread = {
+                    item["thread_id"]: item
+                    for item in manager.browser_theme_entries()
+                    if item["agent_id"] == "A"
+                }
+                assert by_thread["会话一"]["border_color"] == t1["border_color"]
+                assert by_thread["会话二"]["border_color"] == t2["border_color"]
+
+                # 程序重启边界：profile 映射里的浏览器仍在监听时，新 manager
+                # 不必先进入会话，也能发现它并按原颜色给会话列表着色。
+                (Path(a1.profile_dir) / "DevToolsActivePort").write_text(
+                    "12341\n", encoding="utf-8"
+                )
+                manager2 = bs.BrowserSessionManager(store)
+                manager2._discover_live_profiles()
+                restarted = {
+                    item["thread_id"]: item
+                    for item in manager2.browser_theme_entries()
+                    if item["agent_id"] == "A"
+                }
+                assert restarted["会话一"]["border_color"] == t1["border_color"]
+                # 重启后新开的会话不能拿到存活浏览器仍占用的边框色。
+                a3 = manager2.get("A", "会话三")
+                assert manager2._allocate_theme(a3)["border_color"] != t1["border_color"]
+                manager2.shutdown()
+                (Path(a1.profile_dir) / "DevToolsActivePort").unlink()
+
+                # 启动期保护：还没连上的会话在 30 秒内仍占色，超过才视为失败释放。
+                launching = bs.BrowserSession(
+                    key=("A", "启动中"),
+                    agent_id="A",
+                    thread_id="启动中",
+                    agent_name="A",
+                    profile_dir=a1.profile_dir,
+                    controller=a1.controller,
+                    theme={"border_color": "#123456", "text_color": "#ffffff"},
+                    theme_at=time.monotonic(),
+                )
+                launching._disconnect_count = 5  # 启动期探测失败多次也不能提前释放
+                assert "#123456" in manager._used_borders([launching])
+                launching.theme_at -= 31.0
+                assert "#123456" not in manager._used_borders([launching])
+
+                # 浏览器真正连过之后再关闭：连续两次探测失败就释放颜色，
+                # 不能因为「启动宽限期 30 秒」继续白占用户预设色。
+                a2.controller.launcher.port = 19999
+                a2._probe_at = 0.0
+                a2._disconnect_count = 1
+                closed2 = manager.status("A", "会话二")
+                assert not closed2["connected"] and a2.theme is None
+                fresh = bs.BrowserSession(
+                    key=("A", "新会话"),
+                    agent_id="A",
+                    thread_id="新会话",
+                    agent_name="A",
+                    profile_dir=a2.profile_dir,
+                    controller=a2.controller,
+                )
+                assert manager._allocate_theme(fresh)["border_color"] == "#00aa00"
+
                 assert manager.toggle_pause("A", "会话一") is True
                 assert manager.status("A", "会话一")["paused"] is True
                 assert manager.status("A", "会话二")["paused"] is False
@@ -107,6 +170,10 @@ def main() -> int:
                 closed = manager.status("A", "会话一")
                 assert not closed["connected"] and closed["paused"] is False
                 assert a1.theme is None
+                assert not any(
+                    item["agent_id"] == "A" and item["thread_id"] == "会话一"
+                    for item in manager.browser_theme_entries()
+                )
                 assert manager._allocate_theme(a1)["border_color"] == "#ff0000"
                 manager.shutdown()
         finally:

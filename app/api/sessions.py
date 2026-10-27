@@ -34,13 +34,16 @@ async def list_sessions():
                     item["agent_name"] = config_store.load(item["agent_id"]).name
                 except Exception:  # noqa: BLE001
                     item["agent_name"] = item["agent_id"]
+        return browser_session_manager.browser_theme_entries()
 
     # 端口探测是阻塞 requests；放到线程池，避免卡事件循环。
-    await asyncio.to_thread(enrich)
+    # 同时带回「浏览器仍开着」的会话配色（会话选择页按浏览器主色着色）。
+    browsers = await asyncio.to_thread(enrich)
     active = session_hub.active_view
     return {
         "sessions": sessions,
         "counts": counts,
+        "browsers": browsers,
         "active": (
             {"agent_id": active[0], "thread_id": active[1]}
             if active
