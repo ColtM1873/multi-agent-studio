@@ -18,9 +18,7 @@
 
 ### 第一步：前置软件
 
-1. **Python**：如果没有的话（本项目要求3.13以上版本），需要到 https://www.python.org/downloads/ 下载并安装
-   安装时**请勾选「Add python.exe to PATH」**。
-2. **PostgreSQL**：程序用它保存会话历史和长期记忆。
+1. **PostgreSQL**：如果使用Lite版本的sqlite子版本，则不需要
 
 ### 第二步：下载
 
@@ -37,16 +35,18 @@
 ### 第五步：一键安装 + 打包
 
 1. 双击 `setup.bat`。
-2. 会先跑一个cmd黑色窗口，然后再跑一个蓝色背景的powershell窗口。请不要在安装完成前关闭黑色窗口（或者蓝色窗口）。
-3. 安装过程中可能会要求提权，说明没有开启长路径支持，支持库安装失败，此时请授权。
-4. 对于非轻量版，会提示一键安装 pgvector ，可以考虑一键安装。
-5. 安装完成后，可以在桌面看见Studio的快捷方式，双击即可开始使用
+2. 会先跑一个cmd黑色窗口，然后可能会再跑一个蓝色背景的提权powershell窗口。请不要在安装完成前关闭黑色窗口（或者蓝色窗口）。
+3. 安装过程中可能会要求提权，说明因为没有开启长路径支持，导致支持库安装失败。此时请授权。
+4. 如果没有python，会提示要不要一键自动安装python（本项目需要Python才能跑）
+5. 轻量版分为postgres版本和sqlite版本，推荐sqlite版本，不需要额外安装约1GB存储占用的PostgreSQL
+6. 对于非轻量版，会提示一键安装 pgvector ，可以考虑一键安装。
+7. 安装完成后，可以在桌面看见Studio的快捷方式，双击即可开始使用
 
 ### 第六步：使用说明
 
-1. 安装PostgreSQL时，会让填写密码，以及端口号，请不要乱填。
+1. （如果是postgres版本）安装PostgreSQL时，会让填写密码，以及端口号，请不要乱填。
    程序新建 multi-agent配置时，需要填入 安装PostgreSQL时的密码和端口号（以及用户名）（需要这些信息来连接数据库）
-2. postgres连接设置中，连接串模板  postgresql://用户名:密码@localhost:端口号/?sslmode=disable  （默认本地数据库情景）
+2. （如果是postgres版本）postgres连接设置中，连接串模板  postgresql://用户名:密码@localhost:端口号/?sslmode=disable  （默认本地数据库情景）
 3. 每个选项旁边的 小圆圈，一个感叹号，里面都有比较详细的解释，可以把鼠标移过去查看
 
 
@@ -196,8 +196,7 @@ Supervisor（主 agent）                    Workers（子 agent）
 
 ### 1. Prerequisites
 
-1. **Python**: if it is not installed yet (this project requires 3.13 or newer), download and install it from https://www.python.org/downloads/. During installation, **check "Add python.exe to PATH"**.
-2. **PostgreSQL**: the app uses it to store conversation history and long-term memory.
+1. **PostgreSQL**: not needed if you use the Lite edition's sqlite sub-variant.
 
 ### 2. Download
 
@@ -214,15 +213,17 @@ Supervisor（主 agent）                    Workers（子 agent）
 ### 5. One-click install + build
 
 1. Double-click `setup.bat`.
-2. A black cmd window opens first, followed by a blue PowerShell window. Do not close either window before installation finishes.
-3. Installation may ask for elevation. This means Windows long-path support is not enabled and dependency installation failed; approve the prompt.
-4. For the non-Lite edition, you will be asked whether to install pgvector. Installing it in one click is recommended.
-5. When installation finishes, a Studio shortcut appears on the desktop. Double-click it to start.
+2. A black cmd window opens first, and then possibly a blue elevated PowerShell window. Do not close either window before installation finishes.
+3. Installation may ask for elevation. This means Windows long-path support is not enabled, so dependency installation failed; approve the prompt.
+4. If Python is not installed, you will be asked whether to install it automatically in one click (this project needs Python to run).
+5. The Lite edition comes in a postgres version and a sqlite version. The sqlite version is recommended, since it does not require installing PostgreSQL and its ~1 GB of disk usage.
+6. For the non-Lite edition, you will be asked whether to install pgvector. Installing it in one click is recommended.
+7. When installation finishes, a Studio shortcut appears on the desktop. Double-click it to start.
 
 ### 6. Usage notes
 
-1. When installing PostgreSQL, you will be asked for a password and a port. Do not enter arbitrary values. When creating a multi-agent config, you must enter the PostgreSQL username, password, and port (the app needs them to connect to the database).
-2. In the PostgreSQL connection settings, the connection string template is `postgresql://username:password@localhost:port/?sslmode=disable` (the typical local setup).
+1. (For the postgres version) When installing PostgreSQL, you will be asked for a password and a port. Do not enter arbitrary values. When creating a multi-agent config, you must enter the PostgreSQL username, password, and port (the app needs them to connect to the database).
+2. (For the postgres version) In the PostgreSQL connection settings, the connection string template is `postgresql://username:password@localhost:port/?sslmode=disable` (the typical local setup).
 3. Each option has a small circled exclamation mark with a detailed explanation; hover over it to read.
 
 ## Version migration (upgrading)
