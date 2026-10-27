@@ -46,13 +46,20 @@
         if (li.textContent.includes("pgvector")) li.remove();
       });
       if (isSqliteStorage()) {
-        // SQLite 模式不需要任何 PostgreSQL 连接配置：整张「数据库连接」卡直接隐藏。
-        // 字段保留在 DOM 里，保存处理器仍能读到它们的值（切回 PostgreSQL 不丢配置）。
-        const anchor =
-          document.getElementById("f_prefix") ||
-          document.getElementById("f_conn_full");
-        const card = anchor && anchor.closest(".form-card");
-        if (card) card.style.display = "none";
+        // SQLite 模式不需要任何 PostgreSQL 连接配置。
+        // 注意：不能隐藏整张 .form-card —— 「基本信息」卡里还有名称（f_name）与长期记忆分组，
+        // 隐藏整卡会让新建 multi-agent 时根本看不到/填不了名称（v1.7.5.8 之后的线上问题）。
+        // 只隐藏连接相关的具体控件；字段保留在 DOM 里，保存处理器仍能读到它们的值。
+        const manual = document.getElementById("pgManualBlock");
+        if (manual) manual.style.display = "none";
+        const modeRadio = document.querySelector('input[name="pg_conn_mode"]');
+        const modeField = modeRadio && modeRadio.closest(".field");
+        if (modeField) modeField.style.display = "none";
+        const useGlobal = document.getElementById("f_pg_use_global");
+        const useGlobalField = useGlobal && useGlobal.closest(".field");
+        if (useGlobalField) useGlobalField.style.display = "none";
+        const globalBlock = document.getElementById("pgGlobalBlock");
+        if (globalBlock) globalBlock.style.display = "none";
       }
       return result;
     };

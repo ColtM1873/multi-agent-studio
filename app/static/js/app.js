@@ -5169,7 +5169,7 @@ function buildForm(cfg, canEditSubs) {
         <label style="flex-direction:row;align-items:center;gap:8px;"><input type="checkbox" id="f_memory_tools" ${memoryTools ? "checked" : ""}> 🧠 ${t("开启记忆读取/写入功能")} ${info("开启后，会向主 agent 注入记忆读写工具（write_memory / read_memory），让 agent 能长期存取与检索信息；关闭后主 agent 不再拥有记忆读写工具。此设置影响图编译；「记忆吸附」是另一项功能，不受本开关影响。")}</label>
       </div>
       ${modelBlockHTML(main.llm_provider_name, main.model, main.api_key, "main_api_key")}
-      <div class="field"><label>${t("主Agent工作目录")} ${info("主Agent读写本地文件的根目录")}</label><input id="f_rootdir" value="${esc(ft.root_dir)}"${ph("root_dir")}></div>
+      <div class="field full"><label>${t("主Agent工作目录")} ${info("主Agent读写本地文件的根目录")}</label><input id="f_rootdir" value="${esc(ft.root_dir)}"${ph("root_dir")}></div>
       ${globalEmbSet ? `
       <div class="field full">
         <div class="global-toggle-row">

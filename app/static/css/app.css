@@ -1008,8 +1008,14 @@ body.floating-dragging { user-select: none; cursor: grabbing; }
   padding: 14px 16px;
 }
 .model-source-title { font-size: 13px; color: var(--text-muted); font-weight: 600; margin-bottom: 12px; }
-.model-config-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(190px, 100%), 1fr)); gap: 14px; }
+/* align-items: start 是关键：默认 stretch 会把三列拉到同一高度，
+ * 而 .field label 有 flex:1 1 auto，会被撑高后把 input 整体往下推；
+ * 「模型名称」多一行 hint、其它两列没有，就会出现三个输入框一上一下（ID97）。
+ * 顶部对齐后 input 位置只由各自 label 的行数决定。 */
+.model-config-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(190px, 100%), 1fr)); gap: 14px; align-items: start; }
 .model-config-grid > .field { min-width: 0; }
+/* 三列 label 统一按一行高度对齐，避免任一列标题换行时把该列输入框挤下去。 */
+.model-config-grid > .field > label { min-height: 19px; }
 .model-ref-preview { margin-top: 10px; font-size: 12px; color: var(--text-muted); line-height: 1.6; }
 .model-ref-preview code { background: #f1f5f9; color: var(--text-muted); padding: 1px 6px; border-radius: 5px; font-size: 12px; word-break: break-all; }
 .model-source-card [data-baseurl-field],
