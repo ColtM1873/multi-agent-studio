@@ -649,6 +649,18 @@ const I18N_EN = {
   "代码·常量": "Code constant",
   "代码·变量": "Code variable",
   "浏览器交互延迟设置": "Browser interaction delay settings",
+  "浏览器颜色自定义": "Browser color presets",
+  "为每个会话的浏览器指定边框色与字体主题色。按列表顺序依次分配；列表用完后自动生成不重复的随机颜色。": "Set a border color and a text theme color for each session's browser. Colors are assigned in list order; when the list runs out, unique random colors are generated.",
+  "浏览器边框颜色": "Browser border color",
+  "浏览器字体主题色": "Browser text theme color",
+  "优先级": "Priority",
+  "新增配色": "Add color",
+  "上移": "Move up",
+  "下移": "Move down",
+  "清空全部": "Clear all",
+  "尚未设置配色。每打开一个浏览器会自动生成不重复的随机颜色。": "No presets yet. Each browser will get a unique random color.",
+  "颜色会在下一次打开浏览器时生效。": "Colors apply the next time a browser is opened.",
+  "主色用于标签栏/边框和地址栏强调色；字体色用于标签文字与地址栏选中文字（不同浏览器内核表现略有差异）。": "The border color drives the tab strip/frame and address-bar accents; the text color drives tab labels and selected address-bar text (minor differences across browser engines).",
   "工具调用结果显示设置": "Tool result display settings",
   "展示完整工具调用结果": "Show full tool result",
   "流式输出": "Streaming output",
@@ -3025,6 +3037,7 @@ async function openSettings() {
         <button class="btn small" id="setGlobalConfig">${t("全局配置设置")}</button>
         <button class="btn small" id="setAdvanced">${t("进阶设置")}</button>
         <button class="btn small" id="setColors">${t("字体颜色设置")}</button>
+        <button class="btn small" id="setBrowserColors">${t("浏览器颜色自定义")}</button>
         <button class="btn small" id="setCard">${t("Multi-Agent配置卡片 设置")}</button>
         <button class="btn small" id="setHtmlConfig" style="${(s.export_html || s.show_local_md_convert_button !== false) ? "" : "display:none;"}">${t("HTML 转换配置表")}</button>
         <button class="btn small" id="setToolResultDisplay">${t("工具调用结果显示设置")}</button>
@@ -3074,6 +3087,7 @@ async function openSettings() {
   mask.querySelector("#setGlobalConfig").onclick = () => { mask.remove(); openGlobalConfigSettings(); };
   mask.querySelector("#setAdvanced").onclick = () => { mask.remove(); openAdvancedSettings(); };
   mask.querySelector("#setColors").onclick = () => { mask.remove(); openColorSettings(); };
+  mask.querySelector("#setBrowserColors").onclick = () => { mask.remove(); openBrowserColorSettings(); };
   mask.querySelector("#setCard").onclick = () => { mask.remove(); openCardSettings(); };
   mask.querySelector("#setHtmlConfig").onclick = () => { mask.remove(); openHtmlConfigSettings(); };
   mask.querySelector("#setToolResultDisplay").onclick = () => { mask.remove(); openToolResultDisplaySettings(); };
@@ -4251,6 +4265,164 @@ async function openColorSettings() {
     applyColors();
     mask.remove();
     toast(t("设置已保存"));
+  };
+}
+
+const BROWSER_COLOR_DEFAULT = { border_color: "#4f46e5", text_color: "#ffffff" };
+
+function browserColorNorm(value, fallback) {
+  let text = String(value || "").trim();
+  if (!text) return fallback;
+  if (!text.startsWith("#")) text = "#" + text;
+  if (/^#[0-9a-f]{3}$/i.test(text)) {
+    text = "#" + text.slice(1).split("").map(ch => ch + ch).join("");
+  }
+  return /^#[0-9a-f]{6}$/i.test(text) ? text.toLowerCase() : fallback;
+}
+
+function browserColorAutoText(border) {
+  const digits = browserColorNorm(border, BROWSER_COLOR_DEFAULT.border_color).slice(1);
+  const r = parseInt(digits.slice(0, 2), 16);
+  const g = parseInt(digits.slice(2, 4), 16);
+  const b = parseInt(digits.slice(4, 6), 16);
+  return (0.299 * r + 0.587 * g + 0.114 * b) < 150 ? "#ffffff" : "#1f2937";
+}
+
+function browserHslToHex(h, s, l) {
+  const hue2rgb = (p, q, x) => {
+    if (x < 0) x += 1;
+    if (x > 1) x -= 1;
+    if (x < 1 / 6) return p + (q - p) * 6 * x;
+    if (x < 1 / 2) return q;
+    if (x < 2 / 3) return p + (q - p) * (2 / 3 - x) * 6;
+    return p;
+  };
+  let r, g, b;
+  if (s === 0) {
+    r = g = b = l;
+  } else {
+    const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+    const p = 2 * l - q;
+    r = hue2rgb(p, q, h + 1 / 3);
+    g = hue2rgb(p, q, h);
+    b = hue2rgb(p, q, h - 1 / 3);
+  }
+  const toHex = v => Math.max(0, Math.min(255, Math.round(v * 255))).toString(16).padStart(2, "0");
+  return "#" + toHex(r) + toHex(g) + toHex(b);
+}
+
+function browserRandomColor(usedBorders) {
+  const used = new Set((usedBorders || []).map(v => browserColorNorm(v, "").toLowerCase()).filter(Boolean));
+  for (let i = 0; i < 256; i++) {
+    const color = browserHslToHex(Math.random(), 0.58 + Math.random() * 0.20, 0.36 + Math.random() * 0.20);
+    if (!used.has(color)) return color;
+  }
+  return "#4f46e5";
+}
+
+async function openBrowserColorSettings(back) {
+  let s;
+  try { s = await getSettings(); } catch (e) { toast(e.message, true); return; }
+  let presets = Array.isArray(s.browser_color_presets)
+    ? s.browser_color_presets.map(item => ({
+        border_color: browserColorNorm(item && item.border_color, BROWSER_COLOR_DEFAULT.border_color),
+        text_color: browserColorNorm(item && item.text_color, BROWSER_COLOR_DEFAULT.text_color),
+      }))
+    : [];
+
+  const mask = document.createElement("div");
+  mask.className = "modal-mask";
+  mask.innerHTML = `
+    <div class="modal browser-color-modal" style="width:620px;max-height:84vh;overflow:auto;" data-modal-key="browserColors">
+      <h3>🎨 ${t("浏览器颜色自定义")}</h3>
+      <div class="muted" style="margin-bottom:6px;line-height:1.65;">${t("为每个会话的浏览器指定边框色与字体主题色。按列表顺序依次分配；列表用完后自动生成不重复的随机颜色。")}</div>
+      <div class="browser-color-list" id="browserColorList"></div>
+      <div class="browser-color-add-row">
+        <button class="btn small" id="browserColorAdd">＋ ${t("新增配色")}</button>
+        <span class="muted">${t("颜色会在下一次打开浏览器时生效。")}</span>
+      </div>
+      <div class="muted browser-color-tip">${t("主色用于标签栏/边框和地址栏强调色；字体色用于标签文字与地址栏选中文字（不同浏览器内核表现略有差异）。")}</div>
+      <div class="modal-actions">
+        <button class="btn" id="browserColorClear">${t("清空全部")}</button>
+        <div class="spacer" style="flex:1;"></div>
+        <button class="btn" id="browserColorCancel">${t("返回")}</button>
+        <button class="btn primary" id="browserColorSave">${t("保存")}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(mask);
+  const listEl = mask.querySelector("#browserColorList");
+
+  const rowHtml = (p, index) => `
+    <div class="browser-color-row" data-index="${index}">
+      <span class="browser-color-priority" title="${t("优先级")}">${index + 1}</span>
+      <span class="browser-color-chip" style="background:${p.border_color};color:${p.text_color}">Aa</span>
+      <div class="browser-color-fields">
+        <label class="browser-color-field"><span>${t("浏览器边框颜色")}</span><input type="color" data-field="border_color" value="${p.border_color}"></label>
+        <label class="browser-color-field"><span>${t("浏览器字体主题色")}</span><input type="color" data-field="text_color" value="${p.text_color}"></label>
+      </div>
+      <div class="browser-color-actions">
+        <button class="btn small" type="button" data-act="up" title="${t("上移")}" ${index === 0 ? "disabled" : ""}>↑</button>
+        <button class="btn small" type="button" data-act="down" title="${t("下移")}" ${index === presets.length - 1 ? "disabled" : ""}>↓</button>
+        <button class="btn small danger" type="button" data-act="del" title="${t("删除")}">✕</button>
+      </div>
+    </div>`;
+
+  const render = () => {
+    if (!presets.length) {
+      listEl.innerHTML = `<div class="browser-color-empty">${t("尚未设置配色。每打开一个浏览器会自动生成不重复的随机颜色。")}</div>`;
+      return;
+    }
+    listEl.innerHTML = presets.map(rowHtml).join("");
+  };
+  render();
+
+  listEl.addEventListener("input", e => {
+    const input = e.target.closest("input[data-field]");
+    if (!input) return;
+    const row = input.closest(".browser-color-row");
+    const index = +row.dataset.index;
+    const field = input.dataset.field;
+    if (!presets[index] || (field !== "border_color" && field !== "text_color")) return;
+    presets[index][field] = browserColorNorm(input.value, BROWSER_COLOR_DEFAULT[field]);
+    const chip = row.querySelector(".browser-color-chip");
+    if (chip) {
+      chip.style.background = presets[index].border_color;
+      chip.style.color = presets[index].text_color;
+    }
+  });
+  listEl.addEventListener("click", e => {
+    const btn = e.target.closest("button[data-act]");
+    if (!btn) return;
+    const row = btn.closest(".browser-color-row");
+    const index = +row.dataset.index;
+    const act = btn.dataset.act;
+    if (act === "del") presets.splice(index, 1);
+    else if (act === "up" && index > 0) [presets[index - 1], presets[index]] = [presets[index], presets[index - 1]];
+    else if (act === "down" && index < presets.length - 1) [presets[index + 1], presets[index]] = [presets[index], presets[index + 1]];
+    else return;
+    render();
+  });
+  mask.querySelector("#browserColorAdd").onclick = () => {
+    const border = browserRandomColor(presets.map(p => p.border_color));
+    presets.push({ border_color: border, text_color: browserColorAutoText(border) });
+    render();
+  };
+  mask.querySelector("#browserColorClear").onclick = () => {
+    if (!presets.length) return;
+    presets = [];
+    render();
+  };
+  mask.querySelector("#browserColorCancel").onclick = () => { mask.remove(); (back || openSettings)(); };
+  mask.querySelector("#browserColorSave").onclick = async () => {
+    const out = presets.map(p => ({
+      border_color: browserColorNorm(p.border_color, BROWSER_COLOR_DEFAULT.border_color),
+      text_color: browserColorNorm(p.text_color, BROWSER_COLOR_DEFAULT.text_color),
+    }));
+    try {
+      await saveSettings({ ...s, browser_color_presets: out });
+      mask.remove();
+      toast(t("设置已保存"));
+    } catch (e) { toast(e.message, true); }
   };
 }
 

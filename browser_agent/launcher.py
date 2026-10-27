@@ -10,17 +10,20 @@ ID91：传入 ``profile_dir`` 时为该会话独立启动；只读写这个 prof
 
 from __future__ import annotations
 
+import logging
 import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 import requests
 
 from . import config as cfgmod
 from . import studio_marker
 from . import timing
+
+logger = logging.getLogger(__name__)
 
 
 class BrowserLaunchError(RuntimeError):
@@ -29,7 +32,11 @@ class BrowserLaunchError(RuntimeError):
 
 class BrowserLauncher:
     def __init__(
-        self, profile_dir: Optional[str] = None, persist_global: bool = True
+        self,
+        profile_dir: Optional[str] = None,
+        persist_global: bool = True,
+        theme: Optional[dict] = None,
+        theme_provider: Optional[Callable[[], Optional[dict]]] = None,
     ) -> None:
         self.process: Optional[subprocess.Popen] = None
         self.port: Optional[int] = None
@@ -40,6 +47,10 @@ class BrowserLauncher:
         # 不读写全局 config.json 的 last_port（那是单实例兼容路径）。
         self.profile_dir = str(profile_dir) if profile_dir else None
         self.persist_global = bool(persist_global)
+        # 浏览器配色：theme 可直接给定；theme_provider 在真正 launch() 前现取，
+        # 这样「按用户列表顺序取色 / 不重复」的分配落在实际打开浏览器的时刻。
+        self.theme: Optional[dict] = theme
+        self.theme_provider = theme_provider
 
     # ------------------------------------------------------------------ #
     # public API
@@ -57,7 +68,16 @@ class BrowserLauncher:
         Path(user_data_dir).mkdir(parents=True, exist_ok=True)
         self.user_data_dir = user_data_dir
 
-        studio_marker.apply_profile_theme(user_data_dir, browser_type)
+        theme = self.theme
+        if self.theme_provider is not None:
+            try:
+                provided = self.theme_provider()
+                if provided:
+                    theme = provided
+            except Exception:  # noqa: BLE001
+                logger.exception("选择浏览器配色失败，沿用当前/默认配色")
+        self.theme = theme
+        studio_marker.apply_profile_theme(user_data_dir, browser_type, theme)
 
         active_port_file = Path(user_data_dir) / "DevToolsActivePort"
         if active_port_file.exists():
@@ -93,7 +113,7 @@ class BrowserLauncher:
         ]
 
         if (browser_type or "").strip().lower() == "edge":
-            args[1:1] = studio_marker.edge_extension_args(user_data_dir)
+            args[1:1] = studio_marker.edge_extension_args(user_data_dir, theme)
 
         creationflags = 0
         if sys.platform == "win32":

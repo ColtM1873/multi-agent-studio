@@ -22,11 +22,41 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 THEME_COLOR_RGB = "4f46e5"
+THEME_TEXT_RGB = "ffffff"
 TITLE_SUFFIX = " · Studio"
 
+# 旧代码/文档可能直接引用这个常量；默认主色保持不变。
 _THEME_COLOR_JSON = int("ff" + THEME_COLOR_RGB, 16)
 if _THEME_COLOR_JSON >= 1 << 31:
     _THEME_COLOR_JSON -= 1 << 32
+
+
+def _coerce_rgb(value: object, fallback: str) -> str:
+    """把 ``#rrggbb`` / ``rrggbb`` / ``#rgb`` 归一成 6 位小写十六进制。"""
+    text = str(value or "").strip().lstrip("#")
+    if len(text) == 3:
+        text = "".join(ch * 2 for ch in text)
+    if len(text) != 6 or any(ch not in "0123456789abcdefABCDEF" for ch in text):
+        return fallback
+    return text.lower()
+
+
+def _theme_palette(theme: Optional[dict]) -> tuple[str, str]:
+    data = theme if isinstance(theme, dict) else {}
+    border = _coerce_rgb(data.get("border_color"), THEME_COLOR_RGB)
+    text = _coerce_rgb(data.get("text_color"), THEME_TEXT_RGB)
+    return border, text
+
+
+def _color_json(hex_rgb: str) -> int:
+    value = int("ff" + hex_rgb, 16)
+    if value >= 1 << 31:
+        value -= 1 << 32
+    return value
+
+
+def _color_tuple(hex_rgb: str) -> list[int]:
+    return [int(hex_rgb[i : i + 2], 16) for i in (0, 2, 4)]
 
 _TITLE_SCRIPT = """
 (() => {
@@ -129,13 +159,38 @@ def _ensure_dict(parent: dict, key: str) -> Optional[dict]:
     return value
 
 
-def _theme_values() -> dict:
+def _theme_values(theme: Optional[dict] = None) -> dict:
+    border, text = _theme_palette(theme)
+    # Chrome 的 Material You 主题用两个种子色：user_color 决定标签栏/边框主色，
+    # user_color2 参与地址栏选中文字/强调色。两者写成不同颜色时，同一窗口会出现
+    # 两个可区分的视觉层；沿用旧键名以兼容 Chrome 155/156。
     return {
-        "user_color": _THEME_COLOR_JSON,
-        "user_color2": _THEME_COLOR_JSON,
+        "user_color": _color_json(border),
+        "user_color2": _color_json(text),
         "browser_color_variant": 3,
         "color_variant2": 3,
     }
+
+
+def _edge_manifest(theme: Optional[dict] = None) -> dict:
+    source = theme_extension_path()
+    if source is None:
+        return {}
+    try:
+        manifest = json.loads((source / "manifest.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(manifest, dict):
+        return {}
+    if theme:
+        border, text = _theme_palette(theme)
+        colors = manifest.setdefault("theme", {}).setdefault("colors", {})
+        if isinstance(colors, dict):
+            for key in ("frame", "frame_inactive", "toolbar", "button_background"):
+                colors[key] = _color_tuple(border)
+            for key in ("tab_text", "bookmark_text", "toolbar_text", "tab_background_text"):
+                colors[key] = _color_tuple(text)
+    return manifest
 
 
 def theme_extension_path() -> Optional[Path]:
@@ -143,7 +198,7 @@ def theme_extension_path() -> Optional[Path]:
     return path if (path / "manifest.json").is_file() else None
 
 
-def edge_extension_args(user_data_dir: str) -> list[str]:
+def edge_extension_args(user_data_dir: str, theme: Optional[dict] = None) -> list[str]:
     if not marker_enabled():
         return []
     source = theme_extension_path()
@@ -161,14 +216,26 @@ def edge_extension_args(user_data_dir: str) -> list[str]:
             dirs_exist_ok=True,
             ignore=shutil.ignore_patterns("Cached Theme.pak"),
         )
+        # Edge 每次启动都会重新读取 unpacked 主题；把用户选的两个颜色写进
+        # profile 副本，避免所有会话共用仓库里的默认 manifest。
+        manifest = _edge_manifest(theme)
+        if manifest:
+            (target / "manifest.json").write_text(
+                json.dumps(manifest, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
     except OSError:
         logger.exception("复制 Edge 主题扩展失败: %s", target)
         return []
     return [f"--load-extension={target}"]
 
 
-def apply_profile_theme(user_data_dir: str, browser_type: Optional[str] = None) -> bool:
-    """Write the Studio accent colour into the Chrome automation profile.
+def apply_profile_theme(
+    user_data_dir: str,
+    browser_type: Optional[str] = None,
+    theme: Optional[dict] = None,
+) -> bool:
+    """Write the per-session browser colours into the automation profile.
 
     Edge applies the bundled theme extension at launch instead; Chrome ignores
     ``--load-extension`` on branded builds, so its profile Preferences are used.
@@ -203,15 +270,15 @@ def apply_profile_theme(user_data_dir: str, browser_type: Optional[str] = None) 
     if browser is None:
         logger.warning("Preferences 的 browser 字段不是对象，跳过主题写入: %s", prefs_path)
         return False
-    theme = _ensure_dict(browser, "theme")
-    if theme is None:
+    pref_theme = _ensure_dict(browser, "theme")
+    if pref_theme is None:
         logger.warning("Preferences 的 browser.theme 字段不是对象，跳过主题写入: %s", prefs_path)
         return False
 
     changed = False
-    for key, value in _theme_values().items():
-        if theme.get(key) != value:
-            theme[key] = value
+    for key, value in _theme_values(theme).items():
+        if pref_theme.get(key) != value:
+            pref_theme[key] = value
             changed = True
 
     if not changed:
@@ -233,7 +300,13 @@ def apply_profile_theme(user_data_dir: str, browser_type: Optional[str] = None) 
         logger.exception("写入自动化浏览器主题失败: %s", prefs_path)
         return False
 
-    logger.info("已为自动化浏览器设置 Studio 主题色 (%s)", browser_type or "chromium")
+    border, text = _theme_palette(theme)
+    logger.info(
+        "已为自动化浏览器设置主题色 (%s): border=#%s text=#%s",
+        browser_type or "chromium",
+        border,
+        text,
+    )
     return True
 
 

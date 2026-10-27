@@ -14,12 +14,14 @@ contextvar 只用于把一次工具调用路由到正确的 controller / 暂停�
 
 from __future__ import annotations
 
+import colorsys
 import contextlib
 import contextvars
 import hashlib
 import json
 import logging
 import os
+import random
 import re
 import threading
 import time
@@ -30,6 +32,13 @@ from pathlib import Path
 from browser_agent.config import ROOT
 from browser_agent.controller import BrowserController
 from browser_agent.launcher import BrowserLauncher
+
+from app.config.settings import (
+    DEFAULT_BROWSER_BORDER_COLOR,
+    DEFAULT_BROWSER_TEXT_COLOR,
+    load_settings,
+    normalize_hex_color,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +67,50 @@ def _slug(value: str, limit: int = 28) -> str:
     return text[:limit]
 
 
+def _hex_to_rgb(color: str) -> tuple[int, int, int]:
+    text = color.lstrip("#")
+    return int(text[0:2], 16), int(text[2:4], 16), int(text[4:6], 16)
+
+
+def _rgb_to_hex(r: float, g: float, b: float) -> str:
+    return "#" + "".join(f"{max(0, min(255, int(round(v)))):02x}" for v in (r, g, b))
+
+
+def _auto_text_color(border: str) -> str:
+    """给随机生成的边框色配一个可读的字体色（白 / 深灰）。"""
+    r, g, b = _hex_to_rgb(border)
+    brightness = 0.299 * r + 0.587 * g + 0.114 * b
+    return "#ffffff" if brightness < 150 else "#1f2937"
+
+
+def _random_browser_theme(used_borders: set[str]) -> dict:
+    """生成一个边框色不与当前会话重复的随机配色。"""
+    for _ in range(256):
+        hue = random.random()
+        saturation = random.uniform(0.58, 0.78)
+        lightness = random.uniform(0.36, 0.56)
+        r, g, b = colorsys.hls_to_rgb(hue, lightness, saturation)
+        border = _rgb_to_hex(r * 255, g * 255, b * 255)
+        if border not in used_borders:
+            return {"border_color": border, "text_color": _auto_text_color(border)}
+    # 极端情况下（随机空间被占满）用黄金角兜底，仍保证不与已用边框重复。
+    for i in range(360):
+        hue = (i * 0.61803398875) % 1.0
+        r, g, b = colorsys.hls_to_rgb(hue, 0.48, 0.68)
+        border = _rgb_to_hex(r * 255, g * 255, b * 255)
+        if border not in used_borders:
+            return {"border_color": border, "text_color": _auto_text_color(border)}
+    return {"border_color": DEFAULT_BROWSER_BORDER_COLOR, "text_color": DEFAULT_BROWSER_TEXT_COLOR}
+
+
+def _normalize_theme(theme: object) -> dict | None:
+    if not isinstance(theme, dict):
+        return None
+    border = normalize_hex_color(theme.get("border_color"), DEFAULT_BROWSER_BORDER_COLOR)
+    text = normalize_hex_color(theme.get("text_color"), DEFAULT_BROWSER_TEXT_COLOR)
+    return {"border_color": border, "text_color": text}
+
+
 @dataclass
 class BrowserSession:
     key: SessionKey
@@ -67,10 +120,15 @@ class BrowserSession:
     profile_dir: str
     controller: BrowserController
     paused: bool = False
+    # 当前浏览器正在使用的配色（浏览器关闭后由 probe 清空，释放给后续会话）。
+    theme: dict | None = None
+    # 最近一次分配/确认配色的时间；probe 用它给「浏览器正在启动」留出宽限期。
+    theme_at: float = 0.0
     created_at: str = field(default_factory=_now)
     _probe_at: float = 0.0
     _probe_connected: bool = False
     _probe_port: int | None = None
+    _disconnect_count: int = 0
 
 
 @contextlib.contextmanager
@@ -189,6 +247,77 @@ class BrowserSessionManager:
         self._save_profiles()
         return str(path)
 
+    # ------------------------------------------------------------------ #
+    # 浏览器配色（按会话取色，互不重复）
+    # ------------------------------------------------------------------ #
+    def _color_presets(self) -> list[dict]:
+        try:
+            settings = load_settings(self.config_store._dir)
+        except Exception:  # noqa: BLE001
+            return []
+        out: list[dict] = []
+        for item in settings.browser_color_presets or []:
+            raw = item.model_dump() if hasattr(item, "model_dump") else item
+            theme = _normalize_theme(raw)
+            if theme:
+                out.append(theme)
+        return out
+
+    @staticmethod
+    def _used_borders(sessions, exclude: BrowserSession | None = None) -> set[str]:
+        used: set[str] = set()
+        for item in sessions:
+            if item is exclude or not item.theme:
+                continue
+            border = item.theme.get("border_color")
+            if border:
+                used.add(str(border).lower())
+        return used
+
+    def _saved_theme(self, agent_id: str, thread_id: str) -> dict | None:
+        item = self._profiles.get(self._profile_key(agent_id, thread_id))
+        if not item:
+            return None
+        return _normalize_theme(item.get("theme"))
+
+    def _save_profile_theme(self, session: BrowserSession, theme: dict) -> None:
+        item = self._profiles.get(self._profile_key(session.agent_id, session.thread_id))
+        if item is None:
+            return
+        item["theme"] = dict(theme)
+        self._save_profiles()
+
+    def _allocate_theme(self, session: BrowserSession) -> dict:
+        """优先按用户列表顺序取一个未占用的边框色；否则生成随机色。"""
+        with self._lock:
+            used = self._used_borders(self._sessions.values(), exclude=session)
+            current = _normalize_theme(session.theme)
+            if current and current["border_color"].lower() not in used:
+                session.theme = current
+                session.theme_at = time.monotonic()
+                return current
+
+            for preset in self._color_presets():
+                if preset["border_color"].lower() in used:
+                    continue
+                session.theme = preset
+                session.theme_at = time.monotonic()
+                self._save_profile_theme(session, preset)
+                return preset
+
+            theme = _random_browser_theme(used)
+            session.theme = theme
+            session.theme_at = time.monotonic()
+            self._save_profile_theme(session, theme)
+            return theme
+
+    def _browser_connected(self, controller: BrowserController) -> bool:
+        try:
+            # browser_port() 本身只在端口可用时才返回非空值。
+            return bool(controller.browser_port())
+        except Exception:  # noqa: BLE001
+            return False
+
     def rename_agent(self, old_id: str, new_id: str) -> bool:
         """agent 改名时同步 profile 映射的键；不移动正在使用的 profile 目录。"""
         if old_id == new_id:
@@ -222,6 +351,18 @@ class BrowserSessionManager:
                 if agent_name and session.agent_name != agent_name:
                     session.agent_name = agent_name
                 self._apply_tab_limit(session)
+                # 程序重启后浏览器可能仍在运行：从 profile 映射恢复它原本的颜色，
+                # 避免新会话又拿到同一个颜色。
+                if session.theme is None:
+                    saved = self._saved_theme(agent_id, thread_id)
+                    if saved and self._browser_connected(session.controller):
+                        session.theme = saved
+                        session.theme_at = time.monotonic()
+                        session.controller.launcher.theme = saved
+                if session.controller.launcher.theme_provider is None:
+                    session.controller.launcher.theme_provider = (
+                        lambda s=session: self._allocate_theme(s)
+                    )
                 return session
             if not agent_name:
                 try:
@@ -241,6 +382,14 @@ class BrowserSessionManager:
                 profile_dir=profile_dir,
                 controller=controller,
             )
+            # 已经有一个从上次运行遗留、仍在监听的浏览器时，先恢复它的配色；
+            # 真正需要新起浏览器时，launch() 会调用 provider 现取一个颜色。
+            saved = self._saved_theme(agent_id, thread_id)
+            if saved and self._browser_connected(controller):
+                session.theme = saved
+                session.theme_at = time.monotonic()
+                launcher.theme = saved
+            launcher.theme_provider = lambda s=session: self._allocate_theme(s)
             self._sessions[key] = session
             self._ensure_monitor()
             try:
@@ -300,9 +449,22 @@ class BrowserSessionManager:
         session._probe_at = now
         session._probe_connected = connected
         session._probe_port = port
-        if not connected:
+        if connected:
+            session._disconnect_count = 0
+        else:
             # 浏览器关闭：暂停状态复位，下次重新打开时不会仍被短路。
             session.paused = False
+            session._disconnect_count += 1
+            # 同时释放颜色，让后续会话可以按优先级重新使用它。
+            # 刚分配完色、浏览器还在启动时端口尚不可用，给 30 秒宽限期
+            # （覆盖 launch ready_timeout=25s）；连接探测也可能瞬时失败，
+            # 因此连续两次判离线才真正释放。
+            if (
+                session._disconnect_count >= 2
+                and time.monotonic() - session.theme_at > 30.0
+            ):
+                session.theme = None
+                session.theme_at = 0.0
         return {"connected": connected, "port": port, "paused": session.paused}
 
     def status(self, agent_id: str, thread_id: str) -> dict:

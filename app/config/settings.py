@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path
 
 from pydantic import BaseModel, Field, field_validator
@@ -16,6 +17,53 @@ SETTINGS_FILE_NAME = "settings.json"
 # 长期记忆统一存放的 store 数据库默认名称。所有 multi-agent 共用这一份长期记忆，
 # 不再为每个 multi-agent 单独指定 store 数据库（是否共用由 store_namespace 决定）。
 DEFAULT_STORE_DATABASE = "Long_Term_Memory"
+
+# 浏览器配色：边框主色 / 字体（标签与地址栏选中）主题色。
+DEFAULT_BROWSER_BORDER_COLOR = "#4f46e5"
+DEFAULT_BROWSER_TEXT_COLOR = "#ffffff"
+_HEX_COLOR_RE = re.compile(r"^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
+
+
+def normalize_hex_color(value: object, fallback: str) -> str:
+    """把用户/旧配置里的颜色统一成小写 ``#rrggbb``；非法值回退到默认色。"""
+    text = str(value or "").strip()
+    if not text:
+        return fallback
+    if not text.startswith("#"):
+        text = "#" + text
+    if not _HEX_COLOR_RE.match(text):
+        return fallback
+    digits = text[1:].lower()
+    if len(digits) == 3:
+        digits = "".join(ch * 2 for ch in digits)
+    return "#" + digits
+
+
+class BrowserColorPreset(BaseModel):
+    """一条浏览器配色：边框主色 + 字体主题色。
+
+    用户按列表顺序为会话浏览器取色；列表用完后由后端生成不重复的随机配色。
+    """
+
+    border_color: str = DEFAULT_BROWSER_BORDER_COLOR
+    text_color: str = DEFAULT_BROWSER_TEXT_COLOR
+
+    @field_validator("border_color", "text_color", mode="before")
+    @classmethod
+    def _normalize_color(cls, value, info):
+        fallback = (
+            DEFAULT_BROWSER_BORDER_COLOR
+            if info.field_name == "border_color"
+            else DEFAULT_BROWSER_TEXT_COLOR
+        )
+        return normalize_hex_color(value, fallback)
+
+
+def _coerce_browser_color_presets(value: object) -> list:
+    """兼容 null / 非列表 / 混入脏条目，避免一条坏数据让整份 settings 回退默认。"""
+    if not value or not isinstance(value, (list, tuple)):
+        return []
+    return [item for item in value if isinstance(item, (dict, BrowserColorPreset))]
 
 
 class SensitiveEntry(BaseModel):
@@ -158,6 +206,11 @@ class Settings(BaseModel):
     # 浏览器交互延迟（导航宽限、加载超时、判稳静默窗、轮询间隔、CDP 命令超时、拟人停顿等）。
     # 结构见 browser_agent/timing.py，工具调用时实时读取并覆盖，故改完即生效、无需 invalidate_all。
     browser_timing: dict = Field(default_factory=dict)
+    # 浏览器颜色自定义（多实例会话）：按列表顺序给每个会话的自动化浏览器分配
+    # 「边框主色 + 字体主题色」。列表为空或已用尽时，后端随机生成不重复的颜色。
+    # 只影响下一次启动浏览器（Chrome 写 profile Preferences / Edge 写主题扩展），
+    # 不参与图编译，无需 invalidate_all。
+    browser_color_presets: list[BrowserColorPreset] = Field(default_factory=list)
     # 工具调用结果显示设置（流式输出）：
     # full=True 展示完整结果；full=False 时按 max_lines / max_chars 截断（0 表示不限，
     # 两个上限都填则触发任意一个就截断）。单行 JSON 会先结构化再按上限截断。
@@ -200,6 +253,11 @@ class Settings(BaseModel):
         """当前生效的 store 数据库名（空值兜底为默认值）。"""
         name = (self.global_store_database or "").strip()
         return name or DEFAULT_STORE_DATABASE
+
+    @field_validator("browser_color_presets", mode="before")
+    @classmethod
+    def _coerce_browser_colors(cls, value):
+        return _coerce_browser_color_presets(value)
 
     @field_validator("common_prompts", mode="before")
     @classmethod

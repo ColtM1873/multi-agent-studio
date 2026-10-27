@@ -7,6 +7,7 @@
       "frame": [79, 70, 229],
       "frame_inactive": [79, 70, 229],
       "toolbar": [79, 70, 229],
+      "toolbar_text": [255, 255, 255],
       "tab_text": [255, 255, 255],
       "tab_background_text": [235, 235, 255],
       "bookmark_text": [255, 255, 255],

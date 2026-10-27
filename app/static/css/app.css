@@ -594,6 +594,42 @@ html[data-style-danger="solid"] .card-btn-danger:hover { filter: brightness(.92)
 .settings-group > div:last-child > .switch-row:last-child { border-bottom: none; }
 @media (max-width: 720px) { .settings-cols { column-count: 1; } }
 
+/* ── 浏览器颜色自定义（多实例会话） ─────── */
+.browser-color-list { display: flex; flex-direction: column; gap: 10px; margin: 12px 0; }
+.browser-color-empty {
+  padding: 18px 14px; border: 1px dashed var(--border); border-radius: 12px;
+  color: var(--text-muted); font-size: 13px; line-height: 1.6; text-align: center; background: var(--bg);
+}
+.browser-color-row {
+  display: flex; align-items: center; gap: 10px; padding: 10px 12px;
+  border: 1px solid var(--border); border-radius: 12px; background: #fbfbfd;
+}
+.browser-color-priority {
+  flex: 0 0 26px; height: 26px; border-radius: 50%; display: flex;
+  align-items: center; justify-content: center; font-size: 12px; font-weight: 700;
+  color: var(--primary); background: #eef2ff; border: 1px solid #c7d2fe;
+}
+.browser-color-chip {
+  flex: 0 0 42px; height: 30px; border-radius: 8px; display: flex;
+  align-items: center; justify-content: center; font-size: 13px; font-weight: 700;
+  border: 1px solid rgba(15, 23, 42, .18);
+}
+.browser-color-fields { display: flex; flex: 1 1 auto; flex-wrap: wrap; gap: 8px 16px; min-width: 0; }
+.browser-color-field { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-muted); white-space: nowrap; }
+.browser-color-field input[type="color"] {
+  width: 44px; height: 28px; padding: 0; border: 1px solid var(--border);
+  border-radius: 6px; background: none; cursor: pointer;
+}
+.browser-color-actions { display: flex; gap: 4px; flex: 0 0 auto; }
+.browser-color-actions .btn { padding: 3px 7px; min-width: 28px; }
+.browser-color-add-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 4px 0 2px; }
+.browser-color-tip { margin-top: 8px; line-height: 1.55; }
+@media (max-width: 560px) {
+  .browser-color-row { flex-wrap: wrap; }
+  .browser-color-fields { flex-basis: 100%; }
+  .browser-color-actions { margin-left: auto; }
+}
+
 /* ── 消息统计（横向小字） ───────────────── */
 .msg-stats {
   display: flex; flex-wrap: wrap; gap: 4px 14px;
