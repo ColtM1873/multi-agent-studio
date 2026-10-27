@@ -157,6 +157,12 @@ class BrowserLauncher:
     # internals
     # ------------------------------------------------------------------ #
     def _reuse_existing(self) -> Optional[dict]:
+        # 本进程拉起的浏览器已经退出：端口探测必然失败，别再为此各等一次超时。
+        if self._process_exited():
+            self.port = None
+            self.cdp_url = None
+            self.ws_url = None
+            return None
         if self.port and self.ws_url and self._is_port_ready(self.port):
             return {"port": self.port, "cdp_url": self.cdp_url, "ws_url": self.ws_url}
 
@@ -189,12 +195,38 @@ class BrowserLauncher:
         except Exception:  # noqa: BLE001
             return None
 
+    def _process_exited(self) -> bool:
+        """本进程拉起的浏览器是否已经退出（只查进程表，不联网、瞬时返回）。"""
+        if self.process is None:
+            return False
+        try:
+            return self.process.poll() is not None
+        except Exception:  # noqa: BLE001
+            return False
+
     def current_port(self) -> Optional[int]:
-        """返回该 launcher 当前可用端口（不启动浏览器）。"""
+        """返回该 launcher 当前可用端口（不启动浏览器）。
+
+        这是所有「状态轮询」的热路径：会话列表 2 秒一轮、后台监控 1.5 秒一轮都要
+        问一次。两个必须遵守的约束：
+
+        * **浏览器进程已退出就直接返回**，不要再去连端口。Windows 上向一个已关闭
+          的本地端口 connect 会被静默丢弃（不是立刻 RST），必须等满 connect 超时
+          （``port_probe_timeout`` 默认 1 秒）。多浏览器任务里被关掉的浏览器会一直
+          留在会话表里，每次轮询都白等 1~2 秒，会话选择页因此卡到几秒。
+        * **同一个端口只探一次**：``launch()`` 之后 ``self.port`` 就是该 profile 的
+          ``DevToolsActivePort``，再探一遍纯属重复超时（旧实现因此把单次开销翻倍）。
+        """
+        if self._process_exited():
+            # 进程都退出了，端口/WS 地址必然失效；清掉避免被后续逻辑当成仍可复用。
+            self.port = None
+            self.cdp_url = None
+            self.ws_url = None
+            return None
         if self.port and self._is_port_ready(self.port):
             return self.port
         port = self._port_from_profile() if self.profile_dir else None
-        if isinstance(port, int) and self._is_port_ready(port):
+        if isinstance(port, int) and port != self.port and self._is_port_ready(port):
             self.port = port
             self.cdp_url = f"http://127.0.0.1:{port}/"
             return port

@@ -2385,15 +2385,27 @@ function syncAgentCardStates() {
   });
 }
 
+let sessionsInFlight = null;
 async function refreshSessions() {
-  try {
-    sessionSnapshot = await api("/api/sessions");
-  } catch (e) {
+  // 同一时刻只发一个 /api/sessions：这个接口由全局 2 秒轮询、各视图进入、
+  // 验收后刷新共同触发，重复请求只会互相拖慢（浏览器会话多时尤其明显）。
+  if (sessionsInFlight) return sessionsInFlight;
+  const task = (async () => {
+    try {
+      sessionSnapshot = await api("/api/sessions");
+    } catch (e) {
+      return sessionSnapshot;
+    }
+    updateSessionBall();
+    syncAgentCardStates();
     return sessionSnapshot;
+  })();
+  sessionsInFlight = task;
+  try {
+    return await task;
+  } finally {
+    if (sessionsInFlight === task) sessionsInFlight = null;
   }
-  updateSessionBall();
-  syncAgentCardStates();
-  return sessionSnapshot;
 }
 
 async function acceptSession(agentId, threadId) {
@@ -5772,7 +5784,20 @@ async function saveConfig(cfg, isNew, isDefault) {
 }
 
 /* ================= 视图3：Thread 列表 ================= */
+// 渲染序号：每次进入 / 重绘会话列表都 +1。
+// 视图函数在 await 之后必须再用 alive() 确认一次——否则上一次（另一个 multi-agent）
+// 的请求晚回来时，会把旧 agent 的 threads 画进新页面（异步竞态：表现为「点进 A 看到的
+// 却是 B 的会话」，重新进一次又正常）。慢接口把这个窗口放大到了几秒，所以必须挡。
+let threadsViewSeq = 0;
 async function renderThreadsView() {
+  const seq = ++threadsViewSeq;
+  const agentId = S.agentId;
+  const agentName = S.agentName;
+  const alive = () =>
+    seq === threadsViewSeq &&
+    S.view === "threads" &&
+    S.agentId === agentId &&
+    !!$("#threadsBox");
   if (threadsStatusTimer) { clearInterval(threadsStatusTimer); threadsStatusTimer = null; }
   app.innerHTML = topbar("返回", () => goAgents());
   const view = document.createElement("div");
@@ -5811,10 +5836,10 @@ async function renderThreadsView() {
   const MAX_DB_WAIT_MS = 180000;
   while (threads === null) {
     try {
-      threads = await api(`/api/agents/${encodeURIComponent(S.agentId)}/threads`);
+      threads = await api(`/api/agents/${encodeURIComponent(agentId)}/threads`);
     } catch (e) {
+      if (!alive()) return; // 用户已离开本页（或已切到别的 multi-agent）
       const box = $("#threadsBox");
-      if (!box) return; // 用户已离开本页
       const stillLoading = e.code === "db_unavailable" && e.retryable === true && (Date.now() - loadStartedAt) < MAX_DB_WAIT_MS;
       if (stillLoading) {
         const secs = Math.floor((Date.now() - loadStartedAt) / 1000);
@@ -5836,16 +5861,22 @@ async function renderThreadsView() {
       return;
     }
   }
+  if (!alive()) return; // 列表回来时页面已经换人了：这份数据必须丢掉
 
-  const hiddenKey = "hidden_threads_" + S.agentId;
-  const showKey = "show_hidden_" + S.agentId;
+  const hiddenKey = "hidden_threads_" + agentId;
+  const showKey = "show_hidden_" + agentId;
   const hiddenSet = new Set(JSON.parse(localStorage.getItem(hiddenKey) || "[]"));
-  await refreshSessions();
+  // 会话运行状态 / 浏览器着色属于「增量信息」，不能挡住列表渲染。
+  // 多浏览器任务下 /api/sessions 要为每个会话判断浏览器是否还开着，
+  // 旧实现先 await 它再画列表，页面就会长时间停在「加载中…」。
+  // 这里改为：先用现有快照立即画出来，新快照到了再原地重绘。
+  const sessionsReady = refreshSessions();
 
   // 快照列表：用于决定「快照」按钮是否显示（没有快照就不显示按钮）
   let snapshots = [];
-  try { snapshots = await api(`/api/agents/${encodeURIComponent(S.agentId)}/snapshots`); }
+  try { snapshots = await api(`/api/agents/${encodeURIComponent(agentId)}/snapshots`); }
   catch (e) { snapshots = []; }
+  if (!alive()) return;
 
   // 底部栏可见性（与主界面一致）：
   // - 没有快照 → 不显示「快照」按钮
@@ -5873,7 +5904,7 @@ async function renderThreadsView() {
   // 复用已加载的 threads，仅原地重绘列表，避免整页 flash /「加载中」闪屏
   function threadStateOf(tid) {
     return (sessionSnapshot.sessions || []).find(
-      (s) => s.agent_id === S.agentId && s.thread_id === tid
+      (s) => s.agent_id === agentId && s.thread_id === tid
     ) || null;
   }
 
@@ -5885,11 +5916,11 @@ async function renderThreadsView() {
   // 运行状态与浏览器颜色任一变化都要原地重绘；否则浏览器关掉后颜色会留在列表上。
   function threadStatusSignature() {
     const sessions = (sessionSnapshot.sessions || [])
-      .filter(s => s.agent_id === S.agentId)
+      .filter(s => s.agent_id === agentId)
       .map(s => [s.thread_id, s.status, s.accepted])
       .sort((a, b) => String(a[0]).localeCompare(String(b[0])));
     const browsers = (sessionSnapshot.browsers || [])
-      .filter(b => b.agent_id === S.agentId)
+      .filter(b => b.agent_id === agentId)
       .map(b => [
         b.thread_id,
         String(b.border_color || "").toLowerCase(),
@@ -5920,7 +5951,7 @@ async function renderThreadsView() {
             const info = threadStateOf(th.thread_id);
             const locked = !!info;
             const lockTitle = locked ? t("该会话正在运行或等待验收，暂时不能隐藏或删除") : "";
-            const browserTheme = browserThemeOf(S.agentId, th.thread_id);
+            const browserTheme = browserThemeOf(agentId, th.thread_id);
             const browserTitle = browserTheme ? t("该会话的浏览器已打开（每个会话使用独立浏览器实例）") : "";
             const browserBorder = browserTheme
               ? browserColorNorm(browserTheme.border_color, BROWSER_COLOR_DEFAULT.border_color)
@@ -5948,7 +5979,7 @@ async function renderThreadsView() {
 
       $$("#threadsBox .thread-row").forEach(row => {
         const tid = row.dataset.tid;
-        row.onclick = () => goChat(S.agentId, S.agentName, tid);
+        row.onclick = () => goChat(agentId, agentName, tid);
         const delBtn = row.querySelector("[data-del]");
         const hideBtn = row.querySelector("[data-hide]");
         if (delBtn && !delBtn.disabled) delBtn.onclick = (e) => { e.stopPropagation(); deleteThread(tid); };
@@ -5962,18 +5993,34 @@ async function renderThreadsView() {
       });
     }
   }
+  if (!alive()) return;
   drawThreadsBox();
   // 正在运行 / 完工状态来自后端会话中枢；只在状态签名变化时原地重绘，避免闪烁。
   let lastThreadStatusSig = threadStatusSignature();
-  threadsStatusTimer = setInterval(async () => {
-    if (!$("#threadsBox")) { clearInterval(threadsStatusTimer); threadsStatusTimer = null; return; }
+  // 进入页面时那次 /api/sessions 回来后再补一次重绘（列表已经在上面画好了）。
+  sessionsReady.then(() => {
+    if (!alive()) return;
+    const sig = threadStatusSignature();
+    if (sig !== lastThreadStatusSig) {
+      lastThreadStatusSig = sig;
+      drawThreadsBox();
+    }
+  }).catch(() => {});
+  const timerId = setInterval(async () => {
+    if (!alive()) {
+      clearInterval(timerId);
+      if (threadsStatusTimer === timerId) threadsStatusTimer = null;
+      return;
+    }
     await refreshSessions();
+    if (!alive()) return;
     const sig = threadStatusSignature();
     if (sig !== lastThreadStatusSig) {
       lastThreadStatusSig = sig;
       drawThreadsBox();
     }
   }, 2000);
+  threadsStatusTimer = timerId;
 
   $("#showHiddenChk").onchange = (e) => { localStorage.setItem(showKey, e.target.checked ? "1" : "0"); drawThreadsBox(); };
   $("#showHiddenZone").onclick = (e) => {
@@ -5989,8 +6036,9 @@ async function renderThreadsView() {
   async function loadSnapshots() {
     snapListEl.innerHTML = `<div class="muted">${t("加载中…")}</div>`;
     let snaps;
-    try { snaps = await api(`/api/agents/${encodeURIComponent(S.agentId)}/snapshots`); }
+    try { snaps = await api(`/api/agents/${encodeURIComponent(agentId)}/snapshots`); }
     catch (e) { snapListEl.innerHTML = `<div class="empty">${esc(e.message)}</div>`; return; }
+    if (!alive()) return;
     snapshots = snaps;
     updateThreadsFooter();
     if (!snaps.length) {
@@ -6008,12 +6056,12 @@ async function renderThreadsView() {
 
     $$("#snapshotList .snapshot-row").forEach(row => {
       const sid = row.dataset.sid;
-      row.onclick = (e) => { if (e.target.closest("button")) return; goSnapshot(S.agentId, S.agentName, sid); };
+      row.onclick = (e) => { if (e.target.closest("button")) return; goSnapshot(agentId, agentName, sid); };
       row.querySelector("[data-snap-del]").onclick = async (e) => {
         e.stopPropagation();
         if (!confirm(`${t("确定删除快照")}「${sid}」？${t("此操作不可撤销。")}`)) return;
         try {
-          await api(`/api/agents/${encodeURIComponent(S.agentId)}/snapshots/${encodeURIComponent(sid)}`, { method: "DELETE" });
+          await api(`/api/agents/${encodeURIComponent(agentId)}/snapshots/${encodeURIComponent(sid)}`, { method: "DELETE" });
           toast(t("已删除"));
           loadSnapshots();
         } catch (err) { toast(err.message, true); }

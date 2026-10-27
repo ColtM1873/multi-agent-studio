@@ -646,24 +646,52 @@ class BrowserSessionManager:
         return {"connected": connected, "port": port, "paused": session.paused}
 
     def status(self, agent_id: str, thread_id: str) -> dict:
+        """实时状态：必要时真的去连一次 CDP 端口（会阻塞到 connect 超时）。
+
+        UI 的 2 秒轮询不要直接用它，见 ``cached_status()``。
+        """
         session = self.peek(agent_id, thread_id)
         if session is None:
             return {"connected": False, "port": None, "paused": False}
         return self.probe(session)
 
-    def browser_theme_entries(self) -> list[dict]:
+    def cached_status(self, agent_id: str, thread_id: str) -> dict:
+        """只读后台监控线程维护的探测缓存，**绝不发网络请求**。
+
+        会话选择页 / 悬浮球这类每 2 秒一次的高频接口必须走这里：真实探测要为每个
+        会话连一次 CDP 端口，浏览器关掉之后端口 connect 会等满超时（约 1 秒），
+        多浏览器任务下 ``/api/sessions`` 会被拖到数秒，而页面渲染又在等这个响应。
+        缓存由 ``_monitor_loop`` 每 1.5 秒刷新一次，对「列表着色」这种派生 UI 来说
+        延迟完全够用。
+        """
+        session = self.peek(agent_id, thread_id)
+        if session is None:
+            return {"connected": False, "port": None, "paused": False}
+        return {
+            "connected": bool(session._probe_connected),
+            "port": session._probe_port,
+            "paused": session.paused,
+        }
+
+    def browser_theme_entries(self, *, live: bool = False) -> list[dict]:
         """返回「浏览器仍开着」的会话及其配色，供会话列表着色。
 
-        连接状态以 ``probe()`` 的实时结果为准：浏览器一关，条目立即消失。
-        配色占用则由 ``_used_borders()`` 区分「启动期宽限」与「连上后关闭」，
-        避免关闭的浏览器继续白占用户预设色。
+        默认 ``live=False``：只读监控线程的探测缓存，不联网，接口因此是毫秒级。
+        ``live=True`` 保留旧行为（当场探测，可能阻塞 1~2 秒/会话），供离线验证或
+        需要「立刻拿到真实连接状态」的调用方使用。
         """
         entries: list[dict] = []
         seen: set[SessionKey] = set()
         for session in sorted(self.sessions(), key=lambda s: s.created_at):
             seen.add(session.key)
             try:
-                state = self.probe(session, max_age=1.0)
+                if live:
+                    state = self.probe(session, max_age=1.0)
+                else:
+                    state = {
+                        "connected": bool(session._probe_connected),
+                        "port": session._probe_port,
+                    }
             except Exception:  # noqa: BLE001
                 continue
             if not state.get("connected"):
@@ -692,7 +720,7 @@ class BrowserSessionManager:
         for key, item in discovered:
             if key in seen:
                 continue
-            if now - float(item.get("checked_at") or 0.0) >= 1.0:
+            if live and now - float(item.get("checked_at") or 0.0) >= 1.0:
                 try:
                     connected = BrowserLauncher._is_port_ready(int(item["port"]))
                 except Exception:  # noqa: BLE001

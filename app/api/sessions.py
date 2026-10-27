@@ -24,7 +24,10 @@ async def list_sessions():
 
     def enrich():
         for item in sessions:
-            item["browser"] = browser_session_manager.status(
+            # 只读监控线程的探测缓存：这个接口每 2 秒被轮询一次，绝不能在这里
+            # 去连每个会话的 CDP 端口（浏览器关闭后 connect 要等满超时才失败，
+            # 多浏览器任务下会把响应拖到数秒，会话选择页因此一直「加载中」）。
+            item["browser"] = browser_session_manager.cached_status(
                 item["agent_id"], item["thread_id"]
             )
             if not item.get("agent_name"):
@@ -36,7 +39,7 @@ async def list_sessions():
                     item["agent_name"] = item["agent_id"]
         return browser_session_manager.browser_theme_entries()
 
-    # 端口探测是阻塞 requests；放到线程池，避免卡事件循环。
+    # 上面的 enrich 现在只读缓存（毫秒级），仍放到线程池里避免未来改动阻塞事件循环。
     # 同时带回「浏览器仍开着」的会话配色（会话选择页按浏览器主色着色）。
     browsers = await asyncio.to_thread(enrich)
     active = session_hub.active_view
