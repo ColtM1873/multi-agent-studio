@@ -58,6 +58,11 @@ def _now() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _now_us() -> str:
+    """带微秒的时间戳：profile 池按 ``released_at`` 做 FIFO，秒级会分不出先后。"""
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
+
+
 def _slug(value: str, limit: int = 28) -> str:
     text = str(value or "").strip()
     text = re.sub(r"[^0-9a-zA-Z\u4e00-\u9fa5_-]+", "-", text)
@@ -260,6 +265,8 @@ class BrowserSessionManager:
             return
         if self._discovery_thread is not None and self._discovery_thread.is_alive():
             return
+        # 只要还有带主题的 profile 就值得扫描：颜色跟「存活的浏览器进程」走，
+        # 已释放回池的 profile 的浏览器可能仍开着并继续占着颜色。
         if not any(_normalize_theme(item.get("theme")) for item in self._profiles.values()):
             return
         self._discovery_thread = threading.Thread(
@@ -315,28 +322,168 @@ class BrowserSessionManager:
             logger.exception("扫描重启后仍存活的浏览器 profile 失败")
 
     def _profile_dir_for(self, agent_id: str, thread_id: str, agent_name: str) -> str:
-        pkey = self._profile_key(agent_id, thread_id)
-        item = self._profiles.get(pkey)
-        if item and item.get("profile_dir"):
-            path = Path(str(item["profile_dir"]))
-            if not path.is_absolute():
-                path = ROOT / path
+        """给会话分配一个 profile 目录。
+
+        分配顺序（ID91 之后的「profile 池」语义）：
+
+        1. 该会话自己名下已有条目：直接用（``released`` 的顺手认领回来，
+           同名会话重建因此会拿回原 profile 与原配色）；
+        2. 池子里已释放（``released=true``）的 profile：按 FIFO 认领最早的；
+        3. 池子为空：新建目录与条目。
+        """
+        with self._lock:
+            pkey = self._profile_key(agent_id, thread_id)
+            item = self._profiles.get(pkey)
+            if item and item.get("profile_dir"):
+                path = self._profile_path(item["profile_dir"])
+                if path is not None:
+                    path.mkdir(parents=True, exist_ok=True)
+                    if item.get("released"):
+                        # 同名会话重建：认领自己释放的 profile（配色一起回来）。
+                        self._bind_profile(pkey, item, agent_id, thread_id, agent_name)
+                    return str(path)
+
+            reused = self._take_released_profile(agent_id, thread_id, agent_name)
+            if reused is not None:
+                return reused
+
+            digest = hashlib.sha1(pkey.encode("utf-8")).hexdigest()[:8]
+            folder = Path(".") / ".chrome-profiles" / _slug(agent_id) / f"{_slug(thread_id)}-{digest}"
+            path = (ROOT / folder).resolve()
             path.mkdir(parents=True, exist_ok=True)
+            self._profiles[pkey] = {
+                "agent_id": agent_id,
+                "thread_id": thread_id,
+                "agent_name": agent_name,
+                "profile_dir": str(path.relative_to(ROOT)).replace("\\", "/"),
+                "created_at": _now(),
+            }
+            self._save_profiles()
             return str(path)
 
-        digest = hashlib.sha1(pkey.encode("utf-8")).hexdigest()[:8]
-        folder = Path(".") / ".chrome-profiles" / _slug(agent_id) / f"{_slug(thread_id)}-{digest}"
-        path = (ROOT / folder).resolve()
-        path.mkdir(parents=True, exist_ok=True)
-        self._profiles[pkey] = {
-            "agent_id": agent_id,
-            "thread_id": thread_id,
-            "agent_name": agent_name,
-            "profile_dir": str(path.relative_to(ROOT)).replace("\\", "/"),
-            "created_at": _now(),
-        }
+    def _bind_profile(
+        self,
+        old_key: str,
+        item: dict,
+        agent_id: str,
+        thread_id: str,
+        agent_name: str,
+    ) -> None:
+        """把一条 profile 记录改绑到新会话（清掉释放标记，颜色等属性原样保留）。"""
+        new_key = self._profile_key(agent_id, thread_id)
+        if old_key != new_key:
+            self._profiles.pop(old_key, None)
+            # 浏览器进程还活着时它在 _live_profiles 里占着颜色；profile 被认领后
+            # 这条记录要跟着改绑到新会话，否则颜色会「失联」。
+            if "\u241f" in old_key:
+                old_tuple = tuple(old_key.split("\u241f", 1))
+                live = self._live_profiles.pop(old_tuple, None)
+                if live is not None:
+                    live["agent_id"] = agent_id
+                    live["thread_id"] = thread_id
+                    self._live_profiles[(agent_id, thread_id)] = live
+        item.pop("released", None)
+        item.pop("released_at", None)
+        item["agent_id"] = agent_id
+        item["thread_id"] = thread_id
+        if agent_name:
+            item["agent_name"] = agent_name
+        item["reused_at"] = _now()
+        self._profiles[new_key] = item
         self._save_profiles()
-        return str(path)
+
+    def _take_released_profile(
+        self, agent_id: str, thread_id: str, agent_name: str
+    ) -> str | None:
+        """从池子里按 FIFO 认领一个已释放的 profile；没有则返回 ``None``。
+
+        FIFO 用 ``released_at`` 升序（最早释放的先被复用，时间戳带微秒）；
+        同一时刻释放的条目保持 ``browser_profiles.json`` 里的书写顺序，结果确定。
+        """
+        candidates = [
+            (pkey, item)
+            for pkey, item in self._profiles.items()
+            if item.get("released") and item.get("profile_dir")
+        ]
+        candidates.sort(key=lambda pair: str(pair[1].get("released_at") or ""))
+        for pkey, item in candidates:
+            path = self._profile_path(item["profile_dir"])
+            if path is None:
+                continue
+            path.mkdir(parents=True, exist_ok=True)
+            self._bind_profile(pkey, item, agent_id, thread_id, agent_name)
+            return str(path)
+        return None
+
+    # ------------------------------------------------------------------ #
+    # profile 池：会话删除 = 释放（不关浏览器、不删目录）
+    # ------------------------------------------------------------------ #
+    def release(self, agent_id: str, thread_id: str) -> bool:
+        """把会话的 profile 释放回池（资源复用语义）。
+
+        * **不关闭**浏览器进程、**不删除** profile 目录（登录态/主题都留着）；
+        * 只摘掉内存里的 ``BrowserSession``；
+        * 若浏览器进程还活着，把它转入 ``_live_profiles``（颜色仍算程序级占用，
+          直到进程关闭）；进程已关则颜色随之收回；
+        * 在 ``browser_profiles.json`` 里打 ``released`` / ``released_at`` 标记，
+          供下一个会话按 FIFO 认领。
+
+        返回是否真的标记了一条 profile 记录（从未创建过 profile 的会话返回 False）。
+        """
+        key = (agent_id, thread_id)
+        keep_live = False
+        with self._lock:
+            session = self._sessions.pop(key, None)
+            self._live_profiles.pop(key, None)
+            pkey = self._profile_key(agent_id, thread_id)
+            item = self._profiles.get(pkey)
+            if item is None:
+                return False
+            item["released"] = True
+            item["released_at"] = _now_us()
+            if session is not None and session.theme:
+                item["theme"] = dict(session.theme)
+                # 浏览器进程还开着：颜色是「程序的活动进程资源」，不能因为删了
+                # 会话就释放给别的浏览器（否则两个窗口同色）。
+                port = session._probe_port
+                if port is None:
+                    try:
+                        port = session.controller.browser_port()
+                    except Exception:  # noqa: BLE001
+                        port = None
+                if port:
+                    self._live_profiles[key] = {
+                        "agent_id": agent_id,
+                        "thread_id": thread_id,
+                        "port": port,
+                        "theme": dict(session.theme),
+                        "checked_at": time.monotonic(),
+                    }
+                    keep_live = True
+            self._save_profiles()
+        if keep_live:
+            # 让后台监控继续探测它；浏览器关掉时颜色才会真正收回。
+            self._ensure_monitor()
+        return True
+
+    def release_agent(self, agent_id: str) -> int:
+        """删除 multi-agent 时释放它名下全部 profile（同样不关浏览器、不删目录）。"""
+        keys = [key for key in list(self._sessions) if key[0] == agent_id]
+        released = 0
+        for key in keys:
+            if self.release(*key):
+                released += 1
+        prefix = agent_id + "\u241f"
+        with self._lock:
+            for pkey, item in self._profiles.items():
+                if not pkey.startswith(prefix) or item.get("released"):
+                    continue
+                item["released"] = True
+                item["released_at"] = _now_us()
+                released += 1
+            if released:
+                self._save_profiles()
+        return released
 
     # ------------------------------------------------------------------ #
     # 浏览器配色（按会话取色，互不重复）
@@ -418,7 +565,16 @@ class BrowserSessionManager:
         self._save_profiles()
 
     def _allocate_theme(self, session: BrowserSession) -> dict:
-        """优先按用户列表顺序取一个未占用的边框色；否则生成随机色。"""
+        """给「即将启动的浏览器进程」分配一个配色。
+
+        颜色是**程序级的活动进程资源**，不是 profile / 会话的持久属性：
+
+        * 占用集合 = 当前所有仍存活的浏览器进程（活跃会话 + 程序重启后
+          发现仍在监听的浏览器）；
+        * 按用户预设列表顺序取第一个没被占用的；列表用尽则随机不重复；
+        * 进程关闭后颜色立即回到池子（``probe`` / ``_refresh_live_profiles``
+          把它从占用集合里摘掉），下一次启动重新按列表分配，不沿用旧色。
+        """
         with self._lock:
             used = self._used_borders(self._sessions.values(), exclude=session)
             # 程序重启后发现的存活浏览器不在 _sessions 里，但颜色仍被它们占着。
@@ -426,13 +582,6 @@ class BrowserSessionManager:
                 theme = _normalize_theme(item.get("theme"))
                 if theme:
                     used.add(theme["border_color"].lower())
-            current = _normalize_theme(session.theme)
-            if current and current["border_color"].lower() not in used:
-                session.theme = current
-                session.theme_at = time.monotonic()
-                session._theme_connected = False
-                session._disconnect_count = 0
-                return current
 
             for preset in self._color_presets():
                 if preset["border_color"].lower() in used:
@@ -492,8 +641,8 @@ class BrowserSessionManager:
                 if agent_name and session.agent_name != agent_name:
                     session.agent_name = agent_name
                 self._apply_tab_limit(session)
-                # 程序重启后浏览器可能仍在运行：从 profile 映射恢复它原本的颜色，
-                # 避免新会话又拿到同一个颜色。
+                # 颜色只跟「仍存活的浏览器进程」走：进程在，恢复它当前的颜色；
+                # 进程已关，旧色作废（下次启动按预设列表重新分配）。
                 if session.theme is None:
                     saved = self._saved_theme(agent_id, thread_id)
                     if saved and self._browser_connected(session.controller):
@@ -525,8 +674,8 @@ class BrowserSessionManager:
                 profile_dir=profile_dir,
                 controller=controller,
             )
-            # 已经有一个从上次运行遗留、仍在监听的浏览器时，先恢复它的配色；
-            # 真正需要新起浏览器时，launch() 会调用 provider 现取一个颜色。
+            # 复用的池中 profile：只有它背后的浏览器进程还活着，才继承它的颜色；
+            # 进程已关则视为「颜色已收回」，等真正 launch 时按预设列表重新分配。
             saved = self._saved_theme(agent_id, thread_id)
             if saved and self._browser_connected(controller):
                 session.theme = saved

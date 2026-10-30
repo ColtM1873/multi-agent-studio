@@ -51,7 +51,7 @@ def main() -> int:
             with patch.object(
                 BrowserLauncher,
                 "_is_port_ready",
-                staticmethod(lambda p: p in {12341, 12342, 12343}),
+                staticmethod(lambda p: p in {12341, 12342, 12343, 12351}),
             ):
                 store = Store(base)
                 (store._dir / "settings.json").write_text(
@@ -138,8 +138,8 @@ def main() -> int:
                 launching.theme_at -= 31.0
                 assert "#123456" not in manager._used_borders([launching])
 
-                # 浏览器真正连过之后再关闭：连续两次探测失败就释放颜色，
-                # 不能因为「启动宽限期 30 秒」继续白占用户预设色。
+                # 浏览器进程关闭 → 它占的颜色立即回到程序的颜色池：
+                # 下一个启动的浏览器可以按预设列表重新拿到它。
                 a2.controller.launcher.port = 19999
                 a2._probe_at = 0.0
                 a2._disconnect_count = 1
@@ -153,6 +153,7 @@ def main() -> int:
                     profile_dir=a2.profile_dir,
                     controller=a2.controller,
                 )
+                # 此刻 a1 占 #ff0000、b1 占随机色，a2 的 #00aa00 已收回。
                 assert manager._allocate_theme(fresh)["border_color"] == "#00aa00"
 
                 assert manager.toggle_pause("A", "会话一") is True
@@ -162,11 +163,11 @@ def main() -> int:
                 assert manager.status("A", "会话一")["paused"] is True
                 assert manager.status("A", "会话二")["paused"] is True
 
-                # 浏览器关闭：连接状态为假、暂停复位，并释放颜色给后续会话。
+                # 再关一个浏览器：连接状态为假、暂停复位、颜色收回。
                 a1.controller.launcher.port = 19999
                 a1._probe_at = 0.0
                 a1.theme_at -= 31.0  # 越过启动宽限期
-                a1._disconnect_count = 1  # 连续两次判离线才释放
+                a1._disconnect_count = 1  # 连续两次判离线才收回
                 closed = manager.status("A", "会话一")
                 assert not closed["connected"] and closed["paused"] is False
                 assert a1.theme is None
@@ -175,6 +176,109 @@ def main() -> int:
                     for item in manager.browser_theme_entries()
                 )
                 assert manager._allocate_theme(a1)["border_color"] == "#ff0000"
+
+                # ---- profile 池：删除会话 = 释放（不关浏览器、不删目录） ----
+                # 造一个「浏览器进程还活着」的会话：删掉它之后，颜色必须仍然
+                # 被程序占用（否则另一个窗口会领到同一个颜色）。
+                survivor = manager.get("B", "存活会话")
+                survivor_dir = survivor.profile_dir
+                survivor_theme = manager._allocate_theme(survivor)
+                survivor.controller.launcher.port = 12351
+                survivor._probe_at = 0.0
+                # 真实浏览器会把端口写进 profile；复用时靠这个文件找回进程。
+                (Path(survivor_dir) / "DevToolsActivePort").write_text(
+                    "12351\n", encoding="utf-8"
+                )
+                assert manager.status("B", "存活会话")["connected"] is True
+                saved_controller = survivor.controller  # 只做「没被关闭」的事实引用
+
+                assert manager.release("B", "存活会话") is True
+                assert manager.peek("B", "存活会话") is None
+                assert Path(survivor_dir).is_dir()          # 目录没删
+                assert saved_controller is not None         # 浏览器没被关闭
+                freed_item = manager._profiles[manager._profile_key("B", "存活会话")]
+                assert freed_item.get("released") is True
+                assert freed_item.get("theme") == survivor_theme
+
+                # 进程还活着 → 颜色仍被占用；同时下一个会话会认领这条 profile，
+                # 并继承它背后仍存活进程的颜色（你说的 a→b→c→d→e）。
+                adopter = manager.get("A", "复用会话")
+                assert adopter.profile_dir == survivor_dir
+                assert adopter.theme == survivor_theme
+                assert manager._profile_key("B", "存活会话") not in manager._profiles
+                assert manager._profile_key("A", "复用会话") in manager._profiles
+
+                # 池子空了以后再新建一个 profile：它不能拿走仍被占用的颜色。
+                other = manager.get("B", "另一个新会话")
+                assert (
+                    manager._allocate_theme(other)["border_color"]
+                    != survivor_theme["border_color"]
+                )
+
+                # 这个浏览器一关，颜色就收回；下一次启动重新按预设列表分配。
+                adopter.controller.launcher.port = 19999
+                (Path(adopter.profile_dir) / "DevToolsActivePort").unlink(
+                    missing_ok=True
+                )
+                adopter._probe_at = 0.0
+                adopter._disconnect_count = 1
+                assert manager.status("A", "复用会话")["connected"] is False
+                assert adopter.theme is None
+                recycled = bs.BrowserSession(
+                    key=("A", "回收后新开"),
+                    agent_id="A",
+                    thread_id="回收后新开",
+                    agent_name="A",
+                    profile_dir=adopter.profile_dir,
+                    controller=adopter.controller,
+                )
+                assert (
+                    manager._allocate_theme(recycled)["border_color"]
+                    == survivor_theme["border_color"]
+                )
+
+                # 同名会话重建：认领自己释放的 profile（进程已关，颜色重新分配）
+                manager.release("A", "复用会话")
+                same_name = manager.get("A", "复用会话")
+                assert same_name.profile_dir == survivor_dir
+                assert same_name.theme is None
+
+                # 删除 multi-agent：名下 profile 全部释放，内存会话一并摘掉
+                released_count = manager.release_agent("B")
+                assert released_count >= 1
+                assert all(
+                    item.get("released")
+                    for pkey, item in manager._profiles.items()
+                    if pkey.startswith("B" + "\u241f")
+                )
+                assert not [s for s in manager.sessions() if s.agent_id == "B"]
+
+                # ---- FIFO：最早释放的 profile 先被认领 ----
+                pool_store = Store(base / "pool")
+                pool = bs.BrowserSessionManager(pool_store)
+                q1 = pool.get("A", "池一")
+                pool._allocate_theme(q1)
+                q2 = pool.get("A", "池二")
+                pool._allocate_theme(q2)
+                dir1, dir2 = q1.profile_dir, q2.profile_dir
+                pool.release("A", "池一")
+                pool.release("A", "池二")
+                pool._profiles[pool._profile_key("A", "池一")]["released_at"] = (
+                    "2026-01-01 00:00:00"
+                )
+                pool._profiles[pool._profile_key("A", "池二")]["released_at"] = (
+                    "2026-01-01 00:00:01"
+                )
+                pool._save_profiles()
+                # 换一个 manager 模拟程序重启：池子从磁盘恢复，FIFO 仍然成立。
+                pool2 = bs.BrowserSessionManager(pool_store)
+                first = pool2.get("B", "认领一")
+                assert first.profile_dir == dir1
+                second = pool2.get("B", "认领二")
+                assert second.profile_dir == dir2
+                pool.shutdown()
+                pool2.shutdown()
+
                 manager.shutdown()
         finally:
             bs.ROOT = old_root

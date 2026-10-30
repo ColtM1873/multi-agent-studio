@@ -277,6 +277,14 @@ async def delete_agent(agent_id: str):
     await chat_manager.invalidate(agent_id)
     # 删除前把显示名记进快照目录，供「查看已删除 multi-agent 的快照」展示
     snapshot_service.save_agent_meta(agent_id, cfg.name)
+    # 删除 multi-agent 时把它名下所有浏览器 profile 释放回池（不关浏览器、不删目录）。
+    try:
+        from app.deps import browser_session_manager
+
+        # 释放里可能探测 CDP 端口，放线程里跑，别卡住事件循环。
+        await asyncio.to_thread(browser_session_manager.release_agent, agent_id)
+    except Exception:  # noqa: BLE001 — 释放失败不影响删除本身
+        logger.exception("释放 multi-agent 的浏览器 profile 失败 (agent_id=%s)", agent_id)
     config_store.delete(agent_id)
     return {"ok": True}
 

@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from app.deps import chat_manager
 from app.services.messages_json import message_to_dict
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/agents/{agent_id}/threads", tags=["threads"])
 
@@ -51,6 +56,20 @@ async def delete_thread(agent_id: str, thread_id: str):
             detail="该会话正在运行或等待验收，暂时不能删除。请等它完成并验收后再删除。",
         )
     await chat_manager.delete_thread(agent_id, thread_id)
+    # 删除会话 = 把它的浏览器 profile 释放回池：
+    # 不关闭浏览器、不删除 profile 目录（登录态/配色都保留），
+    # 下一个需要 profile 的会话会按 FIFO 认领它。
+    try:
+        from app.deps import browser_session_manager
+
+        # 释放里可能探测 CDP 端口，放线程里跑，别卡住事件循环。
+        await asyncio.to_thread(
+            browser_session_manager.release, agent_id, thread_id
+        )
+    except Exception:  # noqa: BLE001 — 释放失败不影响会话删除本身
+        logger.exception(
+            "释放会话浏览器 profile 失败 (agent_id=%s, thread_id=%s)", agent_id, thread_id
+        )
     return {"ok": True}
 
 
