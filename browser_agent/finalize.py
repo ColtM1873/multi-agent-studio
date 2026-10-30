@@ -6,6 +6,9 @@
    压成 ``<tag eN {sep} 内容>``（内容原样保留换行），并去掉闭合标签；
    内容里出现的 ``<`` / ``>`` 分别转义为 ``[`` / ``]``，避免与外层尖括号混淆；
    若某个字符恰好就是用户设置的分隔符，则该字符不转义（用户口径）。
+   BID087：属于敏感替换列表的 ``<名称>`` 占位符整段保留，不参与上述符号替换。
+   该保护默认关闭（``prefs.SENSITIVE_PLACEHOLDER_GUARD = False``），关闭时行为与
+   BID084 完全一致；置 ``True`` 才启用，代码保留备用。
 2. 「英文渲染」：把中文标签名 / 类别名 / 元素引用换成英文口径
    （``<Click elem 23>``）；只换标签与术语，正文说明仍保留中文。
 
@@ -44,17 +47,52 @@ _TAG_EN = wording.TAG_EN_BY_CN
 _ELEM_REF_RE = re.compile(r"\be(?P<num>\d+)\b")
 
 
-# 本函数于BID084引入
-def _escape_merged_content(text: str, separator: str) -> str:
-    """整合进尖括号的内容转义：``<``→``[``、``>``→``]``。
-
-    与用户设置的分隔符相同的字符不转义（否则会影响分隔符语义）。
-    """
+# 本函数于BID087引入
+def _escape_brackets(text: str, separator: str) -> str:
+    """纯符号替换：``<``→``[``、``>``→``]``（与分隔符相同的字符跳过）。"""
     if separator != "<":
         text = text.replace("<", "[")
     if separator != ">":
         text = text.replace(">", "]")
     return text
+
+
+# 本常量于BID087引入
+# 敏感替换列表的占位符形态：``<名称>``。内层不允许尖括号 / 换行，与输入侧
+# ``apply_sensitive_replacement`` 的 ``_SENSITIVE_RE``（``<([^<>\n]+)>``）同一口径。
+_SENSITIVE_PLACEHOLDER_RE = re.compile(r"<([^<>\n]+)>")
+
+
+# 本函数于BID084引入（BID087 起保留敏感替换列表的占位符）
+def _escape_merged_content(text: str, separator: str) -> str:
+    """整合进尖括号的内容转义：``<``→``[``、``>``→``]``。
+
+    与用户设置的分隔符相同的字符不转义（否则会影响分隔符语义）。
+
+    BID087：**属于敏感替换列表的 ``<名称>`` 整段保留**，不做符号替换。该列表保证
+    ``<>`` 成对（由「隐私遮蔽」生成，或由调用方按列表说明手写），把它改成
+    ``[名称]`` 会让 LLM 看到的占位符与说明冲突。其余 ``<`` / ``>`` 照旧转义。
+    该特性由 ``prefs.SENSITIVE_PLACEHOLDER_GUARD`` 总开关控制（默认关闭），关闭时
+    本函数与 BID084 的实现逐字节相同、不读设置也不扫内容。
+    """
+    if not prefs.SENSITIVE_PLACEHOLDER_GUARD:  # BID087
+        return _escape_brackets(text, separator)  # BID087
+    names = prefs.sensitive_names()  # BID087
+    if not names or "<" not in text:  # BID087
+        return _escape_brackets(text, separator)  # BID087
+    pieces: list[str] = []  # BID087
+    cursor = 0  # BID087
+    for match in _SENSITIVE_PLACEHOLDER_RE.finditer(text):  # BID087
+        inner = match.group(1).strip()  # BID087
+        # 同时排除「整段本身就是互动标签 token」的文本：保留它等于凭空造出一个
+        # 假的互动元素引用，会把 LLM 的元素寻址带偏（BID087）。
+        if inner not in names or _TOKEN_RE.fullmatch(match.group(0)):  # BID087
+            continue  # BID087
+        pieces.append(_escape_brackets(text[cursor:match.start()], separator))  # BID087
+        pieces.append(match.group(0))  # BID087
+        cursor = match.end()  # BID087
+    pieces.append(_escape_brackets(text[cursor:], separator))  # BID087
+    return "".join(pieces)  # BID087
 
 
 # 本函数于BID084引入

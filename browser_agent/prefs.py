@@ -16,6 +16,21 @@ _merge_separator = ":"
 # BID084：可交互元素是否使用英文标签渲染（``<Click elem 23>``）。默认关闭。
 _english_enabled = False
 
+# BID087：敏感替换列表的「名称」集合（``<名称>`` 占位符的内层文字）。
+# app 层每次工具调用前用 ``configure_sensitive_names()`` 覆盖（与 timing / 整合开关同构）。
+# ``finalize`` 的符号替换层据此判断某个 ``<...>`` 是否属于该列表：属于就整段保留，
+# 不把 ``<姓名>`` 转成 ``[姓名]``（与「敏感信息替换列表」对 LLM 的说明保持一致）。
+_sensitive_names: frozenset[str] = frozenset()
+
+# BID087：上面这项「占位符保护」的总开关，**默认关闭**。
+# 现状是「先整合、后隐私遮蔽」（见 ``app/runtime/browser_tools_wrap_up._wrap_up``），
+# 遮蔽刚生成的 ``<名称>`` 不会再经过符号替换层，所以默认关掉既不改变任何输出，
+# 也不让每次互动多付「读设置 + 扫内容」的开销——代码只作备用。
+# 需要时（例如将来调整两层顺序，或页面文本本身带 ``<名称>`` 字面量要保留）把它置
+# ``True`` 即可全链路生效：``finalize._escape_merged_content`` 会保留占位符，
+# ``_apply_browser_sensitive_names`` 会把设置里的名称注入进来。
+SENSITIVE_PLACEHOLDER_GUARD = False
+
 
 # 本函数于BID080引入
 def configure_image_tags(enabled: bool) -> None:
@@ -66,6 +81,32 @@ def interactive_merge_separator() -> str:
 def interactive_english_enabled() -> bool:
     """当前可交互元素是否使用英文标签渲染。"""
     return _english_enabled
+
+
+# 本函数于BID087引入
+def configure_sensitive_names(names) -> None:
+    """设置敏感替换列表的「名称」集合（调用时现读，默认空集）。
+
+    只保留「能构成合法占位符」的名称：去掉首尾空白；含 ``<`` / ``>`` / 换行的名称
+    本身就无法出现在 ``<名称>`` 里（输入侧 ``_SENSITIVE_RE`` 同样不匹配它们），
+    直接丢弃，避免在符号替换层做出永远命不中的判断。
+    """
+    global _sensitive_names
+    cleaned: set[str] = set()
+    for name in names or ():
+        text = str(name or "").strip()
+        if not text:
+            continue
+        if any(ch in text for ch in "<>\n\r"):
+            continue
+        cleaned.add(text)
+    _sensitive_names = frozenset(cleaned)
+
+
+# 本函数于BID087引入
+def sensitive_names() -> frozenset[str]:
+    """当前敏感替换列表的名称集合（已去空白、已剔除非法名称）。"""
+    return _sensitive_names
 
 
 # 本常量于BID086引入

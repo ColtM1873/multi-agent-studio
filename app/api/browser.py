@@ -16,6 +16,7 @@ from app.runtime.browser_tools_wrap_up import (
     PAUSE_PROMPT,
     _apply_browser_image_tags,  # BID080
     _apply_browser_interactive_prefs,  # BID084
+    _apply_browser_sensitive_names,  # BID087
     _apply_browser_timing,
     is_paused,
     set_paused,
@@ -216,6 +217,7 @@ def viewport_dom(body: AgentBody | None = None):
             _apply_browser_timing()
             _apply_browser_image_tags()  # BID080
             _apply_browser_interactive_prefs()  # BID084
+            _apply_browser_sensitive_names()  # BID087
             result = _controller().full_dom(action_ok=NOT_CALLED)
             connected, port = browser_status(body.agent_id, body.thread_id)
             if connected:

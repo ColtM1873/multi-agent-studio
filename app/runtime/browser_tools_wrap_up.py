@@ -107,6 +107,34 @@ def _apply_browser_interactive_prefs() -> None:
         pass
 
 
+# 本函数于BID087引入
+def _apply_browser_sensitive_names() -> None:
+    """按全局「敏感信息替换列表」把条目名称交给 browser_agent 的输出偏好。
+
+    整合层的符号替换据此保留 ``<名称>`` 占位符（不改成 ``[名称]``），与「隐私遮蔽」
+    生成占位符、以及列表说明里「用 ``<>`` 包裹名称」的口径保持一致。
+    每次工具调用前现读，改表后下一次调用即生效。
+
+    受 ``browser_agent.prefs.SENSITIVE_PLACEHOLDER_GUARD`` 总开关控制（默认关闭）：
+    关闭时第一行就返回，连设置都不读——不产生任何额外开销。
+    """
+    try:
+        from browser_agent import prefs as browser_prefs
+
+        if not browser_prefs.SENSITIVE_PLACEHOLDER_GUARD:  # BID087
+            return  # BID087
+        settings = _load_settings_safe()
+        if settings is not None:
+            browser_prefs.configure_sensitive_names(
+                [
+                    getattr(entry, "name", "")
+                    for entry in (getattr(settings, "sensitive_info", None) or [])
+                ]
+            )
+    except Exception:  # noqa: BLE001
+        pass
+
+
 async def _wrap_up(sync_func , **kwargs) -> str:
     if is_paused():
         return PAUSE_PROMPT
@@ -116,6 +144,7 @@ async def _wrap_up(sync_func , **kwargs) -> str:
     _apply_browser_timing()
     _apply_browser_image_tags()  # BID080
     _apply_browser_interactive_prefs()  # BID084
+    _apply_browser_sensitive_names()  # BID087
     # 记录 LLM 原始输入（敏感信息替换前的 kwargs）。
     llm_input = dict(kwargs)
 
