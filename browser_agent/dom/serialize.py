@@ -55,6 +55,7 @@ from .classify import (
 )
 from .registry import NameRegistry
 from .compress import compress_lines  # BID079
+from .. import prefs  # BID088
 
 SKIP_TAGS = {
     "script",
@@ -644,6 +645,22 @@ class OutLine:
     closing: str = ""  # closing tag emitted when this header's group ends
 
 
+# 本函数于BID088引入
+def document_header(tree: EnhancedTree) -> str:
+    """全量输出的首行 ``[document] …``。
+
+    「浏览器工具返回内容携带 url」开启时保持原格式 ``[document] url=… title=…``；
+    关闭时（默认）只给标题。地址经常带一长串没有语义的随机字符（推广/追踪参数），
+    对推理没有帮助，因此**在产生处就不拼进去**（而不是事后再用正则删）：
+    这样不会漏匹配，也不会误伤网页正文里本来就有的链接文本。
+    标题为空时整行退化为裸 ``[document]``，不留悬空的 ``title=``。
+    """
+    title = tree.title or ""  # BID088
+    if prefs.url_in_content_enabled():  # BID088
+        return f"[document] url={tree.url or 'about:blank'} title={title}".rstrip()  # BID088
+    return f"[document] title={title}".rstrip() if title else "[document]"  # BID088
+
+
 class DOMSerializer:
     def __init__(self, registry: NameRegistry, max_chars: int = 40000) -> None:
         self.registry = registry
@@ -675,7 +692,7 @@ class DOMSerializer:
         self, tree: EnhancedTree, context_lines: Optional[list[OutLine]] = None  # BID079
     ) -> str:
         lines = self.serialize_lines(tree)
-        parts = [f"[document] url={tree.url or 'about:blank'} title={tree.title or ''}".rstrip()]
+        parts = [document_header(tree)]  # BID088
         # BID079：缩进压缩在「序列化完成之后」统一做一次（不改渲染逻辑）。
         # context_lines = 忽略视口裁剪的整页行，用于「全量口径」判断兄弟/内容行数。
         parts.extend(compress_lines(lines, context_lines=context_lines, blank_mode="header"))  # BID079

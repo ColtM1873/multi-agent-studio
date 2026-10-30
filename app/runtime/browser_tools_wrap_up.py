@@ -79,6 +79,27 @@ def _apply_browser_image_tags() -> None:
         pass
 
 
+# 本函数于BID088引入
+def _apply_browser_url_in_content() -> None:
+    """按全局「浏览器工具返回内容携带 url」开关覆盖 browser_agent 的输出偏好。
+
+    关闭（默认）时，全量返回的 ``[document]`` 首行只留标题，增量里的
+    「页面地址已变化」提示不再附地址本体；专门返回 tab→url 映射表的
+    ``tool_40_return_urls_of_opened_tags`` 不受影响。每次工具调用前现读设置，
+    因此改完保存后下一次调用即生效；browser_agent 默认也是关闭。
+    """
+    try:
+        from browser_agent import prefs as browser_prefs
+
+        settings = _load_settings_safe()
+        if settings is not None:
+            browser_prefs.configure_url_in_content(
+                bool(getattr(settings, "browser_url_in_content", False))
+            )
+    except Exception:  # noqa: BLE001
+        pass
+
+
 # 本函数于BID084引入
 def _apply_browser_interactive_prefs() -> None:
     """按全局「可交互元素整合 / 英文渲染」设置覆盖 browser_agent 的输出偏好。
@@ -143,6 +164,7 @@ async def _wrap_up(sync_func , **kwargs) -> str:
     # 按全局「浏览器交互延迟设置」覆盖运行时延迟（调用时现读，改完即生效）。
     _apply_browser_timing()
     _apply_browser_image_tags()  # BID080
+    _apply_browser_url_in_content()  # BID088
     _apply_browser_interactive_prefs()  # BID084
     _apply_browser_sensitive_names()  # BID087
     # 记录 LLM 原始输入（敏感信息替换前的 kwargs）。

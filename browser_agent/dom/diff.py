@@ -25,9 +25,17 @@ from typing import Optional, Sequence
 
 from .compress import compress_lines  # BID079
 from .serialize import OutLine, separate_scroll_blocks
+from .. import prefs  # BID088
 
 MAX_DIFF_CHARS = 40000
 MAX_LOST = 50
+
+# BID088：「返回内容携带 url」关闭时（默认）用来替代 ``[增量] url 已变为 …`` 的那一行。
+# 只保留「地址变过」这个事实，不附地址本体（地址常带一长串无语义的随机字符）。
+# 注意：这里**不要**写「如需查看请调用某工具」之类的指路文案——LLM 本来就能看到
+# 完整工具列表，点名某个工具会让它产生强烈的调用动机（哪怕完全没有必要），
+# 反而增加上下文噪音、模糊任务目标。
+_URL_CHANGED_NOTICE = "[增量] 页面地址已变化"
 
 # BID083：去重判据用的「直接父级」= 最邻近的那一层分组开标签（祖先链最后一项）。
 # 再往上/往前的祖先不参与比较——类型不同、层级更深的嵌套不该阻止去重。
@@ -176,7 +184,10 @@ def compute_diff(
         return "（页面无变化）"
     parts: list[str] = []
     if old_url != new_url and new_url:
-        parts.append(f"[增量] url 已变为 {new_url}")
+        if prefs.url_in_content_enabled():  # BID088
+            parts.append(f"[增量] url 已变为 {new_url}")  # BID088
+        else:  # BID088
+            parts.append(_URL_CHANGED_NOTICE)  # BID088
     parts.append(format_lines(lines, max_chars, context_lines=context_lines))  # BID079
     return "\n".join(parts)
 

@@ -45,6 +45,28 @@ def image_tags_enabled() -> bool:
     return _image_tags_enabled
 
 
+# BID088：是否把「页面地址（url）」写进浏览器工具的返回内容，**默认关闭**。
+# 关闭时，全量返回的 ``[document]`` 首行只留标题，增量里的「页面地址已变化」
+# 提示也不再附地址本体；唯一的例外是专门返回「tab → url 映射表」的
+# ``tool_40_return_urls_of_opened_tags``（它存在的意义就是地址）。
+# 动机：很多页面地址带一长串没有语义的随机字符（推广/追踪参数），既挤占上下文
+# 又干扰推理。app 层在每次工具调用前覆盖（与图片标签/整合开关同构），调用时现读。
+_url_in_content_enabled = False
+
+
+# 本函数于BID088引入
+def configure_url_in_content(enabled: bool) -> None:
+    """设置「浏览器工具返回内容携带 url」开关（调用时现读，默认 False）。"""
+    global _url_in_content_enabled
+    _url_in_content_enabled = bool(enabled)
+
+
+# 本函数于BID088引入
+def url_in_content_enabled() -> bool:
+    """当前返回内容（``[document]`` 首行 / 增量地址变化提示）是否携带 url。"""
+    return _url_in_content_enabled
+
+
 # 本函数于BID084引入
 def configure_interactive(
     merge_enabled: bool = True,

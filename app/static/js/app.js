@@ -363,6 +363,9 @@ const I18N_EN = {
   "开启后，LLM 每次调用浏览器工具都会在程序根目录的 browser_tools_DEBUG_logs 文件夹下，按小时记录一份日志（含整个 viewport 的原始 DOM、处理后的 DOM、LLM 输入、工具返回的 content），便于排查。": "When enabled, every browser tool call by the LLM writes an hourly log under the browser_tools_DEBUG_logs folder in the program root (the whole viewport's raw DOM, processed DOM, LLM input and returned content) to help troubleshooting.",
   "浏览器工具解析图片标签": "Parse image tags in browser tool output", // BID080
   "开启后，浏览器工具会把网页里的图片解析成 [图片] 标签（有 alt 时附带一行文本）返回给 LLM；关闭时（默认），[图片] 行以及因此变空的 [..] 结构标签父链会被整条删除，不输出任何图片信息。": "When enabled, the browser tool renders images in web pages as [图片] tags (with one line of alt text when available) for the LLM; when disabled (the default), the [图片] line and any [..] structural parent chain left empty by its removal are deleted entirely, so no image information is returned.", // BID080
+  // BID088：浏览器工具返回内容是否携带 url（默认关闭）
+  "浏览器工具返回内容携带url": "Include URLs in browser tool output", // BID088
+  "开启后，浏览器工具的返回内容会带上当前页面地址（url）。关闭时（默认），除专门返回「tab 到 url 映射表」的工具外，其余工具的返回内容都不含 url：全量返回的 [document] 首行只保留标题，增量里的「页面地址已变化」也不再附地址本体。页面地址常带一长串没有语义的随机字符，关闭可节省上下文、减少干扰。": "When enabled, browser tool output carries the current page URL. When disabled (the default), only the dedicated 'tab to URL map' tool returns URLs; every other tool omits them: the [document] line of a full return keeps only the title, and the 'page address changed' notice in an incremental return no longer carries the address. Page URLs often contain a long run of meaningless random characters, so disabling this saves context and noise.", // BID088
   // BID084：可交互元素整合 / 分隔符 / 英文渲染
   "浏览器可交互元素整合": "Merge interactive browser elements",
   "开启后（默认），返回给 LLM 的可交互元素会从 `<可点击元素 eN>内容</可点击元素 eN>` 压缩成 `<可点击元素 eN : 内容>`，取消闭合标签，可显著节省上下文长度。可滚动元素不参与整合。": "When enabled (the default), interactive elements returned to the LLM are compressed from `<可点击元素 eN>content</可点击元素 eN>` into `<可点击元素 eN : content>`, dropping the closing tag to save context. Scrollable elements are not merged.",
@@ -3800,6 +3803,7 @@ async function openAdvancedSettings() {
   mask.className = "modal-mask";
   // BID080：进阶设置新增「浏览器工具解析图片标签」开关（默认关闭）；模板字符串内不能写注释，故在此标注。
   // BID084：进阶设置新增「浏览器可交互元素整合」开关（默认开启）、整合分隔符、英文渲染开关。
+  // BID088：进阶设置新增「浏览器工具返回内容携带url」开关（默认关闭）。
   mask.innerHTML = `
     <div class="modal" style="width:480px;" data-modal-key="advanced">
       <h3>🧩 ${t("进阶设置")}</h3>
@@ -3839,6 +3843,10 @@ async function openAdvancedSettings() {
       <div class="switch-row">
         <span class="sw-label">🖼️ ${t("浏览器工具解析图片标签")} <i class="info-icon">!<span class="tip">${t("开启后，浏览器工具会把网页里的图片解析成 [图片] 标签（有 alt 时附带一行文本）返回给 LLM；关闭时（默认），[图片] 行以及因此变空的 [..] 结构标签父链会被整条删除，不输出任何图片信息。")}</span></i></span>
         <label class="toggle"><input type="checkbox" id="adv_browser_image_tags" ${s.browser_image_tags ? "checked" : ""}><span class="track"></span></label>
+      </div>
+      <div class="switch-row">
+        <span class="sw-label">🔗 ${t("浏览器工具返回内容携带url")} <i class="info-icon">!<span class="tip">${t("开启后，浏览器工具的返回内容会带上当前页面地址（url）。关闭时（默认），除专门返回「tab 到 url 映射表」的工具外，其余工具的返回内容都不含 url：全量返回的 [document] 首行只保留标题，增量里的「页面地址已变化」也不再附地址本体。页面地址常带一长串没有语义的随机字符，关闭可节省上下文、减少干扰。")}</span></i></span>
+        <label class="toggle"><input type="checkbox" id="adv_browser_url_in_content" ${s.browser_url_in_content ? "checked" : ""}><span class="track"></span></label>
       </div>
       <div class="switch-row">
         <span class="sw-label">🧩 ${t("浏览器可交互元素整合")} <i class="info-icon">!<span class="tip">${esc(t("开启后（默认），返回给 LLM 的可交互元素会从 `<可点击元素 eN>内容</可点击元素 eN>` 压缩成 `<可点击元素 eN : 内容>`，取消闭合标签，可显著节省上下文长度。可滚动元素不参与整合。"))}</span></i></span>
@@ -3888,6 +3896,7 @@ async function openAdvancedSettings() {
         cross_agent_draft_flow: mask.querySelector("#adv_cross_draft").checked,
         browser_takeover_debug: mask.querySelector("#adv_browser_debug").checked,
         browser_image_tags: mask.querySelector("#adv_browser_image_tags").checked, // BID080
+        browser_url_in_content: mask.querySelector("#adv_browser_url_in_content").checked, // BID088
         browser_interactive_merge: mask.querySelector("#adv_browser_interactive_merge").checked, // BID084
         browser_interactive_merge_separator: (mask.querySelector("#adv_browser_interactive_sep").value || ":").trim() || ":", // BID084
         browser_interactive_english: mask.querySelector("#adv_browser_interactive_english").checked, // BID084

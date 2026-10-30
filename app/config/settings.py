@@ -184,6 +184,13 @@ class Settings(BaseModel):
     # 会把 [图片] 行及其「独子父 [..] 结构标签链」整条删除（含 alt 文本）。
     # 工具调用时实时读取，不参与图编译，无需 invalidate_all。
     browser_image_tags: bool = False  # BID080
+    # 浏览器接管：浏览器工具返回内容是否携带 url（BID088）。默认关闭：关闭时，
+    # 除专门返回「tab → url 映射表」的 tool_40_return_urls_of_opened_tags 之外，
+    # 其余工具的返回内容都不带页面地址——全量返回的 `[document]` 首行只保留标题，
+    # 增量里的「页面地址已变化」提示不再附地址本体。动机：页面地址常带一长串没有
+    # 语义的随机字符（推广/追踪参数），既挤占上下文又干扰推理。
+    # 工具调用时实时读取，不参与图编译，无需 invalidate_all。
+    browser_url_in_content: bool = False  # BID088
     # 浏览器接管：可交互元素整合（BID084）。开启后，返回给 LLM 的
     # ``<可点击元素 eN>内容</可点击元素 eN>`` 会压成 ``<可点击元素 eN : 内容>``
     # （可滚动元素除外），取消闭合标签，显著节省上下文长度。默认开启。
