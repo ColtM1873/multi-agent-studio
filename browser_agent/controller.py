@@ -1767,17 +1767,61 @@ class BrowserController:
         before = before if isinstance(before, dict) else {}  # BID091
         before_n = int(before.get("count", -1))  # BID091
         after_n = int(after.get("count", -1))  # BID091
-        if before_n >= 0 and after_n >= 0 and after_n > before_n:  # BID091
-            return True  # BID091
         # BID092：``count`` 会被无关浮层抵消，``near`` 不会（见 ``_wait_popup_opened``）。
         try:  # BID092
             before_near = int(before.get("near", -1))  # BID092
             after_near = int(after.get("near", -1))  # BID092
         except (TypeError, ValueError):  # BID092
             before_near = after_near = -1  # BID092
+        # BID093：先算「贴着本控件的候选面板变少」，再用它否决下面「总数变多」那条兜底。
+        # 同一击关掉面板（-1）同时插入两个无关浮层（+2）时总数是**变多**的，这条兜底
+        # 会把 BID092 刚判对的「被关掉」翻回「已打开」、跳过补点 —— 后一轮修复否决
+        # 前一轮（BID093 §1 CASE-G 真机复现）。``near`` 变少说明面板已被关掉，此时
+        # 总数变多只能来自无关浮层，不能算「面板新出现」。
+        near_decreased = (  # BID093
+            before_near >= 0 and after_near >= 0 and after_near < before_near  # BID093
+        )  # BID093
+        if (  # BID091
+            before_n >= 0  # BID091
+            and after_n >= 0  # BID091
+            and after_n > before_n  # BID091
+            and not near_decreased  # BID093
+        ):  # BID091
+            return True  # BID091
         if before_near >= 0 and after_near >= 0 and after_near > before_near:  # BID092
             return True  # BID092
         return bool(after.get("anchored")) and not bool(before.get("anchored"))  # BID091
+
+    # 本函数于BID093引入
+    @staticmethod
+    def _panel_closed_since(before: dict, after: dict) -> bool:
+        """相对**动作前**的基线，判断「这一击把面板关掉了」（补点闸门）。
+
+        ``_run_searchable`` 的两处补点闸门（BID089/BID090）原先只认「全页浮层盒子数
+        变少」。BID092 已在 ``_wait_popup_opened`` 里证明这个总数会被同一击插入的
+        无关浮层（保存提示/loading 遮罩）抵消，但这两处闸门没有跟着换口径：面板被
+        自己点关、总数“先减一再加一”不变 ⇒ 闸门不触发 ⇒ 不补点 ⇒ 面板关着、没有
+        候选，工具静默返回（BID093 §1 CASE-E 真机复现）。
+
+        与 :meth:`_panel_opened_since` 对称，两条独立证据取**并集**：
+        * 全页浮层盒子数**变少**——不受常驻同款盒子影响（BID089 的原始证据）；
+        * 贴着本控件的候选面板数（``near``）**变少**——不受同一击插入的无关浮层影响
+          （BID092 引入的量，这里才真正用起来）。
+
+        两边都必须可观测（``>=0``）；不可观测按 BID072「不下否定结论」返回 False。
+        """
+        before = before if isinstance(before, dict) else {}  # BID093
+        after = after if isinstance(after, dict) else {}  # BID093
+        before_n = int(before.get("count", -1))  # BID093
+        after_n = int(after.get("count", -1))  # BID093
+        if before_n >= 0 and after_n >= 0 and after_n < before_n:  # BID093
+            return True  # BID093
+        try:  # BID093
+            before_near = int(before.get("near", -1))  # BID093
+            after_near = int(after.get("near", -1))  # BID093
+        except (TypeError, ValueError):  # BID093
+            return False  # BID093
+        return before_near >= 0 and after_near >= 0 and after_near < before_near  # BID093
 
     # 本函数于BID085引入
     def _select_panel_open(self, ctx: _InteractContext, state: Optional[dict] = None) -> bool:  # BID089
@@ -1893,13 +1937,13 @@ class BrowserController:
                 # ``anchored``），补点反而会把仍开着的面板 toggle 关掉——实测这正是
                 # 「面板 closed、返回却说已调整为展开」的来源。只有「浮层真的少了」
                 # 才说明面板被关掉，才值得补点；数不到（-1）时按 BID072 不破坏。
-                before_n = int(before.get("count", -1))  # BID090
-                after_n = int(after.get("count", -1))  # BID090
+                #
+                # BID093：闸门收口到 `_panel_closed_since`，与 `_wait_popup_opened`
+                # 同口径（全页总数 ∨ 贴本控件的候选面板数变少）。只认总数时，同一击
+                # 插入的无关浮层会把「变少」抵消，面板被清空动作关掉也不补点。
                 if (  # BID089 / BID090
                     not after.get("anchored")  # BID089
-                    and before_n >= 0  # BID090
-                    and after_n >= 0  # BID090
-                    and after_n < before_n  # BID090
+                    and self._panel_closed_since(before, after)  # BID090 / BID093
                 ):  # BID090
                     need_click = True  # BID089
             elif clicked:  # BID089
@@ -1908,12 +1952,11 @@ class BrowserController:
                 # 且只在「确实关掉了一个浮层」时发生，不是盲重试。
                 # 再来一次「面板其实开着」的直接证据闸门：盒子数可能被无关浮层的
                 # 出现/消失带偏，若控件旁仍贴着面板就绝不补点（补点会把它关掉）。
-                before_n = int(before.get("count", -1))  # BID089
-                after_n = int(after.get("count", -1))  # BID089
+                #
+                # BID093：同上，收口到 `_panel_closed_since`。这里正是「点击关掉面板 +
+                # 同一击插入无关浮层」的路径：总数不变会让旧闸门整个失效（CASE-E）。
                 if (  # BID089
-                    before_n >= 0  # BID089
-                    and after_n >= 0  # BID089
-                    and after_n < before_n  # BID089
+                    self._panel_closed_since(before, after)  # BID089 / BID093
                     and not after.get("anchored")  # BID089
                 ):  # BID089
                     need_click = True  # BID089

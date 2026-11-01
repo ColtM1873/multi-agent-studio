@@ -288,8 +288,14 @@ def panel_state_probe_expression() -> str:
         "var ho=overlap/Math.max(1,r.width);"  # BID089
         "var inter=!(p.bottom<r.top||p.top>r.bottom||p.right<r.left||p.left>r.right);"  # BID089
         "var below=p.top-r.bottom;var above=r.top-p.bottom;"  # BID089
-        "if(ho>=0.6&&(inter||(below>=-2&&below<=400)||(above>=-2&&above<=400))){"
-        "near++;anchored=true;}}}"  # BID089 / BID092
+        # BID093：``near`` 与 ``anchored`` 的门槛**不能共用**。``anchored`` 是「此刻是否
+        # 已展开」的最终断言，要求面板基本覆盖控件（重叠 ≥60% 控件宽）；``near`` 只用于
+        # 「数量变多/变少」的差分，门槛只需「水平有实质重叠」——宽控件配窄面板
+        # （600 vs 280，重叠 47%）时若沿用 60%，``near`` 整个看不见这个面板，BID092
+        # 的「候选面板变少」证据在最需要它的场景里失效（BID093 §1 CASE-F 真机复现）。
+        "var adjacent=inter||(below>=-2&&below<=400)||(above>=-2&&above<=400);"  # BID093
+        "if(overlap>=Math.min(r.width*0.6,120)&&adjacent)near++;"  # BID093
+        "if(ho>=0.6&&adjacent)anchored=true;}}"  # BID089 / BID093
         "return [out.length,anchored?1:0,out.length+'|'+out.sort().join(';'),near];"  # BID089 / BID092
         "}catch(e){return [0,0,'',-1];}}"  # BID089 / BID092
     )  # BID089
