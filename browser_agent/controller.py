@@ -1680,6 +1680,45 @@ class BrowserController:
             opened = True  # BID094
         return {"popup_missing": not opened, "panel_fixed": opened}  # BID094
 
+    # BID096：「疑似被自己关掉」的确认窗口。输入会触发筛选/远端取数，组件库常在
+    # 「先卸载候选面板 → 取结果 → 再挂回来」之间空出一段（React 列表重排、loading
+    # 占位、transition 首帧），真机实测补点的「判定 → 派发」本身就要 ~0.6s，中间态
+    # 常在这个量级。窗口必须覆盖它，否则确认形同虚设、仍会补点误关。
+    # 只在「疑似关闭」时才付这个代价（正常输入零额外开销）。
+    _PANEL_CLOSE_CONFIRM_SECONDS = 1.0  # BID096
+    _PANEL_CLOSE_CONFIRM_INTERVAL = 0.05  # BID096
+
+    # 本函数于BID096引入
+    def _confirm_panel_closed(
+        self, executor, backend_node_id: int, before: dict, after: dict
+    ) -> dict:
+        """给「面板疑似被自己关掉」一个短的有界确认窗口，再下结论。
+
+        为什么不能只看动作后的单帧快照：输入会触发筛选 / 远端取数，组件库常在
+        「先卸载候选面板 → 拿结果 → 再挂回来」之间空出一段（React 列表重排、
+        loading 占位、transition 首帧）。单帧快照这时看到的「面板不在」只是**中间
+        态**；若据此补点，那一击会按真实 toggle 语义把它**关掉**（BID096 §1
+        CASE-N 真机复现：输入后面板 0.8s 隐藏、随后自行恢复，旧实现却多点一次、
+        把面板永久关闭，还报「没有检测到面板打开」）。
+
+        BID089 对「变少」已经立过同样的规矩：变少只是候选，不能抢跑，先观察再下
+        结论。这里把同一条规矩用到「关闭」上：窗口内只要面板重新出现（锚定，或
+        贴着本控件的候选面板数不再比基线少），立刻返回当前状态，让调用方放弃补点。
+
+        返回窗口结束时（或提前恢复时）的 ``panel_state``。
+        """
+        current = after  # BID096
+        deadline = time.time() + self._PANEL_CLOSE_CONFIRM_SECONDS  # BID096
+        while time.time() < deadline:  # BID096
+            if current.get("anchored"):  # BID096
+                return current  # BID096
+            if not self._panel_closed_since(before, current):  # BID096
+                # 面板回来了：这不是我们关的，别补点。
+                return current  # BID096
+            time.sleep(self._PANEL_CLOSE_CONFIRM_INTERVAL)  # BID096
+            current = executor.panel_state(backend_node_id)  # BID096
+        return current  # BID096
+
     # 本函数于BID095引入
     def _input_with_panel_evidence(
         self, executor, session: str, node: EnhancedNode, input_fn
@@ -1694,8 +1733,15 @@ class BrowserController:
         只报告「已写入」，既不补点也不披露（BID095 §1 CASE-J/CASE-K 真机复现）。
 
         只在「动作前控件旁确实贴着一个候选面板」时才做动作后复验：普通文本框没有
-        候选面板，不会平白多出一次 0.6s 轮询；这条判据与 BID094 的 ``tail_popup``
+        候选面板，不会平白多出一次确认窗口；这条判据与 BID094 的 ``tail_popup``
         同构——只在按契约会有面板的地方付代价。
+
+        BID096：动作后**不能只凭一帧**就判定「面板被自己关掉了」。输入触发的筛选 /
+        重新取数会把面板短暂卸载再挂回（React 列表重排、loading 占位、transition
+        首帧），单帧快照看到的「不在」常常只是中间态；据此补点，那一击会按真实
+        toggle 语义把马上要恢复的面板**真正关掉**。BID089 对「变少」已经立过
+        「不抢跑」，这里对「关闭」走同一个有界确认窗口
+        （:meth:`_confirm_panel_closed`）。
 
         返回 ``(input_result, {"panel_missing": bool, "panel_fixed": bool})``：
         前者是 ``input_fn`` 的返回值（调用方仍要读它判断清空是否成功），后者语义与
@@ -1715,6 +1761,15 @@ class BrowserController:
         after = executor.panel_state(backend_node_id)  # BID095
         if after.get("anchored") or not self._panel_closed_since(before, after):  # BID095
             return result, evidence  # BID095
+        # BID096：这一帧只是「疑似关闭」。输入触发的重渲染/取数会把面板短暂卸载，
+        # 单帧快照分不清「被我们关掉」和「正在挂回来」；据此补点会把中间的动画面板
+        # 真正 toggle 关掉。先给一个有界确认窗口，再决定要不要补点。
+        after = self._confirm_panel_closed(  # BID096
+            executor, backend_node_id, before, after  # BID096
+        )  # BID096
+        if after.get("anchored") or not self._panel_closed_since(before, after):  # BID096
+            # 面板自己回来了：中间态而已，不是本次输入关的，不补点也不披露。
+            return result, evidence  # BID096
         if self._page_hidden(session):  # BID095
             # 页面不可见时几何/盒子数都不可信；BID072 的原则是「不可观测 ⇒ 不做可能
             # 把面板点关的破坏性重试」。补点本身就是一次点击，这里一律放弃。
