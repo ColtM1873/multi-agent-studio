@@ -2239,6 +2239,17 @@ class BrowserController:
           点击只聚焦）：补点闸门 ``_panel_closed_since`` 不触发、
           ``panel_unconfirmed`` 也不置位，于是没有任何披露。与 ``_run_click`` 的
           ``popup_missing`` 不对称——现在由 ``panel_ok`` 统一兜底。
+
+        BID108：上面两个出口都只在**空** ``fill`` 上。非空筛选词（tool_07 的主路径）
+        走的是 ``_input_with_panel_evidence``，而它只在**动作前控件旁已有候选面板**时
+        才复验；动作前没有面板时按「普通文本输入」直接早返回，`panel_ok` 的兜底又在
+        `if not fill:` 里，于是 `input_text` 的隐式点击没把面板打开时返回里零披露
+        （§1 CASE-BS 真机：clicks=1、panel=closed、action_ok=成功）。BID105 §5.1
+        第 4 条当时排除这条路径的理由（「普通文本框，加披露会误报」）只对 tool_02 /
+        tool_06 成立——它们的类别可以是普通 ``input``；tool_07 的目标类别**只有**
+        `searchable`，按契约输入前那一击就该打开候选面板。现在非空路径也留动作前基线，
+        在「动作前没有候选面板」时用同一组方向性证据（BID105/BID099 口径）判一次，
+        没有证据才报 ``popup_not_opened_notice``。
         """
         node = ctx.node
         executor = ctx.executor
@@ -2248,6 +2259,13 @@ class BrowserController:
         probe_open = False  # BID085
         input_evidence: dict = {}  # BID095
         if fill:
+            # BID108：非空筛选词路径也要留一份**动作前**的实测基线。`_input_with_panel_evidence`
+            # 只在「控件旁本来就有候选面板」（`anchored` 或 `near>0`）时才复验，动作前
+            # 没有面板时它按「普通文本输入」直接早返回（零额外开销，BID095）；可
+            # `_run_searchable` 的 `panel_ok` 兜底全在 `if not fill:` 里，于是 tool_07
+            # 打完筛选词、面板可观测地没打开时返回里一个字都没有（§1 CASE-BS）。
+            # 基线取在滚动/点击之前，与空串分支同点（BID089）。
+            before = executor.panel_state(node.backend_node_id)  # BID108
             # BID095：``input_text`` 内部第一步就是点击目标。控件若已展开，这一击是
             # toggle 的反向操作——先把面板关掉，再往里打字。BID085 只在「空串筛出
             # 完整候选」分支躲开了它，非空筛选词路径完全没有面板证据：面板被自己
@@ -2397,6 +2415,37 @@ class BrowserController:
         # the moment the panel opens — see ``_range_entry_notice`` for why the two
         # shapes must not share one wording.
         fill_notice = _range_entry_notice(node, ctx.name)
+        if fill:  # BID108
+            # 非空筛选词路径的「面板开着」结论。BID105 的 `panel_ok` 兜底只在空串
+            # 分支计算，而 `fill` 非空时 `_input_with_panel_evidence` 只在**动作前
+            # 控件旁已有候选面板**时才复验；动作前没有候选面板时它直接早返回，
+            # `if not fill:` 整块又被跳过，于是「按契约输入前那一击就该打开候选面板」
+            # 的 tool_07 点完面板没开、返回里零披露：模型读到的是「（筛选词：成都，
+            # 尚未点选候选）」——像是候选已经列在下面，只是还没点（§1 CASE-BS 真机：
+            # clicks=1、panel=closed、action_ok=成功、body 里没有任何面板结论）。
+            # tool_07 的目标类别只有 `searchable`（`interact_searchable_fill_in` 的
+            # allowed），「输入前的点击应当打开候选面板」无条件成立，所以这里不必再判
+            # 「是不是下拉」——这正是本轮与 BID105 §5.1 第 4 条的分界：那条理由
+            # （「普通文本框，加披露会误报」）只对 tool_02/tool_06 成立，它们共用
+            # `_input_with_panel_evidence` 但**不经过** `_run_searchable`。
+            # 判据与空串分支逐条同构（BID105 的三条方向性证据，含 BID099 的
+            # 「从无到有」口径）：只在「动作前没有候选面板」时接手——那种情形下
+            # `_input_with_panel_evidence` 必然没有自己的结论，不会重复披露；
+            # 动作前已有面板的情形照旧由 `input_notice`（BID095/BID106）负责。
+            final_state = executor.panel_state(node.backend_node_id)  # BID108
+            if (  # BID108
+                int(before.get("count", -1)) >= 0  # BID108
+                and not before.get("anchored")  # BID108
+                and int(before.get("near", -1)) <= 0  # BID108
+                and not input_evidence.get("panel_missing")  # BID108
+                and not input_evidence.get("panel_fixed")  # BID108
+                and not self._panel_opened_since(before, final_state)  # BID108
+            ):  # BID108
+                fill_notice = "\n".join(  # BID108
+                    p  # BID108
+                    for p in (rp.popup_not_opened_notice(ctx.name), fill_notice)  # BID108
+                    if p  # BID108
+                )  # BID108
         if already_open and not panel_unconfirmed:  # BID085 / BID090
             # 面板本来就是展开的：本轮没有可观察变化，必须说明，否则模型会把
             # 「（页面无变化）」读成「没打开」而重复调用。
