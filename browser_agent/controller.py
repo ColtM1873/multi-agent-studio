@@ -2220,6 +2220,13 @@ class BrowserController:
         与 BID096 同一原则：先过 :meth:`_confirm_panel_closed` 的有界确认窗口，
         确认「关掉」了再补点。
 
+        BID107：``panel_unconfirmed``（补点也没打开）同样不是「动作前面板不存在」。
+        这一支是 BID089 留下的否定出口，BID106 只补了同一入口里 BID105 新增的
+        ``elif not panel_ok and not already_open`` 那条分支。动作前 ``before.anchored``
+        已为真、首点把面板关掉、补点又救不回来时（受控展开的组件：焦点已在这一侧就
+        不再 toggle），返回里只报「没有检测到面板打开」，模型于是以为面板从头到尾都是
+        关的。现在把「动作前就贴着候选面板盒子」的条件句一并追加（§1 CASE-BK/BL）。
+
         BID105：空 ``fill`` 还有**两个**出口会在没有任何「面板开着」证据时静默
         返回「（页面无变化）」，模型只能反复调本工具：
 
@@ -2421,9 +2428,24 @@ class BrowserController:
         if panel_unconfirmed:  # BID089
             # 补点后仍没有任何「面板已展开」的证据：不能沿用「已调整为展开」的
             # 说法，按 BID060 的口径如实说「没有检测到面板打开」。
+            # BID107：`panel_unconfirmed` 只说明「补点也没把它打开」，不说明**动作前**
+            # 它不存在。这一支是 BID089 留下的否定出口，BID106 只补了同一入口里
+            # BID105 新增的 `elif not panel_ok` 那条分支。首点把本已展开的面板关掉、
+            # 补点又救不回来时（受控展开的组件：点击只改控件状态，焦点已在这一侧就
+            # 不再 toggle），`before.anchored` 为真而 `after`/`fixed_after` 都为假，
+            # 模型于是读到「面板关着」、以为从未打开过，只会重复点同一个不 toggle
+            # 的元素（§1 CASE-BK/BL 真机：clicks=2、panel=closed、只有这一句）。
+            # 与 BID090 不冲突：补充句说的是「动作前曾贴着候选盒子」的条件句，不是
+            # 「此刻已经是展开状态」的断言——后者才是 BID090 禁止的互相否定。
+            notice = rp.popup_not_opened_notice(ctx.name)  # BID107
+            if before.get("anchored"):  # BID107
+                notice = "\n".join(  # BID107
+                    p  # BID107
+                    for p in (notice, rp.panel_preopened_notice(ctx.name)) if p  # BID107
+                )  # BID107
             fill_notice = "\n".join(  # BID089
                 p  # BID089
-                for p in (rp.popup_not_opened_notice(ctx.name), fill_notice)  # BID089
+                for p in (notice, fill_notice)  # BID107
                 if p  # BID089
             )  # BID089
         elif panel_fixed:  # BID089
