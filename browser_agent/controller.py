@@ -1519,6 +1519,14 @@ class BrowserController:
                     opened = self._wait_popup_opened(  # BID067
                         executor, session, panels_closed  # BID089
                     )  # BID067
+                    if not opened:  # BID090
+                        # BID090：补点后与首点后要**对称**地做同一道兜底。补点的
+                        # 「成功」同样只来自间接的浮层差分：差分探针不可观测时它
+                        # 必然返回 False，于是面板明明被补点打开了也照样报「没有
+                        # 检测到面板打开」（实测可复现）。控件旁若贴着面板，那就是
+                        # 最直接的反证。
+                        if executor.panel_state(node.backend_node_id).get("anchored"):  # BID090
+                            opened = True  # BID090
                 if not opened:
                     popup_missing = True
                 click_noop = False
@@ -1805,7 +1813,21 @@ class BrowserController:
                 # 假阳性校正：动作前判「已展开」所以没点，但动作后控件旁边并没有任何
                 # 贴着的浮层（原来的 overlay 是别的常驻弹窗，或页面自己把面板收了）。
                 # 这时**必须**补点一次——这就是旧实现「无条件点一次」在兜底的那一步。
-                if not after.get("anchored"):  # BID089
+                #
+                # BID090：本轮**没有点击过任何东西**（只清了筛选词/聚焦），面板不会
+                # 因为这两个动作自己消失。此时若浮层盒子数一点没少，``anchored=False``
+                # 更可能是探测误差（BID089 §5.10：static 布局、宽度 <40 的面板都测不出
+                # ``anchored``），补点反而会把仍开着的面板 toggle 关掉——实测这正是
+                # 「面板 closed、返回却说已调整为展开」的来源。只有「浮层真的少了」
+                # 才说明面板被关掉，才值得补点；数不到（-1）时按 BID072 不破坏。
+                before_n = int(before.get("count", -1))  # BID090
+                after_n = int(after.get("count", -1))  # BID090
+                if (  # BID089 / BID090
+                    not after.get("anchored")  # BID089
+                    and before_n >= 0  # BID090
+                    and after_n >= 0  # BID090
+                    and after_n < before_n  # BID090
+                ):  # BID090
                     need_click = True  # BID089
             elif clicked:  # BID089
                 # 假阴性校正：点前有浮层、点后反而变少 ⇒ 这一击把原本已展开的面板
@@ -1831,13 +1853,19 @@ class BrowserController:
                 executor.click(node.backend_node_id)  # BID089
                 self._stabilize(ctx.target_id)  # BID089
                 self._wait_overlay_open(ctx.session)  # BID089
-                # 补点后必须**复验**：只有确实出现了「贴着控件的浮层」或「浮层集合
-                # 发生了变化」才敢说「已调整为展开」。否则补点本身失败（该元素不是
+                # 补点后必须**复验**：只有确实出现了「贴着控件的浮层」或「浮层盒子
+                # 变多」才敢说「已调整为展开」。否则补点本身失败（该元素不是
                 # toggle/点击无效）时会谎报成功，模型拿着「已展开」去点候选、却点空
                 # （BID060 的诚实披露原则：没验证到就不能断言）。
+                #
+                # BID090：不能用「指纹变化」判成功——补点把面板**关掉**时指纹同样
+                # 变化，那会把一次反向操作当成「已调整为展开」（实测：返回说已展开、
+                # 面板实为 closed）。只认有方向的证据：锚定面板出现，或盒子数变多。
                 fixed_after = executor.panel_state(node.backend_node_id)  # BID089
-                confirmed = bool(fixed_after.get("anchored")) or (  # BID089
-                    fixed_after.get("fingerprint") != after.get("fingerprint")  # BID089
+                fixed_n = int(fixed_after.get("count", -1))  # BID090
+                prev_n = int(after.get("count", -1))  # BID090
+                confirmed = bool(fixed_after.get("anchored")) or (  # BID089 / BID090
+                    fixed_n >= 0 and prev_n >= 0 and fixed_n > prev_n  # BID090
                 )  # BID089
                 if confirmed:  # BID089
                     panel_fixed = True  # BID089
@@ -1848,9 +1876,11 @@ class BrowserController:
         # the moment the panel opens — see ``_range_entry_notice`` for why the two
         # shapes must not share one wording.
         fill_notice = _range_entry_notice(node, ctx.name)
-        if already_open:  # BID085
+        if already_open and not panel_unconfirmed:  # BID085 / BID090
             # 面板本来就是展开的：本轮没有可观察变化，必须说明，否则模型会把
             # 「（页面无变化）」读成「没打开」而重复调用。
+            # BID090：补点后仍未确认时**不能**再说「已经是展开状态」——两句话
+            # 互相否定（实测：「没有检测到面板打开」+「候选面板已经是展开状态」）。
             fill_notice = rp.dropdown_already_open_notice(ctx.name)  # BID085
         if panel_unconfirmed:  # BID089
             # 补点后仍没有任何「面板已展开」的证据：不能沿用「已调整为展开」的

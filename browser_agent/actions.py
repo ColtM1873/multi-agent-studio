@@ -198,7 +198,10 @@ def panel_state_probe_expression() -> str:
     ``this`` 是被测控件，返回值 ``[数量, 是否紧贴(0/1), 指纹]``：
 
     * 数量/指纹沿用 :data:`_FLOATING_BOX_JS`（出文档流 + 可见 + 有尺寸 + 在视口，
-      不看 class 名），与 :func:`floating_panel_probe_expression` 同口径；
+      不看 class 名）；但它**排除自身与「包含控件的祖先盒子」**，因此与
+      :func:`floating_panel_probe_expression` 的计数不是同一口径，二者不可直接比较
+      （BID090 澄清：拿 ``panel_state.count`` 去和浮层指纹里的数量比，会凭空产生
+      「变少/变多」的假差分）；
     * 「紧贴」= 存在一个**不是自身、也不包含自身**的浮层盒子，水平覆盖控件宽度 ≥60%，
       且与控件相交 / 紧贴其上方或下方（≤400px），**并且它本身像面板**
       （:data:`_FLOATING_PANEL_JS`：overlay role 或 ≥2 行候选/列表项）——只看几何会把
@@ -615,6 +618,10 @@ class ActionExecutor:
         自绘面板常挂本工具不认识的 class（BID067/068），只看清单会把「已展开」判成
         「没展开」，于是补点一次把面板 toggle 关掉。``count`` 取不到时为 ``-1``
         （= 无法观测），调用方必须把它与「0 个浮层」区分开。
+
+        ``count`` 的口径（BID090 澄清）：它是「排除自身与包含控件的祖先盒子之后」的
+        浮层盒子数，用于与本控件自身的状态做**同一口径**的前后对比；不要拿它去和
+        :meth:`floating_panel_fingerprint` 的首段数量比较（后者不排除祖先容器）。
         """
         empty = {"count": -1, "anchored": False, "fingerprint": ""}  # BID089
         object_id = self._resolve(backend_node_id)  # BID089
