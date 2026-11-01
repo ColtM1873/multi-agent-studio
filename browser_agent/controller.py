@@ -2317,9 +2317,26 @@ class BrowserController:
             # 互相否定（实测：「没有检测到面板打开」+「候选面板已经是展开状态」）。
             # BID095：与「范围控件怎么提交」的说明是两条独立信息，用追加而不是覆盖
             # ——旧写法会把 `_range_entry_notice` 整句抹掉。
+            # BID103：本轮**一次都没点**（BID085 的 toggle 保护），「已展开」只来自
+            # 动作前的单一快照。动作前后若**完全无差分**，我们连「面板响应过」都没
+            # 看到——常驻的「候选形态」盒子会让 probe_open 假阳性，真面板其实一直
+            # 没开（BID103 §1 CASE-AR 真机：clicks=0、panel=closed、返回却让模型
+            # 去下方找候选项）。此时不能承诺「候选项见下方返回内容」，换成条件句
+            # + 出路；`already_open` 蕴含 `not fill`，所以 `after` 一定已赋值。
+            unchanged = (  # BID103
+                before.get("count") == after.get("count")  # BID103
+                and before.get("near") == after.get("near")  # BID103
+                and bool(before.get("anchored")) == bool(after.get("anchored"))  # BID103
+                and before.get("fingerprint") == after.get("fingerprint")  # BID103
+            )  # BID103
             fill_notice = "\n".join(  # BID095
                 p  # BID095
-                for p in (rp.dropdown_already_open_notice(ctx.name), fill_notice)  # BID095
+                for p in (  # BID095 / BID103
+                    rp.dropdown_already_open_notice(  # BID095 / BID103
+                        ctx.name, unchanged=unchanged  # BID103
+                    ),  # BID103
+                    fill_notice,  # BID095
+                )  # BID095
                 if p  # BID095
             )  # BID095
         if panel_unconfirmed:  # BID089
