@@ -1484,7 +1484,14 @@ class BrowserController:
             with self._watch_navigation(session) as nav_state:
                 executor.click(node.backend_node_id)
                 self._settle_navigation(session, nav_state, click_may_nav)
-            if inside_overlay:
+            # BID094：``inside_overlay`` 只该回答「要不要 blur/park」（BID067 的原始
+            # 用途），不能顺带否决整条面板证据链。模态框（role=dialog 满足
+            # ``_FLOATING_PANEL_JS``）里的下拉控件同样被算作「在浮层内」，旧写法让它
+            # 直接落到这一支：不轮询、不补点、也不披露，首点没打开就静默返回成功
+            # （BID094 §1 CASE-I 真机复现）。目标本身是触发器（aria-haspopup/combobox
+            # 或 clickdropdown 类别）时，点击语义就是「打开它的候选面板」，与它外层
+            # 是否还套着一个模态框无关，因此仍走下面的面板校验。
+            if inside_overlay and not popup_trigger:  # BID094
                 # Clicked inside an already-open popup: a popup interaction is
                 # itself proof the click was real.
                 click_noop = False
@@ -1609,6 +1616,61 @@ class BrowserController:
             "before_sig": before_sig,
             "after_sig": after_sig,
         }
+
+    # 本函数于BID094引入
+    def _click_with_popup_evidence(
+        self, executor, session: str, node: EnhancedNode
+    ) -> dict:
+        """点击「按契约会展开面板」的元素，并用 ``_run_click`` 同一套证据收尾。
+
+        为什么需要它：``interact_many``（tool_06）的收尾点击一直是裸
+        ``executor.click``，完全没有接入 BID067 之后的任何面板证据——不轮询
+        ``_wait_popup_opened``、不做 ``_panel_opened_since`` 兜底、不补点，也不给
+        ``popup_missing`` 的诚实披露。于是整条 BID089–BID093 修好的东西在批量入口上
+        一个都不生效：收尾点的是已展开的 toggle 下拉时把它关掉仍报「成功」，首点因
+        入场竞态没打开同样报「成功」（BID094 §1 CASE-H 真机复现）。
+
+        返回 ``{"popup_missing": bool, "panel_fixed": bool}``，语义与 ``_run_click``
+        的同名键一致：前者表示「契约上应有的面板没出现」，后者表示「首点没打开/把它
+        关掉了，补点一次之后确认打开」。判据全部复用既有函数，这里不另立一套。
+        """
+        backend_node_id = node.backend_node_id  # BID094
+        try:  # BID094
+            # 与 _run_click 同点取基线：指纹是视口坐标拼的，先滚到位再取（BID068）。
+            executor.scroll_into_view(backend_node_id)  # BID094
+        except Exception:  # noqa: BLE001  # BID094
+            pass  # BID094
+        panels_before = executor.floating_panel_fingerprint()  # BID094
+        panel_before = executor.panel_state(backend_node_id)  # BID094
+        overlay_before = self._overlay_open(session)  # BID094
+        executor.click(backend_node_id)  # BID094
+        opened = self._wait_popup_opened(  # BID094
+            executor, session, panels_before, overlay_before,  # BID094
+            panel_before=panel_before,  # BID094
+            backend_node_id=backend_node_id,  # BID094
+        )  # BID094
+        if not opened and self._panel_opened_since(  # BID094
+            panel_before, executor.panel_state(backend_node_id)  # BID094
+        ):  # BID094
+            opened = True  # BID094
+        if opened:  # BID094
+            return {"popup_missing": False, "panel_fixed": False}  # BID094
+        # 与 _run_click 对称：补点的基线**重新取**（首点可能反向操作过），补点后仍要
+        # 有方向的证据才认成功——BID089/BID090/BID091 的结论原样复用，不另立判据。
+        panels_closed = executor.floating_panel_fingerprint()  # BID094
+        overlay_closed = self._overlay_open(session)  # BID094
+        panel_closed = executor.panel_state(backend_node_id)  # BID094
+        executor.click(backend_node_id)  # BID094
+        opened = self._wait_popup_opened(  # BID094
+            executor, session, panels_closed, overlay_closed,  # BID094
+            panel_before=panel_closed,  # BID094
+            backend_node_id=backend_node_id,  # BID094
+        )  # BID094
+        if not opened and self._panel_opened_since(  # BID094
+            panel_closed, executor.panel_state(backend_node_id)  # BID094
+        ):  # BID094
+            opened = True  # BID094
+        return {"popup_missing": not opened, "panel_fixed": opened}  # BID094
 
     def _run_fill(
         self, ctx: _InteractContext, fill: str, press_enter: bool = False
@@ -2472,6 +2534,7 @@ class BrowserController:
             fill_nodes[name] = node
             plan.append((name, cat, node.backend_node_id))
         click_may_nav = False
+        tail_node: Optional[EnhancedNode] = None  # BID094
         if has_click:
             node, err = self._resolve_interactive_node(registry, tree, click_name)
             if err:
@@ -2489,6 +2552,7 @@ class BrowserController:
             if click_may_nav and _href_targets_same_document(node, tree.url):
                 click_may_nav = False
             plan.append((click_name, "click", node.backend_node_id))
+            tail_node = node  # BID094
 
         # ---- serial execution ----
         old_focus = self.focused_target_id
@@ -2502,6 +2566,19 @@ class BrowserController:
             return self._base_result(INCREMENTAL, FAIL, rp.EMPTY_CONTENT, str(exc), include_tabs=False)
 
         executor = ActionExecutor(self.client, session)
+        # BID094：收尾点击若是「按契约打开面板」的元素（clickdropdown / aria-haspopup /
+        # role=combobox），就走与 `_run_click` 相同的证据链；普通按钮点击保持原样，
+        # 不给它加一次 0.6s 轮询与补点。
+        tail_popup = bool(  # BID094
+            has_click  # BID094
+            and tail_node is not None  # BID094
+            and (  # BID094
+                classify(tail_node) == "clickdropdown"  # BID094
+                or executor.is_popup_trigger(tail_node.backend_node_id)  # BID094
+            )  # BID094
+        )  # BID094
+        tail_popup_missing = False  # BID094
+        tail_panel_fixed = False  # BID094
         base_tree = tree  # BID078
         base_lines = self.serialize_lines_tree(tree, target_id)  # BID078
         initial_lines = base_lines  # BID078
@@ -2543,6 +2620,7 @@ class BrowserController:
 
         def _run_plan() -> None:
             nonlocal success_count, error_msg
+            nonlocal tail_popup_missing, tail_panel_fixed  # BID094
             for index, (_name, category, backend_node_id) in enumerate(plan):
                 try:
                     _rebuild_baseline(backend_node_id)  # BID078
@@ -2559,6 +2637,15 @@ class BrowserController:
                         executor.input_text(backend_node_id, fills[index])
                     elif category == "select":
                         executor.select_option(backend_node_id, fills[index])
+                    elif index == len(plan) - 1 and tail_popup:  # BID094
+                        # 收尾点击：与 `_run_click` 同一套面板证据 + 一次有界补点。
+                        # 裸点击会让整条 BID067/BID089–BID093 的结论在批量入口失效
+                        # （BID094 §1 CASE-H：点关已展开的 toggle 面板仍报成功）。
+                        evidence = self._click_with_popup_evidence(  # BID094
+                            executor, session, tail_node  # BID094
+                        )  # BID094
+                        tail_popup_missing = bool(evidence.get("popup_missing"))  # BID094
+                        tail_panel_fixed = bool(evidence.get("panel_fixed"))  # BID094
                     else:
                         executor.click(backend_node_id)
                     if category in ("input", "select"):  # BID078
@@ -2707,6 +2794,16 @@ class BrowserController:
             mode = INCREMENTAL
 
         include_tabs = focus_changed or bool(opened_names)
+        # BID094：收尾点击的面板复验结果必须披露——否则模型会把「动作执行了」当成
+        # 「面板打开了」。与 `_run_click` 的 `popup_missing`、`_run_searchable` 的
+        # `panel_unconfirmed`/`panel_fixed` 用同一组文案，不另立说法。
+        tail_notice = ""  # BID094
+        if tail_popup_missing:  # BID094
+            tail_notice = rp.popup_not_opened_notice(click_name or "")  # BID094
+        elif tail_panel_fixed:  # BID094
+            tail_notice = rp.select_panel_reopened_notice(click_name or "")  # BID094
+        if tail_notice:  # BID094
+            content = tail_notice + "\n\n" + content  # BID094
         if error_msg:
             action_ok = PARTIAL_FAIL if success_count > 0 else FAIL
             return self._base_result(
