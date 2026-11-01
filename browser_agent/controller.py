@@ -1495,7 +1495,9 @@ class BrowserController:
                 # fingerprint change that catches a custom-class panel our probe
                 # does not know (BID067).
                 opened = self._wait_popup_opened(  # BID067
-                    executor, session, panels_before, overlay_before  # BID091
+                    executor, session, panels_before, overlay_before,  # BID091
+                    panel_before=panel_before,  # BID092
+                    backend_node_id=node.backend_node_id,  # BID092
                 )  # BID067
                 if not opened:  # BID089
                     # 「没打开」这个否定结论只来自间接的浮层盒子差分。控件旁边若**新出现**
@@ -1534,7 +1536,9 @@ class BrowserController:
                         executor.click(node.backend_node_id)
                         self._settle_navigation(session, retry_nav, click_may_nav)
                     opened = self._wait_popup_opened(  # BID067
-                        executor, session, panels_closed, overlay_closed  # BID089 / BID091
+                        executor, session, panels_closed, overlay_closed,  # BID089 / BID091
+                        panel_before=panel_closed,  # BID092
+                        backend_node_id=node.backend_node_id,  # BID092
                     )  # BID067
                     if not opened:  # BID090
                         # BID090：补点后与首点后要**对称**地做同一道兜底。补点的
@@ -1747,10 +1751,13 @@ class BrowserController:
         正确判出的「没打开」会被这道兜底翻回「已打开」，补点被跳过 —— 面板关着、
         没有候选，工具却报告成功（BID091 §1 真机复现）。
 
-        只认两条有方向的证据：
+        只认三条有方向的证据：
         * 锚定面板**从无到有**（``before.anchored`` 假、``after.anchored`` 真）；
         * 同口径浮层盒子数**变多**（``count`` 增加）——锚定基线本就为真的常驻场景下，
-          新面板会让计数比基线多。
+          新面板会让计数比基线多；
+        * 贴着本控件的候选面板个数**变多**（``near`` 增加，BID092）——``count`` 会被
+          同一击插入的无关浮层（保存提示/loading 遮罩）带偏（面板少一个、提示多一个，
+          总数不变或变多），``near`` 只数本控件旁边的候选面板，不受其影响。
 
         取不到数（``count == -1``）、锚定基线本来就真且计数没增加时一律返回 False：
         宁可少一次「已打开」的断言，也不要把反向操作说成成功（BID060/BID090）。
@@ -1762,6 +1769,14 @@ class BrowserController:
         after_n = int(after.get("count", -1))  # BID091
         if before_n >= 0 and after_n >= 0 and after_n > before_n:  # BID091
             return True  # BID091
+        # BID092：``count`` 会被无关浮层抵消，``near`` 不会（见 ``_wait_popup_opened``）。
+        try:  # BID092
+            before_near = int(before.get("near", -1))  # BID092
+            after_near = int(after.get("near", -1))  # BID092
+        except (TypeError, ValueError):  # BID092
+            before_near = after_near = -1  # BID092
+        if before_near >= 0 and after_near >= 0 and after_near > before_near:  # BID092
+            return True  # BID092
         return bool(after.get("anchored")) and not bool(before.get("anchored"))  # BID091
 
     # 本函数于BID085引入
@@ -1773,11 +1788,18 @@ class BrowserController:
         刚展开的面板关掉、返回里一个候选都没有（Moka 实测）。
 
         BID089 起判据换成**结构 + 几何**证据（``ActionExecutor.panel_state``）：
-        控件有焦点，且**紧贴它**有一个可见浮层盒子（水平覆盖控件 ≥60%，紧贴其上方/
+        控件有焦点，且**紧贴它**有一个可见**候选面板**（水平覆盖控件 ≥60%，紧贴其上方/
         下方或与它相交）。原先只用 ``_overlay_open``（class 清单）有两个方向的误差：
         自定义 class 面板块完全不在清单里（假阴性 → 补点把面板关掉），而页面里任何
         常驻弹窗/提示层又可能让清单恒真（假阳性 → 跳过点击，面板永远打不开）。
         ``_run_searchable`` 在动作后还会用实测的浮层盒子数再校正一次，这里只是「先验」。
+
+        BID092：「像面板」进一步收窄到「**候选**面板」（``_CANDIDATE_PANEL_JS``：只认
+        listbox/menu/tree/grid role 或 ≥2 行候选，不认 tooltip/dialog/alertdialog）。
+        字段下方一条常驻的 ``role=tooltip`` 校验提示紧贴、水平覆盖，同样满足几何判据，
+        沿用旧的「overlay role」判据会让这里恒真 → 一次都不点、面板永远打不开
+        （BID092 §1 CASE-D 真机复现）。这不是放宽/推翻 BID089 的意图：BID089 要的
+        本来就是「候选面板」，只是当时把 tooltip 也算进了「面板形态」。
         """
         try:  # BID085
             if not ctx.executor.is_focused(ctx.node.backend_node_id):  # BID085
@@ -1819,7 +1841,7 @@ class BrowserController:
         executor = ctx.executor
         already_open = False  # BID085
         clicked = False  # BID089
-        before = {"count": -1, "anchored": False, "fingerprint": ""}  # BID089
+        before = {"count": -1, "anchored": False, "fingerprint": "", "near": -1}  # BID089 / BID092
         probe_open = False  # BID085
         if fill:
             executor.input_text(node.backend_node_id, fill)
@@ -2793,6 +2815,8 @@ class BrowserController:
         session: str,
         panels_before: str,
         overlay_before: Optional[bool] = None,  # BID091
+        panel_before: Optional[dict] = None,  # BID092
+        backend_node_id: Optional[int] = None,  # BID092
         timeout: float = 0.6,
     ) -> bool:  # BID067
         """触发器点击后，有界轮询「弹层是否打开」——双证据，覆盖自定义 class。
@@ -2830,29 +2854,65 @@ class BrowserController:
         ``overlay_before=True`` 时跳过它，只用差分/几何证据。若此时差分本身也不可
         观测（``panels_before`` 为空），超时后按 BID072「不可观测 ⇒ 不下否定结论」
         保守返回 True，不做可能把面板点关的补点。
+
+        BID092：把「这一击关掉了面板」的判据从「全页浮层盒子总数变少」换成
+        **「贴着该控件的候选面板个数（``panel_state.near``）变少」**。总数会被同一击
+        插入的无关浮层（保存提示/loading 遮罩）抵消：面板少了、提示层多了，「先减一
+        再加一」看不出变少，而指纹确实变了 ⇒ 直接 return True ⇒ 报「已打开」、
+        不补点 ⇒ 面板关着、没有候选（BID092 §1 CASE-C 真机复现）。``near`` 只数
+        贴着本控件、且有候选语义的盒子，无关浮层进不来；它同时要求 ``panels_before``
+        那一路的差分照旧，两者任一发现「变少」都判「没打开」。
         """
         deadline = time.time() + timeout  # BID067
         before_boxes = self._panel_box_count(panels_before)  # BID089
         decreased = False  # BID089
         overlay_sticky = bool(overlay_before)  # BID091
+        before_near = -1  # BID092
+        if isinstance(panel_before, dict):  # BID092
+            try:  # BID092
+                before_near = int(panel_before.get("near", -1))  # BID092
+            except (TypeError, ValueError):  # BID092
+                before_near = -1  # BID092
+        near_decreased = False  # BID092
+        near_opened = False  # BID092
         while True:  # BID067
             if not overlay_sticky and self._overlay_open(session):  # BID067 / BID091
                 return True  # BID067
             fingerprint = executor.floating_panel_fingerprint()  # BID089
             after_boxes = self._panel_box_count(fingerprint)  # BID089
+            if before_near >= 0 and backend_node_id is not None:  # BID092
+                current = executor.panel_state(backend_node_id)  # BID092
+                try:  # BID092
+                    after_near = int(current.get("near", -1))  # BID092
+                except (TypeError, ValueError):  # BID092
+                    after_near = -1  # BID092
+                if after_near >= 0:  # BID092
+                    near_decreased = after_near < before_near  # BID092
+                    near_opened = after_near > before_near  # BID092
+                else:  # BID092
+                    near_decreased = False  # BID092
+                    near_opened = False  # BID092
             if before_boxes >= 0 and after_boxes >= 0 and after_boxes < before_boxes:  # BID089
                 decreased = True  # BID089
             else:  # BID089
                 # 盒子数已回到基线（或无法比较）：不再算「变少」，否则「面板短暂消失
                 # 又完全恢复原样」会在超时被判成没打开，随后补点把它关掉（BID089）。
                 decreased = False  # BID089
-                if panels_before and fingerprint != panels_before:  # BID067 / BID089
+                if (  # BID067 / BID089
+                    panels_before  # BID067
+                    and fingerprint != panels_before  # BID067
+                    and not near_decreased  # BID092
+                ):  # BID092
                     return True  # BID067
             if time.time() >= deadline:  # BID067
-                # 见过「变少」⇒ 这一击关掉了浮层（toggle 反向）；否则交给 BID072 的
+                # 见过「变少」⇒ 这一击关掉了面板（toggle 反向）；否则交给 BID072 的
                 # 「不可观测 ⇒ 不下否定结论」兜底（BID089）。
-                if decreased:  # BID089
+                if decreased or near_decreased:  # BID089 / BID092
                     return False  # BID089
+                if near_opened:  # BID092
+                    # 贴着本控件的候选面板比点击前多了：这是「新出现」的直接证据，
+                    # 指纹不可观测（``panels_before`` 为空）时也能用。
+                    return True  # BID092
                 if overlay_sticky and not panels_before:  # BID091
                     # 页面本来就有可见浮层、差分又探测不到：既没有「新出现」的证据，
                     # 也无法证明「没打开」。保守按已打开处理，避免补点误关（BID072）。

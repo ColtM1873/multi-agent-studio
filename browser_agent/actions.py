@@ -111,6 +111,40 @@ _FLOATING_PANEL_JS = (  # BID067
     "return true;}catch(e){return false;}}"  # BID067
 )
 
+# 本常量于BID092引入
+# 「候选面板」判据：与 _FLOATING_PANEL_JS 的区别只有 overlayRole 一项——只认
+# listbox/menu/tree/grid 这几种**装候选项**的语义，**不认** tooltip/dialog/
+# alertdialog。理由：`panel_state.anchored` 的用途是「这个控件旁是不是贴着它已展开
+# 的候选面板」（BID089/BID090），而校验提示（role=tooltip）、遮罩/弹窗
+# （dialog/alertdialog）紧贴字段时同样满足「出文档流 + 可见 + 有尺寸 + 水平覆盖」，
+# 于是被当成「已展开」→ tool_08 一次都不点、面板永远打不开（BID092 真机复现：
+# 字段下方一条常驻校验提示就足以喂死循环）。`_FLOATING_PANEL_JS` 保持原样：
+# 它另有用途（`element_inside_overlay` 判「点击是否落在浮层内」，tooltip/dialog
+# 里的点击同样不该被 blur 打断，BID067），二者语义不同，不能合并。
+# 候选行选择器与 _FLOATING_PANEL_JS 逐字一致（含 BID068 的跨库类名族）。
+_CANDIDATE_PANEL_JS = (  # BID092
+    "function(el){try{"  # BID092
+    "var cs=getComputedStyle(el);"  # BID092
+    "var pos=cs.position;"  # BID092
+    "if(pos!=='absolute'&&pos!=='fixed') return false;"  # BID092
+    "if(cs.display==='none'||cs.visibility==='hidden') return false;"  # BID092
+    "if(!document.hidden){"  # BID092
+    "if(parseFloat(cs.opacity||'1')<=0.01) return false;"  # BID092
+    "var r=el.getBoundingClientRect();"  # BID092
+    "if(r.width<40||r.height<24) return false;"  # BID092
+    "if(r.bottom<=0||r.top>=innerHeight||r.right<=0||r.left>=innerWidth) return false;"  # BID092
+    "}"  # BID092
+    "var role=(el.getAttribute('role')||'').toLowerCase();"  # BID092
+    "var candidateRole=(role==='listbox'||role==='menu'||role==='tree'"  # BID092
+    "||role==='grid');"  # BID092
+    "var rows=el.querySelectorAll('li,[role=\"option\"],[role=\"menuitem\"],"  # BID092
+    "[role=\"treeitem\"],[role=\"row\"],[role=\"gridcell\"],td,"  # BID092
+    "[class*=\"list-item\"],[class*=\"listitem\"],[class*=\"option\"],"  # BID092
+    "[class*=\"candidate\"],[class*=\"choice\"],[class*=\"node\"]');"  # BID092
+    "if(!candidateRole&&rows.length<2) return false;"  # BID092
+    "return true;}catch(e){return false;}}"  # BID092
+)  # BID092
+
 # 本常量于BID068引入
 # 结构性「浮层盒子」判据：只要求「出文档流(absolute/fixed) + 可见 + 有尺寸 + 与视口相交」，
 # **不要求能识别出候选行**。它只用于「点击前/后浮层集合差分」：
@@ -203,9 +237,11 @@ def panel_state_probe_expression() -> str:
       （BID090 澄清：拿 ``panel_state.count`` 去和浮层指纹里的数量比，会凭空产生
       「变少/变多」的假差分）；
     * 「紧贴」= 存在一个**不是自身、也不包含自身**的浮层盒子，水平覆盖控件宽度 ≥60%，
-      且与控件相交 / 紧贴其上方或下方（≤400px），**并且它本身像面板**
-      （:data:`_FLOATING_PANEL_JS`：overlay role 或 ≥2 行候选/列表项）——只看几何会把
-      贴着字段渲染的校验提示/悬浮提示也算进去。
+      且与控件相交 / 紧贴其上方或下方（≤400px），**并且它本身是候选面板**
+      （:data:`_CANDIDATE_PANEL_JS`：listbox/menu/tree/grid role，或 ≥2 行候选/列表项）
+      ——只看几何会把贴着字段渲染的校验提示/悬浮提示也算进去；只看 overlay role 而
+      不排除 tooltip/dialog 同样会把**常驻校验提示**当成「已展开的候选面板」，让
+      tool_08 一次都不点（BID092 真机复现）。
 
     为什么要多一个「紧贴」：判「这个下拉此刻是不是已经展开」若只看「页面里有没有浮层」，
     常驻的固定顶栏、页面正中的对话框/提示层都会被算进去（BID044 的触发器误判是同一个坑）。
@@ -219,7 +255,9 @@ def panel_state_probe_expression() -> str:
         # （CDP 会报 Given expression does not evaluate to a function，BID089 实测）。
         "function(){try{"  # BID089
         "var okBox=" + _FLOATING_BOX_JS + ";"  # BID089
-        "var okPanel=" + _FLOATING_PANEL_JS + ";"  # BID089
+        # BID092：这里要的是「候选面板」，不是任意 overlay。tooltip/dialog 紧贴字段时
+        # 同样满足几何判据，若沿用 _FLOATING_PANEL_JS 就会被当成「已展开」。
+        "var okPanel=" + _CANDIDATE_PANEL_JS + ";"  # BID092
         "var out=[];"  # BID089
         "var r=null;var el=this;"  # BID089
         # 控件自身可能是零尺寸的隐藏筛选框：向上找有面积的一层当锚定基准（≤4 层）。
@@ -229,6 +267,12 @@ def panel_state_probe_expression() -> str:
         "el=el.parentElement;}"  # BID089
         "var all=document.body?document.body.getElementsByTagName('*'):[];"  # BID089
         "var anchored=false;"  # BID089
+        # BID092：除布尔 anchored 外再数「贴着本控件的候选面板盒子」个数。BID089/BID090
+        # 用「全页浮层盒子总数」判「这一击把面板关掉了」，但总数会被同一击插入的
+        # 无关浮层（保存提示/loading 遮罩）抵消——「先减一再加一」看不出变少，
+        # 于是面板关了也报「已打开」（BID092 真机复现）。near 只数贴着本控件、
+        # 且有候选语义的盒子，同一击的无关浮层不会进来。
+        "var near=0;"  # BID092
         "for(var i=0;i<all.length;i++){"  # BID089
         "var e=all[i];"  # BID089
         "if(e.children.length===0)continue;"  # BID089
@@ -239,15 +283,15 @@ def panel_state_probe_expression() -> str:
         "var cn=(typeof e.className==='string')?e.className:((e.className&&e.className.baseVal)||'');"  # BID089
         "out.push(cn.slice(0,40)+'@'+Math.round(p.left)+','+Math.round(p.top)+','"
         "+Math.round(p.width)+','+Math.round(p.height));"  # BID089
-        "if(!anchored&&r&&p.width>=2&&p.height>=2&&okPanel(e)){"  # BID089
+        "if(r&&p.width>=2&&p.height>=2&&okPanel(e)){"  # BID089 / BID092
         "var overlap=Math.min(r.right,p.right)-Math.max(r.left,p.left);"  # BID089
         "var ho=overlap/Math.max(1,r.width);"  # BID089
         "var inter=!(p.bottom<r.top||p.top>r.bottom||p.right<r.left||p.left>r.right);"  # BID089
         "var below=p.top-r.bottom;var above=r.top-p.bottom;"  # BID089
         "if(ho>=0.6&&(inter||(below>=-2&&below<=400)||(above>=-2&&above<=400))){"
-        "anchored=true;}}}"  # BID089
-        "return [out.length,anchored?1:0,out.length+'|'+out.sort().join(';')];"  # BID089
-        "}catch(e){return [0,0,''];}}"  # BID089
+        "near++;anchored=true;}}}"  # BID089 / BID092
+        "return [out.length,anchored?1:0,out.length+'|'+out.sort().join(';'),near];"  # BID089 / BID092
+        "}catch(e){return [0,0,'',-1];}}"  # BID089 / BID092
     )  # BID089
 
 
@@ -611,19 +655,25 @@ class ActionExecutor:
 
     # 本函数于BID089引入
     def panel_state(self, backend_node_id: int) -> dict:
-        """控件此刻的浮层状态：``{"count", "anchored", "fingerprint"}``。
+        """控件此刻的浮层状态：``{"count", "anchored", "fingerprint", "near"}``。
 
-        ``anchored`` 表示「控件旁边确实贴着一个可见浮层面板」——这是判「这个下拉是不是
-        已经展开」的**结构+几何**证据，比 class 清单（``_overlay_open``）稳：组件库的
-        自绘面板常挂本工具不认识的 class（BID067/068），只看清单会把「已展开」判成
-        「没展开」，于是补点一次把面板 toggle 关掉。``count`` 取不到时为 ``-1``
+        ``anchored`` 表示「控件旁边确实贴着一个可见**候选**面板」——这是判「这个下拉
+        是不是已经展开」的**结构+几何**证据，比 class 清单（``_overlay_open``）稳：
+        组件库的自绘面板常挂本工具不认识的 class（BID067/068），只看清单会把「已展开」
+        判成「没展开」，于是补点一次把面板 toggle 关掉。``count`` 取不到时为 ``-1``
         （= 无法观测），调用方必须把它与「0 个浮层」区分开。
+
+        ``near``（BID092）：贴着本控件、且有候选语义的浮层盒子个数（取不到时 ``-1``）。
+        它与 ``anchored`` 同源（都走 :data:`_CANDIDATE_PANEL_JS`），但比布尔值能回答
+        「点前那个面板还在不在」：判「这一击把面板关掉了」若用全页 ``count`` 的差分，
+        会被同一击插入的无关浮层（保存提示/loading 遮罩）抵消；``near`` 只数本控件
+        旁边的东西，无关浮层进不来。
 
         ``count`` 的口径（BID090 澄清）：它是「排除自身与包含控件的祖先盒子之后」的
         浮层盒子数，用于与本控件自身的状态做**同一口径**的前后对比；不要拿它去和
         :meth:`floating_panel_fingerprint` 的首段数量比较（后者不排除祖先容器）。
         """
-        empty = {"count": -1, "anchored": False, "fingerprint": ""}  # BID089
+        empty = {"count": -1, "anchored": False, "fingerprint": "", "near": -1}  # BID089 / BID092
         object_id = self._resolve(backend_node_id)  # BID089
         if not object_id:  # BID089
             return dict(empty)  # BID089
@@ -637,10 +687,15 @@ class ActionExecutor:
             count = int(value[0])  # BID089
         except (TypeError, ValueError):  # BID089
             count = -1  # BID089
+        try:  # BID092
+            near = int(value[3])  # BID092
+        except (IndexError, TypeError, ValueError):  # BID092
+            near = -1  # BID092
         return {  # BID089
             "count": count,  # BID089
             "anchored": bool(value[1]),  # BID089
             "fingerprint": str(value[2] or ""),  # BID089
+            "near": near,  # BID092
         }  # BID089
 
     def is_popup_trigger(self, backend_node_id: int) -> bool:
