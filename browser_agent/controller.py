@@ -2058,6 +2058,11 @@ class BrowserController:
 
         只在 ``before_near > 0`` 时否决：``near == 0`` 说明它本来就看不见这个面板
         （面板太窄 / 太远 / 属探测盲区），那时 ``count`` 是唯一证据，不能否决。
+
+        BID102：``near`` 的口径是「贴着本控件的**候选面板盒子**数」，**1 行候选也算**
+        （``actions._candidate_panel_js(1)``）。所以一次筛选把候选从 3 行筛到 1 行时
+        ``near`` 不会下降、这条否决才生效——若有人把行数门槛改回 2，「筛掉两行」就会
+        重新被读成「面板被关掉」并补点（BID102 §1 CASE-AN 真机复现）。
         """
         return before_near > 0 and after_near >= before_near  # BID101
 
@@ -2082,6 +2087,10 @@ class BrowserController:
         BID101：``count`` 变少只是**候选**，必须由「``near`` 也变少」背书。``count``
         计的是全页浮层（含校验提示 / toast / loading），它们被交互清掉时会凭空造出
         「面板变少」；``near`` 不变就说明那个候选面板还在，少的是无关浮层。
+
+        BID102：``near`` 下降的语义收窄为「**少了一个候选面板盒子**」，不含「候选
+        行数变少」——后者由 :func:`browser_agent.actions._candidate_panel_js` 的宽松档
+        （没有候选 role 时 1 行即算）保证 ``near`` 不变（BID102 §1 CASE-AN）。
         """
         before = before if isinstance(before, dict) else {}  # BID093
         after = after if isinstance(after, dict) else {}  # BID093
