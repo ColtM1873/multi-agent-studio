@@ -3215,10 +3215,22 @@ class BrowserController:
         不补点 ⇒ 面板关着、没有候选（BID092 §1 CASE-C 真机复现）。``near`` 只数
         贴着本控件、且有候选语义的盒子，无关浮层进不来；它同时要求 ``panels_before``
         那一路的差分照旧，两者任一发现「变少」都判「没打开」。
+
+        BID098：``timeout``（0.6s）是「死点击」的判定窗口，不是「面板不会更晚挂回」的
+        证明。点击同样会触发重渲染（重新取数、旧面板卸载再挂回），而实测「观察窗口
+        超时 → 判定 → 补点派发」本身要 2–3s；等补点真正发出时，面板往往已经自行挂回，
+        那一击反而把它**永久关掉**（§1 CASE-T 真机：clicks=2、restored=1、最终
+        panel=closed、返回「没有检测到面板打开」）。因此一旦观察到「变少」——
+        不论来自全页总数还是 ``near``——就把观察窗口延长到与 BID096 的确认窗口等长；
+        期间盒子数回到基线即判「已打开」（这就是上面「变少不抢跑」缺失的那一半：
+        旧实现只把 ``decreased`` 复位，超时后照样返回 False）。死点击（从未变少）
+        不受影响，仍是 0.6s 有界重试；真关闭（变少后不恢复）照旧等满窗口返回 False，
+        让调用方补点并披露。
         """
         deadline = time.time() + timeout  # BID067
         before_boxes = self._panel_box_count(panels_before)  # BID089
         decreased = False  # BID089
+        seen_decreased = False  # BID098
         overlay_sticky = bool(overlay_before)  # BID091
         before_near = -1  # BID092
         if isinstance(panel_before, dict):  # BID092
@@ -3233,6 +3245,7 @@ class BrowserController:
                 return True  # BID067
             fingerprint = executor.floating_panel_fingerprint()  # BID089
             after_boxes = self._panel_box_count(fingerprint)  # BID089
+            after_near = -1  # BID098
             if before_near >= 0 and backend_node_id is not None:  # BID092
                 current = executor.panel_state(backend_node_id)  # BID092
                 try:  # BID092
@@ -3242,14 +3255,37 @@ class BrowserController:
                 if after_near >= 0:  # BID092
                     near_decreased = after_near < before_near  # BID092
                     near_opened = after_near > before_near  # BID092
+                    if near_decreased and not seen_decreased:  # BID098
+                        # 第一次看到「贴着本控件的候选面板变少」：面板可能只是短暂
+                        # 卸载、随后自己挂回，把观察窗口延长到确认窗口等长再下结论。
+                        seen_decreased = True  # BID098
+                        deadline = max(  # BID098
+                            deadline, time.time() + self._PANEL_CLOSE_CONFIRM_SECONDS  # BID098
+                        )  # BID098
                 else:  # BID092
                     near_decreased = False  # BID092
                     near_opened = False  # BID092
             if before_boxes >= 0 and after_boxes >= 0 and after_boxes < before_boxes:  # BID089
                 decreased = True  # BID089
+                if not seen_decreased:  # BID098
+                    seen_decreased = True  # BID098
+                    deadline = max(  # BID098
+                        deadline, time.time() + self._PANEL_CLOSE_CONFIRM_SECONDS  # BID098
+                    )  # BID098
             else:  # BID089
                 # 盒子数已回到基线（或无法比较）：不再算「变少」，否则「面板短暂消失
                 # 又完全恢复原样」会在超时被判成没打开，随后补点把它关掉（BID089）。
+                if (  # BID098
+                    seen_decreased  # BID098
+                    and before_boxes >= 0  # BID098
+                    and after_boxes >= before_boxes  # BID098
+                    and not near_decreased  # BID098
+                ):  # BID098
+                    # BID098：见过「变少」之后盒子数回到基线 ⇒ 面板自己挂回来了。
+                    # 这是「恢复」的直接证据，必须判「已打开」——旧实现只把 decreased
+                    # 复位，超时后照样按「没打开」补点，而那一击正好把刚恢复的面板
+                    # toggle 关掉（§1 CASE-T 真机：clicks=2、最终 closed）。
+                    return True  # BID098
                 decreased = False  # BID089
                 if (  # BID067 / BID089
                     panels_before  # BID067
@@ -3266,6 +3302,16 @@ class BrowserController:
                     # 贴着本控件的候选面板比点击前多了：这是「新出现」的直接证据，
                     # 指纹不可观测（``panels_before`` 为空）时也能用。
                     return True  # BID092
+                if after_near > 0 and after_near >= before_near:  # BID098
+                    # BID098：点击前控件旁就有候选面板、现在也没变少 ⇒ 面板在。
+                    # 「点击 → 组件收起面板 → 重新取数 → 挂回」可能整个发生在
+                    # `_settle_navigation` 的等待里，等本函数开始观察时面板已经恢复：
+                    # 差分看不到任何「变少」，旧实现于是在超时判「没打开」，调用方补点，
+                    # 而那一击正好把已恢复的面板 toggle 关掉（§1 CASE-T 真机：
+                    # clicks=2、restored=1、最终 closed、返回「没有检测到面板打开」）。
+                    # 有常驻假面板的页面（BID091）靠 ``near_decreased`` 先返回 False，
+                    # 不会走到这里（CASE-W 守卫）。
+                    return True  # BID098
                 if overlay_sticky and not panels_before:  # BID091
                     # 页面本来就有可见浮层、差分又探测不到：既没有「新出现」的证据，
                     # 也无法证明「没打开」。保守按已打开处理，避免补点误关（BID072）。
