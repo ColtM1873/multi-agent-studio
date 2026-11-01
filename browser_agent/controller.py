@@ -1466,6 +1466,15 @@ class BrowserController:
         panels_before = (
             executor.floating_panel_fingerprint() if popup_trigger else ""
         )  # BID067
+        # BID091：兜底判据要的是「相对点击前**新出现**的面板」，所以必须留一份点击前
+        # 的同口径基线。只问「此刻 anchored 是否为真」会把页面上常驻的、长得像面板的
+        # 浮层（紧贴控件、水平覆盖 ≥60%、含 ≥2 行候选）当成「面板已打开」：首点把
+        # toggle 面板关掉后，BID089 靠「浮层盒子数变少」正确判出的「没打开」会被翻回
+        # 「已打开」，补点被跳过 —— 面板关着、没有候选，工具却报告成功（真机复现
+        # 见 BID091 文档 §1）。基线与 ``panels_before`` 同点取（滚动之后，BID068）。
+        panel_before = (
+            executor.panel_state(node.backend_node_id) if popup_trigger else {}
+        )  # BID091
         # A same-document link (active nav item / in-page hash) must not pay the
         # full navigation grace: it either fires a soft event or does nothing.
         click_may_nav = may_navigate(node)
@@ -1486,13 +1495,19 @@ class BrowserController:
                 # fingerprint change that catches a custom-class panel our probe
                 # does not know (BID067).
                 opened = self._wait_popup_opened(  # BID067
-                    executor, session, panels_before
+                    executor, session, panels_before, overlay_before  # BID091
                 )  # BID067
                 if not opened:  # BID089
-                    if executor.panel_state(node.backend_node_id).get("anchored"):  # BID089
-                        # 「没打开」这个否定结论只来自间接的浮层盒子差分。控件旁边若**确实
-                        # 贴着一个面板盒子**，那是最直接的反证：宁可认为已打开，也不要因为
-                        # 一次计数误差再点一次——第二次点击会把 panel 关掉（BID089）。
+                    # 「没打开」这个否定结论只来自间接的浮层盒子差分。控件旁边若**新出现**
+                    # 一个贴着的面板盒子，那是最直接的反证：宁可认为已打开，也不要因为
+                    # 一次计数误差再点一次——第二次点击会把 panel 关掉（BID089）。
+                    # BID091：必须是「相对点击前新出现」。常驻的像面板的浮层会让
+                    # ``anchored`` 恒真，那样这道兜底会把上面已经判对的「被自己关掉」
+                    # 再翻回「已打开」，补点于是被跳过（BID089 的核心修复被抵消）。
+                    if self._panel_opened_since(  # BID091
+                        panel_before,  # BID091
+                        executor.panel_state(node.backend_node_id),  # BID091
+                    ):  # BID091
                         opened = True  # BID089
                 if not opened:
                     # The contract of this category is "clicking opens a panel".
@@ -1513,11 +1528,13 @@ class BrowserController:
                     # 仍拿旧的 ``panels_before`` 比就永远「没变化」，于是面板明明开着却
                     # 报「没有检测到面板打开」。基线取首点之后的状态，才认得出「重新开了」。
                     panels_closed = executor.floating_panel_fingerprint()  # BID089
+                    overlay_closed = self._overlay_open(session)  # BID091
+                    panel_closed = executor.panel_state(node.backend_node_id)  # BID091
                     with self._watch_navigation(session) as retry_nav:
                         executor.click(node.backend_node_id)
                         self._settle_navigation(session, retry_nav, click_may_nav)
                     opened = self._wait_popup_opened(  # BID067
-                        executor, session, panels_closed  # BID089
+                        executor, session, panels_closed, overlay_closed  # BID089 / BID091
                     )  # BID067
                     if not opened:  # BID090
                         # BID090：补点后与首点后要**对称**地做同一道兜底。补点的
@@ -1525,7 +1542,12 @@ class BrowserController:
                         # 必然返回 False，于是面板明明被补点打开了也照样报「没有
                         # 检测到面板打开」（实测可复现）。控件旁若贴着面板，那就是
                         # 最直接的反证。
-                        if executor.panel_state(node.backend_node_id).get("anchored"):  # BID090
+                        # BID091：基线与首点兜底同理，取**补点前**那一刻；仍然只认
+                        # 「新出现/计数变多」，否则常驻假阳性会让失败也被说成成功。
+                        if self._panel_opened_since(  # BID091
+                            panel_closed,  # BID091
+                            executor.panel_state(node.backend_node_id),  # BID091
+                        ):  # BID091
                             opened = True  # BID090
                 if not opened:
                     popup_missing = True
@@ -1713,6 +1735,35 @@ class BrowserController:
         except (TypeError, ValueError):  # BID089
             return -1  # BID089
 
+    # 本函数于BID091引入
+    @staticmethod
+    def _panel_opened_since(before: dict, after: dict) -> bool:
+        """相对**动作前**的基线，判断「这个控件旁刚刚出现了面板」。
+
+        为什么不能只看 ``after["anchored"]``：BID089 §5.2 的措辞是「控件旁**出现了**
+        贴着它的面板」，而 ``anchored`` 只回答「此刻有没有」。页面上本来就有一个
+        「长得像面板」的常驻浮层（紧贴控件、水平覆盖 ≥60%、含 ≥2 行候选）时，
+        ``anchored`` 恒真；首点把 toggle 面板关掉后，BID089 靠「浮层盒子数变少」
+        正确判出的「没打开」会被这道兜底翻回「已打开」，补点被跳过 —— 面板关着、
+        没有候选，工具却报告成功（BID091 §1 真机复现）。
+
+        只认两条有方向的证据：
+        * 锚定面板**从无到有**（``before.anchored`` 假、``after.anchored`` 真）；
+        * 同口径浮层盒子数**变多**（``count`` 增加）——锚定基线本就为真的常驻场景下，
+          新面板会让计数比基线多。
+
+        取不到数（``count == -1``）、锚定基线本来就真且计数没增加时一律返回 False：
+        宁可少一次「已打开」的断言，也不要把反向操作说成成功（BID060/BID090）。
+        """
+        if not isinstance(after, dict):  # BID091
+            return False  # BID091
+        before = before if isinstance(before, dict) else {}  # BID091
+        before_n = int(before.get("count", -1))  # BID091
+        after_n = int(after.get("count", -1))  # BID091
+        if before_n >= 0 and after_n >= 0 and after_n > before_n:  # BID091
+            return True  # BID091
+        return bool(after.get("anchored")) and not bool(before.get("anchored"))  # BID091
+
     # 本函数于BID085引入
     def _select_panel_open(self, ctx: _InteractContext, state: Optional[dict] = None) -> bool:  # BID089
         """该下拉控件此刻是否已经展开（用于躲开 toggle 语义的二次点击）。
@@ -1862,11 +1913,13 @@ class BrowserController:
                 # 变化，那会把一次反向操作当成「已调整为展开」（实测：返回说已展开、
                 # 面板实为 closed）。只认有方向的证据：锚定面板出现，或盒子数变多。
                 fixed_after = executor.panel_state(node.backend_node_id)  # BID089
-                fixed_n = int(fixed_after.get("count", -1))  # BID090
-                prev_n = int(after.get("count", -1))  # BID090
-                confirmed = bool(fixed_after.get("anchored")) or (  # BID089 / BID090
-                    fixed_n >= 0 and prev_n >= 0 and fixed_n > prev_n  # BID090
-                )  # BID089
+                # BID091：和 ``_run_click`` 的两处兜底共用同一个方向性判据。此处基线
+                # 是 ``after``，而进入补点的闸门已保证 ``after.anchored`` 为假，所以
+                # 「此刻 anchored」与「anchored 新出现」等价；收口到一处函数是为了让
+                # 后来者不会再写回「只看此刻」的版本。
+                confirmed = self._panel_opened_since(  # BID091
+                    after, fixed_after  # BID091
+                )  # BID091
                 if confirmed:  # BID089
                     panel_fixed = True  # BID089
                     already_open = False  # BID089
@@ -2735,7 +2788,12 @@ class BrowserController:
             time.sleep(0.05)
 
     def _wait_popup_opened(  # BID067
-        self, executor, session: str, panels_before: str, timeout: float = 0.6
+        self,
+        executor,
+        session: str,
+        panels_before: str,
+        overlay_before: Optional[bool] = None,  # BID091
+        timeout: float = 0.6,
     ) -> bool:  # BID067
         """触发器点击后，有界轮询「弹层是否打开」——双证据，覆盖自定义 class。
 
@@ -2764,12 +2822,21 @@ class BrowserController:
         若立即返回 False，调用方会在面板画出来之前补点，那一击又把它 toggle 关掉。
         因此先记下「见过变少」并继续轮询；期间盒子数回升或形状变化照样判「已打开」，
         只有等满 ``timeout`` 仍是变少才判「没打开」（既有界、又不抢跑）。
+
+        BID091：证据一的 ``_overlay_open`` 是 class 清单，页面若常驻一个可见的无关
+        下拉/菜单（``.dropdown-menu[role=menu]`` 一类），它会**恒真**——没有基线时，
+        首个轮询就 ``return True``，连「盒子数变少」都轮不到看，于是 toggle 型触发器
+        被自己的点击关掉也报「已打开」。因此证据一改为「相对点击前**新出现**」：
+        ``overlay_before=True`` 时跳过它，只用差分/几何证据。若此时差分本身也不可
+        观测（``panels_before`` 为空），超时后按 BID072「不可观测 ⇒ 不下否定结论」
+        保守返回 True，不做可能把面板点关的补点。
         """
         deadline = time.time() + timeout  # BID067
         before_boxes = self._panel_box_count(panels_before)  # BID089
         decreased = False  # BID089
+        overlay_sticky = bool(overlay_before)  # BID091
         while True:  # BID067
-            if self._overlay_open(session):  # BID067
+            if not overlay_sticky and self._overlay_open(session):  # BID067 / BID091
                 return True  # BID067
             fingerprint = executor.floating_panel_fingerprint()  # BID089
             after_boxes = self._panel_box_count(fingerprint)  # BID089
@@ -2786,6 +2853,10 @@ class BrowserController:
                 # 「不可观测 ⇒ 不下否定结论」兜底（BID089）。
                 if decreased:  # BID089
                     return False  # BID089
+                if overlay_sticky and not panels_before:  # BID091
+                    # 页面本来就有可见浮层、差分又探测不到：既没有「新出现」的证据，
+                    # 也无法证明「没打开」。保守按已打开处理，避免补点误关（BID072）。
+                    return True  # BID091
                 return self._page_hidden(session)  # BID072
             time.sleep(0.05)  # BID067
 
