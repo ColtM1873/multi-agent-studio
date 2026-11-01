@@ -2722,6 +2722,12 @@ class BrowserController:
         fails nothing is executed. If an action fails mid-way, the remaining
         actions are abandoned and ``action_ok`` becomes ``部分失败`` (or ``失败``
         when the very first action fails).
+
+        BID100：中间 fill 与单个 ``tool_02`` 不再分叉——两者都经
+        :meth:`_input_with_panel_evidence`。``input_text`` 的第一步是点击控件，组件
+        库的 select 是 toggle：对已展开的控件点这一下会把候选面板关掉，裸调用时
+        既不补点也不披露（§1 CASE-AD 真机：clicks=1、面板 closed、action_ok=成功）。
+        普通文本框的探测与文案开销不变（无候选面板时直接返回）。
         """
         names = [str(n) for n in (name_list or [])]
         fills = [str(f) for f in (fill_list or [])]
@@ -2827,6 +2833,7 @@ class BrowserController:
         )  # BID094
         tail_popup_missing = False  # BID094
         tail_panel_fixed = False  # BID094
+        batch_panels: list[tuple[str, dict]] = []  # BID100
         base_tree = tree  # BID078
         base_lines = self.serialize_lines_tree(tree, target_id)  # BID078
         initial_lines = base_lines  # BID078
@@ -2869,6 +2876,7 @@ class BrowserController:
         def _run_plan() -> None:
             nonlocal success_count, error_msg
             nonlocal tail_popup_missing, tail_panel_fixed  # BID094
+            nonlocal batch_panels  # BID100
             for index, (_name, category, backend_node_id) in enumerate(plan):
                 try:
                     _rebuild_baseline(backend_node_id)  # BID078
@@ -2882,7 +2890,24 @@ class BrowserController:
                         ):
                             error_msg = rp.readonly_fill_error(_name, fills[index])
                             break
-                        executor.input_text(backend_node_id, fills[index])
+                        # BID100：批量中间 fill 与 `_run_fill` 走**同一条**面板证据链。
+                        # `input_text` 的第一步是点击控件，组件库的 select 是 toggle
+                        # 语义：对已展开的控件点这一下会把候选面板关掉，然后才打字。
+                        # 裸调用时既不补点也不披露——BID095 修好的东西在批量入口上
+                        # 一个都不生效（BID100 §1 CASE-AD 真机：clicks=1、面板 closed、
+                        # action_ok=成功、返回里零披露）。
+                        _fill_result, _fill_evidence = self._input_with_panel_evidence(  # BID100
+                            executor,  # BID100
+                            session,  # BID100
+                            fill_nodes[_name],  # BID100
+                            lambda: executor.input_text(backend_node_id, fills[index]),  # BID100
+                        )  # BID100
+                        if _fill_evidence.get("panel_missing") or _fill_evidence.get(  # BID100
+                            "panel_fixed"  # BID100
+                        ):  # BID100
+                            # BID100：只在真的有面板结论时收集——普通文本框不会产生键，
+                            # 批次里的常规填写零额外开销、零额外文案（CASE-AE）。
+                            batch_panels.append((_name, dict(_fill_evidence)))  # BID100
                     elif category == "select":
                         executor.select_option(backend_node_id, fills[index])
                     elif index == len(plan) - 1 and tail_popup:  # BID094
@@ -3052,6 +3077,19 @@ class BrowserController:
             tail_notice = rp.select_panel_reopened_notice(click_name or "")  # BID094
         if tail_notice:  # BID094
             content = tail_notice + "\n\n" + content  # BID094
+        # BID100：批量**中间** fill 的面板结论，与收尾点击的 ``tail_notice`` 同一组
+        # 文案（``_panel_evidence_notice`` → ``popup_not_opened_notice`` /
+        # ``select_panel_reopened_notice``），不另立说法。每条都带字段名：批次里有
+        # 多个字段时，模型得知道该复查哪一个，而不是拿到一句无主语的提示。
+        batch_notice = ""  # BID100
+        for _fname, _evidence in batch_panels:  # BID100
+            _notice = self._panel_evidence_notice(_evidence, _fname)  # BID100
+            if _notice:  # BID100
+                batch_notice = "\n".join(  # BID100
+                    p for p in (batch_notice, _notice) if p  # BID100
+                )  # BID100
+        if batch_notice:  # BID100
+            content = batch_notice + "\n\n" + content  # BID100
         if error_msg:
             action_ok = PARTIAL_FAIL if success_count > 0 else FAIL
             return self._base_result(
