@@ -1416,6 +1416,7 @@ class BrowserController:
         click_noop = False
         popup_missing = False
         panel_fixed = False  # BID095
+        panel_preopened = False  # BID106
 
         # A click may trigger a navigation; wait for it to actually begin/finish
         # instead of trusting the stale DOM's quietness.
@@ -1584,6 +1585,14 @@ class BrowserController:
                         panel_fixed = True  # BID095
                 if not opened:
                     popup_missing = True
+                    # BID106：这个否定结论只说明「这一击没有把面板**打开**」，不说明面板
+                    # 是关着的。``panel_before.anchored`` 在动作前就为真时，面板很可能
+                    # 本来就已经展开、只是这次点击没有改变它（受控展开的下拉：点击只
+                    # 聚焦/计数）。BID099 的取舍不变（照旧补点、照旧报「没有检测到」），
+                    # 但必须把这份**动作前就存在**的证据一起交给模型——否则它会以为面板
+                    # 关着，一次次重点同一个不 toggle 的元素（§1 CASE-BB 真机：
+                    # clicks=2、panel=open 全程、返回只有「没有检测到面板打开」）。
+                    panel_preopened = bool(panel_before.get("anchored"))  # BID106
                 click_noop = False
             elif (not overlay_before) and self._overlay_open(session):
                 # The click opened a real overlay: leave it open for capture.
@@ -1636,6 +1645,7 @@ class BrowserController:
             "click_noop": click_noop,
             "popup_missing": popup_missing,
             "panel_fixed": panel_fixed,  # BID095
+            "panel_preopened": panel_preopened,  # BID106
             "before_sig": before_sig,
             "after_sig": after_sig,
         }
@@ -1656,6 +1666,9 @@ class BrowserController:
         返回 ``{"popup_missing": bool, "panel_fixed": bool}``，语义与 ``_run_click``
         的同名键一致：前者表示「契约上应有的面板没出现」，后者表示「首点没打开/把它
         关掉了，补点一次之后确认打开」。判据全部复用既有函数，这里不另立一套。
+
+        BID106：与 ``_run_click`` 同步带上 ``panel_preopened``——动作前控件旁已经
+        贴着候选面板时，``popup_missing`` 只说明「没把它打开」，不说明它是关着的。
         """
         backend_node_id = node.backend_node_id  # BID094
         try:  # BID094
@@ -1681,7 +1694,11 @@ class BrowserController:
         ):  # BID094
             opened = True  # BID094
         if opened:  # BID094
-            return {"popup_missing": False, "panel_fixed": False}  # BID094
+            return {  # BID094
+                "popup_missing": False,  # BID094
+                "panel_fixed": False,  # BID094
+                "panel_preopened": False,  # BID106
+            }  # BID094
         # 与 _run_click 对称：补点的基线**重新取**（首点可能反向操作过），补点后仍要
         # 有方向的证据才认成功——BID089/BID090/BID091 的结论原样复用，不另立判据。
         panels_closed = executor.floating_panel_fingerprint()  # BID094
@@ -1701,7 +1718,13 @@ class BrowserController:
             panel_closed, executor.panel_state(backend_node_id)  # BID094
         ):  # BID094
             opened = True  # BID094
-        return {"popup_missing": not opened, "panel_fixed": opened}  # BID094
+        return {  # BID094
+            "popup_missing": not opened,  # BID094
+            "panel_fixed": opened,  # BID094
+            # BID106：``panel_before`` 是**首点之前**的实测状态；它在动作前就已经
+            # ``anchored`` 时，补点失败也只说明「没打开」，不说明面板是关着的。
+            "panel_preopened": (not opened) and bool(panel_before.get("anchored")),  # BID106
+        }  # BID094
 
     # BID096：「疑似被自己关掉」的确认窗口。输入会触发筛选/远端取数，组件库常在
     # 「先卸载候选面板 → 取结果 → 再挂回来」之间空出一段（React 列表重排、loading
@@ -1817,7 +1840,14 @@ class BrowserController:
         confirmed = self._panel_opened_since(  # BID095
             after, executor.panel_state(backend_node_id)  # BID095
         )  # BID095
-        evidence = {"panel_missing": not confirmed, "panel_fixed": confirmed}  # BID095
+        evidence = {  # BID095
+            "panel_missing": not confirmed,  # BID095
+            "panel_fixed": confirmed,  # BID095
+            # BID106：`panel_missing` 只说明补点没把面板打开；动作前它就已经
+            # `anchored` 时，面板很可能本来就在（受控展开的控件），这份证据要一起
+            # 交给模型，否则它只会读到「没有检测到面板打开」（§1 CASE-BC）。
+            "panel_preopened": bool(before.get("anchored")),  # BID106
+        }  # BID095
         return result, evidence  # BID095
 
     # 本函数于BID095引入
@@ -1827,9 +1857,17 @@ class BrowserController:
 
         复用 ``_run_searchable`` / ``_click_with_popup_evidence`` 的同一组文案：
         「没有检测到面板打开」与「已额外点击一次」，不另立说法（BID094 的口径）。
+
+        BID106：``panel_missing`` 后面补 ``panel_preopened``（动作前面板就已贴着），
+        与 ``_panel_verdict_notice`` 同步，三条入口不再各说各的。
         """
         if evidence.get("panel_missing"):  # BID095
-            return rp.popup_not_opened_notice(name)  # BID095
+            notice = rp.popup_not_opened_notice(name)  # BID106
+            if evidence.get("panel_preopened"):  # BID106
+                notice = "\n".join(  # BID106
+                    p for p in (notice, rp.panel_preopened_notice(name)) if p  # BID106
+                )  # BID106
+            return notice  # BID106
         if evidence.get("panel_fixed"):  # BID095
             return rp.select_panel_reopened_notice(name)  # BID095
         return ""  # BID095
@@ -1842,9 +1880,19 @@ class BrowserController:
         ``_run_click`` 的键名沿用 BID089 的 ``popup_missing``；补点成功原本没有键，
         BID095 补成 ``panel_fixed``。集中到一处，任何出口（含 ``new_focus`` 的提前
         返回）都拼同一个前缀，就不会再各自漏拼。返回带结尾空行，便于直接前置。
+
+        BID106：``popup_missing`` 是「这一击没有把面板打开」，不是「面板是关着的」。
+        动作前 ``panel_state.anchored`` 已为真时（受控展开的下拉：点击只聚焦、不
+        toggle），面板很可能本来就已经展开；把 ``panel_preopened`` 紧随其后拼上，
+        两条信息一起到模型，避免它以为面板关着而反复重试（§1 CASE-BB）。
         """
         if extras.get("popup_missing"):  # BID095
-            return rp.popup_not_opened_notice(ctx.name) + "\n\n"  # BID095
+            notice = rp.popup_not_opened_notice(ctx.name)  # BID106
+            if extras.get("panel_preopened"):  # BID106
+                notice = "\n".join(  # BID106
+                    p for p in (notice, rp.panel_preopened_notice(ctx.name)) if p  # BID106
+                )  # BID106
+            return notice + "\n\n"  # BID106
         if extras.get("panel_fixed"):  # BID095
             return rp.select_panel_reopened_notice(ctx.name) + "\n\n"  # BID095
         return ""  # BID095
@@ -2391,9 +2439,22 @@ class BrowserController:
             # 工具却一个字都不说，模型只能反复重试（§1 CASE-AX 真机）。按 BID060
             # 的诚实披露原则，与 tool_01 的 clickdropdown 路径同口径（`popup_missing`），
             # 共用 ``popup_not_opened_notice`` 这一句，不另立说法。
+            # BID106：`panel_ok` 只认「本轮**新增**的证据」，所以动作前 `before.anchored`
+            # 已为真、而这一击没有改变面板时，它也是假。可那正是「面板本来就展开着」
+            # （受控展开：点击只聚焦、不 toggle）。否定披露保留（BID099 的口径），
+            # 但后面补上「动作前就贴着候选面板」——否则模型读到的是「面板关着」
+            # （§1 CASE-BA 真机：panel=open 全程、clicks=1、只报「没有检测到面板打开」）。
             fill_notice = "\n".join(  # BID105
                 p  # BID105
-                for p in (rp.popup_not_opened_notice(ctx.name), fill_notice)  # BID105
+                for p in (  # BID105
+                    rp.popup_not_opened_notice(ctx.name),  # BID105
+                    (  # BID106
+                        rp.panel_preopened_notice(ctx.name)  # BID106
+                        if before.get("anchored")  # BID106
+                        else ""  # BID106
+                    ),  # BID106
+                    fill_notice,  # BID105
+                )  # BID105
                 if p  # BID105
             )  # BID105
         input_notice = self._panel_evidence_notice(input_evidence, ctx.name)  # BID095
@@ -2927,6 +2988,7 @@ class BrowserController:
         )  # BID094
         tail_popup_missing = False  # BID094
         tail_panel_fixed = False  # BID094
+        tail_panel_preopened = False  # BID106
         batch_panels: list[tuple[str, dict]] = []  # BID100
         base_tree = tree  # BID078
         base_lines = self.serialize_lines_tree(tree, target_id)  # BID078
@@ -2970,6 +3032,7 @@ class BrowserController:
         def _run_plan() -> None:
             nonlocal success_count, error_msg
             nonlocal tail_popup_missing, tail_panel_fixed  # BID094
+            nonlocal tail_panel_preopened  # BID106
             nonlocal batch_panels  # BID100
             for index, (_name, category, backend_node_id) in enumerate(plan):
                 try:
@@ -3013,6 +3076,9 @@ class BrowserController:
                         )  # BID094
                         tail_popup_missing = bool(evidence.get("popup_missing"))  # BID094
                         tail_panel_fixed = bool(evidence.get("panel_fixed"))  # BID094
+                        tail_panel_preopened = bool(  # BID106
+                            evidence.get("panel_preopened")  # BID106
+                        )  # BID106
                     else:
                         executor.click(backend_node_id)
                     if category in ("input", "select"):  # BID078
@@ -3167,6 +3233,17 @@ class BrowserController:
         tail_notice = ""  # BID094
         if tail_popup_missing:  # BID094
             tail_notice = rp.popup_not_opened_notice(click_name or "")  # BID094
+            if tail_panel_preopened:  # BID106
+                # BID106：与单次 tool_01 的 `_panel_verdict_notice` 同一条补充——
+                # 收尾点击前面板就贴着候选盒子时，`popup_missing` 也不等于「面板是关的」。
+                tail_notice = "\n".join(  # BID106
+                    p  # BID106
+                    for p in (  # BID106
+                        tail_notice,  # BID106
+                        rp.panel_preopened_notice(click_name or ""),  # BID106
+                    )  # BID106
+                    if p  # BID106
+                )  # BID106
         elif tail_panel_fixed:  # BID094
             tail_notice = rp.select_panel_reopened_notice(click_name or "")  # BID094
         if tail_notice:  # BID094
