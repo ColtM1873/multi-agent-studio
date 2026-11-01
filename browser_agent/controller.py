@@ -1685,6 +1685,8 @@ class BrowserController:
     # 占位、transition 首帧），真机实测补点的「判定 → 派发」本身就要 ~0.6s，中间态
     # 常在这个量级。窗口必须覆盖它，否则确认形同虚设、仍会补点误关。
     # 只在「疑似关闭」时才付这个代价（正常输入零额外开销）。
+    # BID097：「清空筛选词」同样会触发重渲染，`_run_searchable` 空串路径的补点
+    # 闸门也先过这个窗口——不能只凭动作后一帧就下「被关掉」的结论。
     _PANEL_CLOSE_CONFIRM_SECONDS = 1.0  # BID096
     _PANEL_CLOSE_CONFIRM_INTERVAL = 0.05  # BID096
 
@@ -1706,6 +1708,9 @@ class BrowserController:
         贴着本控件的候选面板数不再比基线少），立刻返回当前状态，让调用方放弃补点。
 
         返回窗口结束时（或提前恢复时）的 ``panel_state``。
+
+        BID097：``_run_searchable`` 空串路径（清空筛选词 / ``open_only``）的补点
+        闸门也复用它——那条路径同样只凭「动作后一帧」就判「被关掉」。
         """
         current = after  # BID096
         deadline = time.time() + self._PANEL_CLOSE_CONFIRM_SECONDS  # BID096
@@ -2093,6 +2098,12 @@ class BrowserController:
         这两条都是「解析/探测与真实交互不一致」的回归，离线重放解析结果逐字相同、
         根本测不出来。现在动作后再收一次**实测证据**（浮层盒子数 + 是否紧贴控件），
         只在这两种可证伪的情形下补点一次：把面板真正打开，或把被自己关掉的面板恢复。
+
+        BID097：补点闸门的证据同样是「动作后一帧」。清空筛选词（空 ``fill``）会让
+        组件重新过滤 / 取数（先卸载候选面板、再挂回），固定等待之后采样仍可能落在
+        中间态；据此补点，那一击会按真实 toggle 语义把马上要恢复的面板真正关掉。
+        与 BID096 同一原则：先过 :meth:`_confirm_panel_closed` 的有界确认窗口，
+        确认「关掉」了再补点。
         """
         node = ctx.node
         executor = ctx.executor
@@ -2182,6 +2193,20 @@ class BrowserController:
                     and not after.get("anchored")  # BID089
                 ):  # BID089
                     need_click = True  # BID089
+            if need_click:  # BID097
+                # BID096 的同一原则：「动作后这一帧不在」只是候选，不是结论。
+                # 清空筛选词同样会让组件重新过滤/取数（先卸载面板、再挂回），
+                # 而这里的采样只经过固定的 _stabilize + _wait_overlay_open，
+                # 重排偏慢时仍落在中间态；据此补点，那一击会按真实 toggle 语义
+                # 把马上要恢复的面板真正关掉（§1 CASE-Q 真机复现）。
+                after = self._confirm_panel_closed(  # BID097
+                    executor, node.backend_node_id, before, after  # BID097
+                )  # BID097
+                if after.get("anchored") or not self._panel_closed_since(  # BID097
+                    before, after  # BID097
+                ):  # BID097
+                    # 面板自己回来了：刚才那一帧只是重渲染中间态，不补点。
+                    need_click = False  # BID097
             if need_click and self._page_hidden(ctx.session):  # BID072 / BID089
                 # 页面不可见时 rAF 冻结、几何与盒子数都不可信；BID072 的原则是
                 # 「不可观测 ⇒ 不下否定结论 ⇒ 不做可能把面板点关的动作」。补点本身
