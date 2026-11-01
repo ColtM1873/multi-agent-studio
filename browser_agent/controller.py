@@ -2043,6 +2043,24 @@ class BrowserController:
             return True  # BID092
         return bool(after.get("anchored")) and not bool(before.get("anchored"))  # BID091
 
+    # 本函数于BID101引入
+    @staticmethod
+    def _panel_still_near(before_near: int, after_near: int) -> bool:
+        """贴着本控件的候选面板一个都没少 —— 面板仍在的直接证据（BID101）。
+
+        为什么需要这条**否决**：``count`` 是**全页所有浮层盒子**（``_FLOATING_BOX_JS``
+        只要求出文档流 + 可见 + 有尺寸，不要求候选语义），而组件库会在交互时清掉上一次
+        的校验提示、「草稿已保存」toast、loading 提示。那一个盒子消失就让 ``count``
+        变少，``_panel_closed_since`` 于是判「面板被自己关掉」并补点一次 —— 可 ``near``
+        （贴着本控件、且有候选语义的面板数）一个没少，面板明明还开着。对已展开的面板
+        补点，要么白点（受控展开的下拉），要么按 toggle 语义把它真正关掉，最后再报
+        「没有检测到面板打开」（BID101 §1 CASE-AK / CASE-AM 真机复现）。
+
+        只在 ``before_near > 0`` 时否决：``near == 0`` 说明它本来就看不见这个面板
+        （面板太窄 / 太远 / 属探测盲区），那时 ``count`` 是唯一证据，不能否决。
+        """
+        return before_near > 0 and after_near >= before_near  # BID101
+
     # 本函数于BID093引入
     @staticmethod
     def _panel_closed_since(before: dict, after: dict) -> bool:
@@ -2060,18 +2078,25 @@ class BrowserController:
           （BID092 引入的量，这里才真正用起来）。
 
         两边都必须可观测（``>=0``）；不可观测按 BID072「不下否定结论」返回 False。
+
+        BID101：``count`` 变少只是**候选**，必须由「``near`` 也变少」背书。``count``
+        计的是全页浮层（含校验提示 / toast / loading），它们被交互清掉时会凭空造出
+        「面板变少」；``near`` 不变就说明那个候选面板还在，少的是无关浮层。
         """
         before = before if isinstance(before, dict) else {}  # BID093
         after = after if isinstance(after, dict) else {}  # BID093
         before_n = int(before.get("count", -1))  # BID093
         after_n = int(after.get("count", -1))  # BID093
-        if before_n >= 0 and after_n >= 0 and after_n < before_n:  # BID093
-            return True  # BID093
         try:  # BID093
             before_near = int(before.get("near", -1))  # BID093
             after_near = int(after.get("near", -1))  # BID093
         except (TypeError, ValueError):  # BID093
-            return False  # BID093
+            before_near = after_near = -1  # BID093
+        if BrowserController._panel_still_near(before_near, after_near):  # BID101
+            # 候选面板一个没少：``count`` 的下降来自无关浮层，不是面板被关。
+            return False  # BID101
+        if before_n >= 0 and after_n >= 0 and after_n < before_n:  # BID093
+            return True  # BID093
         return before_near >= 0 and after_near >= 0 and after_near < before_near  # BID093
 
     # 本函数于BID085引入
@@ -3351,7 +3376,17 @@ class BrowserController:
                 else:  # BID092
                     near_decreased = False  # BID092
                     near_opened = False  # BID092
-            if before_boxes >= 0 and after_boxes >= 0 and after_boxes < before_boxes:  # BID089
+            # BID101：``count`` 变少必须由「``near`` 也变少」背书。``count`` 是全页
+            # 浮层盒子（含校验提示 / toast / loading），交互把它们清掉同样会「变少」，
+            # 而贴着本控件的候选面板一个没少 —— 那不是这一击关掉了面板，是无关浮层被
+            # 清掉。旧写法据此判「没打开」、补点把仍开着的面板 toggle 关掉，再报
+            # 「没有检测到面板打开」（BID101 §1 CASE-AM 真机复现）。
+            if (  # BID101
+                before_boxes >= 0  # BID089
+                and after_boxes >= 0  # BID089
+                and after_boxes < before_boxes  # BID089
+                and not self._panel_still_near(before_near, after_near)  # BID101
+            ):  # BID101
                 decreased = True  # BID089
                 if not seen_decreased:  # BID098
                     seen_decreased = True  # BID098
