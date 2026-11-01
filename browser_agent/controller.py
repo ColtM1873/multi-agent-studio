@@ -2171,6 +2171,19 @@ class BrowserController:
         中间态；据此补点，那一击会按真实 toggle 语义把马上要恢复的面板真正关掉。
         与 BID096 同一原则：先过 :meth:`_confirm_panel_closed` 的有界确认窗口，
         确认「关掉」了再补点。
+
+        BID105：空 ``fill`` 还有**两个**出口会在没有任何「面板开着」证据时静默
+        返回「（页面无变化）」，模型只能反复调本工具：
+
+        * ``open_only=False``（tool_07 空串）落在 ``probe_open`` 假阳性上时，本轮
+          只清筛选词、**一次都不点**；筛选框本来就是空的时候 ``clear_field`` 一个键
+          都不发，于是 0 交互、0 提示。BID103/BID104 的条件句原先只挂在
+          ``open_only``（tool_08）那条分支上——现在 ``already_open`` 覆盖所有
+          「判了已展开所以没点」的路径。
+        * ``probe_open=False`` 时点击了、但点完面板可观测地没开（受控展开的下拉，
+          点击只聚焦）：补点闸门 ``_panel_closed_since`` 不触发、
+          ``panel_unconfirmed`` 也不置位，于是没有任何披露。与 ``_run_click`` 的
+          ``popup_missing`` 不对称——现在由 ``panel_ok`` 统一兜底。
         """
         node = ctx.node
         executor = ctx.executor
@@ -2213,6 +2226,13 @@ class BrowserController:
                 # 焦点在别处时才用点击打开面板，然后只清筛选词。
                 if probe_open:  # BID085 / BID089
                     executor.clear_field(node.backend_node_id)  # BID085
+                    # BID105：这条路径也是「判了已展开，所以**一次都没点**」。BID085 的
+                    # toggle 保护在这里表现为「只清筛选词、不点控件」；筛选框本来就是空
+                    # 的时候，`clear_field` 一个键都不发（BID085 的早退），本轮于是 0 交互。
+                    # BID103/BID104 的条件句原先只挂在 `open_only`（tool_08）那条分支上，
+                    # tool_07 空串走的是这里，假阳性时退回「（页面无变化）」——零证据、
+                    # 零提示，模型只能反复调本工具（§1 CASE-AW 真机）。
+                    already_open = True  # BID105
                 else:  # BID085
                     executor.input_text(node.backend_node_id, "")  # BID085
                     executor.clear_field(node.backend_node_id)  # BID085
@@ -2223,8 +2243,10 @@ class BrowserController:
         self._wait_overlay_open(ctx.session)
         panel_fixed = False  # BID089
         panel_unconfirmed = False  # BID089
+        panel_ok = True  # BID105
         if not fill:  # BID089
             after = executor.panel_state(node.backend_node_id)  # BID089
+            fixed_after = None  # BID105
             need_click = False  # BID089
             if probe_open and not clicked:  # BID089
                 # 假阳性校正：动作前判「已展开」所以没点，但动作后控件旁边并没有任何
@@ -2306,6 +2328,16 @@ class BrowserController:
                     already_open = False  # BID089
                 else:  # BID089
                     panel_unconfirmed = True  # BID089
+            # BID105：本轮结束时「面板开着」有没有证据。三条互不相同的证据：补点
+            # 成功（panel_fixed）、锚定面板**从无到有**（BID099 的方向性口径）、
+            # 或 near/浮层计数变多（BID091）。只看 `after.anchored` 不够——面板原本
+            # 就开着（真展开）时它恒真；只看计数也不够——`_panel_opened_since` 已
+            # 把两者合起来。补点路径的终态是补点后那一帧，没补点就是动作后那一帧。
+            final_state = fixed_after if fixed_after is not None else after  # BID105
+            panel_ok = bool(panel_fixed) or (  # BID105
+                bool(final_state.get("anchored") and not before.get("anchored"))  # BID105
+                or self._panel_opened_since(before, final_state)  # BID105
+            )  # BID105
         # A date/range widget needs its own "how this commits" contract stated at
         # the moment the panel opens — see ``_range_entry_notice`` for why the two
         # shapes must not share one wording.
@@ -2327,6 +2359,9 @@ class BrowserController:
             # 被击穿、假承诺回来（§1 CASE-AU 真机）。而这个分支**永远**拿不到「候选
             # 面板出现」的证据（probe_open 要求 before.anchored 已为真），所以不再
             # 问「页面有没有动」，无条件给条件句。
+            # BID105：这个分支不再只服务 tool_08。`open_only=False`（tool_07 空串）
+            # 落在同一个假阳性上时本轮同样**一次都不点**，已一并置 `already_open`
+            # ——否则那条路径连这句提示都没有（§1 CASE-AW 真机：「（页面无变化）」）。
             fill_notice = "\n".join(  # BID095
                 p  # BID095
                 for p in (  # BID095 / BID103
@@ -2349,6 +2384,18 @@ class BrowserController:
                 for p in (rp.select_panel_reopened_notice(ctx.name), fill_notice)  # BID089
                 if p  # BID089
             )  # BID089
+        elif not panel_ok and not already_open:  # BID105
+            # BID105：本轮既没有「已展开」的断言（already_open），也没有任何
+            # 「面板开着」的方向性证据。旧实现只回「（页面无变化）」——`tool_08`
+            # 点了一个按契约应当展开面板的 searchable、点击后面板可观测地没开，
+            # 工具却一个字都不说，模型只能反复重试（§1 CASE-AX 真机）。按 BID060
+            # 的诚实披露原则，与 tool_01 的 clickdropdown 路径同口径（`popup_missing`），
+            # 共用 ``popup_not_opened_notice`` 这一句，不另立说法。
+            fill_notice = "\n".join(  # BID105
+                p  # BID105
+                for p in (rp.popup_not_opened_notice(ctx.name), fill_notice)  # BID105
+                if p  # BID105
+            )  # BID105
         input_notice = self._panel_evidence_notice(input_evidence, ctx.name)  # BID095
         if input_notice:  # BID095
             # BID095：非空筛选词路径的复验结论（面板被隐式点击关掉 / 已补点恢复）
