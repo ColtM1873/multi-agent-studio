@@ -1415,6 +1415,7 @@ class BrowserController:
         after_sig = ""
         click_noop = False
         popup_missing = False
+        panel_fixed = False  # BID095
 
         # A click may trigger a navigation; wait for it to actually begin/finish
         # instead of trusting the stale DOM's quietness.
@@ -1560,6 +1561,12 @@ class BrowserController:
                             executor.panel_state(node.backend_node_id),  # BID091
                         ):  # BID091
                             opened = True  # BID090
+                    # BID095：补点分支的复验若通过，说明这次**多点了界面一下**——
+                    # 必须落在 `if not opened:`（首点失败）之内。放到外层会连
+                    # 「首点就打开」的正常路径也标成补点，误报「已额外点击一次」
+                    # （BID095 真机回归：CASE-M 首点即打开却被标注）。
+                    if opened:  # BID095
+                        panel_fixed = True  # BID095
                 if not opened:
                     popup_missing = True
                 click_noop = False
@@ -1613,6 +1620,7 @@ class BrowserController:
             "dialog": dialog,
             "click_noop": click_noop,
             "popup_missing": popup_missing,
+            "panel_fixed": panel_fixed,  # BID095
             "before_sig": before_sig,
             "after_sig": after_sig,
         }
@@ -1672,6 +1680,82 @@ class BrowserController:
             opened = True  # BID094
         return {"popup_missing": not opened, "panel_fixed": opened}  # BID094
 
+    # 本函数于BID095引入
+    def _input_with_panel_evidence(
+        self, executor, session: str, node: EnhancedNode, input_fn
+    ) -> tuple[dict, dict]:
+        """输入前先留面板基线；控件旁本来就有候选面板时，验证输入没把它关掉。
+
+        为什么需要它：``ActionExecutor.input_text`` 的**第一步就是点击**目标
+        （``self.click()``，为了让控件聚焦、让受控组件进入编辑态）。而组件库的
+        select 是 toggle 语义：对**已展开**的控件点这一下会把它关掉，接着才打字。
+        旧实现只在「空串筛出完整候选列表」分支躲开了这一击（BID085），非空筛选词
+        / 往筛选框写值这两条路径完全没验面板：面板被自己的隐式点击关掉后，工具仍然
+        只报告「已写入」，既不补点也不披露（BID095 §1 CASE-J/CASE-K 真机复现）。
+
+        只在「动作前控件旁确实贴着一个候选面板」时才做动作后复验：普通文本框没有
+        候选面板，不会平白多出一次 0.6s 轮询；这条判据与 BID094 的 ``tail_popup``
+        同构——只在按契约会有面板的地方付代价。
+
+        返回 ``(input_result, {"panel_missing": bool, "panel_fixed": bool})``：
+        前者是 ``input_fn`` 的返回值（调用方仍要读它判断清空是否成功），后者语义与
+        ``_run_click`` / ``_click_with_popup_evidence`` 的同名键一致。判据全部复用
+        BID089/BID090/BID091/BID093 的既有函数，这里不另立一套。
+        """
+        backend_node_id = node.backend_node_id  # BID095
+        before = executor.panel_state(backend_node_id)  # BID095
+        evidence = {"panel_missing": False, "panel_fixed": False}  # BID095
+        if int(before.get("count", -1)) < 0:  # BID095
+            # 探针不可观测：按 BID072 不做事后否定/补点，直接输入。
+            return input_fn(), evidence  # BID095
+        if not before.get("anchored") and int(before.get("near", -1)) <= 0:  # BID095
+            # 动作前控件旁没有候选面板：这是普通文本输入，不额外探测或补点。
+            return input_fn(), evidence  # BID095
+        result = input_fn()  # BID095
+        after = executor.panel_state(backend_node_id)  # BID095
+        if after.get("anchored") or not self._panel_closed_since(before, after):  # BID095
+            return result, evidence  # BID095
+        if self._page_hidden(session):  # BID095
+            # 页面不可见时几何/盒子数都不可信；BID072 的原则是「不可观测 ⇒ 不做可能
+            # 把面板点关的破坏性重试」。补点本身就是一次点击，这里一律放弃。
+            return result, evidence  # BID095
+        executor.click(backend_node_id)  # BID095
+        self._wait_overlay_open(session)  # BID095
+        confirmed = self._panel_opened_since(  # BID095
+            after, executor.panel_state(backend_node_id)  # BID095
+        )  # BID095
+        evidence = {"panel_missing": not confirmed, "panel_fixed": confirmed}  # BID095
+        return result, evidence  # BID095
+
+    # 本函数于BID095引入
+    @staticmethod
+    def _panel_evidence_notice(evidence: dict, name: str) -> str:
+        """把 :meth:`_input_with_panel_evidence` 的结论翻成一句披露。
+
+        复用 ``_run_searchable`` / ``_click_with_popup_evidence`` 的同一组文案：
+        「没有检测到面板打开」与「已额外点击一次」，不另立说法（BID094 的口径）。
+        """
+        if evidence.get("panel_missing"):  # BID095
+            return rp.popup_not_opened_notice(name)  # BID095
+        if evidence.get("panel_fixed"):  # BID095
+            return rp.select_panel_reopened_notice(name)  # BID095
+        return ""  # BID095
+
+    # 本函数于BID095引入
+    @staticmethod
+    def _panel_verdict_notice(ctx: "_InteractContext", extras: dict) -> str:
+        """一次点击的面板结论（``popup_missing`` / ``panel_fixed``，互斥）前缀。
+
+        ``_run_click`` 的键名沿用 BID089 的 ``popup_missing``；补点成功原本没有键，
+        BID095 补成 ``panel_fixed``。集中到一处，任何出口（含 ``new_focus`` 的提前
+        返回）都拼同一个前缀，就不会再各自漏拼。返回带结尾空行，便于直接前置。
+        """
+        if extras.get("popup_missing"):  # BID095
+            return rp.popup_not_opened_notice(ctx.name) + "\n\n"  # BID095
+        if extras.get("panel_fixed"):  # BID095
+            return rp.select_panel_reopened_notice(ctx.name) + "\n\n"  # BID095
+        return ""  # BID095
+
     def _run_fill(
         self, ctx: _InteractContext, fill: str, press_enter: bool = False
     ) -> dict:
@@ -1713,8 +1797,12 @@ class BrowserController:
                 "fill_notice": fill_notice,
                 "dialog": {"type": "", "message": ""},
             }
+        panel_evidence: dict = {}  # BID095
         if not fill_error:
-            result = executor.input_text(node.backend_node_id, fill)
+            result, panel_evidence = self._input_with_panel_evidence(  # BID095
+                executor, ctx.session, node,  # BID095
+                lambda: executor.input_text(node.backend_node_id, fill),  # BID095
+            )  # BID095
             self._stabilize(target_id)
         else:
             result = {}
@@ -1749,9 +1837,17 @@ class BrowserController:
             with self._watch_navigation(ctx.session) as nav_state:
                 executor.press_enter()
                 self._settle_navigation(ctx.session, nav_state, True)
+        panel_notice = self._panel_evidence_notice(panel_evidence, name)  # BID095
         if fill and not fill_error and is_select_filter:  # BID085
             # 值确实进了输入框，但那只是筛选词：下拉的取值只能靠点候选提交。
-            fill_notice = rp.select_filter_typing_notice(name, fill)  # BID085
+            # BID095：这句与面板披露是**两条独立信息**，用追加而不是覆盖——旧写法
+            # 会把「面板被这次输入关掉/已补点恢复」的结论整句抹掉。
+            fill_notice = "\n".join(  # BID095
+                p for p in (fill_notice, rp.select_filter_typing_notice(name, fill)) if p  # BID095
+            )  # BID095
+        fill_notice = "\n".join(  # BID095
+            p for p in (panel_notice, fill_notice) if p  # BID095
+        )  # BID095
         return {
             "fill_error": fill_error,
             "fill_notice": fill_notice,
@@ -1949,8 +2045,17 @@ class BrowserController:
         clicked = False  # BID089
         before = {"count": -1, "anchored": False, "fingerprint": "", "near": -1}  # BID089 / BID092
         probe_open = False  # BID085
+        input_evidence: dict = {}  # BID095
         if fill:
-            executor.input_text(node.backend_node_id, fill)
+            # BID095：``input_text`` 内部第一步就是点击目标。控件若已展开，这一击是
+            # toggle 的反向操作——先把面板关掉，再往里打字。BID085 只在「空串筛出
+            # 完整候选」分支躲开了它，非空筛选词路径完全没有面板证据：面板被自己
+            # 关掉后，返回只说「已输入」，没有候选、没有披露（CASE-J）。
+            # 这里只在动作前控件旁确实有候选面板时复验/补点，普通输入零额外开销。
+            _input_result, input_evidence = self._input_with_panel_evidence(  # BID095
+                executor, ctx.session, node,  # BID095
+                lambda: executor.input_text(node.backend_node_id, fill),  # BID095
+            )  # BID095
         else:
             # BID068 的既定前提：浮层指纹是**视口坐标**拼的，而 ``click`` 内部可能先
             # ``scrollIntoView``。若不先把目标滚进视口再取基线，「点击自身滚动」会让
@@ -2061,7 +2166,13 @@ class BrowserController:
             # 「（页面无变化）」读成「没打开」而重复调用。
             # BID090：补点后仍未确认时**不能**再说「已经是展开状态」——两句话
             # 互相否定（实测：「没有检测到面板打开」+「候选面板已经是展开状态」）。
-            fill_notice = rp.dropdown_already_open_notice(ctx.name)  # BID085
+            # BID095：与「范围控件怎么提交」的说明是两条独立信息，用追加而不是覆盖
+            # ——旧写法会把 `_range_entry_notice` 整句抹掉。
+            fill_notice = "\n".join(  # BID095
+                p  # BID095
+                for p in (rp.dropdown_already_open_notice(ctx.name), fill_notice)  # BID095
+                if p  # BID095
+            )  # BID095
         if panel_unconfirmed:  # BID089
             # 补点后仍没有任何「面板已展开」的证据：不能沿用「已调整为展开」的
             # 说法，按 BID060 的口径如实说「没有检测到面板打开」。
@@ -2076,6 +2187,14 @@ class BrowserController:
                 for p in (rp.select_panel_reopened_notice(ctx.name), fill_notice)  # BID089
                 if p  # BID089
             )  # BID089
+        input_notice = self._panel_evidence_notice(input_evidence, ctx.name)  # BID095
+        if input_notice:  # BID095
+            # BID095：非空筛选词路径的复验结论（面板被隐式点击关掉 / 已补点恢复）
+            # 与上面两条互斥（`input_evidence` 只在 fill 非空时非空），但都必须到达
+            # 模型；用同一个前缀口径，不另立说法。
+            fill_notice = "\n".join(  # BID095
+                p for p in (input_notice, fill_notice) if p  # BID095
+            )  # BID095
         return {
             "fill_error": "",
             "fill_notice": fill_notice,
@@ -2138,10 +2257,18 @@ class BrowserController:
             new_text = self.serialize_tree(new_tree, new_focus)
             if self._is_blank_shell(new_tree):
                 new_text = self._blank_notice(new_tree) + new_text
+            # BID095：这条提前返回走的是**另一个标签页**，但它不能因此丢掉本次
+            # 动作的面板结论。旧写法把 `popup_missing` / `panel_fixed` 整段跳过：
+            # 点击既打开新标签页、又没有打开面板时，模型看不到任何失败说明。
+            content = self._panel_verdict_notice(ctx, extras) + (  # BID095
+                self._dialog_notice(dialog)  # BID095
+                + (fill_notice + "\n\n" if fill_notice else "")  # BID095
+                + new_text  # BID095
+            )  # BID095
             return self._base_result(
                 FULL,
                 FAIL if fill_error else OK,
-                self._dialog_notice(dialog) + (fill_notice + "\n\n" if fill_notice else "") + new_text,
+                content,
                 error=fill_error or rp.NO_ERROR,
                 include_tabs=True,
             )
@@ -2159,11 +2286,10 @@ class BrowserController:
         scroll_note = self._viewport_scroll_note(ctx)
         if scroll_note:
             content = scroll_note + "\n\n" + content
-        if extras.get("popup_missing"):
-            # Honest failure beats a truthful-looking "成功": the model must not
-            # believe a dropdown was opened (and therefore that a value was
-            # chosen) when no panel exists.
-            content = rp.popup_not_opened_notice(ctx.name) + "\n\n" + content
+        # BID095：`popup_missing`（首点+补点都没打开）与 `panel_fixed`（补点才打开）
+        # 是本条动作的面板结论，统一走 `_panel_verdict_notice`；`new_focus` 的提前
+        # 返回也用同一个前缀，任何出口都不再漏拼。
+        content = self._panel_verdict_notice(ctx, extras) + content  # BID095
 
         # The click may have opened a background tab without moving focus. The
         # focused page then looks unchanged, so tell the LLM explicitly and hand
@@ -2254,7 +2380,14 @@ class BrowserController:
         notice = _range_entry_notice(ctx.node, name)
         if notice:
             extras = dict(extras or {})
-            extras["fill_notice"] = notice
+            # BID095：与 `_run_searchable` 已经给出的面板结论（「没有检测到面板打开」
+            # /「已额外点击一次」）是两条独立信息，追加而不是覆盖——旧写法会把一整条
+            # 失败披露替换成「这个范围控件怎么提交」的说明。
+            extras["fill_notice"] = "\n".join(  # BID095
+                p  # BID095
+                for p in (str(extras.get("fill_notice") or ""), notice)  # BID095
+                if p  # BID095
+            )  # BID095
         return self._finish_interaction(ctx, extras)
 
     @_finalize_llm_output  # BID084
