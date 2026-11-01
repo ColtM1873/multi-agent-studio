@@ -465,6 +465,18 @@ def dropdown_already_open_notice(name: str) -> str:
     )
 
 
+# 作用：告知「动作后的实测状态与动作前的判断不一致，已补点一次把面板调整到打开」。
+# 触发条件：controller._run_searchable 里，要么动作前判「已展开」但动作后控件旁边没有任何
+#           贴着的浮层（假阳性，面板其实没开），要么本次点击把原本展开的面板 toggle 关掉了
+#           （假阴性，点后浮层盒子数变少）。
+# 返回时机：作为 fill_notice 拼在返回内容最前面，说明这次**多点了一下**不是重复操作。
+def select_panel_reopened_notice(name: str) -> str:
+    return (
+        f"[提示] {name} 的面板展开状态与动作前的快照不一致（探测有误差），"
+        f"已额外点击一次把它调整为展开状态；候选项见下方返回内容。"
+    )
+
+
 # 作用：告知「先清空再输入」中的清空这一步失败，字段现在是被拼接污染的脏值。
 # 触发条件：_run_fill 中 input_text 报告 clear_ok=False（清空后字段仍非空）。
 # 返回时机：作为 fill_error 返回（此时报告成功会让 LLM 在错误前提上继续操作）。

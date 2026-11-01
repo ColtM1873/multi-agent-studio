@@ -191,6 +191,63 @@ def floating_panel_probe_expression() -> str:  # BID067
     )  # BID067
 
 
+# 本函数于BID089引入
+def panel_state_probe_expression() -> str:
+    """自包含表达式：一次扫描同时返回「可见浮层盒子指纹」与「是否紧贴本控件」。
+
+    ``this`` 是被测控件，返回值 ``[数量, 是否紧贴(0/1), 指纹]``：
+
+    * 数量/指纹沿用 :data:`_FLOATING_BOX_JS`（出文档流 + 可见 + 有尺寸 + 在视口，
+      不看 class 名），与 :func:`floating_panel_probe_expression` 同口径；
+    * 「紧贴」= 存在一个**不是自身、也不包含自身**的浮层盒子，水平覆盖控件宽度 ≥60%，
+      且与控件相交 / 紧贴其上方或下方（≤400px），**并且它本身像面板**
+      （:data:`_FLOATING_PANEL_JS`：overlay role 或 ≥2 行候选/列表项）——只看几何会把
+      贴着字段渲染的校验提示/悬浮提示也算进去。
+
+    为什么要多一个「紧贴」：判「这个下拉此刻是不是已经展开」若只看「页面里有没有浮层」，
+    常驻的固定顶栏、页面正中的对话框/提示层都会被算进去（BID044 的触发器误判是同一个坑）。
+    面板几乎总是贴着它的触发器渲染，而无关浮层不会；同时**排除包含控件的盒子**——控件
+    常嵌在固定头部/常驻容器里，那些容器自身也满足盒形判据，不排除就会让「页面有固定
+    头部」被当成「这个下拉已展开」（BID089 实测：假阳性会让工具跳过点击、面板永远打不开）。
+    """
+    return (  # BID089
+        # 用 ``Runtime.callFunctionOn`` 调用（``this`` = 被测控件），所以这里必须是
+        # **函数声明**本身，不能是 ``(function(){…})()`` 这种「调用表达式」
+        # （CDP 会报 Given expression does not evaluate to a function，BID089 实测）。
+        "function(){try{"  # BID089
+        "var okBox=" + _FLOATING_BOX_JS + ";"  # BID089
+        "var okPanel=" + _FLOATING_PANEL_JS + ";"  # BID089
+        "var out=[];"  # BID089
+        "var r=null;var el=this;"  # BID089
+        # 控件自身可能是零尺寸的隐藏筛选框：向上找有面积的一层当锚定基准（≤4 层）。
+        "for(var k=0;k<5&&el;k++){"  # BID089
+        "var b=el.getBoundingClientRect();"  # BID089
+        "if(b.width>=2&&b.height>=2){r=b;break;}"  # BID089
+        "el=el.parentElement;}"  # BID089
+        "var all=document.body?document.body.getElementsByTagName('*'):[];"  # BID089
+        "var anchored=false;"  # BID089
+        "for(var i=0;i<all.length;i++){"  # BID089
+        "var e=all[i];"  # BID089
+        "if(e.children.length===0)continue;"  # BID089
+        "if(e===this)continue;"  # BID089
+        "if(e.contains&&e.contains(this))continue;"  # BID089
+        "if(!okBox(e))continue;"  # BID089
+        "var p=e.getBoundingClientRect();"  # BID089
+        "var cn=(typeof e.className==='string')?e.className:((e.className&&e.className.baseVal)||'');"  # BID089
+        "out.push(cn.slice(0,40)+'@'+Math.round(p.left)+','+Math.round(p.top)+','"
+        "+Math.round(p.width)+','+Math.round(p.height));"  # BID089
+        "if(!anchored&&r&&p.width>=2&&p.height>=2&&okPanel(e)){"  # BID089
+        "var overlap=Math.min(r.right,p.right)-Math.max(r.left,p.left);"  # BID089
+        "var ho=overlap/Math.max(1,r.width);"  # BID089
+        "var inter=!(p.bottom<r.top||p.top>r.bottom||p.right<r.left||p.left>r.right);"  # BID089
+        "var below=p.top-r.bottom;var above=r.top-p.bottom;"  # BID089
+        "if(ho>=0.6&&(inter||(below>=-2&&below<=400)||(above>=-2&&above<=400))){"
+        "anchored=true;}}}"  # BID089
+        "return [out.length,anchored?1:0,out.length+'|'+out.sort().join(';')];"  # BID089
+        "}catch(e){return [0,0,''];}}"  # BID089
+    )  # BID089
+
+
 class ActionError(RuntimeError):
     pass
 
@@ -548,6 +605,36 @@ class ActionExecutor:
         except Exception:  # BID067
             return ""  # BID067
         return str(value) if value is not None else ""  # BID067
+
+    # 本函数于BID089引入
+    def panel_state(self, backend_node_id: int) -> dict:
+        """控件此刻的浮层状态：``{"count", "anchored", "fingerprint"}``。
+
+        ``anchored`` 表示「控件旁边确实贴着一个可见浮层面板」——这是判「这个下拉是不是
+        已经展开」的**结构+几何**证据，比 class 清单（``_overlay_open``）稳：组件库的
+        自绘面板常挂本工具不认识的 class（BID067/068），只看清单会把「已展开」判成
+        「没展开」，于是补点一次把面板 toggle 关掉。``count`` 取不到时为 ``-1``
+        （= 无法观测），调用方必须把它与「0 个浮层」区分开。
+        """
+        empty = {"count": -1, "anchored": False, "fingerprint": ""}  # BID089
+        object_id = self._resolve(backend_node_id)  # BID089
+        if not object_id:  # BID089
+            return dict(empty)  # BID089
+        try:  # BID089
+            value = self._call_on_node(object_id, panel_state_probe_expression())  # BID089
+        except Exception:  # noqa: BLE001  # BID089
+            return dict(empty)  # BID089
+        if not isinstance(value, (list, tuple)) or len(value) < 3:  # BID089
+            return dict(empty)  # BID089
+        try:  # BID089
+            count = int(value[0])  # BID089
+        except (TypeError, ValueError):  # BID089
+            count = -1  # BID089
+        return {  # BID089
+            "count": count,  # BID089
+            "anchored": bool(value[1]),  # BID089
+            "fingerprint": str(value[2] or ""),  # BID089
+        }  # BID089
 
     def is_popup_trigger(self, backend_node_id: int) -> bool:
         """True if the click target opens a self-drawn popup (combobox/haspopup).

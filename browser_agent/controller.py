@@ -1488,6 +1488,12 @@ class BrowserController:
                 opened = self._wait_popup_opened(  # BID067
                     executor, session, panels_before
                 )  # BID067
+                if not opened:  # BID089
+                    if executor.panel_state(node.backend_node_id).get("anchored"):  # BID089
+                        # 「没打开」这个否定结论只来自间接的浮层盒子差分。控件旁边若**确实
+                        # 贴着一个面板盒子**，那是最直接的反证：宁可认为已打开，也不要因为
+                        # 一次计数误差再点一次——第二次点击会把 panel 关掉（BID089）。
+                        opened = True  # BID089
                 if not opened:
                     # The contract of this category is "clicking opens a panel".
                     # When nothing opened, one bounded retry on the same target is
@@ -1501,11 +1507,17 @@ class BrowserController:
                     #
                     # 注意：只有「首点后连结构指纹都没变」才允许重试——否则 toggle
                     # 型触发器会被第二次点击关掉刚打开的面板（BID067）。
+                    #
+                    # BID089：补点的比对基线要**重新取**。若首点其实是把那面板关掉了
+                    # （探测盲区里的反向操作），面板重新打开后指纹会回到「点前」的样子，
+                    # 仍拿旧的 ``panels_before`` 比就永远「没变化」，于是面板明明开着却
+                    # 报「没有检测到面板打开」。基线取首点之后的状态，才认得出「重新开了」。
+                    panels_closed = executor.floating_panel_fingerprint()  # BID089
                     with self._watch_navigation(session) as retry_nav:
                         executor.click(node.backend_node_id)
                         self._settle_navigation(session, retry_nav, click_may_nav)
                     opened = self._wait_popup_opened(  # BID067
-                        executor, session, panels_before
+                        executor, session, panels_closed  # BID089
                     )  # BID067
                 if not opened:
                     popup_missing = True
@@ -1677,20 +1689,47 @@ class BrowserController:
             "dialog": {"type": "", "message": ""},
         }
 
+    # 本函数于BID089引入
+    @staticmethod
+    def _panel_box_count(fingerprint: str) -> int:
+        """从浮层指纹（``"<数量>|class@rect;…"``）里取出可见浮层盒子数。
+
+        取不到指纹（空串）时返回 ``-1``：那是「无法观测」，绝不能当成「一个浮层都没有」，
+        否则「探测失败」会被误读成「面板确实关着/关了」而多补一次点击（BID089）。
+        """
+        if not fingerprint:  # BID089
+            return -1  # BID089
+        head = fingerprint.split("|", 1)[0]  # BID089
+        try:  # BID089
+            return int(head)  # BID089
+        except (TypeError, ValueError):  # BID089
+            return -1  # BID089
+
     # 本函数于BID085引入
-    def _select_panel_open(self, ctx: _InteractContext) -> bool:
+    def _select_panel_open(self, ctx: _InteractContext, state: Optional[dict] = None) -> bool:  # BID089
         """该下拉控件此刻是否已经展开（用于躲开 toggle 语义的二次点击）。
 
         组件库的 select 是 toggle：对**已展开**的控件再点一次会把它关掉。
         「用空串筛出完整候选列表」「打开下拉」这两个动作如果盲点一次，就会把
-        刚展开的面板关掉、返回里一个候选都没有（Moka 实测）。判据用「控件有焦点
-        且页面上有可见浮层」——两条都成立几乎只可能来自它自己的面板；任一不成立
-        就按「未展开」处理，照常点击（不改变常规行为）。
+        刚展开的面板关掉、返回里一个候选都没有（Moka 实测）。
+
+        BID089 起判据换成**结构 + 几何**证据（``ActionExecutor.panel_state``）：
+        控件有焦点，且**紧贴它**有一个可见浮层盒子（水平覆盖控件 ≥60%，紧贴其上方/
+        下方或与它相交）。原先只用 ``_overlay_open``（class 清单）有两个方向的误差：
+        自定义 class 面板块完全不在清单里（假阴性 → 补点把面板关掉），而页面里任何
+        常驻弹窗/提示层又可能让清单恒真（假阳性 → 跳过点击，面板永远打不开）。
+        ``_run_searchable`` 在动作后还会用实测的浮层盒子数再校正一次，这里只是「先验」。
         """
         try:  # BID085
             if not ctx.executor.is_focused(ctx.node.backend_node_id):  # BID085
                 return False  # BID085
-            return self._overlay_open(ctx.session)  # BID085
+            state = state or ctx.executor.panel_state(ctx.node.backend_node_id)  # BID089
+            if state.get("anchored"):  # BID089
+                return True  # BID089
+            # 页面不可见时（标签页被切走/窗口最小化）rAF 冻结，面板的几何/可见性判据
+            # 恒假，「没看到面板」不代表没打开。按 BID072 的既定原则：不可观测就**不下
+            # 否定结论**，宁可不点，也不能冒「再点一次把已开面板关掉」的风险（BID089）。
+            return self._page_hidden(ctx.session) and state.get("count", 0) > 0  # BID089
         except Exception:  # noqa: BLE001  # BID085
             return False  # BID085
 
@@ -1709,31 +1748,90 @@ class BrowserController:
         BID085：``open_only=True``（tool_08 落到可搜索下拉时）只点击展开、**不动**
         已有的筛选词——tool_08 的语义是「打开候选面板」，顺手清掉用户/模型刚输入的
         筛选词是计划外的破坏性副作用。
+
+        BID089：面板开没开**不能只信动作前的那一帧快照**。旧实现（BID085）判「已展开」
+        就整轮不点，于是任何假阳性（页面另有常驻弹窗、控件恰好带着焦点）都会让面板
+        永远打不开；反过来假阴性（自定义 class 面板）时那一击会把面板 toggle 关掉。
+        这两条都是「解析/探测与真实交互不一致」的回归，离线重放解析结果逐字相同、
+        根本测不出来。现在动作后再收一次**实测证据**（浮层盒子数 + 是否紧贴控件），
+        只在这两种可证伪的情形下补点一次：把面板真正打开，或把被自己关掉的面板恢复。
         """
         node = ctx.node
         executor = ctx.executor
         already_open = False  # BID085
+        clicked = False  # BID089
+        before = {"count": -1, "anchored": False, "fingerprint": ""}  # BID089
+        probe_open = False  # BID085
         if fill:
             executor.input_text(node.backend_node_id, fill)
-        elif open_only:  # BID085
-            if self._select_panel_open(ctx):  # BID085
-                already_open = True  # BID085
-            else:  # BID085
-                executor.click(node.backend_node_id)  # BID085
         else:
-            # BID085：已在焦点上的下拉控件**不要**再点一次——组件库的 select 是
-            # toggle 语义：点已展开的控件会把它关掉。「用空串筛出完整候选列表」于是
-            # 变成「先关掉面板再清筛选词」，返回里一个候选都没有（Moka 实测）。
-            # 焦点在别处时才用点击打开面板，然后只清筛选词。
-            if self._select_panel_open(ctx):  # BID085
-                executor.clear_field(node.backend_node_id)  # BID085
-            else:  # BID085
-                executor.input_text(node.backend_node_id, "")  # BID085
-                executor.clear_field(node.backend_node_id)  # BID085
+            # BID068 的既定前提：浮层指纹是**视口坐标**拼的，而 ``click`` 内部可能先
+            # ``scrollIntoView``。若不先把目标滚进视口再取基线，「点击自身滚动」会让
+            # 常驻盒子整体进出视口、凭空造出差异（BID068 实测过假差异）。基线只在
+            # 滚动稳定之后取，才是「点击造成的真实变化」（BID089）。
+            try:  # BID089
+                executor.scroll_into_view(node.backend_node_id)  # BID089
+            except Exception:  # noqa: BLE001  # BID089
+                pass  # BID089
+            before = executor.panel_state(node.backend_node_id)  # BID089
+            probe_open = self._select_panel_open(ctx, before)  # BID085 / BID089
+            if open_only:  # BID085
+                if probe_open:  # BID085 / BID089
+                    already_open = True  # BID085
+                else:  # BID085
+                    executor.click(node.backend_node_id)  # BID085
+                    clicked = True  # BID089
+            else:
+                # BID085：已在焦点上的下拉控件**不要**再点一次——组件库的 select 是
+                # toggle 语义：点已展开的控件会把它关掉。「用空串筛出完整候选列表」于是
+                # 变成「先关掉面板再清筛选词」，返回里一个候选都没有（Moka 实测）。
+                # 焦点在别处时才用点击打开面板，然后只清筛选词。
+                if probe_open:  # BID085 / BID089
+                    executor.clear_field(node.backend_node_id)  # BID085
+                else:  # BID085
+                    executor.input_text(node.backend_node_id, "")  # BID085
+                    executor.clear_field(node.backend_node_id)  # BID085
+                    clicked = True  # BID089
         self._stabilize(ctx.target_id)
         # A dropdown mounts on focus/typing and paints a frame or two later;
         # give it a bounded moment so its candidates are captured.
         self._wait_overlay_open(ctx.session)
+        panel_fixed = False  # BID089
+        if not fill:  # BID089
+            after = executor.panel_state(node.backend_node_id)  # BID089
+            need_click = False  # BID089
+            if probe_open and not clicked:  # BID089
+                # 假阳性校正：动作前判「已展开」所以没点，但动作后控件旁边并没有任何
+                # 贴着的浮层（原来的 overlay 是别的常驻弹窗，或页面自己把面板收了）。
+                # 这时**必须**补点一次——这就是旧实现「无条件点一次」在兜底的那一步。
+                if not after.get("anchored"):  # BID089
+                    need_click = True  # BID089
+            elif clicked:  # BID089
+                # 假阴性校正：点前有浮层、点后反而变少 ⇒ 这一击把原本已展开的面板
+                # toggle 关掉了（探测盲区）。再补点一次恢复展开；点击次数有上界，
+                # 且只在「确实关掉了一个浮层」时发生，不是盲重试。
+                # 再来一次「面板其实开着」的直接证据闸门：盒子数可能被无关浮层的
+                # 出现/消失带偏，若控件旁仍贴着面板就绝不补点（补点会把它关掉）。
+                before_n = int(before.get("count", -1))  # BID089
+                after_n = int(after.get("count", -1))  # BID089
+                if (  # BID089
+                    before_n >= 0  # BID089
+                    and after_n >= 0  # BID089
+                    and after_n < before_n  # BID089
+                    and not after.get("anchored")  # BID089
+                ):  # BID089
+                    need_click = True  # BID089
+            if need_click and self._page_hidden(ctx.session):  # BID072 / BID089
+                # 页面不可见时 rAF 冻结、几何与盒子数都不可信；BID072 的原则是
+                # 「不可观测 ⇒ 不下否定结论 ⇒ 不做可能把面板点关的动作」。补点本身
+                # 就是一次点击，因此这里一律放弃补点（宁少一次修正，不误关面板）。
+                need_click = False  # BID089
+            if need_click:  # BID089
+                executor.click(node.backend_node_id)  # BID089
+                self._stabilize(ctx.target_id)  # BID089
+                self._wait_overlay_open(ctx.session)  # BID089
+                panel_fixed = True  # BID089
+                already_open = False  # BID089
         # A date/range widget needs its own "how this commits" contract stated at
         # the moment the panel opens — see ``_range_entry_notice`` for why the two
         # shapes must not share one wording.
@@ -1742,6 +1840,12 @@ class BrowserController:
             # 面板本来就是展开的：本轮没有可观察变化，必须说明，否则模型会把
             # 「（页面无变化）」读成「没打开」而重复调用。
             fill_notice = rp.dropdown_already_open_notice(ctx.name)  # BID085
+        if panel_fixed:  # BID089
+            fill_notice = "\n".join(  # BID089
+                p  # BID089
+                for p in (rp.select_panel_reopened_notice(ctx.name), fill_notice)  # BID089
+                if p  # BID089
+            )  # BID089
         return {
             "fill_error": "",
             "fill_notice": fill_notice,
@@ -2598,14 +2702,24 @@ class BrowserController:
         第二次点击会把刚打开的面板关掉（实测顺丰证件类型/民族：首点已打开、被补偿重试
         关闭后报「没有检测到面板打开」，LLM 永远点不动）。故超时后只要是「页面不可见」
         就按「已打开（不可验证）」返回，交给序列化（BID030 透明子树兜底）呈现候选，
-        由返回的 diff 说明真相（BID072）。"""
+        由返回的 diff 说明真相（BID072）。
+
+        BID089：浮层盒子**变少**必须判成「没打开」。旧实现把「指纹变了」一律当「已打开」，
+        于是 toggle 型触发器被自己的点击**关掉**时（指纹从「有面板」变成「没面板」同样是
+        「变了」）也返回 True，跳过补偿重试，留下一个关着的面板、返回里一个候选都没有。
+        现在先比盒子数量：变少 ⇒ 这一击是反向操作 ⇒ 返回 False，让调用方补点一次把它
+        重新打开（这正是「针对探测/解析误差保留的第二次点击」）。
+        """
         deadline = time.time() + timeout  # BID067
+        before_boxes = self._panel_box_count(panels_before)  # BID089
         while True:  # BID067
             if self._overlay_open(session):  # BID067
                 return True  # BID067
-            if panels_before and (  # BID067
-                executor.floating_panel_fingerprint() != panels_before  # BID067
-            ):  # BID067
+            fingerprint = executor.floating_panel_fingerprint()  # BID089
+            after_boxes = self._panel_box_count(fingerprint)  # BID089
+            if before_boxes >= 0 and after_boxes >= 0 and after_boxes < before_boxes:  # BID089
+                return False  # BID089
+            if panels_before and fingerprint != panels_before:  # BID067 / BID089
                 return True  # BID067
             if time.time() >= deadline:  # BID067
                 return self._page_hidden(session)  # BID072
