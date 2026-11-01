@@ -1797,6 +1797,7 @@ class BrowserController:
         # give it a bounded moment so its candidates are captured.
         self._wait_overlay_open(ctx.session)
         panel_fixed = False  # BID089
+        panel_unconfirmed = False  # BID089
         if not fill:  # BID089
             after = executor.panel_state(node.backend_node_id)  # BID089
             need_click = False  # BID089
@@ -1830,8 +1831,19 @@ class BrowserController:
                 executor.click(node.backend_node_id)  # BID089
                 self._stabilize(ctx.target_id)  # BID089
                 self._wait_overlay_open(ctx.session)  # BID089
-                panel_fixed = True  # BID089
-                already_open = False  # BID089
+                # 补点后必须**复验**：只有确实出现了「贴着控件的浮层」或「浮层集合
+                # 发生了变化」才敢说「已调整为展开」。否则补点本身失败（该元素不是
+                # toggle/点击无效）时会谎报成功，模型拿着「已展开」去点候选、却点空
+                # （BID060 的诚实披露原则：没验证到就不能断言）。
+                fixed_after = executor.panel_state(node.backend_node_id)  # BID089
+                confirmed = bool(fixed_after.get("anchored")) or (  # BID089
+                    fixed_after.get("fingerprint") != after.get("fingerprint")  # BID089
+                )  # BID089
+                if confirmed:  # BID089
+                    panel_fixed = True  # BID089
+                    already_open = False  # BID089
+                else:  # BID089
+                    panel_unconfirmed = True  # BID089
         # A date/range widget needs its own "how this commits" contract stated at
         # the moment the panel opens — see ``_range_entry_notice`` for why the two
         # shapes must not share one wording.
@@ -1840,7 +1852,15 @@ class BrowserController:
             # 面板本来就是展开的：本轮没有可观察变化，必须说明，否则模型会把
             # 「（页面无变化）」读成「没打开」而重复调用。
             fill_notice = rp.dropdown_already_open_notice(ctx.name)  # BID085
-        if panel_fixed:  # BID089
+        if panel_unconfirmed:  # BID089
+            # 补点后仍没有任何「面板已展开」的证据：不能沿用「已调整为展开」的
+            # 说法，按 BID060 的口径如实说「没有检测到面板打开」。
+            fill_notice = "\n".join(  # BID089
+                p  # BID089
+                for p in (rp.popup_not_opened_notice(ctx.name), fill_notice)  # BID089
+                if p  # BID089
+            )  # BID089
+        elif panel_fixed:  # BID089
             fill_notice = "\n".join(  # BID089
                 p  # BID089
                 for p in (rp.select_panel_reopened_notice(ctx.name), fill_notice)  # BID089
@@ -2709,19 +2729,33 @@ class BrowserController:
         「变了」）也返回 True，跳过补偿重试，留下一个关着的面板、返回里一个候选都没有。
         现在先比盒子数量：变少 ⇒ 这一击是反向操作 ⇒ 返回 False，让调用方补点一次把它
         重新打开（这正是「针对探测/解析误差保留的第二次点击」）。
+
+        变少**不立刻**返回：点击可能同时关掉一个无关浮层、而自己的面板还在入场动画里。
+        若立即返回 False，调用方会在面板画出来之前补点，那一击又把它 toggle 关掉。
+        因此先记下「见过变少」并继续轮询；期间盒子数回升或形状变化照样判「已打开」，
+        只有等满 ``timeout`` 仍是变少才判「没打开」（既有界、又不抢跑）。
         """
         deadline = time.time() + timeout  # BID067
         before_boxes = self._panel_box_count(panels_before)  # BID089
+        decreased = False  # BID089
         while True:  # BID067
             if self._overlay_open(session):  # BID067
                 return True  # BID067
             fingerprint = executor.floating_panel_fingerprint()  # BID089
             after_boxes = self._panel_box_count(fingerprint)  # BID089
             if before_boxes >= 0 and after_boxes >= 0 and after_boxes < before_boxes:  # BID089
-                return False  # BID089
-            if panels_before and fingerprint != panels_before:  # BID067 / BID089
-                return True  # BID067
+                decreased = True  # BID089
+            else:  # BID089
+                # 盒子数已回到基线（或无法比较）：不再算「变少」，否则「面板短暂消失
+                # 又完全恢复原样」会在超时被判成没打开，随后补点把它关掉（BID089）。
+                decreased = False  # BID089
+                if panels_before and fingerprint != panels_before:  # BID067 / BID089
+                    return True  # BID067
             if time.time() >= deadline:  # BID067
+                # 见过「变少」⇒ 这一击关掉了浮层（toggle 反向）；否则交给 BID072 的
+                # 「不可观测 ⇒ 不下否定结论」兜底（BID089）。
+                if decreased:  # BID089
+                    return False  # BID089
                 return self._page_hidden(session)  # BID072
             time.sleep(0.05)  # BID067
 
