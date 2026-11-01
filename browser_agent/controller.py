@@ -1481,9 +1481,18 @@ class BrowserController:
         click_may_nav = may_navigate(node)
         if click_may_nav and _href_targets_same_document(node, old_tree.url):
             click_may_nav = False
+        click_closed = False  # BID099
         with self._handle_dialogs(session) as dialog:
             with self._watch_navigation(session) as nav_state:
                 executor.click(node.backend_node_id)
+                # BID099：在 settle 之前记下「这一击确实让面板变少」的证据。
+                # ``_settle_navigation`` 会等 DOM 静默，收起→挂回可能整个落在它里面；
+                # 等到观察窗口开始时差分已看不到任何变化，BID098 的乐观判据就失去
+                # 了它唯一的前提（见 `_panel_closed_by_click`）。
+                if popup_trigger:  # BID099
+                    click_closed = self._panel_closed_by_click(  # BID099
+                        executor, node.backend_node_id, panel_before  # BID099
+                    )  # BID099
                 self._settle_navigation(session, nav_state, click_may_nav)
             # BID094：``inside_overlay`` 只该回答「要不要 blur/park」（BID067 的原始
             # 用途），不能顺带否决整条面板证据链。模态框（role=dialog 满足
@@ -1506,6 +1515,7 @@ class BrowserController:
                     executor, session, panels_before, overlay_before,  # BID091
                     panel_before=panel_before,  # BID092
                     backend_node_id=node.backend_node_id,  # BID092
+                    saw_click_close=click_closed,  # BID099
                 )  # BID067
                 if not opened:  # BID089
                     # 「没打开」这个否定结论只来自间接的浮层盒子差分。控件旁边若**新出现**
@@ -1540,13 +1550,18 @@ class BrowserController:
                     panels_closed = executor.floating_panel_fingerprint()  # BID089
                     overlay_closed = self._overlay_open(session)  # BID091
                     panel_closed = executor.panel_state(node.backend_node_id)  # BID091
+                    retry_closed = False  # BID099
                     with self._watch_navigation(session) as retry_nav:
                         executor.click(node.backend_node_id)
+                        retry_closed = self._panel_closed_by_click(  # BID099
+                            executor, node.backend_node_id, panel_closed  # BID099
+                        )  # BID099
                         self._settle_navigation(session, retry_nav, click_may_nav)
                     opened = self._wait_popup_opened(  # BID067
                         executor, session, panels_closed, overlay_closed,  # BID089 / BID091
                         panel_before=panel_closed,  # BID092
                         backend_node_id=node.backend_node_id,  # BID092
+                        saw_click_close=retry_closed,  # BID099
                     )  # BID067
                     if not opened:  # BID090
                         # BID090：补点后与首点后要**对称**地做同一道兜底。补点的
@@ -1652,10 +1667,14 @@ class BrowserController:
         panel_before = executor.panel_state(backend_node_id)  # BID094
         overlay_before = self._overlay_open(session)  # BID094
         executor.click(backend_node_id)  # BID094
+        click_closed = self._panel_closed_by_click(  # BID099
+            executor, backend_node_id, panel_before  # BID099
+        )  # BID099
         opened = self._wait_popup_opened(  # BID094
             executor, session, panels_before, overlay_before,  # BID094
             panel_before=panel_before,  # BID094
             backend_node_id=backend_node_id,  # BID094
+            saw_click_close=click_closed,  # BID099
         )  # BID094
         if not opened and self._panel_opened_since(  # BID094
             panel_before, executor.panel_state(backend_node_id)  # BID094
@@ -1669,10 +1688,14 @@ class BrowserController:
         overlay_closed = self._overlay_open(session)  # BID094
         panel_closed = executor.panel_state(backend_node_id)  # BID094
         executor.click(backend_node_id)  # BID094
+        retry_closed = self._panel_closed_by_click(  # BID099
+            executor, backend_node_id, panel_closed  # BID099
+        )  # BID099
         opened = self._wait_popup_opened(  # BID094
             executor, session, panels_closed, overlay_closed,  # BID094
             panel_before=panel_closed,  # BID094
             backend_node_id=backend_node_id,  # BID094
+            saw_click_close=retry_closed,  # BID099
         )  # BID094
         if not opened and self._panel_opened_since(  # BID094
             panel_closed, executor.panel_state(backend_node_id)  # BID094
@@ -1715,7 +1738,11 @@ class BrowserController:
         current = after  # BID096
         deadline = time.time() + self._PANEL_CLOSE_CONFIRM_SECONDS  # BID096
         while time.time() < deadline:  # BID096
-            if current.get("anchored"):  # BID096
+            # BID099：``current.anchored`` 只有「相对基线**新出现**」才算面板回来。
+            # 页面上常驻一个「面板形态」盒子（BID091 的几何假阳性）时 ``anchored``
+            # 恒真，单点判据会让本窗口一开始就返回「恢复」，后面的补点被整个跳过
+            # （BID099 §1 CASE-AA 真机复现）。
+            if current.get("anchored") and not before.get("anchored"):  # BID099
                 return current  # BID096
             if not self._panel_closed_since(before, current):  # BID096
                 # 面板回来了：这不是我们关的，别补点。
@@ -1764,7 +1791,10 @@ class BrowserController:
             return input_fn(), evidence  # BID095
         result = input_fn()  # BID095
         after = executor.panel_state(backend_node_id)  # BID095
-        if after.get("anchored") or not self._panel_closed_since(before, after):  # BID095
+        if (  # BID095
+            (after.get("anchored") and not before.get("anchored"))  # BID099
+            or not self._panel_closed_since(before, after)  # BID095
+        ):  # BID099
             return result, evidence  # BID095
         # BID096：这一帧只是「疑似关闭」。输入触发的重渲染/取数会把面板短暂卸载，
         # 单帧快照分不清「被我们关掉」和「正在挂回来」；据此补点会把中间的动画面板
@@ -1772,7 +1802,10 @@ class BrowserController:
         after = self._confirm_panel_closed(  # BID096
             executor, backend_node_id, before, after  # BID096
         )  # BID096
-        if after.get("anchored") or not self._panel_closed_since(before, after):  # BID096
+        if (  # BID096
+            (after.get("anchored") and not before.get("anchored"))  # BID099
+            or not self._panel_closed_since(before, after)  # BID096
+        ):  # BID099
             # 面板自己回来了：中间态而已，不是本次输入关的，不补点也不披露。
             return result, evidence  # BID096
         if self._page_hidden(session):  # BID095
@@ -2175,7 +2208,7 @@ class BrowserController:
                 # 同口径（全页总数 ∨ 贴本控件的候选面板数变少）。只认总数时，同一击
                 # 插入的无关浮层会把「变少」抵消，面板被清空动作关掉也不补点。
                 if (  # BID089 / BID090
-                    not after.get("anchored")  # BID089
+                    not (after.get("anchored") and not before.get("anchored"))  # BID099
                     and self._panel_closed_since(before, after)  # BID090 / BID093
                 ):  # BID090
                     need_click = True  # BID089
@@ -2190,7 +2223,7 @@ class BrowserController:
                 # 同一击插入无关浮层」的路径：总数不变会让旧闸门整个失效（CASE-E）。
                 if (  # BID089
                     self._panel_closed_since(before, after)  # BID089 / BID093
-                    and not after.get("anchored")  # BID089
+                    and not (after.get("anchored") and not before.get("anchored"))  # BID099
                 ):  # BID089
                     need_click = True  # BID089
             if need_click:  # BID097
@@ -2202,9 +2235,10 @@ class BrowserController:
                 after = self._confirm_panel_closed(  # BID097
                     executor, node.backend_node_id, before, after  # BID097
                 )  # BID097
-                if after.get("anchored") or not self._panel_closed_since(  # BID097
-                    before, after  # BID097
-                ):  # BID097
+                if (  # BID097
+                    (after.get("anchored") and not before.get("anchored"))  # BID099
+                    or not self._panel_closed_since(before, after)  # BID097
+                ):  # BID099
                     # 面板自己回来了：刚才那一帧只是重渲染中间态，不补点。
                     need_click = False  # BID097
             if need_click and self._page_hidden(ctx.session):  # BID072 / BID089
@@ -2226,9 +2260,10 @@ class BrowserController:
                 # 面板实为 closed）。只认有方向的证据：锚定面板出现，或盒子数变多。
                 fixed_after = executor.panel_state(node.backend_node_id)  # BID089
                 # BID091：和 ``_run_click`` 的两处兜底共用同一个方向性判据。此处基线
-                # 是 ``after``，而进入补点的闸门已保证 ``after.anchored`` 为假，所以
-                # 「此刻 anchored」与「anchored 新出现」等价；收口到一处函数是为了让
-                # 后来者不会再写回「只看此刻」的版本。
+                # 是 ``after``（补点前的实测状态），补点后必须看到「near/计数变多」或
+                # 「anchored 从无到有」才认成功。BID099：闸门不再要求
+                # ``after.anchored`` 为假——常驻假面板会让它为真；差分基线仍然成立，
+                # 收口到一处函数是为了让后来者不会再写回「只看此刻」的版本。
                 confirmed = self._panel_opened_since(  # BID091
                     after, fixed_after  # BID091
                 )  # BID091
@@ -3171,6 +3206,7 @@ class BrowserController:
         panel_before: Optional[dict] = None,  # BID092
         backend_node_id: Optional[int] = None,  # BID092
         timeout: float = 0.6,
+        saw_click_close: bool = False,  # BID099
     ) -> bool:  # BID067
         """触发器点击后，有界轮询「弹层是否打开」——双证据，覆盖自定义 class。
 
@@ -3226,6 +3262,18 @@ class BrowserController:
         旧实现只把 ``decreased`` 复位，超时后照样返回 False）。死点击（从未变少）
         不受影响，仍是 0.6s 有界重试；真关闭（变少后不恢复）照旧等满窗口返回 False，
         让调用方补点并披露。
+
+        BID099：BID098 的超时乐观判据（「``near`` 没变少且大于 0 ⇒ 面板在」）有一个
+        未言明的前提——**这一击确实作用于那个面板**。它同样适用于另一种情况：页面上
+        常驻一个「面板形态」盒子（BID091 的几何假阳性：紧贴控件、≥2 行候选、
+        ``anchored`` 恒真、``near`` 恒为 1），而这一击是死点击 / 首点竞态失败——
+        真面板从未打开。此时单帧状态与「点击把面板关掉、组件随后自己挂回」完全等价，
+        乐观判据会把失败说成成功：补点被吞掉（面板永远打不开）、返回连「没有检测到
+        面板打开」都不披露（BID099 §1 CASE-X/CASE-Y 真机复现）。因此这条乐观判据必须
+        由**方向性证据**背书：只有 ``saw_click_close``（调用方在点击后、``_settle_
+        navigation`` 之前观测到「这一击确实让 ``near``/浮层计数变少」）为真时才允许
+        返回「已打开」。点击没让面板变化时，照旧等满窗口返回 False，让 BID067 的有界
+        补点与「没有检测到面板打开」的披露生效。
         """
         deadline = time.time() + timeout  # BID067
         before_boxes = self._panel_box_count(panels_before)  # BID089
@@ -3302,15 +3350,21 @@ class BrowserController:
                     # 贴着本控件的候选面板比点击前多了：这是「新出现」的直接证据，
                     # 指纹不可观测（``panels_before`` 为空）时也能用。
                     return True  # BID092
-                if after_near > 0 and after_near >= before_near:  # BID098
+                if saw_click_close and after_near > 0 and after_near >= before_near:  # BID099
                     # BID098：点击前控件旁就有候选面板、现在也没变少 ⇒ 面板在。
                     # 「点击 → 组件收起面板 → 重新取数 → 挂回」可能整个发生在
                     # `_settle_navigation` 的等待里，等本函数开始观察时面板已经恢复：
                     # 差分看不到任何「变少」，旧实现于是在超时判「没打开」，调用方补点，
                     # 而那一击正好把已恢复的面板 toggle 关掉（§1 CASE-T 真机：
                     # clicks=2、restored=1、最终 closed、返回「没有检测到面板打开」）。
-                    # 有常驻假面板的页面（BID091）靠 ``near_decreased`` 先返回 False，
-                    # 不会走到这里（CASE-W 守卫）。
+                    #
+                    # BID099：这条乐观判据必须由 ``saw_click_close`` 背书——那是调用方
+                    # 在点击后、``_settle_navigation`` 之前观测到的「这一击确实让面板
+                    # 变少」的直接证据。没有它时，同样的单帧状态也可以来自「页面上
+                    # 常驻一个面板形态盒子（BID091 的几何假阳性）+ 死点击 / 首点竞态
+                    # 失败」：真面板从未打开，乐观判据会吞掉补点并把失败说成成功
+                    # （§1 CASE-X/CASE-Y 真机复现）。点击没让面板变化时，照旧等满窗口
+                    # 返回 False，让 BID067 的有界补点与诚实披露生效。
                     return True  # BID098
                 if overlay_sticky and not panels_before:  # BID091
                     # 页面本来就有可见浮层、差分又探测不到：既没有「新出现」的证据，
@@ -3318,6 +3372,42 @@ class BrowserController:
                     return True  # BID091
                 return self._page_hidden(session)  # BID072
             time.sleep(0.05)  # BID067
+
+    # 本函数于BID099引入
+    def _panel_closed_by_click(
+        self, executor, backend_node_id: int, before: dict, window: float = 0.15
+    ) -> bool:
+        """点击后立即（有界）确认**这一击**是否真的把面板关掉了。
+
+        BID098 的超时乐观判据「``near`` 没变少且大于 0 ⇒ 面板在」无法区分两件事：
+
+        * 点击确实把面板关掉、组件随后自己挂回（观察窗口开始时已恢复）；
+        * 点击根本没让面板变化——死点击 / 首点竞态失败，而页面上常驻一个「面板
+          形态」盒子（BID091 的几何假阳性：``anchored`` 恒真、``near`` 恒为 1）。
+
+        两者在单帧状态上完全等价，只有「点击后**期间**观察到变少」能证明这一击
+        作用于那个面板（BID099 §1 CASE-X/CASE-Y 真机复现）。``_settle_navigation``
+        会等 DOM 静默，而这个「收起 → 重新取数 → 挂回」可能整个落在它里面；所以
+        必须在 ``executor.click`` 之后、settle 之前做一次很短的轮询，把这份方向性
+        证据记下来，交给 ``_wait_popup_opened`` 的乐观判据（``saw_click_close``）。
+
+        ``before`` 没有候选面板时直接返回 ``False``：常规「点击打开面板」不付这份
+        延迟；只有「点击前控件旁已贴着候选面板」（toggle 关闭 / 常驻假面板）
+        才需要区分。
+        """
+        try:  # BID099
+            if not before.get("anchored") and int(before.get("near", -1)) <= 0:  # BID099
+                return False  # BID099
+        except (TypeError, ValueError):  # BID099
+            return False  # BID099
+        deadline = time.time() + window  # BID099
+        while True:  # BID099
+            current = executor.panel_state(backend_node_id)  # BID099
+            if self._panel_closed_since(before, current):  # BID099
+                return True  # BID099
+            if time.time() >= deadline:  # BID099
+                return False  # BID099
+            time.sleep(0.04)  # BID099
 
     # 本函数于BID072引入
     def _page_hidden(self, session: str) -> bool:  # BID072
