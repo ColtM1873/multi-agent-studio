@@ -18,6 +18,7 @@ from typing import Optional
 from . import debug, studio_marker, timing
 from . import bid065_trace  # BID065
 from . import finalize as finalize_output  # BID084
+from . import panel as panel_evidence  # BID109
 from .actions import (
     ActionError,
     ActionExecutor,
@@ -1417,6 +1418,8 @@ class BrowserController:
         popup_missing = False
         panel_fixed = False  # BID095
         panel_preopened = False  # BID106
+        clicks = 1  # BID109
+        panel_outcome: dict = {}  # BID109
 
         # A click may trigger a navigation; wait for it to actually begin/finish
         # instead of trusting the stale DOM's quietness.
@@ -1477,6 +1480,12 @@ class BrowserController:
         panel_before = (
             executor.panel_state(node.backend_node_id) if popup_trigger else {}
         )  # BID091
+        # BID109：点击前控件旁已经有候选面板 ⇒ 给它认领身份。之后「这一击有没有把它
+        # 关掉」可以直接问那个节点，而不是数全页浮层（BID089–BID108 的根因）。
+        if popup_trigger:  # BID109
+            panel_before = self._track_panel(  # BID109
+                executor, node.backend_node_id, panel_before  # BID109
+            )  # BID109
         # A same-document link (active nav item / in-page hash) must not pay the
         # full navigation grace: it either fires a soft event or does nothing.
         click_may_nav = may_navigate(node)
@@ -1552,6 +1561,7 @@ class BrowserController:
                     overlay_closed = self._overlay_open(session)  # BID091
                     panel_closed = executor.panel_state(node.backend_node_id)  # BID091
                     retry_closed = False  # BID099
+                    clicks = 2  # BID109
                     with self._watch_navigation(session) as retry_nav:
                         executor.click(node.backend_node_id)
                         retry_closed = self._panel_closed_by_click(  # BID099
@@ -1594,6 +1604,19 @@ class BrowserController:
                     # clicks=2、panel=open 全程、返回只有「没有检测到面板打开」）。
                     panel_preopened = bool(panel_before.get("anchored"))  # BID106
                 click_noop = False
+                # BID109：把这次点击的面板结论整理成结构化字段（`panel`）。
+                # 只在 `popup_trigger` 分支里产出：普通按钮点击没有面板契约，
+                # 硬塞一个 `panel` 字段只会让消费方以为「这里本该有面板」。
+                panel_after = executor.panel_state(node.backend_node_id)  # BID109
+                if panel_fixed:  # BID109
+                    _reason = "reopened"  # BID109
+                elif opened:  # BID109
+                    _reason = "opened"  # BID109
+                else:  # BID109
+                    _reason = "not_observed"  # BID109
+                panel_outcome = self._panel_result(  # BID109
+                    panel_after, clicks, _reason  # BID109
+                )  # BID109
             elif (not overlay_before) and self._overlay_open(session):
                 # The click opened a real overlay: leave it open for capture.
                 click_noop = False
@@ -1646,6 +1669,7 @@ class BrowserController:
             "popup_missing": popup_missing,
             "panel_fixed": panel_fixed,  # BID095
             "panel_preopened": panel_preopened,  # BID106
+            "panel_outcome": panel_outcome,  # BID109
             "before_sig": before_sig,
             "after_sig": after_sig,
         }
@@ -1678,6 +1702,7 @@ class BrowserController:
             pass  # BID094
         panels_before = executor.floating_panel_fingerprint()  # BID094
         panel_before = executor.panel_state(backend_node_id)  # BID094
+        panel_before = self._track_panel(executor, backend_node_id, panel_before)  # BID109
         overlay_before = self._overlay_open(session)  # BID094
         executor.click(backend_node_id)  # BID094
         click_closed = self._panel_closed_by_click(  # BID099
@@ -1698,6 +1723,7 @@ class BrowserController:
                 "popup_missing": False,  # BID094
                 "panel_fixed": False,  # BID094
                 "panel_preopened": False,  # BID106
+                "clicks": 1,  # BID109
             }  # BID094
         # 与 _run_click 对称：补点的基线**重新取**（首点可能反向操作过），补点后仍要
         # 有方向的证据才认成功——BID089/BID090/BID091 的结论原样复用，不另立判据。
@@ -1724,6 +1750,7 @@ class BrowserController:
             # BID106：``panel_before`` 是**首点之前**的实测状态；它在动作前就已经
             # ``anchored`` 时，补点失败也只说明「没打开」，不说明面板是关着的。
             "panel_preopened": (not opened) and bool(panel_before.get("anchored")),  # BID106
+            "clicks": 2,  # BID109
         }  # BID094
 
     # BID096：「疑似被自己关掉」的确认窗口。输入会触发筛选/远端取数，组件库常在
@@ -1805,7 +1832,10 @@ class BrowserController:
         """
         backend_node_id = node.backend_node_id  # BID095
         before = executor.panel_state(backend_node_id)  # BID095
+        before = self._track_panel(executor, backend_node_id, before)  # BID109
         evidence = {"panel_missing": False, "panel_fixed": False}  # BID095
+        evidence["clicks"] = 1  # BID109
+        evidence["reason"] = "unobservable"  # BID109
         if int(before.get("count", -1)) < 0:  # BID095
             # 探针不可观测：按 BID072 不做事后否定/补点，直接输入。
             return input_fn(), evidence  # BID095
@@ -1847,6 +1877,8 @@ class BrowserController:
             # `anchored` 时，面板很可能本来就在（受控展开的控件），这份证据要一起
             # 交给模型，否则它只会读到「没有检测到面板打开」（§1 CASE-BC）。
             "panel_preopened": bool(before.get("anchored")),  # BID106
+            "clicks": 2,  # BID109
+            "reason": "reopened" if confirmed else "not_observed",  # BID109
         }  # BID095
         return result, evidence  # BID095
 
@@ -1989,11 +2021,22 @@ class BrowserController:
         fill_notice = "\n".join(  # BID095
             p for p in (panel_notice, fill_notice) if p  # BID095
         )  # BID095
-        return {
-            "fill_error": fill_error,
-            "fill_notice": fill_notice,
-            "dialog": {"type": "", "message": ""},
-        }
+        result = {  # BID109
+            "fill_error": fill_error,  # BID109
+            "fill_notice": fill_notice,  # BID109
+            "dialog": {"type": "", "message": ""},  # BID109
+        }  # BID109
+        # BID109：只有「动作前控件旁本来就有面板」的输入才会产生面板结论，普通文本框
+        # 不塞 `panel` 字段（`panel_evidence` 为空）。
+        if panel_evidence and (  # BID109
+            panel_evidence.get("panel_missing") or panel_evidence.get("panel_fixed")  # BID109
+        ):  # BID109
+            result["panel_outcome"] = self._panel_result(  # BID109
+                None,  # BID109
+                int(panel_evidence.get("clicks", 1)),  # BID109
+                "reopened" if panel_evidence.get("panel_fixed") else "not_observed",  # BID109
+            )  # BID109
+        return result  # BID109
 
     def _run_select(self, ctx: _InteractContext, fill: str) -> dict:
         node = ctx.node
@@ -2060,41 +2103,19 @@ class BrowserController:
 
         取不到数（``count == -1``）、锚定基线本来就真且计数没增加时一律返回 False：
         宁可少一次「已打开」的断言，也不要把反向操作说成成功（BID060/BID090）。
+
+        BID109：判定主体搬到 :mod:`browser_agent.panel`，并多了一条**最强**的证据——
+        被跟踪面板**句柄**「从不在到在场」（同一个 DOM 节点，不受任何无关浮层影响）。
+        上面四条旧证据原样保留，作为「还没认领到句柄」时的兜底。
         """
-        if not isinstance(after, dict):  # BID091
-            return False  # BID091
-        before = before if isinstance(before, dict) else {}  # BID091
-        before_n = int(before.get("count", -1))  # BID091
-        after_n = int(after.get("count", -1))  # BID091
-        # BID092：``count`` 会被无关浮层抵消，``near`` 不会（见 ``_wait_popup_opened``）。
-        try:  # BID092
-            before_near = int(before.get("near", -1))  # BID092
-            after_near = int(after.get("near", -1))  # BID092
-        except (TypeError, ValueError):  # BID092
-            before_near = after_near = -1  # BID092
-        # BID093：先算「贴着本控件的候选面板变少」，再用它否决下面「总数变多」那条兜底。
-        # 同一击关掉面板（-1）同时插入两个无关浮层（+2）时总数是**变多**的，这条兜底
-        # 会把 BID092 刚判对的「被关掉」翻回「已打开」、跳过补点 —— 后一轮修复否决
-        # 前一轮（BID093 §1 CASE-G 真机复现）。``near`` 变少说明面板已被关掉，此时
-        # 总数变多只能来自无关浮层，不能算「面板新出现」。
-        near_decreased = (  # BID093
-            before_near >= 0 and after_near >= 0 and after_near < before_near  # BID093
-        )  # BID093
-        if (  # BID091
-            before_n >= 0  # BID091
-            and after_n >= 0  # BID091
-            and after_n > before_n  # BID091
-            and not near_decreased  # BID093
-        ):  # BID091
-            return True  # BID091
-        if before_near >= 0 and after_near >= 0 and after_near > before_near:  # BID092
-            return True  # BID092
-        return bool(after.get("anchored")) and not bool(before.get("anchored"))  # BID091
+        return panel_evidence.opened_since(before, after)  # BID109
 
     # 本函数于BID101引入
     @staticmethod
-    def _panel_still_near(before_near: int, after_near: int) -> bool:
-        """贴着本控件的候选面板一个都没少 —— 面板仍在的直接证据（BID101）。
+    def _panel_still_near(
+        before_near: int, after_near: int, after: Optional[dict] = None  # BID109
+    ) -> bool:
+        """面板仍在的直接证据：句柄在场且可见（BID109），或 ``near`` 一个没少（BID101）。
 
         为什么需要这条**否决**：``count`` 是**全页所有浮层盒子**（``_FLOATING_BOX_JS``
         只要求出文档流 + 可见 + 有尺寸，不要求候选语义），而组件库会在交互时清掉上一次
@@ -2104,15 +2125,18 @@ class BrowserController:
         补点，要么白点（受控展开的下拉），要么按 toggle 语义把它真正关掉，最后再报
         「没有检测到面板打开」（BID101 §1 CASE-AK / CASE-AM 真机复现）。
 
-        只在 ``before_near > 0`` 时否决：``near == 0`` 说明它本来就看不见这个面板
-        （面板太窄 / 太远 / 属探测盲区），那时 ``count`` 是唯一证据，不能否决。
+        只在 ``before_near > 0`` 时用 ``near`` 否决：``near == 0`` 说明它本来就看不见
+        这个面板（面板太窄 / 太远 / 属探测盲区），那时 ``count`` 是唯一证据，不能否决。
 
         BID102：``near`` 的口径是「贴着本控件的**候选面板盒子**数」，**1 行候选也算**
         （``actions._candidate_panel_js(1)``）。所以一次筛选把候选从 3 行筛到 1 行时
         ``near`` 不会下降、这条否决才生效——若有人把行数门槛改回 2，「筛掉两行」就会
         重新被读成「面板被关掉」并补点（BID102 §1 CASE-AN 真机复现）。
+
+        BID109：``after`` 带面板句柄且句柄在场时直接返回 True。这条比 ``near`` 精确：
+        ``near`` 会因为「候选被筛少」「面板变窄」而下降，句柄不会——它数的是一个**身份**。
         """
-        return before_near > 0 and after_near >= before_near  # BID101
+        return panel_evidence.still_present(after, before_near, after_near)  # BID109
 
     # 本函数于BID093引入
     @staticmethod
@@ -2139,22 +2163,64 @@ class BrowserController:
         BID102：``near`` 下降的语义收窄为「**少了一个候选面板盒子**」，不含「候选
         行数变少」——后者由 :func:`browser_agent.actions._candidate_panel_js` 的宽松档
         （没有候选 role 时 1 行即算）保证 ``near`` 不变（BID102 §1 CASE-AN）。
+
+        BID109：判定主体搬到 :mod:`browser_agent.panel`。有面板句柄时**它可以单独下结论**：
+        「那个节点还在」直接否决（不再依赖 ``near`` 恰好没变少），「那个节点不在了」
+        直接成立（不再依赖 ``count`` 恰好变少）。旧口径只在没有句柄时生效。
         """
-        before = before if isinstance(before, dict) else {}  # BID093
-        after = after if isinstance(after, dict) else {}  # BID093
-        before_n = int(before.get("count", -1))  # BID093
-        after_n = int(after.get("count", -1))  # BID093
-        try:  # BID093
-            before_near = int(before.get("near", -1))  # BID093
-            after_near = int(after.get("near", -1))  # BID093
-        except (TypeError, ValueError):  # BID093
-            before_near = after_near = -1  # BID093
-        if BrowserController._panel_still_near(before_near, after_near):  # BID101
-            # 候选面板一个没少：``count`` 的下降来自无关浮层，不是面板被关。
-            return False  # BID101
-        if before_n >= 0 and after_n >= 0 and after_n < before_n:  # BID093
-            return True  # BID093
-        return before_near >= 0 and after_near >= 0 and after_near < before_near  # BID093
+        return panel_evidence.closed_since(before, after)  # BID109
+
+    # 本函数于BID109引入
+    @staticmethod
+    def _track_panel(executor, backend_node_id: int, state: dict) -> dict:
+        """动作前控件旁**本来就有**候选面板时，给它们认领身份（CDP 句柄，最多 3 个）。
+
+        为什么只在「本来就有面板」时认领：普通「点击打开面板」没有「之前那个还在不在」
+        的问题，面板就是这一击带来的；认领身份只在 toggle / 受控展开 / 常驻假面板这
+        几类场景里有价值——而那正是 BID089–BID108 全部假阳性/假阴性的来源。
+        为什么是一组：控件旁可能同时有常驻提示盒，只认一个会被它顶替（BID109 审计回归）。
+
+        认领失败（自绘面板没有被 ``anchored`` 认出来、节点在 ``scroll_into_view`` 后
+        重渲染了）时原样返回，调用方退回旧口径。**绝不**凭空构造一个「长得像面板的
+        节点」当身份：一个错的句柄比没有句柄更糟——它会让 ``alive`` 自信地答错。
+        """
+        if state.get("tracked"):  # BID109
+            return state  # BID109
+        if not (state.get("anchored") or int(state.get("near", -1)) > 0):  # BID109
+            return state  # BID109
+        tracked_count = executor.panel_track(backend_node_id)  # BID109
+        if not tracked_count:  # BID109
+            return state  # BID109
+        # 刚认领成功 ⇒ 这几个节点此刻确实在场且可见；后续观测由 ``panel_state``
+        # 回传「还活着几个」，判据比较的是这个数量（BID109）。
+        return dict(  # BID109
+            state,  # BID109
+            tracked=True,  # BID109
+            tracked_n=int(tracked_count),  # BID109
+            alive_n=int(tracked_count),  # BID109
+            alive=panel_evidence.ALIVE_ALIVE,  # BID109
+        )  # BID109
+
+    # 本函数于BID109引入
+    @staticmethod
+    def _panel_result(observed: Optional[dict], clicks: int, reason: str) -> dict:
+        """把一次动作的面板结论整理成返回里的结构化字段 ``panel``。
+
+        ``state`` 的取值只有 ``open`` / ``closed`` / ``unknown``：``unknown`` 是**合法
+        结果**（探测盲区、页面不可见、没有句柄），不要为了让字段好看而把它写成
+        ``closed``——那又会退回「没看见就说关着」的老问题（BID072/BID090）。
+
+        有句柄时以句柄为准；``reason`` 是「本轮为什么这么判」：
+        ``opened`` / ``reopened`` / ``already_open`` / ``not_observed`` /
+        ``unobservable`` / ``kept``。
+        """
+        reason = str(reason or "unknown")  # BID109
+        state = panel_evidence.verdict(None, observed or {}, fallback="unknown")  # BID109
+        if reason in ("opened", "reopened", "already_open"):  # BID109
+            # 补点/首点已经确认打开时，旧句柄可能指向被卸载的旧节点（重挂成新节点），
+            # 此时 `alive == 0` 是**过期句柄**而不是「面板关着」——以本轮证据为准。
+            state = "open"  # BID109
+        return {"state": state, "clicks": int(clicks), "reason": reason}  # BID109
 
     # 本函数于BID085引入
     def _select_panel_open(self, ctx: _InteractContext, state: Optional[dict] = None) -> bool:  # BID089
@@ -2266,6 +2332,7 @@ class BrowserController:
             # 打完筛选词、面板可观测地没打开时返回里一个字都没有（§1 CASE-BS）。
             # 基线取在滚动/点击之前，与空串分支同点（BID089）。
             before = executor.panel_state(node.backend_node_id)  # BID108
+            before = self._track_panel(executor, node.backend_node_id, before)  # BID109
             # BID095：``input_text`` 内部第一步就是点击目标。控件若已展开，这一击是
             # toggle 的反向操作——先把面板关掉，再往里打字。BID085 只在「空串筛出
             # 完整候选」分支躲开了它，非空筛选词路径完全没有面板证据：面板被自己
@@ -2285,6 +2352,7 @@ class BrowserController:
             except Exception:  # noqa: BLE001  # BID089
                 pass  # BID089
             before = executor.panel_state(node.backend_node_id)  # BID089
+            before = self._track_panel(executor, node.backend_node_id, before)  # BID109
             probe_open = self._select_panel_open(ctx, before)  # BID085 / BID089
             if open_only:  # BID085
                 if probe_open:  # BID085 / BID089
@@ -2415,6 +2483,7 @@ class BrowserController:
         # the moment the panel opens — see ``_range_entry_notice`` for why the two
         # shapes must not share one wording.
         fill_notice = _range_entry_notice(node, ctx.name)
+        fill_panel_missing = False  # BID109
         if fill:  # BID108
             # 非空筛选词路径的「面板开着」结论。BID105 的 `panel_ok` 兜底只在空串
             # 分支计算，而 `fill` 非空时 `_input_with_panel_evidence` 只在**动作前
@@ -2441,6 +2510,7 @@ class BrowserController:
                 and not input_evidence.get("panel_fixed")  # BID108
                 and not self._panel_opened_since(before, final_state)  # BID108
             ):  # BID108
+                fill_panel_missing = True  # BID109
                 fill_notice = "\n".join(  # BID108
                     p  # BID108
                     for p in (rp.popup_not_opened_notice(ctx.name), fill_notice)  # BID108
@@ -2536,11 +2606,46 @@ class BrowserController:
             fill_notice = "\n".join(  # BID095
                 p for p in (input_notice, fill_notice) if p  # BID095
             )  # BID095
-        return {
-            "fill_error": "",
-            "fill_notice": fill_notice,
-            "dialog": {"type": "", "message": ""},
-        }
+        # BID109：本入口的面板结论（结构化字段 ``panel``）。只在**按契约涉及面板**时
+        # 产出：`fill` 非空时只有「动作前就贴着面板 / BID108 兜底报过没打开」才算涉及，
+        # 普通输入不塞 `panel` 字段（否则消费方会以为这里本该有面板）。
+        _observed: Optional[dict] = None  # BID109
+        _reason = ""  # BID109
+        _clicks = 1 if clicked else 0  # BID109
+        if fill:  # BID109
+            _observed = final_state  # BID109
+            if fill_panel_missing:  # BID109
+                _reason = "not_observed"  # BID109
+            elif input_evidence.get("panel_fixed"):  # BID109
+                _reason = "reopened"  # BID109
+                _clicks += 1  # BID109
+            elif input_evidence.get("panel_missing"):  # BID109
+                _reason = "not_observed"  # BID109
+                _clicks += 1  # BID109
+            elif input_evidence:  # BID109
+                _reason = "kept"  # BID109
+        else:  # BID109
+            _observed = fixed_after if fixed_after is not None else after  # BID109
+            if panel_unconfirmed:  # BID109
+                _reason = "not_observed"  # BID109
+            elif panel_fixed:  # BID109
+                _reason = "reopened"  # BID109
+            elif already_open:  # BID109
+                _reason = "already_open"  # BID109
+            elif panel_ok:  # BID109
+                _reason = "opened"  # BID109
+            else:  # BID109
+                _reason = "not_observed"  # BID109
+            if panel_fixed or panel_unconfirmed:  # BID109
+                _clicks += 1  # BID109
+        result = {  # BID109
+            "fill_error": "",  # BID109
+            "fill_notice": fill_notice,  # BID109
+            "dialog": {"type": "", "message": ""},  # BID109
+        }  # BID109
+        if _reason:  # BID109
+            result["panel_outcome"] = self._panel_result(_observed, _clicks, _reason)  # BID109
+        return result  # BID109
 
     def _run_drag(self, ctx: _InteractContext, drag_pct: int) -> dict:
         ctx.executor.drag(ctx.node.backend_node_id, drag_pct)
@@ -2573,6 +2678,20 @@ class BrowserController:
         content = "\n\n".join(p for p in (notice, diff) if p)
         return self._base_result(INCREMENTAL, OK, content, include_tabs=False)
 
+    # 本函数于BID109引入
+    @staticmethod
+    def _attach_panel(result: dict, outcome: dict) -> dict:
+        """把一次动作的面板结论挂到返回 dict 的 ``panel`` 字段上。
+
+        为什么单独一个字段而不是又加一句散文：BID103–BID108 六轮都在修「失败时该怎么
+        说」，因为状态只存在于散文里；每个出口要各补一句、每句话还要单独论证成立条件
+        （「候选项见下方返回内容」在主 E2E 的 T20 里至今是假的）。状态进字段之后，
+        散文只负责解释，措辞不完美也不再影响正确性判断。
+        """
+        if outcome:  # BID109
+            result["panel"] = outcome  # BID109
+        return result  # BID109
+
     def _finish_interaction(self, ctx: _InteractContext, extras: dict) -> dict:
         target_id = ctx.target_id
         old_tree = ctx.old_tree
@@ -2585,6 +2704,10 @@ class BrowserController:
         click_noop = bool(extras.get("click_noop", False))
         before_sig = extras.get("before_sig", "")
         after_sig = extras.get("after_sig", "")
+        panel_outcome = extras.get("panel_outcome") or {}  # BID109
+        # BID109：本动作的面板结论已经在 `_run_*` 里算完（都写进了 extras），这里可以
+        # 安全释放被认领的面板句柄——executor 是每个互动一个，句柄不释放会随会话累积。
+        ctx.executor.panel_forget()  # BID109
 
         # 点击（非零变化）成功 → 该元素不是死链，清零连续死点击计数。亦在聚焦标签页
         # 切换（下面提前返回）之前处理。仅当 extras 带 click_noop 键（即本次是点击类
@@ -2606,13 +2729,16 @@ class BrowserController:
                 + (fill_notice + "\n\n" if fill_notice else "")  # BID095
                 + new_text  # BID095
             )  # BID095
-            return self._base_result(
-                FULL,
-                FAIL if fill_error else OK,
-                content,
-                error=fill_error or rp.NO_ERROR,
-                include_tabs=True,
-            )
+            return self._attach_panel(  # BID109
+                self._base_result(  # BID109
+                    FULL,  # BID109
+                    FAIL if fill_error else OK,  # BID109
+                    content,  # BID109
+                    error=fill_error or rp.NO_ERROR,  # BID109
+                    include_tabs=True,  # BID109
+                ),  # BID109
+                panel_outcome,  # BID109
+            )  # BID109
 
 
         new_tree = self.capture_tree(target_id)
@@ -2664,14 +2790,20 @@ class BrowserController:
             # When the focused page did change, keep it and append the hint;
             # when it did not, the new tab *is* the outcome.
             content = extra if rp.PAGE_NO_CHANGE in content else content + "\n\n" + extra
-            return self._base_result(
-                INCREMENTAL, FAIL if fill_error else OK, content,
-                error=fill_error or rp.NO_ERROR, include_tabs=True,
-            )
-        return self._base_result(
-            INCREMENTAL, FAIL if fill_error else OK, content,
-            error=fill_error or rp.NO_ERROR, include_tabs=False,
-        )
+            return self._attach_panel(  # BID109
+                self._base_result(  # BID109
+                    INCREMENTAL, FAIL if fill_error else OK, content,  # BID109
+                    error=fill_error or rp.NO_ERROR, include_tabs=True,  # BID109
+                ),  # BID109
+                panel_outcome,  # BID109
+            )  # BID109
+        return self._attach_panel(  # BID109
+            self._base_result(  # BID109
+                INCREMENTAL, FAIL if fill_error else OK, content,  # BID109
+                error=fill_error or rp.NO_ERROR, include_tabs=False,  # BID109
+            ),  # BID109
+            panel_outcome,  # BID109
+        )  # BID109
 
     @_trim_tabs_after_reply  # BID086
     @_finalize_llm_output  # BID084
@@ -3060,6 +3192,7 @@ class BrowserController:
         tail_popup_missing = False  # BID094
         tail_panel_fixed = False  # BID094
         tail_panel_preopened = False  # BID106
+        tail_clicks = 0  # BID109
         batch_panels: list[tuple[str, dict]] = []  # BID100
         base_tree = tree  # BID078
         base_lines = self.serialize_lines_tree(tree, target_id)  # BID078
@@ -3150,6 +3283,7 @@ class BrowserController:
                         tail_panel_preopened = bool(  # BID106
                             evidence.get("panel_preopened")  # BID106
                         )  # BID106
+                        tail_clicks = int(evidence.get("clicks", 1))  # BID109
                     else:
                         executor.click(backend_node_id)
                     if category in ("input", "select"):  # BID078
@@ -3175,6 +3309,11 @@ class BrowserController:
                     INCREMENTAL, FAIL, rp.EMPTY_CONTENT, error_msg, include_tabs=False
                 )
             self._stabilize(target_id)
+
+        # BID109：批次的每一次 fill / 收尾点击都可能认领过面板句柄；这里统一释放，
+        # 避免一个长会话里句柄越积越多（每个互动一个 executor，正常路径由
+        # `_finish_interaction` 释放，批量没有走那条出口）。
+        executor.panel_forget()  # BID109
 
         new_focus = self._resolve_focused_target()
         focus_changed = bool(new_focus and new_focus != old_focus)
@@ -3332,11 +3471,37 @@ class BrowserController:
                 )  # BID100
         if batch_notice:  # BID100
             content = batch_notice + "\n\n" + content  # BID100
+        # BID109：批量的面板结论也进结构化字段。收尾点击是「一次动作」，中间 fill 是
+        # 「多个字段各一次」，所以用 ``fields`` 分开表达，别用一个 `state` 蒙混：
+        # 批次里一个字段的面板开着、另一个关着是常态。
+        batch_panel: dict = {}  # BID109
+        if tail_popup:  # BID109
+            if tail_panel_fixed:  # BID109
+                _tail_reason = "reopened"  # BID109
+            elif tail_popup_missing:  # BID109
+                _tail_reason = "not_observed"  # BID109
+            else:  # BID109
+                _tail_reason = "opened"  # BID109
+            batch_panel["tail"] = self._panel_result(  # BID109
+                None, tail_clicks or 1, _tail_reason  # BID109
+            )  # BID109
+        if batch_panels:  # BID109
+            batch_panel["fields"] = {  # BID109
+                _fname: self._panel_result(  # BID109
+                    None,  # BID109
+                    int(_evidence.get("clicks", 1)),  # BID109
+                    str(_evidence.get("reason") or "not_observed"),  # BID109
+                )  # BID109
+                for _fname, _evidence in batch_panels  # BID109
+            }  # BID109
         if error_msg:
             action_ok = PARTIAL_FAIL if success_count > 0 else FAIL
-            return self._base_result(
-                mode, action_ok, content, error=error_msg, include_tabs=include_tabs
-            )
+            return self._attach_panel(  # BID109
+                self._base_result(  # BID109
+                    mode, action_ok, content, error=error_msg, include_tabs=include_tabs  # BID109
+                ),  # BID109
+                batch_panel,  # BID109
+            )  # BID109
         if failed_fills or failed_selects:
             chunks: list[str] = []
             if failed_fills:
@@ -3350,10 +3515,17 @@ class BrowserController:
                         ]
                     )
                 )
-            return self._base_result(
-                mode, PARTIAL_FAIL, content, error=" ".join(chunks), include_tabs=include_tabs
-            )
-        return self._base_result(mode, OK, content, include_tabs=include_tabs)
+            return self._attach_panel(  # BID109
+                self._base_result(  # BID109
+                    mode, PARTIAL_FAIL, content, error=" ".join(chunks),  # BID109
+                    include_tabs=include_tabs,  # BID109
+                ),  # BID109
+                batch_panel,  # BID109
+            )  # BID109
+        return self._attach_panel(  # BID109
+            self._base_result(mode, OK, content, include_tabs=include_tabs),  # BID109
+            batch_panel,  # BID109
+        )  # BID109
 
     def _quiet(
         self,
@@ -3568,18 +3740,43 @@ class BrowserController:
                 before_near = -1  # BID092
         near_decreased = False  # BID092
         near_opened = False  # BID092
+        # BID109：动作前如果已经认领了面板句柄，之后每一轮都能直接问「那个节点还在不在」。
+        # 这是唯一能区分「这一击把面板关掉」与「页面上别的浮层在动」的证据，优先于
+        # ``count``/``near``（BID101/102 两轮修的都是聚合量被带偏）。
+        before_alive_n = panel_evidence.alive_n(panel_before)  # BID109
         while True:  # BID067
             if not overlay_sticky and self._overlay_open(session):  # BID067 / BID091
                 return True  # BID067
             fingerprint = executor.floating_panel_fingerprint()  # BID089
             after_boxes = self._panel_box_count(fingerprint)  # BID089
             after_near = -1  # BID098
+            current: Optional[dict] = None  # BID109
             if before_near >= 0 and backend_node_id is not None:  # BID092
                 current = executor.panel_state(backend_node_id)  # BID092
                 try:  # BID092
                     after_near = int(current.get("near", -1))  # BID092
                 except (TypeError, ValueError):  # BID092
                     after_near = -1  # BID092
+                # BID109：句柄证据。只在动作前就持有句柄时生效（普通「点击打开面板」
+                # 没有基线句柄，行为与旧实现逐字一致）。比较的是**还活着的候选个数**，
+                # 不是某一个节点：控件旁可能同时有常驻提示盒，单节点会被它顶住。
+                if current.get("tracked") and panel_before.get("tracked"):  # BID109
+                    now_alive_n = panel_evidence.alive_n(current)  # BID109
+                    if now_alive_n > before_alive_n:  # BID109
+                        # 被认领的候选里又有节点「活着」了：面板自己挂回来了。
+                        return True  # BID109
+                    if now_alive_n < before_alive_n and not current.get(  # BID109
+                        "page_hidden"  # BID109
+                    ):  # BID109
+                        # 有节点确实不在了。仍然按 BID098「变少不抢跑」处理：先记下、
+                        # 延长窗口，等它会不会重新挂回来，再决定补不补点。
+                        decreased = True  # BID109
+                        if not seen_decreased:  # BID109
+                            seen_decreased = True  # BID109
+                            deadline = max(  # BID109
+                                deadline,  # BID109
+                                time.time() + self._PANEL_CLOSE_CONFIRM_SECONDS,  # BID109
+                            )  # BID109
                 if after_near >= 0:  # BID092
                     near_decreased = after_near < before_near  # BID092
                     near_opened = after_near > before_near  # BID092
@@ -3602,7 +3799,7 @@ class BrowserController:
                 before_boxes >= 0  # BID089
                 and after_boxes >= 0  # BID089
                 and after_boxes < before_boxes  # BID089
-                and not self._panel_still_near(before_near, after_near)  # BID101
+                and not self._panel_still_near(before_near, after_near, current)  # BID109
             ):  # BID101
                 decreased = True  # BID089
                 if not seen_decreased:  # BID098
@@ -3684,12 +3881,24 @@ class BrowserController:
         ``before`` 没有候选面板时直接返回 ``False``：常规「点击打开面板」不付这份
         延迟；只有「点击前控件旁已贴着候选面板」（toggle 关闭 / 常驻假面板）
         才需要区分。
+
+        BID109：``before`` 若带着面板句柄，这里不再需要「观察到变少」这种间接证据——
+        直接问那个节点还在不在即可：仍在 ⇒ 没关（立刻返回，省掉整个 0.15s 窗口）；
+        不在了 ⇒ 关了。没有句柄时才退回原来的 ``near``/``count`` 变少口径。
         """
         try:  # BID099
             if not before.get("anchored") and int(before.get("near", -1)) <= 0:  # BID099
                 return False  # BID099
         except (TypeError, ValueError):  # BID099
             return False  # BID099
+        if before.get("tracked"):  # BID109
+            current = executor.panel_state(backend_node_id)  # BID109
+            before_n = panel_evidence.alive_n(before)  # BID109
+            now_n = panel_evidence.alive_n(current)  # BID109
+            if now_n >= before_n:  # BID109
+                return False  # BID109
+            if now_n < before_n and not current.get("page_hidden"):  # BID109
+                return True  # BID109
         deadline = time.time() + window  # BID099
         while True:  # BID099
             current = executor.panel_state(backend_node_id)  # BID099

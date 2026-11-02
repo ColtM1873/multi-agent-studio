@@ -12,6 +12,7 @@ import time
 from typing import Optional
 
 from .cdp import CDPClient, CDPError
+from . import panel as panel_evidence  # BID109
 from . import timing
 
 
@@ -331,9 +332,98 @@ def panel_state_probe_expression() -> str:
         # 只有一行内容的提示/说明」会被当成「已展开」，回到 BID092 的假阳性死循环。
         # ``near`` 才用宽松档——它只回答「候选面板盒子还在不在」，不回答「已展开」。
         "if(ho>=0.6&&adjacent&&okPanel(e))anchored=true;}}"  # BID089 / BID102
-        "return [out.length,anchored?1:0,out.length+'|'+out.sort().join(';'),near];"  # BID089 / BID092
-        "}catch(e){return [0,0,'',-1];}}"  # BID089 / BID092
+        # BID109：``aria-expanded`` 与 ``document.hidden`` 一同回传。前者**只进诊断字段**
+        # （panel.hints.aria），不参与任何 open/closed 判定——它可能挂在包装层、可能被
+        # 受控组件在 blur 时先置 false 而面板还在画、也可能只是 a11y 镜像。历史实现
+        # 没有拿它当判据是对的（见 browser_agent/panel.py 的模块说明）。
+        "var aria=-1;var ae=this;"  # BID109
+        "for(var k2=0;k2<4&&ae;k2++){"  # BID109
+        "var av=(ae.getAttribute&&ae.getAttribute('aria-expanded'))||'';"  # BID109
+        "if(av==='true'||av==='false'){aria=(av==='true')?1:0;break;}"  # BID109
+        "ae=ae.parentElement;}"  # BID109
+        "return [out.length,anchored?1:0,out.length+'|'+out.sort().join(';'),near,"  # BID109
+        "aria,document.hidden?1:0];"  # BID109
+        "}catch(e){return [0,0,'',-1,-1,0];}}"  # BID109
     )  # BID089
+
+
+# 本函数于BID109引入
+def panel_anchor_expression(index: int = 0) -> str:
+    """返回**锚定在控件旁的第 ``index`` 个候选面板元素**（DOM 节点本身，不是值）。
+
+    用途：给面板一个**身份**。CDP 的 ``Runtime.callFunctionOn`` 在
+    ``returnByValue=False`` 时会把「返回一个 DOM 节点」换成 ``objectId``；
+    之后所有「这个面板还在不在」都只问这几个节点（O(1)、不受页面其它浮层影响），
+    不必再拿全页浮层计数去反推——BID089–BID108 二十轮的假阳性/假阴性都源于那个反推。
+
+    **为什么要按 index 取多个**：一个控件旁可能同时有多个「长得像候选面板」的盒子
+    （BID091 的常驻 ``sticky-hint``、BID101 的校验提示、真面板）。只认第一个会让
+    「常驻提示」顶替真面板：提示永远可见 ⇒ 面板明明被点关了却判「还在」（BID109
+    审计回归 CASE-AA/AD/AL/AO 就是这么炸的）。这里把候选**全部**认领下来，判据改成
+    「被认领的节点里还有几个活着」——数量变化是身份级证据，不受候选行数/无关浮层影响。
+
+    判据与 :func:`panel_state_probe_expression` 的 ``anchored`` **逐字一致**
+    （同一组 ``_FLOATING_BOX_JS`` + ``_CANDIDATE_PANEL_JS`` + BID093 的 0.6 重叠门槛
+    + BID102 的严格 2 行档）。两处若不一致，「谁算这个控件的面板」就会出现两套口径。
+
+    拿不到第 ``index`` 个候选时返回 ``null``（调用方据此停止认领）。
+    """
+    return (  # BID109
+        "function(i){try{"  # BID109
+        "var okBox=" + _FLOATING_BOX_JS + ";"  # BID109
+        "var okPanel=" + _CANDIDATE_PANEL_JS + ";"  # BID109
+        "var r=null;var el=this;"  # BID109
+        "for(var k=0;k<5&&el;k++){"  # BID109
+        "var b=el.getBoundingClientRect();"  # BID109
+        "if(b.width>=2&&b.height>=2){r=b;break;}"  # BID109
+        "el=el.parentElement;}"  # BID109
+        "if(!r)return null;"  # BID109
+        "var all=document.body?document.body.getElementsByTagName('*'):[];"  # BID109
+        "var seen=0;"  # BID109
+        "for(var j=0;j<all.length;j++){"  # BID109
+        "var e=all[j];"  # BID109
+        "if(e.children.length===0)continue;"  # BID109
+        "if(e===this)continue;"  # BID109
+        "if(e.contains&&e.contains(this))continue;"  # BID109
+        "if(!okBox(e))continue;"  # BID109
+        "var p=e.getBoundingClientRect();"  # BID109
+        "if(p.width<2||p.height<2)continue;"  # BID109
+        "if(!okPanel(e))continue;"  # BID109
+        "var overlap=Math.min(r.right,p.right)-Math.max(r.left,p.left);"  # BID109
+        "var ho=overlap/Math.max(1,r.width);"  # BID109
+        "var inter=!(p.bottom<r.top||p.top>r.bottom||p.right<r.left||p.left>r.right);"  # BID109
+        "var below=p.top-r.bottom;var above=r.top-p.bottom;"  # BID109
+        "var adjacent=inter||(below>=-2&&below<=400)||(above>=-2&&above<=400);"  # BID109
+        "if(!(ho>=0.6&&adjacent))continue;"  # BID109
+        "if(seen==i)return e;"  # BID109
+        "seen++;}"  # BID109
+        "return null;}catch(err){return null;}}"  # BID109
+    )  # BID109
+
+
+# 本常量于BID109引入
+# 被跟踪面板句柄的「还在不在」查询：只问这一个节点，不扫全页。
+# 返回值 ``[connected, cssHidden, faint, ariaHidden, width, height]``：
+#   * ``connected=0``   → 节点已从文档移除（关闭 / 重新挂载成新节点）；
+#   * ``cssHidden=1``   → display:none 或 visibility:hidden；
+#   * ``faint=1``       → opacity≈0（入场首帧；页面不可见时 rAF 冻结，此项不可信，
+#                          由 Python 侧按 ``page_hidden`` 决定是否采信，BID072）；
+#   * ``ariaHidden=1``  → 面板自身 aria-hidden=true（部分组件库用它代替 display:none）。
+_PANEL_HANDLE_STATE_JS = (  # BID109
+    "function(){try{"  # BID109
+    "var el=this;"  # BID109
+    "if(!el)return [-1,0,0,0,0,0];"  # BID109
+    "var connected=(typeof el.isConnected==='boolean')"  # BID109
+    "?el.isConnected:(document.contains?document.contains(el):true);"  # BID109
+    "if(!connected)return [0,0,0,0,0,0];"  # BID109
+    "var cs=getComputedStyle(el);"  # BID109
+    "var hid=(cs.display==='none'||cs.visibility==='hidden')?1:0;"  # BID109
+    "var faint=(parseFloat(cs.opacity||'1')<=0.01)?1:0;"  # BID109
+    "var ah=(el.getAttribute&&el.getAttribute('aria-hidden')==='true')?1:0;"  # BID109
+    "var r=el.getBoundingClientRect();"  # BID109
+    "return [1,hid,faint,ah,Math.round(r.width),Math.round(r.height)];"  # BID109
+    "}catch(err){return [-1,0,0,0,0,0];}}"  # BID109
+)  # BID109
 
 
 class ActionError(RuntimeError):
@@ -349,6 +439,17 @@ class ActionExecutor:
         self.client = client
         self.session = session_id
         self._mouse: tuple[float, float] = (random.uniform(100, 400), random.uniform(100, 400))
+        # BID109：被跟踪候选面板元素的 CDP objectId 列表（「这个控件的这个面板」的身份）。
+        # 每个互动开始时由 controller 调用 :meth:`panel_forget` 复位，因此同一时刻
+        # 最多只持有这一组句柄；拿到句柄后，``panel_state()`` 会顺带回传「还活着几个」，
+        # 判据不再需要从「全页浮层计数」反推（BID089–BID108 二十轮的根因）。
+        #
+        # 为什么是一组而不是一个：控件旁可能同时有多个「像候选面板」的盒子
+        # （BID091 的常驻 sticky-hint、BID101 的校验提示、真面板）。只认第一个会让
+        # 常驻提示顶替真面板——提示永远可见 ⇒ 面板被点关了也判「还在」（BID109 审计
+        # CASE-AA/AD/AL/AO 的回归就是它）。认领**全部**候选之后，判据看「还活着几个」，
+        # 数量变化是身份级证据，不受候选行数与无关浮层影响。
+        self._panel_object_ids: list[str] = []  # BID109
 
     # ------------------------------------------------------------------ #
     # low level
@@ -716,8 +817,29 @@ class ActionExecutor:
         ``count`` 的口径（BID090 澄清）：它是「排除自身与包含控件的祖先盒子之后」的
         浮层盒子数，用于与本控件自身的状态做**同一口径**的前后对比；不要拿它去和
         :meth:`floating_panel_fingerprint` 的首段数量比较（后者不排除祖先容器）。
+
+        BID109 起多回传四个键，全部服务于「给面板一个身份」：
+
+        * ``tracked`` / ``alive``：是否持有面板句柄，以及那**一个**节点此刻的状态
+          （``1`` 在场且可见 / ``0`` 不在了 / ``-1`` 没跟踪）。有了它，「这一击有没有
+          把面板关掉」不再需要 ``count``/``near`` 去猜（BID101/102 那两轮修的就是
+          「聚合量被无关浮层带偏」）；``alive == -1`` 时调用方必须退回旧口径；
+        * ``aria_expanded``：触发器（≤4 层祖先）上的 ``aria-expanded`` 三态。
+          **只进诊断字段，永不参与判定**——它可能挂在包装层、可能 stale、
+          可能是 a11y 镜像（见 ``browser_agent/panel.py`` 的模块说明）；
+        * ``page_hidden``：``document.hidden``。页面不可见时句柄的「可见」不可信，
+          调用方要按 BID072「不可观测 ⇒ 不下否定结论」处理。
         """
-        empty = {"count": -1, "anchored": False, "fingerprint": "", "near": -1}  # BID089 / BID092
+        empty = {  # BID089 / BID092
+            "count": -1,  # BID089
+            "anchored": False,  # BID089
+            "fingerprint": "",  # BID089
+            "near": -1,  # BID092
+            "tracked": False,  # BID109
+            "alive": panel_evidence.ALIVE_UNKNOWN,  # BID109
+            "aria_expanded": None,  # BID109
+            "page_hidden": False,  # BID109
+        }  # BID089 / BID092
         object_id = self._resolve(backend_node_id)  # BID089
         if not object_id:  # BID089
             return dict(empty)  # BID089
@@ -735,12 +857,179 @@ class ActionExecutor:
             near = int(value[3])  # BID092
         except (IndexError, TypeError, ValueError):  # BID092
             near = -1  # BID092
-        return {  # BID089
+        aria_expanded = None  # BID109
+        page_hidden = False  # BID109
+        if len(value) >= 6:  # BID109
+            try:  # BID109
+                aria_raw = int(value[4])  # BID109
+            except (TypeError, ValueError):  # BID109
+                aria_raw = -1  # BID109
+            if aria_raw in (0, 1):  # BID109
+                aria_expanded = bool(aria_raw)  # BID109
+            page_hidden = bool(value[5])  # BID109
+        state = {  # BID089
             "count": count,  # BID089
             "anchored": bool(value[1]),  # BID089
             "fingerprint": str(value[2] or ""),  # BID089
             "near": near,  # BID092
+            "tracked": False,  # BID109
+            "alive": panel_evidence.ALIVE_UNKNOWN,  # BID109
+            "aria_expanded": aria_expanded,  # BID109
+            "page_hidden": page_hidden,  # BID109
         }  # BID089
+        handle = self.panel_object_state()  # BID109
+        if handle.get("tracked"):  # BID109
+            state.update(handle)  # BID109
+        return state  # BID089
+
+    # 本函数于BID109引入
+    def panel_forget(self) -> None:
+        """释放被跟踪的候选面板句柄。
+
+        每个互动开始时调用一次：句柄是「本次动作看到的那几个面板候选」，跨动作复用会让
+        ``alive_n`` 回答上一个控件的问题（比没句柄更糟）。``Runtime.releaseObject``
+        失败不影响正确性（执行上下文销毁/导航也会回收），因此吞掉异常。
+        """
+        object_ids = self._panel_object_ids  # BID109
+        self._panel_object_ids = []  # BID109
+        for object_id in object_ids:  # BID109
+            try:  # BID109
+                self._send("Runtime.releaseObject", {"objectId": object_id})  # BID109
+            except Exception:  # noqa: BLE001  # BID109
+                pass  # BID109
+
+    # 本函数于BID109引入
+    _PANEL_TRACK_MAX = 3  # BID109
+
+    def panel_track(self, backend_node_id: int) -> bool:
+        """给「锚定在这个控件旁的候选面板」认领身份（最多 ``_PANEL_TRACK_MAX`` 个）。
+
+        只在**动作前控件旁本来就有候选面板**时才值得调用：那是唯一需要区分
+        「面板被自己点关」与「无关浮层被清掉」的场合（BID089–BID108 的 toggle /
+        受控展开 / 常驻假面板全都落在这里）。普通「点击打开面板」不需要身份——
+        面板是这次点击带来的，不存在「之前那个还在不在」的问题。
+
+        **为什么认领一组而不是一个**：控件旁可能同时有多个「像候选面板」的盒子
+        （BID091 的常驻 ``sticky-hint``、BID101 的校验提示、真面板）。只认第一个会让
+        常驻提示顶替真面板（提示永远可见 ⇒ 面板被点关了也判「还在」）。认领全部候选后，
+        判据看「还活着几个」——数量变化是身份级证据，与候选行数、无关浮层都无关。
+
+        返回认领到的候选个数（0 = 没拿到）。拿不到（自绘面板没有被 ``anchored`` 认出来、
+        节点在 ``scroll_into_view`` 后重渲染了）时返回 ``0``，调用方必须退回旧口径，
+        **不得**凭空构造一个「差不多的节点」当身份。
+        """
+        self.panel_forget()  # BID109
+        object_id = self._resolve(backend_node_id)  # BID109
+        if not object_id:  # BID109
+            return False  # BID109
+        try:  # BID109
+            for index in range(self._PANEL_TRACK_MAX):  # BID109
+                try:  # BID109
+                    res = self._send(  # BID109
+                        "Runtime.callFunctionOn",  # BID109
+                        {  # BID109
+                            "objectId": object_id,  # BID109
+                            "functionDeclaration": panel_anchor_expression(index),  # BID109
+                            "arguments": [{"value": index}],  # BID109
+                            "returnByValue": False,  # BID109
+                        },  # BID109
+                    )  # BID109
+                except Exception:  # noqa: BLE001  # BID109
+                    break  # BID109
+                panel_id = (res.get("result") or {}).get("objectId")  # BID109
+                if not panel_id:  # BID109
+                    break  # BID109
+                self._panel_object_ids.append(panel_id)  # BID109
+        finally:  # BID109
+            try:  # BID109
+                self._send("Runtime.releaseObject", {"objectId": object_id})  # BID109
+            except Exception:  # noqa: BLE001  # BID109
+                pass  # BID109
+        return len(self._panel_object_ids)  # BID109
+
+    # 本函数于BID109引入
+    def panel_object_state(self) -> dict:
+        """查询被跟踪候选面板此刻「还活着几个」（每个 O(1)，不扫全页）。
+
+        返回 ``{"tracked": bool, "alive_n": int, "tracked_n": int, "alive": -1|0|1}``：
+
+        * ``tracked_n`` 是动作前认领到的候选个数（基线，整个互动内不变）；
+        * ``alive_n`` 是此刻仍「在场且可见」的个数；
+        * ``alive`` 是给旧判据用的三态（``1`` 还有、``0`` 全没了、``-1`` 没跟踪）。
+
+        判据为什么看「个数」而不是「某一个节点」：控件旁的常驻提示盒会让单个句柄恒真，
+        而**候选集合的大小变化**是身份级证据——真面板消失、提示还在时 ``alive_n`` 会
+        从 2 掉到 1，与「无关浮层进出」无关（BID101 的 toast、BID102 的候选行数变化
+        都不会改变 ``alive_n``）。
+
+        ``callFunctionOn`` 报错（对象已回收 / 执行上下文换了 / 节点已移除）一律按
+        「这个节点不在了」计。``faint``（opacity≈0，入场首帧）不计为活着，但也不作为
+        「关掉了」的**唯一**证据——调用方仍走确认窗口（BID096/BID098）。
+        """
+        if not self._panel_object_ids:  # BID109
+            return {  # BID109
+                "tracked": False,  # BID109
+                "tracked_n": 0,  # BID109
+                "alive_n": 0,  # BID109
+                "alive": panel_evidence.ALIVE_UNKNOWN,  # BID109
+            }  # BID109
+        alive_n = 0  # BID109
+        details: list[dict] = []  # BID109
+        for object_id in self._panel_object_ids:  # BID109
+            try:  # BID109
+                res = self._send(  # BID109
+                    "Runtime.callFunctionOn",  # BID109
+                    {  # BID109
+                        "objectId": object_id,  # BID109
+                        "functionDeclaration": _PANEL_HANDLE_STATE_JS,  # BID109
+                        "arguments": [],  # BID109
+                        "returnByValue": True,  # BID109
+                    },  # BID109
+                )  # BID109
+            except Exception:  # noqa: BLE001  # BID109
+                details.append({"reason": "gone"})  # BID109
+                continue  # BID109
+            value = (res.get("result") or {}).get("value")  # BID109
+            if not isinstance(value, (list, tuple)) or len(value) < 6:  # BID109
+                details.append({"reason": "gone"})  # BID109
+                continue  # BID109
+            try:  # BID109
+                connected = int(value[0])  # BID109
+                css_hidden = int(value[1])  # BID109
+                faint = int(value[2])  # BID109
+                aria_hidden = int(value[3])  # BID109
+            except (TypeError, ValueError):  # BID109
+                details.append({"reason": "gone"})  # BID109
+                continue  # BID109
+            shown = (  # BID109
+                connected == 1  # BID109
+                and not css_hidden  # BID109
+                and not aria_hidden  # BID109
+                and not faint  # BID109
+            )  # BID109
+            if shown:  # BID109
+                alive_n += 1  # BID109
+            details.append(  # BID109
+                {  # BID109
+                    "connected": bool(connected),  # BID109
+                    "css_hidden": bool(css_hidden),  # BID109
+                    "faint": bool(faint),  # BID109
+                    "aria_hidden": bool(aria_hidden),  # BID109
+                    "width": value[4],  # BID109
+                    "height": value[5],  # BID109
+                }  # BID109
+            )  # BID109
+        return {  # BID109
+            "tracked": True,  # BID109
+            "tracked_n": len(self._panel_object_ids),  # BID109
+            "alive_n": alive_n,  # BID109
+            "alive": (  # BID109
+                panel_evidence.ALIVE_ALIVE  # BID109
+                if alive_n > 0  # BID109
+                else panel_evidence.ALIVE_GONE  # BID109
+            ),  # BID109
+            "alive_detail": details,  # BID109
+        }  # BID109
 
     def is_popup_trigger(self, backend_node_id: int) -> bool:
         """True if the click target opens a self-drawn popup (combobox/haspopup).
