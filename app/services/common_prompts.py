@@ -20,7 +20,9 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
+import re
 import threading
 from pathlib import Path
 
@@ -33,6 +35,8 @@ from app.config.settings import (
 )
 
 COMMON_PROMPTS_FILE_NAME = "common_prompts.json"
+
+logger = logging.getLogger(__name__)
 
 
 class CommonPromptStore:
@@ -147,19 +151,59 @@ def resolve_prompt_text(prompts: list[CommonPrompt], ref: str) -> str:
     return entry.text if entry else ""
 
 
+# 全局库条目 id 的形态：`make_common_prompt_id` 生成 `cp` + 10 位十六进制；
+# 内容重复时再追加 `-2`、`-3` 这样的去重后缀。
+_COMMON_PROMPT_ID_RE = re.compile(r"cp[0-9a-f]{10}(?:-\d+)?")
+
+
+def looks_like_common_prompt_id(value: str) -> bool:
+    """判断一个值是否「形如全局库条目 id」。
+
+    ⚠️ 这是「悬空指针 vs 旧文本副本」的分水岭：会话指针指向的全局条目被删除后，
+    `common_prompts.json` 里会留下一个**已经不存在的 id**（设计上不清理，解析不到即
+    「未设置」）。旧版迁移只看「值不在全局库 id 集合里」，会把这个悬空 id 当成旧文本
+    副本重新补进全局库——于是凭空长出一条内容为 `cpXXXX` 的垃圾条目；删掉后下次启动
+    又会按哈希迭代生成新的一条，表现为「永远删不掉的序列号」。因此形如 id 的值一律
+    按指针处理，绝不能当成用户文本写回全局库。
+    """
+    return bool(_COMMON_PROMPT_ID_RE.fullmatch((value or "").strip()))
+
+
 def migrate_legacy_session_refs(config_dir: Path | str, store: CommonPromptStore) -> int:
     """把旧版「存文本副本」的会话记录升级成「存全局库条目 id（指针）」。
 
     - 能按文本匹配到全局库条目的：直接改成指向它；
     - 匹配不到的（用户先设了会话、后来又改了全局库内容）：把旧文本补进全局库再指向它，
       保证用户已有的内容不丢（与旧版「直接输入会自动进全局库」的语义一致）。
+    - **悬空指针**（值形如 id、但库里已经没有这条，通常是用户删掉了全局条目）：
+      直接清空为「未设置」，**绝不**把它当旧文本补回全局库（否则每次启动都会复活
+      一条 `cpXXXX` 垃圾条目，且内容按哈希迭代变化，永远删不掉）。
     - 幂等：已经是合法 id 的记录不动；没有任何旧数据时不写盘。
-    返回迁移的记录数。
+    返回「迁移为指针」的记录数（悬空指针清理不计入）。
     """
     settings: Settings = load_settings(config_dir)
     prompts: list[CommonPrompt] = list(settings.common_prompts)
     ids: set[str] = {p.id for p in prompts}
-    legacy = [(a, t, v) for a, t, v in store.items() if v and v not in ids]
+
+    dangling: list[tuple[str, str]] = []
+    legacy: list[tuple[str, str, str]] = []
+    for agent_id, thread_id, value in store.items():
+        if not value or value in ids:
+            continue
+        if looks_like_common_prompt_id(value):
+            dangling.append((agent_id, thread_id))
+        else:
+            legacy.append((agent_id, thread_id, value))
+
+    # 指向已删除条目的指针 = 「未设置」：先清掉，避免下面把它当成旧文本迁移。
+    for agent_id, thread_id in dangling:
+        store.set(agent_id, thread_id, "")
+    if dangling:
+        logger.info(
+            "[common-prompt] 已清空 %s 条指向已删除条目的会话指针（不再当作旧文本复活）",
+            len(dangling),
+        )
+
     if not legacy:
         return 0
 
