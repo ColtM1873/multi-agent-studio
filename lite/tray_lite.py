@@ -11,6 +11,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import tray as full_tray
+import runtime_port
 import pystray
 from uvicorn import Config, Server
 
@@ -19,7 +20,7 @@ PORT = full_tray.PORT
 URL = full_tray.URL
 
 
-def _run_server() -> None:
+def _run_server(host: str, port: int) -> None:
     import asyncio
     import selectors
 
@@ -30,20 +31,42 @@ def _run_server() -> None:
     )
     config = Config(
         app="lite.app.main_lite:app",
-        host=HOST,
-        port=PORT,
+        host=host,
+        port=port,
         loop="none",
         log_level="warning",
     )
     server = Server(config)
     full_tray._server = server
-    asyncio.run(server.serve(), loop_factory=loop_factory)
+    try:
+        asyncio.run(server.serve(), loop_factory=loop_factory)
+    except BaseException as exc:  # 端口被占用时 uvicorn 会 sys.exit(1)，不能静默
+        full_tray._server_error.set()
+        print(f"[tray-lite] 后端启动失败（{host}:{port}）：{exc}", flush=True)
+    finally:
+        if not getattr(server, "started", False):
+            full_tray._server_error.set()
 
 
-def main() -> None:
+def main(port: int | None = None) -> None:
+    global PORT, URL
+
     full_tray._redirect_std_streams()
 
-    server_thread = threading.Thread(target=_run_server, daemon=True, name="uvicorn")
+    # 端口冲突检测：8000 被占用时依次尝试 8001、8002……（含刚退出的 TIME_WAIT）。
+    if port is None:
+        port = runtime_port.pick_port()
+    if port is None:
+        full_tray._show_message("Multi-Agent Studio Lite", full_tray._port_unavailable_message())
+        return
+    if port != runtime_port.DEFAULT_PORT:
+        print(f"[tray-lite] 端口 {runtime_port.DEFAULT_PORT} 被占用，已改用 {port}。", flush=True)
+    PORT = port
+    URL = f"http://{HOST}:{PORT}"
+    full_tray.PORT = port
+    full_tray.URL = URL
+
+    server_thread = threading.Thread(target=_run_server, args=(HOST, PORT), daemon=True, name="uvicorn")
     server_thread.start()
 
     icon = pystray.Icon(

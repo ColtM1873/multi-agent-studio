@@ -315,23 +315,26 @@ def health():
 
 
 @app.post("/api/focus")
-def focus(request: Request):
-    """把已运行的桌面窗口唤到前台（供重复双击 exe 的第二实例调用）。"""
+def focus():
+    """把已运行的桌面窗口唤到前台（供重复双击 exe 的第二实例调用）。
+
+    返回 `ok=False` 表示窗口没能唤出（窗口已销毁 / GUI 线程卡死 / 正在退出）。
+    调用方（`runtime_port.find_existing`）必须同时校验 `ok` 与 `app`，否则会把
+    「后端还活着但窗口已坏的残留进程」误判成「已打开的本程序」而不再启动。
+    """
     shown = False
+    current = ""
     try:
         import desktop_app
 
         shown = desktop_app.show_window()
+        # 窗口能唤出还不够：要确认它已经进入应用界面，而不是还停在启动页
+        # （后端活着但 navigate 失败时，旧窗口会一直停在启动页，属于「残废实例」）。
+        current = desktop_app.current_url() if shown else ""
     except Exception:
         shown = False
-    if not shown:
-        try:
-            import webbrowser
-
-            webbrowser.open(str(request.base_url))
-        except Exception:
-            pass
-    return {"ok": shown, "app": "Multi-Agent Studio"}
+        current = ""
+    return {"ok": shown, "app": "Multi-Agent Studio", "url": current}
 
 
 STATIC_DIR = __import__("pathlib").Path(__file__).resolve().parent / "static"

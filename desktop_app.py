@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import ctypes
+import html as _html
 import sys
 import threading
 from pathlib import Path
@@ -60,6 +61,29 @@ _window = None
 _target_url = None
 _quitting = False
 _lock = threading.Lock()
+
+
+# 启动失败页：后端一直起不来（端口被占用 / 数据库服务失败）时替换启动页，
+# 给用户一个能看懂的原因和下一步，而不是让「已等待 N 秒」无限转下去。
+BOOT_ERROR_HTML = """<!doctype html>
+<html lang="zh"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Multi-Agent Studio</title>
+<style>
+  html,body{height:100%;margin:0}
+  body{background:#0b0d12;color:#e8eaf0;font-family:system-ui,"Segoe UI","Microsoft YaHei",sans-serif;
+       display:flex;align-items:center;justify-content:center}
+  .box{max-width:640px;padding:32px;text-align:center}
+  .icon{font-size:38px;margin-bottom:12px}
+  h1{font-size:20px;margin:0 0 16px;font-weight:600}
+  p{color:#c7cbd6;line-height:1.85;margin:8px 0;font-size:14px;white-space:pre-line;text-align:left}
+</style></head>
+<body><div class="box">
+  <div class="icon">⚠️</div>
+  <h1>程序没有启动成功</h1>
+  <p>__MESSAGE__</p>
+  <p>可从右下角托盘图标选择「退出」，然后重新启动程序。</p>
+</div></body></html>"""
 
 
 def _set_app_user_model_id() -> None:
@@ -182,6 +206,19 @@ def navigate(url: str | None = None) -> bool:
         return False
 
 
+def show_boot_error(message: str) -> bool:
+    """后端没起来时，把启动页换成可读的错误页（替代无限读秒）。"""
+    with _lock:
+        window = _window
+    if window is None:
+        return False
+    try:
+        window.load_html(BOOT_ERROR_HTML.replace("__MESSAGE__", _html.escape(message or "")))
+        return True
+    except Exception:
+        return False
+
+
 def start(debug: bool = False) -> None:
     import webview
 
@@ -203,12 +240,41 @@ def start(debug: bool = False) -> None:
     )
 
 
-def show_window() -> bool:
+def current_url() -> str:
+    """窗口当前加载的地址（拿不到时返回空串）。用来区分「已进入应用界面」与「还停在启动页」。
+
+    `get_current_url()` 会等 `loaded` 事件（最多 20s）；页面正在导航时直接返回空串，
+    避免把 `/api/focus` 卡住。
+    """
     with _lock:
         window = _window
     if window is None:
+        return ""
+    try:
+        loaded = getattr(getattr(window, "events", None), "loaded", None)
+        if loaded is not None and not loaded.is_set():
+            return ""
+        return str(window.get_current_url() or "")
+    except Exception:
+        return ""
+
+
+def show_window() -> bool:
+    """把窗口唤到前台；返回 False 表示窗口不可用（已销毁 / GUI 未就绪 / 正在退出）。
+
+    调用方（`/api/focus`）必须把这个结果如实返回：残留进程的 HTTP 可能还活着，
+    但窗口已经唤不出来，不能让它冒充「已打开的本程序」。
+    """
+    with _lock:
+        window = _window
+        quitting = _quitting
+    if window is None or quitting:
         return False
     try:
+        # GUI 未初始化（webview.start 尚未跑完）时 window.gui 为 None，
+        # 此时 show() 会阻塞在 shown 事件上直到超时，不能算「已唤出」。
+        if getattr(window, "gui", None) is None:
+            return False
         window.show()
         window.restore()
         return True

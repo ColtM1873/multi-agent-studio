@@ -28,12 +28,14 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
 import desktop_app
+import runtime_port
 
-HOST = "127.0.0.1"
-PORT = 8000
+HOST = runtime_port.HOST
+PORT = runtime_port.DEFAULT_PORT
 URL = f"http://{HOST}:{PORT}"
 
 _server: Server | None = None
+_server_error = threading.Event()
 _stopped = threading.Event()
 
 
@@ -58,12 +60,19 @@ def _create_image() -> Image.Image:
     return img
 
 
-def _run_server() -> None:
+def _run_server(host: str, port: int) -> None:
     global _server
     loop_factory = (lambda: asyncio.SelectorEventLoop(selectors.SelectSelector())) if sys.platform == "win32" else None
-    config = Config(app="app.main:app", host=HOST, port=PORT, loop="none", log_level="warning")
+    config = Config(app="app.main:app", host=host, port=port, loop="none", log_level="warning")
     _server = Server(config)
-    asyncio.run(_server.serve(), loop_factory=loop_factory)
+    try:
+        asyncio.run(_server.serve(), loop_factory=loop_factory)
+    except BaseException as exc:  # 端口被占用时 uvicorn 会 sys.exit(1)，不能让主线程当没事
+        _server_error.set()
+        print(f"[tray] 后端启动失败（{host}:{port}）：{exc}", flush=True)
+    finally:
+        if not getattr(_server, "started", False):
+            _server_error.set()
 
 
 def _open(_icon, _item) -> None:
@@ -170,19 +179,58 @@ def _open_browser_later(url: str, timeout: float = 180.0) -> None:
     threading.Thread(target=_open, daemon=True).start()
 
 
+def _health_once(url: str, timeout: float = 1.0) -> bool:
+    """单次探测 /api/health（供就绪轮询 + 后端线程死亡检测共用）。"""
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(f"{url}/api/health", timeout=timeout) as resp:
+            return resp.status == 200
+    except Exception:
+        return False
+
+
+def _boot_error(message: str) -> None:
+    """把「后端没起来」变成启动页上的可读提示，而不是无限读秒。"""
+    try:
+        desktop_app.show_boot_error(message)
+    except Exception:
+        pass
+    print(message, flush=True)
+
+
 def _navigate_when_ready(url: str, timeout: float = 300.0) -> None:
     """等后端就绪后，把桌面窗口从「启动页」导航到应用界面。
 
-    窗口刚创建、GUI 循环可能尚未就绪，故失败时短暂重试。
+    窗口刚创建、GUI 循环可能尚未就绪，故失败时短暂重试；后端线程已经死掉或
+    一直起不来时把启动页换成可读错误，避免「无限读秒」。
     """
-    if not _wait_for_server(url, timeout):
-        return
-    for _ in range(30):
-        if _stopped.is_set():
+    deadline = time.time() + timeout
+    while time.time() < deadline and not _stopped.is_set():
+        if _health_once(url):
+            for _ in range(30):
+                if _stopped.is_set():
+                    return
+                if desktop_app.navigate(url):
+                    return
+                time.sleep(0.5)
+            _boot_error(
+                "后端已经就绪，但桌面窗口没能加载界面。\n"
+                "请从托盘退出程序后重新启动；若反复出现，请查看 logs/server.log。"
+            )
             return
-        if desktop_app.navigate(url):
+        if _server_error.is_set():
+            _boot_error(
+                "后端服务没能启动：端口可能被占用，或数据库服务启动失败。\n"
+                "请从托盘退出程序，稍等几秒后重新启动；若反复出现，请查看 logs/server.log。"
+            )
             return
         time.sleep(0.5)
+    if not _stopped.is_set():
+        _boot_error(
+            f"后端在 {int(timeout)} 秒内没有就绪。\n"
+            "请从托盘退出程序，稍等几秒后重新启动；若反复出现，请查看 logs/server.log。"
+        )
 
 
 def _wait_for_server(url: str, timeout: float = 30.0) -> bool:
@@ -201,10 +249,39 @@ def _wait_for_server(url: str, timeout: float = 30.0) -> bool:
     return False
 
 
-def main() -> None:
+def _port_unavailable_message() -> str:
+    last = runtime_port.DEFAULT_PORT + runtime_port.PORT_TRIES - 1
+    return (
+        f"端口 {runtime_port.DEFAULT_PORT}-{last} 均被占用，无法启动。\n\n"
+        "请关闭占用这些端口的程序后重试（例如另一个副本、调试服务或其它软件）。"
+    )
+
+
+def _show_message(title: str, message: str, flags: int = 0x30) -> None:
+    """托盘模式（pythonw）没有控制台，用系统弹窗把启动失败告诉用户。"""
+    try:
+        ctypes.windll.user32.MessageBoxW(0, message, title, flags)
+    except Exception:
+        print(message, flush=True)
+
+
+def main(port: int | None = None) -> None:
+    global PORT, URL
+
     _redirect_std_streams()
 
-    server_thread = threading.Thread(target=_run_server, daemon=True, name="uvicorn")
+    # 端口冲突检测：8000 被占用时依次尝试 8001、8002……（包括刚退出的 TIME_WAIT）。
+    if port is None:
+        port = runtime_port.pick_port()
+    if port is None:
+        _show_message("Multi-Agent Studio", _port_unavailable_message())
+        return
+    if port != runtime_port.DEFAULT_PORT:
+        print(f"[tray] 端口 {runtime_port.DEFAULT_PORT} 被占用，已改用 {port}。", flush=True)
+    PORT = port
+    URL = f"http://{HOST}:{PORT}"
+
+    server_thread = threading.Thread(target=_run_server, args=(HOST, PORT), daemon=True, name="uvicorn")
     server_thread.start()
 
     download_item = pystray.MenuItem("下载模型：就绪", None, enabled=False)
