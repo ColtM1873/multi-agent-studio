@@ -59,11 +59,17 @@
 
 ### 用户配置名录
 
+会话历史存在哪儿，取决于安装时选的存储后端：**SQLite 版**存在程序目录里的 `configs/lite/sqlite/`（见下表）；**PostgreSQL 版**存在 PostgreSQL 里、不在程序目录——每个 multi-agent 用哪个库见其 `configs/<agent_id>.json` 的 `postgres.checkpoint_database`，长期记忆（pgvector）也在同一个 PostgreSQL 中。所以 PostgreSQL 版备份对话历史要用 `pg_dump`，只复制程序文件夹是拿不到的。
+
 | 文件 / 目录 | 说明 |
 |---|---|
 | `configs/` | 所有 multi-agent 配置（`<agent_id>.json`、`default.json`）与全局设置（`settings.json`）。含 API key、system prompt、数据库连接、阈值等。 |
-| `snapshots/` | 全量总结前自动保存的会话快照（若生成过）。 |
-| `.chrome-profile/` | 浏览器接管使用的自动化 Chrome profile（用过浏览器接管才有）。保留可复用网站登录态；不保留则需重新登录。 |
+| `configs/lite/sqlite/` | **（SQLite 版）对话历史本体**：每个 multi-agent 一个 `<agent_id>.sqlite3`，会话列表、thread、checkpoint、全部消息都在里面。文件名取自 multi-agent 名称（Windows 非法字符替换为 `_`，中文保留）。程序运行时同目录会出现 `-wal` / `-shm` 伴生文件，属正常；备份请先退出程序，再整目录复制。退出程序后删掉某个 `.sqlite3`，等于把该 agent 的会话历史清零（配置文件与快照不受影响）。 |
+| `configs/lite/storage.json` | 记录当前会话历史后端（`{"backend": "sqlite"}` 或 `{"backend": "postgres"}`），由安装向导写入。不要手改；想确认自己装的是不是 SQLite 版，看这个文件。 |
+| `snapshots/` | 全量总结前自动保存的会话快照（若生成过）。删除 multi-agent 后快照会保留，仍可只读回看。 |
+| `configs/drafts.json`、`configs/ui_prefs.json`、`configs/common_prompts.json` | 未发送草稿（按 agent）、本机界面偏好、常用 prompt 库。 |
+| `.chrome-profile/`、`.chrome-profiles/`、`configs/browser_profiles.json` | 浏览器接管使用的自动化 Chrome profile（默认 profile、按会话分的 profile）与登记表。保留可复用网站登录态；不保留则需重新登录。 |
+| `webview_profile/`、`config.json`、`logs/` | 桌面窗口（WebView2）的用户数据与缓存、本机浏览器路径缓存、运行日志（`logs/server.log`）。前两者删掉会重建；`logs/` 保留可排查启动 / 连接问题。 |
 
 ## 特性
 
@@ -235,11 +241,17 @@ Supervisor（主 agent）                    Workers（子 agent）
 
 ### User configuration files
 
+Where conversation history lives depends on the storage backend chosen at install time: the **SQLite edition** keeps it under `configs/lite/sqlite/` inside the program folder (see the table); the **PostgreSQL edition** keeps it in PostgreSQL, not in the program folder — the database used by each multi-agent is its `postgres.checkpoint_database` in `configs/<agent_id>.json`, and long-term memory (pgvector) lives in the same PostgreSQL. So backing up a PostgreSQL edition's history requires `pg_dump`; copying the program folder alone will not capture it.
+
 | File / directory | Notes |
 |---|---|
 | `configs/` | All multi-agent configs (`<agent_id>.json`, `default.json`) and global settings (`settings.json`). Contains API keys, system prompts, database connections, thresholds, etc. |
-| `snapshots/` | Conversation snapshots saved automatically before a full summary (if any were generated). |
-| `.chrome-profile/` | The automation Chrome profile used by browser takeover (present only if you used browser takeover). Keep it to reuse website logins; otherwise you will need to sign in again. |
+| `configs/lite/sqlite/` | **(SQLite edition) the conversation history itself**: one `<agent_id>.sqlite3` per multi-agent, holding the thread list, threads, checkpoints, and every message. The file name comes from the multi-agent's name (Windows-illegal characters become `_`; Chinese names are kept as-is). While the app runs, `-wal` / `-shm` sidecar files appear next to it; that is normal. Quit the app before copying the folder to back it up. After quitting the app, deleting one `.sqlite3` wipes that agent's history (the config file and snapshots are untouched). |
+| `configs/lite/storage.json` | Records the active history backend (`{"backend": "sqlite"}` or `{"backend": "postgres"}`), written by the installer. Do not edit it; check it if you are unsure whether you installed the SQLite edition. |
+| `snapshots/` | Conversation snapshots saved automatically before a full summary (if any were generated). Snapshots survive deleting a multi-agent and remain readable. |
+| `configs/drafts.json`, `configs/ui_prefs.json`, `configs/common_prompts.json` | Unsent drafts (per agent), local UI preferences, and the common-prompt library. |
+| `.chrome-profile/`, `.chrome-profiles/`, `configs/browser_profiles.json` | The automation Chrome profile(s) used by browser takeover (a default profile and per-thread profiles) plus its registry. Keep them to reuse website logins; otherwise you will need to sign in again. |
+| `webview_profile/`, `config.json`, `logs/` | Desktop window (WebView2) user data and cache, the local browser-path cache, and runtime logs (`logs/server.log`). The first two are rebuilt if deleted; keep `logs/` for troubleshooting startup or connection issues. |
 
 ## Features
 
