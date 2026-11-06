@@ -108,6 +108,90 @@ def _format_build_error(e: Exception) -> str:
     return "无法初始化该会话的运行环境，请稍后重试；若持续出现，请查看服务端日志 logs/server.log。"
 
 
+# 运行期「连不上模型」类异常：模型 API 走 openai SDK，连不上时抛
+# APIConnectionError，默认文案就是英文 "Connection error."（用户看到的
+# 「⚠️ Connection error.」即此）。这类错误以前只把 str(exc) 原样抛给前端、
+# 且**不打日志**，导致事后查 logs/server.log 一无所获。
+_CONNECTION_ERROR_TYPES = {
+    "APIConnectionError",
+    "APITimeoutError",
+    "ConnectError",
+    "ConnectTimeout",
+    "ReadTimeout",
+    "WriteTimeout",
+    "RemoteProtocolError",
+    "ServerDisconnectedError",
+}
+
+_CONNECTION_ERROR_HINTS = (
+    "connection error",
+    "connection reset",
+    "connection aborted",
+    "connection refused",
+    "connecterror",
+    "clientconnectorerror",
+    "server disconnected",
+    "temporary failure in name resolution",
+    "name or service not known",
+    "nodename nor servname",
+    "getaddrinfo failed",
+    "network is unreachable",
+    "certificate verify failed",
+    "eof occurred in violation of protocol",
+    "all connection attempts failed",
+)
+
+
+def _error_chain(e: BaseException) -> list[BaseException]:
+    """展开异常链（__cause__ / __context__），用于识别被包了一层的网络错误。"""
+    chain: list[BaseException] = []
+    seen: set[int] = set()
+    cur: BaseException | None = e
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        chain.append(cur)
+        cur = cur.__cause__ or cur.__context__
+    return chain
+
+
+def _is_connection_error(e: BaseException) -> bool:
+    if any(type(x).__name__ in _CONNECTION_ERROR_TYPES for x in _error_chain(e)):
+        return True
+    lowered = str(e).lower()
+    return any(h in lowered for h in _CONNECTION_ERROR_HINTS)
+
+
+def _provider_label(runtime) -> str:
+    """给用户看的模型来源（例如 deepseek:deepseek-flash 或 自定义 base_url）。"""
+    try:
+        main = runtime.config.main_agent
+    except Exception:  # noqa: BLE001 - 取不到就不显示，别让报错路径再抛错
+        return ""
+    name = (getattr(main, "llm_provider_name", "") or "").strip()
+    try:
+        base_url = (getattr(main.model, "base_url", "") or "").strip()
+    except Exception:  # noqa: BLE001
+        base_url = ""
+    if base_url:
+        return f"{name} @ {base_url}" if name else base_url
+    return name
+
+
+def _format_run_error(e: Exception, provider_label: str = "") -> str:
+    """把运行期异常转成给人看的说明；非网络类错误保持原文，不吞信息。"""
+    text = (str(e) or type(e).__name__).strip()
+    if _is_connection_error(e):
+        who = f"模型服务（{provider_label}）" if provider_label else "模型服务"
+        return (
+            f"连不上{who}：网络或代理不通，程序自动重试后仍然失败。\n"
+            "本条消息没有丢失——点输入框上方的「✓」即可回填，检查网络后重新发送。\n"
+            f"原始错误：{text}"
+        )
+    if "recursion" in text.lower():
+        return f"本轮执行步数超出上限，已停止。\n原始错误：{text}"
+    return text
+
+
 def _format_edit_error(e: Exception) -> str:
     text = str(e)
     lowered = text.lower()
@@ -680,14 +764,30 @@ class SessionHub:
                             await finish(result, allow_backfill=True)
                             end_reason = "stopped" if result.drained else "done"
                     else:
-                        await self.emit(rec, {"type": "error", "message": str(exc)})
+                        # 运行期异常必须落日志：以前这里只 emit str(exc) 不打日志，
+                        # 「⚠️ Connection error.」这类故障在 logs/server.log 里查不到任何痕迹。
+                        logger.exception(
+                            "会话运行失败 (agent_id=%s, thread_id=%s)",
+                            agent_id,
+                            thread_id,
+                        )
+                        await self.emit(
+                            rec,
+                            {
+                                "type": "error",
+                                "message": _format_run_error(exc, _provider_label(runtime)),
+                            },
+                        )
                         end_reason = "error"
         except asyncio.CancelledError:
             end_reason = "error"
             raise
         except Exception as exc:  # noqa: BLE001
             logger.exception("会话运行异常 (agent_id=%s, thread_id=%s)", agent_id, thread_id)
-            await self.emit(rec, {"type": "error", "message": str(exc)})
+            await self.emit(
+                rec,
+                {"type": "error", "message": _format_run_error(exc, _provider_label(runtime))},
+            )
             end_reason = "error"
         finally:
             await self._complete(rec, run_id, end_reason)
