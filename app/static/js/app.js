@@ -6265,6 +6265,36 @@ window.addEventListener("beforeunload", flushCurrentDraft);
 window.addEventListener("pagehide", flushCurrentDraft);
 window.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flushCurrentDraft(); });
 
+/* ---------- 失败/中断「回填原发送信息」气泡的挂起项 ----------
+   ID91 起一次运行会活过当前视图：`send()` 里 `await openChatWs()` 的续体可能在
+   「另一个（新渲染出来的）视图」里执行。若把待回填文本放在 renderChatView 的闭包里，
+   旧闭包 showFailBubble 显示的是新视图的气泡元素，而新视图按钮的 onclick 读的是
+   新闭包里的 null —— 点 ✓ 会静默无效（真机故障：气泡弹出但回填不生效）。
+   因此挂起项必须放模块级，并按「所属会话」绑定；取元素一律现查 DOM。 */
+let pendingFailMsg = null; // { agentId, threadId, text }
+
+function showFailBubble(msg, scope) {
+  const text = msg == null ? "" : String(msg);
+  const agentId = scope ? scope.agentId : S.agentId;
+  const threadId = scope ? scope.threadId : S.threadId;
+  // 没有可回填的正文（例如只发了注入内容）：不要弹一个点了没反应的 ✓。
+  if (!text.trim()) { hideFailBubble(); return; }
+  pendingFailMsg = { agentId, threadId, text };
+  const b = $("#failBubble");
+  // 当前不在「出事的那条会话」里（切到了别的会话 / 别的视图）：先留着，
+  // 等用户重新进入该会话时由 renderChatView 补显。
+  if (!b || S.view !== "chat" || S.agentId !== agentId || S.threadId !== threadId) return;
+  const pane = $("#inputPane");
+  b.style.bottom = (pane ? pane.offsetHeight + 10 : 160) + "px";
+  b.style.display = "flex";
+}
+
+function hideFailBubble() {
+  const b = $("#failBubble");
+  if (b) b.style.display = "none";
+  pendingFailMsg = null;
+}
+
 async function renderChatView() {
   app.innerHTML = topbar(t("返回会话"), () => leaveChatView());
   const view = document.createElement("div");
@@ -8043,21 +8073,8 @@ async function renderChatView() {
     getSettings().then(s => playSound(s.notification_sound)).catch(() => playSound("ber"));
   }
 
-  // 本轮流程失败/被中断时，暂存「原发送信息」，供气泡上的「回填」按钮使用
-  let pendingFailedMsg = null;
-  function showFailBubble(msg) {
-    const b = $("#failBubble");
-    if (!b) return;
-    pendingFailedMsg = msg || "";
-    const pane = $("#inputPane");
-    b.style.bottom = (pane ? pane.offsetHeight + 10 : 160) + "px";
-    b.style.display = "flex";
-  }
-  function hideFailBubble() {
-    const b = $("#failBubble");
-    if (b) b.style.display = "none";
-    pendingFailedMsg = null;
-  }
+  // 失败/中断回填气泡的挂起项与显隐逻辑在模块级（见 renderChatView 之前的
+  // pendingFailMsg / showFailBubble / hideFailBubble）：运行可以活过本视图。
 
   // 编辑模式中有未保存改动时点「发送」：不发送，仅在发送按钮上方提示。
   let editSendWarnTimer = null;
@@ -8073,6 +8090,8 @@ async function renderChatView() {
   let sendBusy = false;
   async function send() {
     const raw = input.value;
+    // 本次发送所属会话：await 之后 S 可能已被用户切走，回填气泡必须记住「出事的那条会话」。
+    const sendScope = { agentId: S.agentId, threadId: S.threadId };
     if (sendBusy || isRunning) return;
     // 浏览器接管提示已开启但页面内容仍在获取：暂不允许发送（按钮此时也是置灰的，
     // 这里兜底 Enter 键路径），避免发出不含页面内容的消息让 LLM 摸不着头脑。
@@ -8109,7 +8128,11 @@ async function renderChatView() {
     input.value = "";
     if (draftTimer) { clearTimeout(draftTimer); draftTimer = null; }
     saveDraft(S.agentId, "");
-    hideFailBubble();
+    // 新一轮发送只收掉「本会话」上一轮遗留的失败气泡；别的会话的挂起项保留，
+    // 等用户回到那里时再提示（否则会静默丢掉一条本该可回填的消息）。
+    if (!pendingFailMsg || (pendingFailMsg.agentId === sendScope.agentId && pendingFailMsg.threadId === sendScope.threadId)) {
+      hideFailBubble();
+    }
     setRunning(true);
     stream.beginRun(historyEl);
     // 发送后自动下滑到最新消息并跟随流式输出；鼠标上滑后 atBottom 变 false，自动停止跟随
@@ -8126,11 +8149,11 @@ async function renderChatView() {
       // 软取消（停止中 → 本轮回 done）不播「回复已完成」气泡与提示音。
       // 正常完成的气泡由 SessionStream 的 done → view.onDone 统一触发（即使从别处触发也能提示）。
       // 停止后修复削掉了还没被消费的用户消息：提示是否回填（复用失败回填气泡）。
-      if (ok.backfill) showFailBubble(userText);
+      if (ok.backfill) showFailBubble(userText, sendScope);
     } else {
       // 真正的失败（连接断开 / 后端 error）：气泡提示是否回填原发送信息。
       // 软取消不再走这里（会正常收到 done）。
-      showFailBubble(userText);
+      showFailBubble(userText, sendScope);
     }
   }
 
@@ -8282,16 +8305,26 @@ async function renderChatView() {
   };
   const failRestoreBtn = $("#failRestoreBtn"), failCancelBtn = $("#failCancelBtn");
   if (failRestoreBtn) failRestoreBtn.onclick = () => {
-    const msg = pendingFailedMsg;
+    // 挂起项在模块级、按会话绑定；输入框现查 DOM（视图可能已被重新渲染过）。
+    const pending = pendingFailMsg;
     hideFailBubble();
-    if (!msg) return;
-    const cur = input.value.replace(/\s+$/, "");
-    input.value = cur ? cur + "\n" + msg : msg;
+    if (!pending) return;
+    // 只回填到它原本所属的会话，绝不把 A 会话的失败文本塞进 B 会话的输入框。
+    if (S.view !== "chat" || S.agentId !== pending.agentId || S.threadId !== pending.threadId) return;
+    const el = $("#msgInput");
+    if (!el) return;
+    const cur = el.value.replace(/\s+$/, "");
+    el.value = cur ? cur + "\n" + pending.text : pending.text;
     if (draftTimer) { clearTimeout(draftTimer); draftTimer = null; }
-    saveDraft(S.agentId, input.value);
-    input.focus();
+    saveDraft(pending.agentId, el.value);
+    el.focus();
   };
   if (failCancelBtn) failCancelBtn.onclick = () => hideFailBubble();
+  // 失败发生在别的视图里（用户切走又切回）：回到出事的那条会话时把气泡补显出来，
+  // 否则这条「可回填」的提示会随着旧视图一起消失。
+  if (pendingFailMsg && pendingFailMsg.agentId === S.agentId && pendingFailMsg.threadId === S.threadId) {
+    showFailBubble(pendingFailMsg.text, { agentId: S.agentId, threadId: S.threadId });
+  }
 
   // 把本会话的持久流绑定到当前 DOM：若它仍在后台运行，会在这里接回当前内容；
   // 若是页面刷新后的新流，会向后端 attach 并按 run_id+seq 回放。
