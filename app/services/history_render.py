@@ -11,7 +11,37 @@ from datetime import datetime
 
 from langgraph.checkpoint.base import CheckpointTuple
 
+from app.config.settings import (
+    DEFAULT_CHAT_ASSISTANT_ICON,
+    DEFAULT_CHAT_ASSISTANT_NAME,
+    DEFAULT_CHAT_REASONING_ICON,
+    DEFAULT_CHAT_USER_ICON,
+    DEFAULT_CHAT_USER_NAME,
+)
 from app.runtime.prompts import MEMORY_ATTACH_MARKER, USER_MSG_PREFIX
+
+# 聊天界面称谓与图标的兜底默认值（真正生效值来自 Settings.chat_identity()）
+_DEFAULT_LABELS = {
+    "user_name": DEFAULT_CHAT_USER_NAME,
+    "user_icon": DEFAULT_CHAT_USER_ICON,
+    "assistant_name": DEFAULT_CHAT_ASSISTANT_NAME,
+    "assistant_icon": DEFAULT_CHAT_ASSISTANT_ICON,
+    "reasoning_icon": DEFAULT_CHAT_REASONING_ICON,
+}
+
+
+def _normalize_labels(labels: dict | None) -> dict:
+    """把（可能缺项 / 为空的）称谓配置补齐成完整可用的 dict。"""
+    out = dict(_DEFAULT_LABELS)
+    if isinstance(labels, dict):
+        for key in out:
+            value = labels.get(key)
+            if value is None:
+                continue
+            text = str(value).strip()
+            if text:
+                out[key] = text
+    return out
 
 
 def _find_messages_channel(channel_values: dict):
@@ -36,6 +66,7 @@ def render_checkpoint_to_markdown_string(
     tool_call_expanded: bool = False,
     tool_result_expanded: bool = False,
     export_html: bool = False,
+    labels: dict | None = None,
 ) -> str:
     buf = io.StringIO()
     render_checkpoint_to_markdown(
@@ -52,6 +83,7 @@ def render_checkpoint_to_markdown_string(
         tool_call_expanded=tool_call_expanded,
         tool_result_expanded=tool_result_expanded,
         export_html=export_html,
+        labels=labels,
     )
     return buf.getvalue()
 
@@ -71,8 +103,10 @@ def render_checkpoint_to_markdown(
     tool_call_expanded: bool = False,
     tool_result_expanded: bool = False,
     export_html: bool = False,
+    labels: dict | None = None,
 ):
     w = md_file.write
+    labels = _normalize_labels(labels)
     cp = cp_tuple.checkpoint
     metadata = cp_tuple.metadata or {}
 
@@ -122,6 +156,7 @@ def render_checkpoint_to_markdown(
         tool_call_expanded=tool_call_expanded,
         tool_result_expanded=tool_result_expanded,
         export_html=export_html,
+        labels=labels,
     )
 
 
@@ -139,9 +174,11 @@ def render_messages(
     tool_call_expanded: bool = False,
     tool_result_expanded: bool = False,
     export_html: bool = False,
+    labels: dict | None = None,
 ):
     """渲染一个消息列表（供单 checkpoint 与聚合子图历史复用）。"""
     w = md_file.write
+    labels = _normalize_labels(labels)
     if title:
         w(f"## {title}\n\n")
 
@@ -151,10 +188,10 @@ def render_messages(
         msg_type = type(msg).__name__
         counts[msg_type] = counts.get(msg_type, 0) + 1
         if msg_type == "HumanMessage":
-            _render_human(msg, w, human_index, msg_indice)
+            _render_human(msg, w, human_index, msg_indice, labels)
             human_index += 1
         elif msg_type == "AIMessage":
-            _render_ai(msg, w, show_reasoning, show_tool_calls, reasoning_expanded, tool_call_expanded, export_html, msg_indice)
+            _render_ai(msg, w, show_reasoning, show_tool_calls, reasoning_expanded, tool_call_expanded, export_html, msg_indice, labels)
         elif msg_type == "ToolMessage":
             _render_tool(
                 msg,
@@ -203,6 +240,7 @@ def render_messages_to_markdown_string(
     tool_call_expanded: bool = False,
     tool_result_expanded: bool = False,
     export_html: bool = False,
+    labels: dict | None = None,
 ) -> str:
     buf = io.StringIO()
     render_messages(
@@ -218,6 +256,7 @@ def render_messages_to_markdown_string(
         tool_call_expanded=tool_call_expanded,
         tool_result_expanded=tool_result_expanded,
         export_html=export_html,
+        labels=labels,
     )
     return buf.getvalue()
 
@@ -243,13 +282,17 @@ def _extract_user_summary(content: str) -> str:
     return _split_user_content(content)[0].strip()
 
 
-def _render_human(msg, w, idx: int, msg_indice: int):
+def _render_human(msg, w, idx: int, msg_indice: int, labels: dict):
     content = str(msg.content)
     real_text, memory = _split_user_content(content)
     escaped = _escape_html(real_text).replace("\n", "<br>")
     summary = _escape_html(real_text).replace("\n", " ")
     w(f'<div id="user-msg-{idx}" class="user-msg-block" data-msg-indice="{msg_indice}" data-summary="{summary}">\n')
-    w('<div class="user-msg-head">🧑 <strong>用户</strong></div>\n')
+    # 图标与称谓可在「系统设置 → 聊天图标及称谓自定义」里改（默认 🧑 用户）
+    w(
+        f'<div class="user-msg-head">{_escape_html(labels["user_icon"])} '
+        f'<strong>{_escape_html(labels["user_name"])}</strong></div>\n'
+    )
     if memory.strip():
         # 记忆附着默认不显示，只在用户消息框最右侧放一个按钮，点击才展开本次附着的记忆。
         mem_html = _escape_html(memory.strip()).replace("\r\n", "\n").replace("\n", "<br>")
@@ -276,7 +319,8 @@ def _extract_ai_text(content) -> str:
     return "\n\n".join(parts)
 
 
-def _render_ai(msg, w, show_reasoning, show_tool_calls, reasoning_expanded=True, tool_call_expanded=False, export_html=False, msg_indice=0):
+def _render_ai(msg, w, show_reasoning, show_tool_calls, reasoning_expanded=True, tool_call_expanded=False, export_html=False, msg_indice=0, labels=None):
+    labels = _normalize_labels(labels)
     content = msg.content
     tool_calls = getattr(msg, "tool_calls", []) or []
     # 有些模型把 tool call 只编码在 content 的 tool_call block 里（.tool_calls 为空）。
@@ -310,7 +354,8 @@ def _render_ai(msg, w, show_reasoning, show_tool_calls, reasoning_expanded=True,
             data_attr = f' data-md-b64="{b64}"'
 
     w(f'<div class="ai-msg-block" style="border-left: 3px solid #4CAF50; padding-left: 12px;" data-msg-indice="{msg_indice}"{data_attr}>\n\n')
-    w("**🤖 Assistant**  ")
+    # 图标与称谓可在「系统设置 → 聊天图标及称谓自定义」里改（默认 🤖 Assistant）
+    w(f'<strong>{_escape_html(labels["assistant_icon"])} {_escape_html(labels["assistant_name"])}</strong>  ')
     tok_str = f"↑{input_tok} ↓{output_tok}"
     if cache:
         tok_str += f"  💾cache:{cache}"
@@ -328,7 +373,7 @@ def _render_ai(msg, w, show_reasoning, show_tool_calls, reasoning_expanded=True,
                 # （裸公式识别 / 激进公式识别在此同样生效）。用空行把 <div class="reasoning-body">
                 # 与内容隔开，markdown-it 才会把其中内容当 Markdown 解析，否则整块被当 HTML block
                 # 原样输出。标题只在思考块内以更小字号呈现（CSS .reasoning-body h1~h6）。
-                w(f'<details class="reasoning-block"{open_attr}>\n<summary>🧠 思考过程</summary>\n\n')
+                w(f'<details class="reasoning-block"{open_attr}>\n<summary>{_escape_html(labels["reasoning_icon"])} 思考过程</summary>\n\n')
                 w('<div class="reasoning-body reasoning-md">\n\n')
                 w(f"{str(r)}\n\n")
                 w("</div>\n\n")

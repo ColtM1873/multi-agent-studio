@@ -57,6 +57,49 @@ def _safe_filename(name: str) -> str:
     return re.sub(r"[^\w\-]+", "_", str(name)).strip("_") or "thread"
 
 
+# 快照文件名：<会话名>_<YYYYmmdd>_<HHMMSS>_<微秒>_<消息条数>.json
+# 例如 GO_20261031_112957_390810_36.json。
+# 重命名只改最前面的「会话名」，日期 / 时间 / 消息条数这一段序列号必须原样保留。
+SNAPSHOT_SUFFIX_RE = re.compile(r"^(?P<name>.*)_(?P<suffix>\d{8}_\d{6}_\d{6}_\d+)\.json$")
+
+
+def split_snapshot_id(snapshot_id: str) -> tuple[str, str] | None:
+    """把快照文件名拆成 (会话名, 序列号)。识别不了返回 None。"""
+    m = SNAPSHOT_SUFFIX_RE.match(str(snapshot_id))
+    if not m:
+        return None
+    return m.group("name"), m.group("suffix")
+
+
+def snapshot_display_name(snapshot_id: str, record: dict | None = None) -> str:
+    """快照的「会话名」显示值。
+
+    优先用重命名时写入的 ``snapshot_name``（保留用户原样输入，含空格等字符）；
+    其次用记录里的 ``thread_id``（老快照没写过 snapshot_name）；
+    最后退回文件名里序列号之前的部分。
+    """
+    rec = record or {}
+    saved = str(rec.get("snapshot_name") or "").strip()
+    if saved:
+        return saved
+    tid = str(rec.get("thread_id") or "").strip()
+    if tid:
+        return tid
+    parts = split_snapshot_id(snapshot_id)
+    return parts[0] if parts else str(snapshot_id)
+
+
+def _safe_snapshot_name(name: str) -> str:
+    """把用户输入的新名字清洗成文件名安全的形式（保留中文）。
+
+    与 `_safe_filename` 的区别：清洗后为空时抛错，而不是回退成 "thread"。
+    """
+    safe = re.sub(r"[^\w\-]+", "_", str(name)).strip("_")
+    if not safe:
+        raise ValueError("快照名称必须包含文字或数字")
+    return safe
+
+
 def _sanitize_id(snapshot_id: str) -> str:
     sid = Path(str(snapshot_id)).name
     if sid in ("", ".", ".."):
@@ -77,6 +120,8 @@ def _history_settings() -> dict:
         # export_html 参数控制「是否在 .ai-msg-block 埋 data-md-b64 原文」，
         # 供前端「转换 HTML / 导出 md 文件」两个按钮共用，任一开启即埋。
         "export_html": settings.export_html or settings.export_md,
+        # 聊天界面「图标及称谓自定义」（快照与历史浏览严格同源）
+        "labels": settings.chat_identity(),
     }
 
 
@@ -188,6 +233,8 @@ def list_snapshots(agent_id: str) -> list[dict]:
         result.append(
             {
                 "id": p.name,
+                # 「会话名」= 可重命名的那一段（序列号之前的名字）
+                "name": snapshot_display_name(p.name, rec),
                 "thread_id": rec.get("thread_id", ""),
                 "created_at": rec.get("created_at", ""),
                 "total_messages": rec.get("total_messages", 0),
@@ -202,7 +249,55 @@ def read_snapshot(agent_id: str, snapshot_id: str) -> dict | None:
     p = _agent_snapshots_dir(agent_id) / snapshot_id
     if not p.exists():
         return None
-    return json.loads(p.read_text(encoding="utf-8"))
+    rec = json.loads(p.read_text(encoding="utf-8"))
+    # 附带「会话名」，供前端标题显示（与重命名后的名字保持一致）
+    rec["name"] = snapshot_display_name(snapshot_id, rec)
+    return rec
+
+
+def rename_snapshot(agent_id: str, snapshot_id: str, new_name: str) -> dict:
+    """重命名快照的「会话名」，日期/时间/消息条数序列号原样保留。
+
+    文件名会被重写成 ``<新名字>_<原序列号>.json``，同时把用户输入的原名（不做
+    文件名清洗）写进记录的 ``snapshot_name``，因此含空格 / 符号的名称也能原样显示。
+
+    返回新的快照元数据；快照不存在抛 FileNotFoundError，非法名字抛 ValueError，
+    目标文件名已存在抛 FileExistsError。
+    """
+    snapshot_id = _sanitize_id(snapshot_id)
+    d = _agent_snapshots_dir(agent_id)
+    src = d / snapshot_id
+    if not src.exists():
+        raise FileNotFoundError(snapshot_id)
+
+    parts = split_snapshot_id(snapshot_id)
+    if not parts:
+        raise ValueError("无法识别的快照文件名，无法重命名")
+
+    name = str(new_name or "").strip()
+    if not name:
+        raise ValueError("快照名称不能为空")
+    safe = _safe_snapshot_name(name)
+
+    rec = json.loads(src.read_text(encoding="utf-8"))
+
+    new_id = f"{safe}_{parts[1]}.json"
+    dst = d / new_id
+    if dst != src:
+        if dst.exists():
+            raise FileExistsError(new_id)
+        src.rename(dst)
+
+    rec["snapshot_name"] = name
+    dst.write_text(json.dumps(rec, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    return {
+        "id": new_id,
+        "name": name,
+        "thread_id": rec.get("thread_id", ""),
+        "created_at": rec.get("created_at", ""),
+        "total_messages": rec.get("total_messages", 0),
+    }
 
 
 def delete_snapshot(agent_id: str, snapshot_id: str) -> bool:

@@ -146,6 +146,7 @@ async def get_thread_history_markdown(
     tool_result_max_lines: int = 0,
     tool_result_max_chars: int = 0,
     export_html: bool = False,
+    labels: dict | None = None,
 ) -> str | None:
     async with AsyncPostgresSaver.from_conn_string(conn_string) as cp:
         await cp.setup()
@@ -161,6 +162,7 @@ async def get_thread_history_markdown(
         tool_result_max_lines=tool_result_max_lines,
         tool_result_max_chars=tool_result_max_chars,
         export_html=export_html,
+        labels=labels,
     )
 
 
@@ -296,6 +298,7 @@ async def get_subgraph_history_by_node(
     tool_result_max_lines: int = 0,
     tool_result_max_chars: int = 0,
     export_html: bool = False,
+    labels: dict | None = None,
 ) -> str | None:
     """按子 agent 名聚合其所有调用（namespace）的历史，按时间排序合并。"""
     merged = await get_subgraph_messages(conn_string, thread_id, node_name)
@@ -312,4 +315,5 @@ async def get_subgraph_history_by_node(
         tool_result_max_lines=tool_result_max_lines,
         tool_result_max_chars=tool_result_max_chars,
         export_html=export_html,
+        labels=labels,
     )

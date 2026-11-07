@@ -104,6 +104,8 @@ def _load_history_settings(config_dir) -> dict:
         # export_html 参数控制「是否在 .ai-msg-block 埋 data-md-b64 原文」，
         # 供前端「转换 HTML / 导出 md 文件」两个按钮共用，任一开启即埋。
         "export_html": settings.export_html or settings.export_md,
+        # 聊天界面「图标及称谓自定义」（历史由后端渲染，故必须从这里传入）
+        "labels": settings.chat_identity(),
     }
 
 

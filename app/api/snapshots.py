@@ -1,8 +1,9 @@
-"""快照 REST API：列表 / 读取 / 删除，以及「已删除 multi-agent」的快照管理。"""
+"""快照 REST API：列表 / 读取 / 删除 / 重命名，以及「已删除 multi-agent」的快照管理。"""
 
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 from app.deps import config_store
 from app.services import snapshot as snapshot_service
@@ -11,6 +12,12 @@ router = APIRouter(prefix="/api/agents/{agent_id}/snapshots", tags=["snapshots"]
 
 # 已删除 multi-agent 的快照管理（顶层，不属于某个现存 agent）
 deleted_router = APIRouter(prefix="/api/deleted-agents", tags=["snapshots"])
+
+
+class RenameSnapshotBody(BaseModel):
+    """重命名请求体：只有「会话名」，日期/时间/条数序列号由后端保留。"""
+
+    name: str
 
 
 @router.get("")
@@ -38,6 +45,19 @@ def delete_snapshot(agent_id: str, snapshot_id: str):
     if not ok:
         raise HTTPException(status_code=404, detail="快照不存在")
     return {"ok": True}
+
+
+@router.post("/{snapshot_id}/rename")
+def rename_snapshot(agent_id: str, snapshot_id: str, body: RenameSnapshotBody):
+    """重命名快照的「会话名」，保留日期 / 时间 / 消息条数序列号。"""
+    try:
+        return snapshot_service.rename_snapshot(agent_id, snapshot_id, body.name)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="快照不存在")
+    except FileExistsError:
+        raise HTTPException(status_code=409, detail="该名称下已存在同序列号的快照")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @deleted_router.get("")

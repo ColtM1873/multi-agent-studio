@@ -99,6 +99,11 @@ body {
   cursor: pointer;
   position: relative;
   overflow: hidden;
+  /* 卡片是纵向 flex 容器：同一行里内容行数不同的卡片（有子 agent 行的多一行）由
+     grid 的 stretch 撑成同样高度，底部操作按钮靠 margin-top:auto 一起贴底，
+     于是「编辑 / 设为默认 / 隐藏 / 删除」始终在同一水平线上（窗口缩放也成立）。 */
+  display: flex;
+  flex-direction: column;
 }
 .agent-ribbons {
   position: absolute; inset: 0;
@@ -124,7 +129,7 @@ html[data-card-ribbon="0"] .agent-ribbons { display: none; }
 .agent-card-state { margin: 2px 0 8px; }
 .agent-card-state:empty { display: none; }
 .agent-card .actions .card-btn:disabled { opacity: .45; cursor: not-allowed; filter: grayscale(1); }
-.agent-card .actions { margin-top: 14px; display: flex; gap: 8px; }
+.agent-card .actions { margin-top: auto; padding-top: 14px; display: flex; gap: 8px; }
 .card-btn { color: var(--c); border-color: var(--c); background: var(--surface); }
 .card-btn:hover { border-color: var(--c); filter: brightness(.96); }
 .card-btn-edit { --c: var(--card-btn-edit, var(--primary)); }
@@ -593,6 +598,30 @@ html[data-style-danger="solid"] .card-btn-danger:hover { filter: brightness(.92)
 .settings-group > .switch-row:last-child,
 .settings-group > div:last-child > .switch-row:last-child { border-bottom: none; }
 @media (max-width: 720px) { .settings-cols { column-count: 1; } }
+
+/* ── 聊天图标及称谓自定义 ─────────────── */
+.chat-identity-modal .ci-icon-row { align-items: center; }
+.chat-identity-modal .ci-ctl { display: flex; align-items: center; gap: 8px; }
+.chat-identity-modal .ci-icon-preview {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 40px; height: 34px; font-size: 22px; line-height: 1;
+  border: 1px solid var(--border); border-radius: 8px; background: var(--surface);
+  overflow: hidden; white-space: nowrap;
+}
+.chat-identity-modal .ci-icon-input {
+  width: 110px; text-align: center; font-size: 16px;
+}
+.chat-identity-modal .ci-picker {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(38px, 1fr));
+  gap: 4px; padding: 8px; margin: 2px 0 8px;
+  border: 1px solid var(--border); border-radius: 10px;
+  background: var(--surface); max-height: 200px; overflow: auto;
+}
+.chat-identity-modal .ci-picker button {
+  height: 34px; padding: 0; font-size: 20px; line-height: 1;
+  background: transparent; border: 1px solid transparent; border-radius: 8px; cursor: pointer;
+}
+.chat-identity-modal .ci-picker button:hover { background: #eef2ff; border-color: var(--primary); }
 
 /* ── 浏览器颜色自定义（多实例会话） ─────── */
 .browser-color-list { display: flex; flex-direction: column; gap: 10px; margin: 12px 0; }

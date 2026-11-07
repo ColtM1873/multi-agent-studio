@@ -382,6 +382,18 @@ const I18N_EN = {
   "建议开启隐私遮蔽模式": "Enabling privacy masking mode is recommended",
   "隐私遮蔽模式开启后，所有从浏览器返回给 LLM 的网页内容（DOM、diff 等）以及下方「提示接管」预览块，都会在交给 LLM 之前，把其中出现的、与敏感信息表单「真实内容」相同的文字全部替换为对应的 <名称>，从而完全不向 LLM 暴露这些真实信息。\n\n⚠️ 请慎重填写：不要加入过于常见的信息。例如表单里填了「年龄 → 17」，那么网页里独立的 17 都会被替换成 <年龄>（纯数字/纯英文会做边界判断以减少误伤，例如 2017 不会被替换，但 17 岁会被替换）。请尽量只填写足够独特的内容。": "When privacy masking is on, all web content returned from the browser to the LLM (DOM, diff, etc.) and the 'hint takeover' preview block below will have any text matching a sensitive-info 'real value' replaced with the corresponding <name> before it reaches the LLM, so the real values are never exposed to the LLM.\n\n⚠️ Fill with care: do not add overly common values. For example, if you set 'age → 17', every standalone 17 in web content becomes <age> (pure numbers/English get boundary checks to reduce false hits, e.g. 2017 is left alone but '17 years' is replaced). Prefer values that are unique enough.",
   "字体颜色设置": "Font color settings",
+  "聊天图标及称谓自定义": "Chat icons & labels",
+  "自定义聊天界面里用户 / 助手 / 思考过程板块的图标与称谓。": "Customize the icons and labels of the user, the assistant and the reasoning section in the chat UI.",
+  "用户称谓": "User label",
+  "用户图标": "User icon",
+  "助手称谓": "Assistant label",
+  "助手图标": "Assistant icon",
+  "思考图标": "Reasoning icon",
+  "选择图标": "Choose icon",
+  "自定义图标（可直接输入任意 emoji 或短文字）": "Custom icon (any emoji or short text)",
+  "留空则使用默认值。": "Leave empty to use the default.",
+  "称谓与图标只影响聊天界面的显示，不会改变实际发送给模型的内容。": "Labels and icons only affect the chat UI; they do not change what is actually sent to the model.",
+  "图标与称谓保存后，重新进入会话（或刷新历史）即可看到新样式。": "After saving, re-enter the conversation (or refresh the history) to see the new style.",
   "正文": "Body text",
   "调整各板块文字颜色，仅本机生效。": "Adjust the text color of each section; applies on this machine only.",
   "内置模型": "Built-in models",
@@ -761,6 +773,12 @@ const I18N_EN = {
   "个快照": "snapshots",
   "删除全部快照": "Delete all snapshots",
   "确定删除该 multi-agent 的全部快照": "Delete all snapshots of this multi-agent?",
+  "重命名": "Rename",
+  "重命名快照": "Rename snapshot",
+  "只修改快照的会话名称，其余信息保持不变。": "Only the snapshot's session name changes; everything else stays the same.",
+  "会话名称": "Session name",
+  "快照名称不能为空": "Snapshot name cannot be empty",
+  "已重命名": "Renamed",
   "等待确认…": "Awaiting confirmation…",
   "历史消息任意时间可编辑": "Edit any historical message",
   "开启编辑模式": "Enable edit mode",
@@ -787,7 +805,6 @@ const I18N_EN = {
   "未知错误": "Unknown error",
   "当前处于编辑模式，请先退出编辑模式后再离开。是否退出编辑模式？": "You are in edit mode. Exit edit mode before leaving?",
   "查看/编辑记忆库": "View / Edit Memory Store",
-  "刷新": "Refresh",
   "重试": "Retry",
   "数据库服务正在启动，请稍候…": "The database service is starting. Please wait…",
   "程序正在为你加载数据库服务，通常很快；电脑配置较低时可能需要 1～2 分钟。就绪后会自动进入，请不要关闭窗口。": "The app is loading the database service. This is usually quick; on slower computers it may take 1–2 minutes. The interface will open automatically once ready — please don't close this window.",
@@ -1150,7 +1167,6 @@ async function openMemoryStoreModal() {
     <h3>🧠 ${t("查看/编辑记忆库")}</h3>
     <div class="modal-body memory-list" id="memoryList"><div class="muted">${t("加载中…")}</div></div>
     <div class="modal-actions">
-      <button class="btn" id="memoryRefresh">${t("刷新")}</button>
       <button class="btn primary" data-close>${t("关闭")}</button>
     </div>
   </div>`;
@@ -1169,7 +1185,6 @@ async function openMemoryStoreModal() {
       listEl.innerHTML = `<div class="muted">${brk(e.message)}</div>`;
     }
   };
-  mask.querySelector("#memoryRefresh").onclick = load;
   await load();
 }
 
@@ -2837,14 +2852,20 @@ async function renderAgents() {
       container.innerHTML = snaps.map(s => `
         <div class="snapshot-row" data-sid="${esc(s.id)}">
           <div class="snapshot-info">
-            <span class="snapshot-name">${esc(s.thread_id)}</span>
+            <span class="snapshot-name">${esc(s.name || s.thread_id)}</span>
             <span class="snapshot-meta">${esc(s.created_at)} · ${s.total_messages} ${t("条消息")}</span>
           </div>
+          <button class="btn card-btn card-btn-hide small" data-snap-rename="${esc(s.id)}">${t("重命名")}</button>
           <button class="btn card-btn card-btn-danger small" data-snap-del="${esc(s.id)}">${t("删除")}</button>
         </div>`).join("");
       $$(".snapshot-row", container).forEach(row => {
         const sid = row.dataset.sid;
+        const snap = snaps.find(x => x.id === sid) || { id: sid };
         row.onclick = (e) => { if (e.target.closest("button")) return; goSnapshot(dir, aName, sid, true); };
+        row.querySelector("[data-snap-rename]").onclick = (e) => {
+          e.stopPropagation();
+          openSnapshotRenameModal(dir, snap, () => renderDeletedAgentSnaps(dir, aName, container));
+        };
         row.querySelector("[data-snap-del]").onclick = async (e) => {
           e.stopPropagation();
           if (!confirm(`${t("确定删除快照")}「${sid}」？${t("此操作不可撤销。")}`)) return;
@@ -3060,6 +3081,7 @@ async function openSettings() {
         <button class="btn small" id="setGlobalConfig">${t("全局配置设置")}</button>
         <button class="btn small" id="setAdvanced">${t("进阶设置")}</button>
         <button class="btn small" id="setColors">${t("字体颜色设置")}</button>
+        <button class="btn small" id="setChatIdentity">${t("聊天图标及称谓自定义")}</button>
         <button class="btn small" id="setBrowserColors">${t("浏览器颜色自定义")}</button>
         <button class="btn small" id="setCard">${t("Multi-Agent配置卡片 设置")}</button>
         <button class="btn small" id="setHtmlConfig" style="${(s.export_html || s.show_local_md_convert_button !== false) ? "" : "display:none;"}">${t("HTML 转换配置表")}</button>
@@ -3110,6 +3132,7 @@ async function openSettings() {
   mask.querySelector("#setGlobalConfig").onclick = () => { mask.remove(); openGlobalConfigSettings(); };
   mask.querySelector("#setAdvanced").onclick = () => { mask.remove(); openAdvancedSettings(); };
   mask.querySelector("#setColors").onclick = () => { mask.remove(); openColorSettings(); };
+  mask.querySelector("#setChatIdentity").onclick = () => { mask.remove(); openChatIdentitySettings(); };
   mask.querySelector("#setBrowserColors").onclick = () => { mask.remove(); openBrowserColorSettings(); };
   mask.querySelector("#setCard").onclick = () => { mask.remove(); openCardSettings(); };
   mask.querySelector("#setHtmlConfig").onclick = () => { mask.remove(); openHtmlConfigSettings(); };
@@ -4294,6 +4317,153 @@ async function openColorSettings() {
     applyColors();
     mask.remove();
     toast(t("设置已保存"));
+  };
+}
+
+/* ── 聊天界面「图标及称谓」────────────────────────────────────────
+   默认值：用户 / Assistant / 🧑 / 🤖 / 🧠；设置项留空即用默认（「用户」的默认值
+   跟随界面语言）。历史浏览由服务端渲染，所以这些值存在全局 Settings
+   （configs/settings.json）里，前端流式 / 编辑态渲染与后端历史 / 快照渲染共用同一份。 */
+const CHAT_IDENTITY_DEFAULTS = {
+  userName: "用户",
+  userIcon: "🧑",
+  assistantName: "Assistant",
+  assistantIcon: "🤖",
+  reasoningIcon: "🧠",
+};
+
+function chatIdentity() {
+  const s = settingsCache || {};
+  const pick = (v, d) => { const x = String(v == null ? "" : v).trim(); return x || d; };
+  return {
+    userName: pick(s.chat_user_name, t("用户")),
+    userIcon: pick(s.chat_user_icon, CHAT_IDENTITY_DEFAULTS.userIcon),
+    assistantName: pick(s.chat_assistant_name, CHAT_IDENTITY_DEFAULTS.assistantName),
+    assistantIcon: pick(s.chat_assistant_icon, CHAT_IDENTITY_DEFAULTS.assistantIcon),
+    reasoningIcon: pick(s.chat_reasoning_icon, CHAT_IDENTITY_DEFAULTS.reasoningIcon),
+  };
+}
+
+/* 备选图标（约 160 个 emoji，含人物 / 物件 / 自然 / 符号几类）。
+   用户也可以直接在输入框里填任意 emoji 或很短的文字。 */
+const CHAT_ICON_CHOICES = (
+  "🧑 👤 👨 👩 👦 👧 👴 👵 🧓 👶 🙋 🤵 👰 🧙 🧚 🧛 🧟 🦸 🦹 " +
+  "🧑‍🎓 🧑‍🏫 🧑‍💻 🧑‍🔧 🧑‍🍳 🧑‍🚀 🧑‍⚕️ 🧑‍🌾 🧑‍🎤 🧑‍🎨 👮 🕵️ 💂 👷 🤴 👸 🧞 🧜 🧝 " +
+  "🤖 👾 👽 🛸 👻 🧠 💡 💭 🔮 🪄 🔭 🧪 ⚗️ 🧬 🧫 🛠️ ⚙️ 🔧 🔩 📎 📌 📍 " +
+  "📚 📖 📝 ✏️ 🖊️ 📄 📃 🗂️ 🗃️ 🗄️ 📁 📂 🗒️ 🗓️ 🔍 🔎 🧾 📊 📈 📉 🧮 " +
+  "⭐ 🌟 ✨ 💫 🌈 ☀️ 🌤️ ⛅ 🌙 🔥 💧 🌊 🍀 🌸 🌻 🌹 🌲 🌴 🍁 🍄 " +
+  "🦉 🦊 🐱 🐶 🐼 🐻 🐨 🐯 🦁 🐸 🐧 🦄 🐳 🐬 🦋 🐢 🐙 🦅 🕊️ 🐝 " +
+  "🎯 🎨 🎭 🎬 🎵 🎶 🎧 🎮 🕹️ 🎲 🧩 🏆 🥇 🥈 🥉 🏅 ⚽ 🏀 🎾 🏓 " +
+  "🚀 🛰️ 🧭 🗺️ 🧲 ⏰ ⏳ 🔔 📣 💬 🗯️ ❤️ 🧡 💛 💚 💙 💜 🖤 🤍"
+).split(/\s+/).filter(Boolean);
+
+async function openChatIdentitySettings() {
+  let s;
+  try { s = await getSettings(); } catch (e) { toast(e.message, true); return; }
+  const def = CHAT_IDENTITY_DEFAULTS;
+  const iconGrid = (key) => CHAT_ICON_CHOICES
+    .map(e => `<button type="button" data-pick="${key}" data-icon="${esc(e)}">${e}</button>`).join("");
+  const iconRow = (key, label, defIcon) => `
+    <div class="switch-row ci-icon-row">
+      <span class="sw-label">${label}</span>
+      <span class="ci-ctl">
+        <span class="ci-icon-preview" id="ci_prev_${key}">${esc(s["chat_" + key + "_icon"] || defIcon)}</span>
+        <input type="text" id="ci_${key}_icon" class="ci-icon-input" maxlength="8" spellcheck="false"
+               value="${esc(s["chat_" + key + "_icon"] || "")}" placeholder="${esc(defIcon)}">
+        <button class="btn small" type="button" data-toggle-picker="${key}">${t("选择图标")}</button>
+      </span>
+    </div>
+    <div class="ci-picker" id="ci_pick_${key}" style="display:none;">${iconGrid(key)}</div>`;
+
+  const mask = document.createElement("div");
+  mask.className = "modal-mask";
+  mask.innerHTML = `
+    <div class="modal chat-identity-modal" style="width:600px;max-height:86vh;overflow:auto;" data-modal-key="chatIdentity">
+      <h3>💬 ${t("聊天图标及称谓自定义")}</h3>
+      <div class="muted" style="margin-bottom:6px;line-height:1.7;">${t("自定义聊天界面里用户 / 助手 / 思考过程板块的图标与称谓。")}</div>
+      <div class="muted" style="margin-bottom:6px;line-height:1.7;">${t("称谓与图标只影响聊天界面的显示，不会改变实际发送给模型的内容。")}</div>
+      <div class="muted" style="margin-bottom:10px;line-height:1.7;">${t("留空则使用默认值。")}${t("自定义图标（可直接输入任意 emoji 或短文字）")}</div>
+
+      <div class="settings-group">
+        <div class="switch-row">
+          <span class="sw-label">${t("用户称谓")}</span>
+          <input type="text" id="ci_user_name" maxlength="40" value="${esc(s.chat_user_name || "")}" placeholder="${esc(t("用户"))}">
+        </div>
+        ${iconRow("user", t("用户图标"), def.userIcon)}
+      </div>
+
+      <div class="settings-group">
+        <div class="switch-row">
+          <span class="sw-label">${t("助手称谓")}</span>
+          <input type="text" id="ci_assistant_name" maxlength="40" value="${esc(s.chat_assistant_name || "")}" placeholder="${esc(def.assistantName)}">
+        </div>
+        ${iconRow("assistant", t("助手图标"), def.assistantIcon)}
+      </div>
+
+      <div class="settings-group">
+        ${iconRow("reasoning", t("思考图标"), def.reasoningIcon)}
+      </div>
+
+      <div class="muted" style="margin:4px 0 10px;line-height:1.7;">${t("图标与称谓保存后，重新进入会话（或刷新历史）即可看到新样式。")}</div>
+      <div class="modal-actions">
+        <button class="btn" id="ciReset">${t("恢复默认")}</button>
+        <div class="spacer" style="flex:1;"></div>
+        <button class="btn" id="ciCancel">${t("返回")}</button>
+        <button class="btn primary" id="ciSave">${t("保存")}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(mask);
+
+  const keys = ["user", "assistant", "reasoning"];
+  const defIconOf = { user: def.userIcon, assistant: def.assistantIcon, reasoning: def.reasoningIcon };
+  const inputOf = (k) => mask.querySelector(`#ci_${k}_icon`);
+  const prevOf = (k) => mask.querySelector(`#ci_prev_${k}`);
+  const pickerOf = (k) => mask.querySelector(`#ci_pick_${k}`);
+
+  // 「选择图标」按钮：同一时间只展开一个备选面板
+  $$("[data-toggle-picker]", mask).forEach(btn => {
+    btn.onclick = () => {
+      const k = btn.dataset.togglePicker;
+      const open = pickerOf(k).style.display !== "none";
+      keys.forEach(x => { const p = pickerOf(x); if (p) p.style.display = "none"; });
+      if (pickerOf(k)) pickerOf(k).style.display = open ? "none" : "";
+    };
+  });
+  // 点备选图标：写入输入框 + 更新预览 + 收起面板
+  $$("[data-pick]", mask).forEach(btn => {
+    btn.onclick = () => {
+      const k = btn.dataset.pick;
+      inputOf(k).value = btn.dataset.icon;
+      prevOf(k).textContent = btn.dataset.icon;
+      pickerOf(k).style.display = "none";
+    };
+  });
+  // 手动输入时实时同步预览（清空则显示默认图标）
+  keys.forEach(k => {
+    const input = inputOf(k);
+    input.oninput = () => { prevOf(k).textContent = (input.value || "").trim() || defIconOf[k]; };
+  });
+
+  mask.querySelector("#ciCancel").onclick = () => { mask.remove(); openSettings(); };
+  mask.querySelector("#ciReset").onclick = () => {
+    mask.querySelector("#ci_user_name").value = "";
+    mask.querySelector("#ci_assistant_name").value = "";
+    keys.forEach(k => { inputOf(k).value = ""; prevOf(k).textContent = defIconOf[k]; pickerOf(k).style.display = "none"; });
+  };
+  mask.querySelector("#ciSave").onclick = async () => {
+    const val = (sel) => (mask.querySelector(sel).value || "").trim();
+    try {
+      await saveSettings({
+        ...s,
+        chat_user_name: val("#ci_user_name"),
+        chat_user_icon: val("#ci_user_icon"),
+        chat_assistant_name: val("#ci_assistant_name"),
+        chat_assistant_icon: val("#ci_assistant_icon"),
+        chat_reasoning_icon: val("#ci_reasoning_icon"),
+      });
+      mask.remove();
+      toast(t("设置已保存"));
+    } catch (e) { toast(e.message, true); }
   };
 }
 
@@ -6057,15 +6227,21 @@ async function renderThreadsView() {
     snapListEl.innerHTML = snaps.map(s => `
       <div class="snapshot-row" data-sid="${esc(s.id)}">
         <div class="snapshot-info">
-          <span class="snapshot-name">${esc(s.thread_id)}</span>
+          <span class="snapshot-name">${esc(s.name || s.thread_id)}</span>
           <span class="snapshot-meta">${esc(s.created_at)} · ${s.total_messages} ${t("条消息")}</span>
         </div>
+        <button class="btn card-btn card-btn-hide small" data-snap-rename="${esc(s.id)}">${t("重命名")}</button>
         <button class="btn card-btn card-btn-danger small" data-snap-del="${esc(s.id)}">${t("删除")}</button>
       </div>`).join("");
 
     $$("#snapshotList .snapshot-row").forEach(row => {
       const sid = row.dataset.sid;
+      const snap = snaps.find(x => x.id === sid) || { id: sid };
       row.onclick = (e) => { if (e.target.closest("button")) return; goSnapshot(agentId, agentName, sid); };
+      row.querySelector("[data-snap-rename]").onclick = (e) => {
+        e.stopPropagation();
+        openSnapshotRenameModal(agentId, snap, () => loadSnapshots());
+      };
       row.querySelector("[data-snap-del]").onclick = async (e) => {
         e.stopPropagation();
         if (!confirm(`${t("确定删除快照")}「${sid}」？${t("此操作不可撤销。")}`)) return;
@@ -7076,16 +7252,17 @@ async function renderChatView() {
   function renderEditableMessage(msg, settings) {
     const allTypes = !!settings.edit_all_message_types;
     const idx = msg.msg_indice;
+    const idn = chatIdentity();
     if (msg.type === "HumanMessage") {
       const raw = String(msg.content ?? "");
       const body = allTypes
         ? editableLinesHTML(raw, "human_content", null, null, idx)
         : esc(raw).replace(/\n/g, "<br>");
-      return `<div class="user-msg-block" data-msg-indice="${idx}"><div class="user-msg-head">🧑 <strong>${t("用户")}</strong></div><blockquote class="user-msg-quote">${body}</blockquote></div>`;
+      return `<div class="user-msg-block" data-msg-indice="${idx}"><div class="user-msg-head">${esc(idn.userIcon)} <strong>${esc(idn.userName)}</strong></div><blockquote class="user-msg-quote">${body}</blockquote></div>`;
     }
     if (msg.type === "AIMessage") {
       let html = `<div class="ai-msg-block" data-msg-indice="${idx}" style="border-left: 3px solid #4CAF50; padding-left: 12px;">`;
-      html += `<strong>🤖 Assistant</strong>  <sub>${aiTokStr(msg)}</sub>`;
+      html += `<strong>${esc(idn.assistantIcon)} ${esc(idn.assistantName)}</strong>  <sub>${aiTokStr(msg)}</sub>`;
       const content = msg.content;
       if (Array.isArray(content)) {
         content.forEach((blk, bi) => {
@@ -7097,7 +7274,7 @@ async function renderChatView() {
             const inner = allTypes
               ? editableLinesHTML(r, "reasoning", bi, null, idx)
               : renderMd(r);
-            html += `<details class="reasoning-block"${open}><summary>🧠 ${t("思考过程")}</summary><div class="reasoning-body reasoning-md">${inner}</div></details>`;
+            html += `<details class="reasoning-block"${open}><summary>${esc(idn.reasoningIcon)} ${t("思考过程")}</summary><div class="reasoning-body reasoning-md">${inner}</div></details>`;
           } else if (blk.type === "text") {
             html += editableLinesHTML(String(blk.text ?? ""), "text", bi, null, idx);
           }
@@ -8342,6 +8519,67 @@ async function renderChatView() {
   updateSendState();
 }
 
+/* ── 快照重命名弹窗 ───────────────────────────────────────────────
+   · 只重命名快照的「会话名」这一段：后面的「日期_时间_微秒_消息条数」序列号
+     由后端原样保留（文件名形如 <会话名>_20261031_112957_390810_36.json）；
+   · 独立浮层（data-modal-key="snapshotRename"），尺寸 / 位置由通用浮层系统
+     按弹窗分别记忆（见 enableFloatingResize + 自动接线 MutationObserver）。
+   · agentId 可以是现存 agent_id，也可以是「已删除 multi-agent」的快照目录名。 */
+function openSnapshotRenameModal(agentId, snap, after) {
+  const snapId = String((snap && snap.id) || "");
+  const currentName = String((snap && (snap.name || snap.thread_id)) || "");
+  const mask = document.createElement("div");
+  mask.className = "modal-mask";
+  mask.innerHTML = `
+    <div class="modal" style="width:520px;" data-modal-key="snapshotRename">
+      <h3>✏️ ${t("重命名快照")}</h3>
+      <div class="muted" style="margin-bottom:12px;line-height:1.7;">${t("只修改快照的会话名称，其余信息保持不变。")}</div>
+      <div class="field full">
+        <label>${t("会话名称")}</label>
+        <input id="snapRenameInput" type="text" maxlength="80" spellcheck="false" value="${esc(currentName)}">
+      </div>
+      <div class="modal-actions">
+        <button class="btn" id="snapRenameCancel">${t("取消")}</button>
+        <button class="btn primary" id="snapRenameSave">${t("保存")}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(mask);
+
+  const input = mask.querySelector("#snapRenameInput");
+  const saveBtn = mask.querySelector("#snapRenameSave");
+  let closed = false;
+  const close = () => { if (closed) return; closed = true; mask.remove(); };
+
+  mask.querySelector("#snapRenameCancel").onclick = close;
+  mask.addEventListener("click", (e) => { if (e.target === mask) close(); });
+
+  const save = async () => {
+    const name = (input.value || "").trim();
+    if (!name) { toast(t("快照名称不能为空"), true); return; }
+    if (name === currentName) { close(); return; }
+    saveBtn.disabled = true;
+    try {
+      await api(`/api/agents/${encodeURIComponent(agentId)}/snapshots/${encodeURIComponent(snapId)}/rename`, {
+        method: "POST",
+        body: JSON.stringify({ name }),
+      });
+      toast(t("已重命名"));
+      close();
+      if (after) after();
+    } catch (e) {
+      saveBtn.disabled = false;
+      toast(e.message, true);
+    }
+  };
+  saveBtn.onclick = save;
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); save(); }
+    else if (e.key === "Escape") { e.preventDefault(); close(); }
+  });
+  // 弹窗刚插入时布局还没算完，下一帧再聚焦，否则部分外壳会聚焦失败
+  requestAnimationFrame(() => { try { input.focus(); input.select(); } catch (e) { /* ignore */ } });
+}
+
 /* ================= 视图5：快照浏览 ================= */
 async function renderSnapshotView() {
   // 从「已删除 multi-agent 的快照」进入时，原 agent 已不存在，返回主界面；
@@ -8371,7 +8609,7 @@ async function renderSnapshotView() {
   view.innerHTML = `
     <div class="chat-head">
       <div class="chat-head-left">
-        <span class="thread-name">📸 ${esc(snap.thread_id)}</span>
+        <span class="thread-name">📸 ${esc(snap.name || snap.thread_id)}</span>
         <span class="muted">${esc(snap.created_at || "")}</span>
       </div>
       <div class="chat-head-right">
@@ -8421,6 +8659,173 @@ async function renderSnapshotView() {
     injectExportButtons(historyEl);
     const pane = $("#historyPane"); if (pane) pane.scrollTop = 0;
   };
+}
+
+/* ── 「流式回复 → 历史渲染」切换时的阅读位置锚点 ─────────────────────
+   同一轮回复在两条链路里的 DOM 结构不同（流式块没有 Checkpoint 信息块与导出按钮、
+   子 agent 分区方式也不同），所以按像素 scrollTop 复原会把视口落到别的内容上；
+   历史渲染更短时浏览器还会把 scrollTop 钳到最大值，表现为「一下被拽到整条消息
+   的最后」。这里改用「视口顶部那一行文字」做语义锚点：
+     1. 重渲染前记录顶部可见行的起始字符 + 它距面板顶部的偏移；
+     2. 重渲染后在新的 DOM 里按「忽略空白」的文字匹配找回这一行；
+     3. 把这一行重新对齐到原来的纵向偏移，用户看到的内容不动。
+   找不到锚点（内容被改动/删掉）时，退回「按相对滚动比例落位」，也远好于直接贴底。 */
+
+function anchorSkipNode(node) {
+  const pe = node.parentElement;
+  if (!pe) return false;
+  if (pe.closest(".katex-mathml")) return true;        // KaTeX 隐藏 MathML：rect 恒为 (0,0)
+  if (pe.closest(".export-html-row, .mem-attach-btn, .mem-attach-panel, .tool-content-btn")) return true;
+  const closed = pe.closest("details:not([open])");
+  if (closed) {
+    const sum = pe.closest("summary");                 // 折叠块里的内容不可见；summary 本身可见
+    if (!(sum && sum.closest("details") === closed)) return true;
+  }
+  return false;
+}
+
+function anchorCharRect(node, i) {
+  const len = node.data.length;
+  if (!len) return null;
+  const k = Math.min(Math.max(0, i), len - 1);
+  const range = document.createRange();
+  range.setStart(node, k);
+  range.setEnd(node, Math.min(k + 1, len));
+  const rects = range.getClientRects();
+  return rects.length ? rects[0] : null;
+}
+
+/* 取「该可见行起始字符」往后的一小段非空白文字（用作重渲染后的匹配串）。
+   行宽只在视觉上折行、文字内容不变，所以这段文字在新旧 DOM 里都是连续的。 */
+function anchorLineText(node, rect) {
+  const data = node.data || "";
+  let lo = 0, hi = data.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    const r = anchorCharRect(node, mid);
+    if (r && (r.top + r.height / 2) < rect.top + 1) lo = mid + 1;
+    else hi = mid;
+  }
+  const start = Math.min(lo, data.length);
+  let out = "", count = 0;
+  for (let i = start; i < data.length && count < 30; i++) {
+    if (/\s/.test(data[i])) continue;
+    out += data[i];
+    count++;
+  }
+  return out;
+}
+
+function capturePaneAnchor(pane) {
+  if (!pane) return null;
+  const pr = pane.getBoundingClientRect();
+  const anchor = {
+    scrollTop: pane.scrollTop,
+    scrollHeight: pane.scrollHeight,
+    clientHeight: pane.clientHeight,
+    atBottom: pane.scrollHeight - pane.scrollTop - pane.clientHeight < 48,
+    offset: 0,
+    text: "",
+  };
+  if (anchor.atBottom || pr.height < 8) return anchor;
+
+  const paneTop = pr.top, paneBottom = pr.bottom;
+  const walker = document.createTreeWalker(pane, NodeFilter.SHOW_TEXT, null);
+  let n, hit = null, hitTop = Infinity;
+  while ((n = walker.nextNode())) {
+    if (!n.data || !/\S/.test(n.data)) continue;
+    if (anchorSkipNode(n)) continue;
+    const pe = n.parentElement;
+    if (pe) {
+      const er = pe.getBoundingClientRect();
+      if (er.bottom <= paneTop + 0.5) continue;        // 整块已在视口上方
+      if (er.top >= paneBottom) { if (hit) break; continue; }
+    }
+    const range = document.createRange();
+    range.selectNodeContents(n);
+    const rects = range.getClientRects();
+    for (let i = 0; i < rects.length; i++) {
+      const r = rects[i];
+      if (r.height < 0.5) continue;
+      if (r.bottom <= paneTop + 0.5) continue;
+      if (r.top >= paneBottom) continue;
+      if (r.top < hitTop) { hitTop = r.top; hit = { node: n, rect: r }; }
+    }
+  }
+  if (!hit) return anchor;
+  anchor.offset = Math.max(0, hit.rect.top - pr.top);
+  anchor.text = anchorLineText(hit.node, hit.rect);
+  return anchor;
+}
+
+/* 在 root 里按「忽略所有空白」查找 needle，返回命中的 Range 列表。 */
+function findRangesByNormText(root, needle) {
+  const norm = String(needle || "").replace(/\s+/g, "");
+  if (!norm) return [];
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+  const nodes = [];
+  let full = "", n;
+  while ((n = walker.nextNode())) {
+    if (anchorSkipNode(n)) continue;
+    nodes.push({ node: n, start: full.length });
+    full += n.data;
+  }
+  let flat = "";
+  const map = [];
+  for (let i = 0; i < full.length; i++) {
+    if (/\s/.test(full[i])) continue;
+    flat += full[i];
+    map.push(i);
+  }
+  const locate = (idx) => {
+    for (let k = nodes.length - 1; k >= 0; k--) {
+      if (idx >= nodes[k].start) {
+        return { node: nodes[k].node, offset: Math.min(idx - nodes[k].start, nodes[k].node.data.length) };
+      }
+    }
+    return nodes.length ? { node: nodes[0].node, offset: 0 } : null;
+  };
+  const out = [];
+  let from = 0;
+  while (true) {
+    const j = flat.indexOf(norm, from);
+    if (j < 0) break;
+    const s = locate(map[j]);
+    const e = locate(map[j + norm.length - 1] + 1);
+    if (s && e) {
+      const r = document.createRange();
+      r.setStart(s.node, s.offset);
+      r.setEnd(e.node, e.offset);
+      out.push(r);
+    }
+    from = j + 1;
+  }
+  return out;
+}
+
+function restorePaneAnchor(pane, anchor) {
+  if (!pane || !anchor || !pane.isConnected) return;
+  if (anchor.atBottom) { pane.scrollTop = pane.scrollHeight; return; }
+  const pr = pane.getBoundingClientRect();
+  const maxScroll = Math.max(0, pane.scrollHeight - pane.clientHeight);
+  // 老位置的「可滚动比例」：只在多个候选匹配时用于挑最可能的那个
+  const oldMax = Math.max(1, anchor.scrollHeight - anchor.clientHeight);
+  const ratio = Math.min(1, Math.max(0, anchor.scrollTop / oldMax));
+  const expected = ratio * maxScroll;
+
+  let best = null, bestDiff = Infinity;
+  if (anchor.text) {
+    for (const r of findRangesByNormText(pane, anchor.text)) {
+      const rr = r.getBoundingClientRect();
+      if (!rr || !rr.height) continue;
+      // 该行内容在文档里的绝对位置 → 让它落到与原视口相同的纵向偏移所需的 scrollTop
+      const want = rr.top - pr.top + pane.scrollTop - anchor.offset;
+      const diff = Math.abs(want - expected);
+      if (diff < bestDiff) { bestDiff = diff; best = want; }
+    }
+  }
+  if (best == null) best = expected;
+  pane.scrollTop = Math.max(0, Math.min(best, maxScroll));
 }
 
 class SessionStream {
@@ -8676,9 +9081,11 @@ class SessionStream {
   }
 
   async _loadFinalHistory(runId) {
+    // 重渲染前先记住「用户正在看哪一行」：本轮结束会把页面的流式 DOM 换成
+    // /history 的权威渲染，两条链路的块高 / 结构不同，只按像素 scrollTop 复原
+    // 会跳到别处（历史更短时还会被钳到最底部），所以这里用语义锚点。
     const pane = $("#historyPane");
-    const prevTop = pane ? pane.scrollTop : 0;
-    const atBottom = pane ? (pane.scrollHeight - pane.scrollTop - pane.clientHeight < 48) : true;
+    const anchor = capturePaneAnchor(pane);
     try {
       const h = await api(`/api/agents/${encodeURIComponent(this.agentId)}/threads/${encodeURIComponent(this.threadId)}/history`);
       if (this.runId === runId && this.status === "completed") {
@@ -8688,8 +9095,8 @@ class SessionStream {
         if (this.view && this.view.historyEl) {
           this.view.historyEl.innerHTML = renderMd(this.historyMarkdown);
           injectExportButtons(this.view.historyEl);
-          // 保持用户的阅读位置：原来贴底就跟到底，否则停在原处。
-          if (pane && pane.isConnected) pane.scrollTop = atBottom ? pane.scrollHeight : prevTop;
+          // 保持用户的阅读位置：原来在底部就跟到底，否则把锚点那一行拉回原处。
+          if (pane && pane.isConnected) restorePaneAnchor(pane, anchor);
           this.syncView();
         }
       }
@@ -8797,8 +9204,12 @@ class SessionStream {
         if (this.view && this.view.historyEl && !wasCompleted) {
           if (this.historyMarkdown) {
             this.replyEl = null;
+            // 同样是「流式 DOM → 历史渲染」：保持用户当前的阅读位置
+            const pane = $("#historyPane");
+            const anchor = capturePaneAnchor(pane);
             this.view.historyEl.innerHTML = renderMd(this.historyMarkdown);
             injectExportButtons(this.view.historyEl);
+            if (pane && pane.isConnected) restorePaneAnchor(pane, anchor);
           } else {
             // 断线期间完成、后端不回放事件：重新拉一次最终历史，否则只看到断线前
             // 的半截回复。拉完之前不要自动验收，避免把半截内容当成已读。
@@ -8992,8 +9403,9 @@ class SessionStream {
   }
 
   _reasoningBlock(txt) {
+    const idn = chatIdentity();
     return txt
-      ? `<details class="reasoning-block" open><summary>🧠 ${t("思考过程")}</summary><div class="reasoning-body reasoning-md">${renderMd(txt)}</div></details>`
+      ? `<details class="reasoning-block" open><summary>${esc(idn.reasoningIcon)} ${t("思考过程")}</summary><div class="reasoning-body reasoning-md">${renderMd(txt)}</div></details>`
       : "";
   }
 
@@ -9044,9 +9456,10 @@ class SessionStream {
         replyEl.insertBefore(replyEl._userEl, replyEl.firstChild);
       }
       const { text: userText, memory: userMem } = splitUserMemory(this.buffers.main_user);
+      const idn = chatIdentity();
       const memBtn = userMem ? `<button type="button" class="mem-attach-btn" title="${t("查看本条消息自动附着的记忆")}">🔖 ${t("记忆附着")}</button>` : "";
       const memPanel = userMem ? `<div class="mem-attach-panel" hidden>${esc(userMem).replace(/\n/g, "<br>")}</div>` : "";
-      replyEl._userEl.innerHTML = `<div class="user-msg-head">🧑 <strong>${t("用户")}</strong></div><blockquote class="user-msg-quote${userMem ? " has-mem" : ""}">${memBtn}${esc(userText).replace(/\n/g, "<br>")}</blockquote>${memPanel}`;
+      replyEl._userEl.innerHTML = `<div class="user-msg-head">${esc(idn.userIcon)} <strong>${esc(idn.userName)}</strong></div><blockquote class="user-msg-quote${userMem ? " has-mem" : ""}">${memBtn}${esc(userText).replace(/\n/g, "<br>")}</blockquote>${memPanel}`;
     }
     for (const seg of this.buffers.segments) {
       if (!seg._el || seg._el.parentElement !== replyEl) {

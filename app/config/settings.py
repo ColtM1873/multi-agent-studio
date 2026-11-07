@@ -23,6 +23,14 @@ DEFAULT_BROWSER_BORDER_COLOR = "#4f46e5"
 DEFAULT_BROWSER_TEXT_COLOR = "#ffffff"
 _HEX_COLOR_RE = re.compile(r"^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
 
+# 聊天界面「图标及称谓」默认值。设置项留空 = 使用这里的默认（称谓的前端默认值
+# 会跟随界面语言，见 app.js 的 chatIdentity()）。
+DEFAULT_CHAT_USER_NAME = "用户"
+DEFAULT_CHAT_USER_ICON = "🧑"
+DEFAULT_CHAT_ASSISTANT_NAME = "Assistant"
+DEFAULT_CHAT_ASSISTANT_ICON = "🤖"
+DEFAULT_CHAT_REASONING_ICON = "🧠"
+
 
 def normalize_hex_color(value: object, fallback: str) -> str:
     """把用户/旧配置里的颜色统一成小写 ``#rrggbb``；非法值回退到默认色。"""
@@ -255,6 +263,45 @@ class Settings(BaseModel):
     global_summary_configured: bool = False
     global_sub_summary: dict = Field(default_factory=dict)
     global_sub_summary_configured: bool = False
+
+    # 聊天界面「图标及称谓自定义」：主设置 → 子菜单里可改用户/助手的称谓与图标，
+    # 以及思考过程板块的图标。留空 = 用默认值（用户 / Assistant / 🧑 / 🤖 / 🧠）。
+    # 只影响历史与会话界面的显示（历史渲染由后端生成，故必须落在全局设置里），
+    # 不参与图编译，改完无需 invalidate。
+    chat_user_name: str = ""
+    chat_user_icon: str = ""
+    chat_assistant_name: str = ""
+    chat_assistant_icon: str = ""
+    chat_reasoning_icon: str = ""
+
+    def chat_identity(self) -> dict:
+        """解析出实际生效的聊天界面称谓与图标（空值回退默认）。"""
+
+        def pick(value, default: str) -> str:
+            text = str(value or "").strip()
+            return text or default
+
+        return {
+            "user_name": pick(self.chat_user_name, DEFAULT_CHAT_USER_NAME),
+            "user_icon": pick(self.chat_user_icon, DEFAULT_CHAT_USER_ICON),
+            "assistant_name": pick(self.chat_assistant_name, DEFAULT_CHAT_ASSISTANT_NAME),
+            "assistant_icon": pick(self.chat_assistant_icon, DEFAULT_CHAT_ASSISTANT_ICON),
+            "reasoning_icon": pick(self.chat_reasoning_icon, DEFAULT_CHAT_REASONING_ICON),
+        }
+
+    @field_validator(
+        "chat_user_name",
+        "chat_user_icon",
+        "chat_assistant_name",
+        "chat_assistant_icon",
+        "chat_reasoning_icon",
+        mode="before",
+    )
+    @classmethod
+    def _coerce_chat_identity(cls, value):
+        """去掉首尾空白并限制长度：图标/称谓会被塞进一行标题，过长会撑坏布局。"""
+        text = "" if value is None else str(value).strip()
+        return text[:40]
 
     def effective_store_database(self) -> str:
         """当前生效的 store 数据库名（空值兜底为默认值）。"""
