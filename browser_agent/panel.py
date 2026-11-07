@@ -160,6 +160,11 @@ def still_present(after: Any, before_near: int = -1, after_near: int = -1) -> bo
 
     只在能观测到时返回 ``True``；``near == 0`` / ``-1`` 是探测盲区，不能否决
     （BID101 的原始边界：面板太窄/太远时 ``near`` 本来就看不见它）。
+
+    BID110：``alive_n`` 已由 ``actions.panel_object_state`` 排除**离场中**的节点
+    （BID055：组件关闭浮层时先挂 leave 钩子类，此时节点仍 display:block、opacity
+    未归零）。所以「还有活着」只在节点确实在场且不在离场时成立——这正是 BID055
+    要求的「节点可见 ≠ 面板开着」。
     """  # BID109
     count = alive_n(after)  # BID109
     if count > 0:  # BID109
@@ -182,6 +187,12 @@ def closed_since(before: Any, after: Any) -> bool:  # BID109
       （BID072：不可观测 ⇒ 保守）。
 
     没有句柄时退回 BID093/101/102 的老口径（``count`` 变少必须被 ``near`` 背书）。
+
+    BID110：``True`` 只是「出现了关闭方向证据」，**不是**「已经确认关闭」的最终结论。
+    离场动画（BID055 的 leave 钩子类）和组件重挂（BID098 CASE-T）都会让 ``alive_n``
+    先变小、随后恢复；调用方必须按 BID096/BID098 在返回 ``True`` 之前走确认窗口，
+    否则补点会把恢复中的面板真正关掉。本函数不替调用方做这一步，是因为不同入口的
+    窗口长度不同（输入侧 1.0s、点击侧 0.15s）。
     """  # BID109
     before_data = _state(before)  # BID109
     after_data = _state(after)  # BID109

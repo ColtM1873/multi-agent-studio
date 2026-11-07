@@ -3883,8 +3883,14 @@ class BrowserController:
         才需要区分。
 
         BID109：``before`` 若带着面板句柄，这里不再需要「观察到变少」这种间接证据——
-        直接问那个节点还在不在即可：仍在 ⇒ 没关（立刻返回，省掉整个 0.15s 窗口）；
-        不在了 ⇒ 关了。没有句柄时才退回原来的 ``near``/``count`` 变少口径。
+        直接问那个节点还在不在即可：仍在 ⇒ 没关（立刻返回）；不在了 ⇒ 候选离场。
+        没有句柄时才退回原来的 ``near``/``count`` 变少口径。
+
+        BID110：句柄「变少」不能直接判「这一击关掉了面板」。BID055 的 leave 钩子类
+        会让节点在真正移除前就进入离场（``alive_n`` 立刻下降），BID098 的组件重挂也会
+        先卸载旧节点、稍后挂回——两种中间态都会让 ``alive_n`` 变小而面板其实会恢复。
+        因此句柄分支在「变少」时也必须走 BID099 的同一窗口复检：恢复了就说明只是
+        中间态，不判关闭（否则补点会把恢复中的面板真正关掉）。
         """
         try:  # BID099
             if not before.get("anchored") and int(before.get("near", -1)) <= 0:  # BID099
@@ -3898,7 +3904,15 @@ class BrowserController:
             if now_n >= before_n:  # BID109
                 return False  # BID109
             if now_n < before_n and not current.get("page_hidden"):  # BID109
-                return True  # BID109
+                # BID110：见 docstring——离场/重挂都会让 alive_n 先变小，必须在
+                # BID099 的同一窗口内复检，恢复了就不算这一击关掉的。
+                deadline = time.time() + window  # BID110
+                while time.time() < deadline:  # BID110
+                    time.sleep(0.04)  # BID110
+                    current = executor.panel_state(backend_node_id)  # BID110
+                    if panel_evidence.alive_n(current) >= before_n:  # BID110
+                        return False  # BID110
+                return True  # BID110
         deadline = time.time() + window  # BID099
         while True:  # BID099
             current = executor.panel_state(backend_node_id)  # BID099

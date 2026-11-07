@@ -366,12 +366,20 @@ def panel_anchor_expression(index: int = 0) -> str:
     （同一组 ``_FLOATING_BOX_JS`` + ``_CANDIDATE_PANEL_JS`` + BID093 的 0.6 重叠门槛
     + BID102 的严格 2 行档）。两处若不一致，「谁算这个控件的面板」就会出现两套口径。
 
+    **离场中的候选不认领**（BID055/BID110）：动作前带 leave 钩子类的盒子正在关闭，
+    把它认领成「面板」会让基线虚高（``tracked_n`` 多算一个），之后它被移除时
+    ``alive_n`` 下降会被误读成「面板关闭」。BID055 已用真实案例证明「节点可见 ≠
+    面板开着」，所以这里用与 ``_PANEL_HANDLE_STATE_JS`` 同一套 ``_LEAVE_CLASS_JS``
+    把它排除在身份之外；一个都不剩时 ``panel_track`` 返回 0，调用方按既有约定退回
+    旧口径。
+
     拿不到第 ``index`` 个候选时返回 ``null``（调用方据此停止认领）。
     """
     return (  # BID109
         "function(i){try{"  # BID109
         "var okBox=" + _FLOATING_BOX_JS + ";"  # BID109
         "var okPanel=" + _CANDIDATE_PANEL_JS + ";"  # BID109
+        "var leaveFn=" + _LEAVE_CLASS_JS + ";"  # BID110
         "var r=null;var el=this;"  # BID109
         "for(var k=0;k<5&&el;k++){"  # BID109
         "var b=el.getBoundingClientRect();"  # BID109
@@ -395,34 +403,83 @@ def panel_anchor_expression(index: int = 0) -> str:
         "var below=p.top-r.bottom;var above=r.top-p.bottom;"  # BID109
         "var adjacent=inter||(below>=-2&&below<=400)||(above>=-2&&above<=400);"  # BID109
         "if(!(ho>=0.6&&adjacent))continue;"  # BID109
+        "if(leaveFn(e))continue;"  # BID110
         "if(seen==i)return e;"  # BID109
         "seen++;}"  # BID109
         "return null;}catch(err){return null;}}"  # BID109
     )  # BID109
 
 
+# 本常量于BID110引入
+# 离场钩子类判定：对齐 ``browser_agent/dom/build.py::_class_marks_leaving`` 的结论
+# （BID055，有真实案例支撑）。
+#
+# BID055 的教训：组件库关闭浮层时先挂一个 **leave 钩子类** 播放退场动画，动画结束/组件
+# 卸载前节点仍 ``display:block``、``opacity`` 可能未归零；标签页非活跃或动画事件被节流时
+# leave 类可长期滞留。所以 **「节点可见」≠「面板开着」——只认 display/visibility/opacity
+# 必漏**。BID109 的句柄活性判据恰好只认这一组字段，本轮把它接回 BID055 的结论。
+#
+# 判定规则（逐条对齐 BID055 的护栏）：
+#   * leave 必须是**后缀**（``foo-leave`` / ``foo-leave-active``）；纯子串
+#     ``leave-request``、``overflow-hidden`` 永不命中（后者以 ``-hidden`` 结尾）；
+#   * 只认**离场**（leave/leaving/closing/exit/exiting），不认进场（``*-enter``）；
+#   * 形态前提由调用方保证：本函数只查 class，不查 role/class hints——两个调用点
+#     （``panel_anchor_expression`` / ``_PANEL_HANDLE_STATE_JS``）拿到的都已经是
+#     ``anchored`` 候选面板，BID055 要求的「overlay 形态」在认领时已经成立；
+#   * 祖先链只查 ≤4 层：组件库通常把 leave 类加在面板根或紧邻 wrapper 上，再远会误伤
+#     页面级容器。
+_LEAVE_CLASS_JS = (  # BID110
+    "function(el){try{"  # BID110
+    "var lv=el;"  # BID110
+    "for(var li=0;li<5&&lv;li++){"  # BID110
+    "var lc=(lv.getAttribute&&lv.getAttribute('class'))||'';"  # BID110
+    "lc=lc.toLowerCase();"  # BID110
+    "var ts=lc.split(/\\s+/);"  # BID110
+    "for(var ti=0;ti<ts.length;ti++){"  # BID110
+    "var t=ts[ti];if(!t)continue;"  # BID110
+    "var b=t;"  # BID110
+    "var tails=['-active','-to','-from','-start','-end'];"  # BID110
+    "for(var xi=0;xi<tails.length;xi++){"  # BID110
+    "if(b.length>tails[xi].length&&b.slice(-tails[xi].length)===tails[xi]){"  # BID110
+    "b=b.slice(0,-tails[xi].length);break;}}"  # BID110
+    "if(b==='leave'||b==='leaving'||b==='closing'||b==='exit'||b==='exiting')return 1;"  # BID110
+    "if(b.length>6&&b.slice(-6)==='-leave')return 1;"  # BID110
+    "if(b.length>8&&b.slice(-8)==='-leaving')return 1;"  # BID110
+    "if(b.length>8&&b.slice(-8)==='-closing')return 1;"  # BID110
+    "if(b.length>5&&b.slice(-5)==='-exit')return 1;"  # BID110
+    "if(b.length>8&&b.slice(-8)==='-exiting')return 1;}"  # BID110
+    "lv=lv.parentElement;}"  # BID110
+    "return 0;}catch(err){return 0;}}"  # BID110
+)  # BID110
+
+
 # 本常量于BID109引入
 # 被跟踪面板句柄的「还在不在」查询：只问这一个节点，不扫全页。
-# 返回值 ``[connected, cssHidden, faint, ariaHidden, width, height]``：
+# 返回值 ``[connected, cssHidden, faint, ariaHidden, width, height, leaving]``：
 #   * ``connected=0``   → 节点已从文档移除（关闭 / 重新挂载成新节点）；
 #   * ``cssHidden=1``   → display:none 或 visibility:hidden；
 #   * ``faint=1``       → opacity≈0（入场首帧；页面不可见时 rAF 冻结，此项不可信，
 #                          由 Python 侧按 ``page_hidden`` 决定是否采信，BID072）；
-#   * ``ariaHidden=1``  → 面板自身 aria-hidden=true（部分组件库用它代替 display:none）。
+#   * ``ariaHidden=1``  → 面板自身 aria-hidden=true（部分组件库用它代替 display:none）；
+#   * ``leaving=1``     → 自身或 ≤4 层祖先带离场钩子类（BID055/BID110）。离场中的
+#                          节点**不算活着**：它正在关闭，节点却仍可能 display:block、
+#                          opacity 未归零。但它也**不是「已关闭」的强证据**——按
+#                          BID096/BID098，必须走确认窗口等它自己挂回来。
 _PANEL_HANDLE_STATE_JS = (  # BID109
     "function(){try{"  # BID109
     "var el=this;"  # BID109
-    "if(!el)return [-1,0,0,0,0,0];"  # BID109
+    "if(!el)return [-1,0,0,0,0,0,0];"  # BID109 / BID110
     "var connected=(typeof el.isConnected==='boolean')"  # BID109
     "?el.isConnected:(document.contains?document.contains(el):true);"  # BID109
-    "if(!connected)return [0,0,0,0,0,0];"  # BID109
+    "if(!connected)return [0,0,0,0,0,0,0];"  # BID109 / BID110
     "var cs=getComputedStyle(el);"  # BID109
     "var hid=(cs.display==='none'||cs.visibility==='hidden')?1:0;"  # BID109
     "var faint=(parseFloat(cs.opacity||'1')<=0.01)?1:0;"  # BID109
     "var ah=(el.getAttribute&&el.getAttribute('aria-hidden')==='true')?1:0;"  # BID109
     "var r=el.getBoundingClientRect();"  # BID109
-    "return [1,hid,faint,ah,Math.round(r.width),Math.round(r.height)];"  # BID109
-    "}catch(err){return [-1,0,0,0,0,0];}}"  # BID109
+    "var leaving=(" + _LEAVE_CLASS_JS + ")(el);"  # BID110
+    "return [1,hid,faint,ah,Math.round(r.width),Math.round(r.height),leaving];"  # BID109 / BID110
+    "}catch(err){return [-1,0,0,0,0,0,0];}}"  # BID109 / BID110
 )  # BID109
 
 
@@ -954,7 +1011,7 @@ class ActionExecutor:
         返回 ``{"tracked": bool, "alive_n": int, "tracked_n": int, "alive": -1|0|1}``：
 
         * ``tracked_n`` 是动作前认领到的候选个数（基线，整个互动内不变）；
-        * ``alive_n`` 是此刻仍「在场且可见」的个数；
+        * ``alive_n`` 是此刻仍「在场且可见、且**不在离场中**」的个数；
         * ``alive`` 是给旧判据用的三态（``1`` 还有、``0`` 全没了、``-1`` 没跟踪）。
 
         判据为什么看「个数」而不是「某一个节点」：控件旁的常驻提示盒会让单个句柄恒真，
@@ -965,6 +1022,13 @@ class ActionExecutor:
         ``callFunctionOn`` 报错（对象已回收 / 执行上下文换了 / 节点已移除）一律按
         「这个节点不在了」计。``faint``（opacity≈0，入场首帧）不计为活着，但也不作为
         「关掉了」的**唯一**证据——调用方仍走确认窗口（BID096/BID098）。
+
+        **离场中的节点不计为活着**（BID055/BID110）：组件库关闭浮层时先挂 leave 钩子
+        类播放退场动画，此时节点仍 ``display:block``、``opacity`` 未归零，只认可见性会
+        把「正在关闭」读成「还开着」（``alive_n`` 恒不降 ⇒ ``closed_since`` 恒假 ⇒
+        漏补点）。但 ``leaving`` 同理**不是「已关闭」的强证据**：组件可能只是重挂前先
+        离场（BID098 CASE-T），所以 ``alive_n`` 的下降仍必须经过调用方的确认窗口，
+        不得直接判否定结论（BID072/BID096/BID098）。
         """
         if not self._panel_object_ids:  # BID109
             return {  # BID109
@@ -998,6 +1062,7 @@ class ActionExecutor:
                 css_hidden = int(value[1])  # BID109
                 faint = int(value[2])  # BID109
                 aria_hidden = int(value[3])  # BID109
+                leaving = int(value[6]) if len(value) >= 7 else 0  # BID110
             except (TypeError, ValueError):  # BID109
                 details.append({"reason": "gone"})  # BID109
                 continue  # BID109
@@ -1006,6 +1071,7 @@ class ActionExecutor:
                 and not css_hidden  # BID109
                 and not aria_hidden  # BID109
                 and not faint  # BID109
+                and not leaving  # BID110
             )  # BID109
             if shown:  # BID109
                 alive_n += 1  # BID109
@@ -1015,6 +1081,7 @@ class ActionExecutor:
                     "css_hidden": bool(css_hidden),  # BID109
                     "faint": bool(faint),  # BID109
                     "aria_hidden": bool(aria_hidden),  # BID109
+                    "leaving": bool(leaving),  # BID110
                     "width": value[4],  # BID109
                     "height": value[5],  # BID109
                 }  # BID109
