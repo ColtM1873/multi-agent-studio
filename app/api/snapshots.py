@@ -20,6 +20,19 @@ class RenameSnapshotBody(BaseModel):
     name: str
 
 
+class EditSnapshotMessageBody(BaseModel):
+    """快照内编辑：替换一条消息（与普通会话编辑模式的提交结构对齐）。
+
+    - ``subagent_name``：None/空串 = 主图，否则为该子 agent 的消息；
+    - ``msg_indice``：消息下标（= 渲染时的 ``data-msg-indice``）；
+    - ``substitute_msg``：完整替换消息（前端只改目标字段，其余原样回传）。
+    """
+
+    subagent_name: str | None = None
+    msg_indice: int
+    substitute_msg: dict
+
+
 @router.get("")
 def list_snapshots(agent_id: str):
     return snapshot_service.list_snapshots(agent_id)
@@ -56,6 +69,39 @@ def rename_snapshot(agent_id: str, snapshot_id: str, body: RenameSnapshotBody):
         raise HTTPException(status_code=404, detail="快照不存在")
     except FileExistsError:
         raise HTTPException(status_code=409, detail="该名称下已存在同序列号的快照")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/{snapshot_id}/messages")
+def get_snapshot_messages(agent_id: str, snapshot_id: str, subagent_name: str | None = None):
+    """读取快照里保存的原始消息（快照内编辑模式进入时取数，与 /messages 同构）。"""
+    try:
+        messages = snapshot_service.read_snapshot_messages(agent_id, snapshot_id, subagent_name)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="快照不存在")
+    except snapshot_service.SnapshotNotEditable as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"messages": messages}
+
+
+@router.post("/{snapshot_id}/edit")
+def edit_snapshot_message(agent_id: str, snapshot_id: str, body: EditSnapshotMessageBody):
+    """在快照 JSON 内替换一条消息并重渲染 Markdown（不跑图、不碰会话数据库）。"""
+    try:
+        return snapshot_service.edit_snapshot_message(
+            agent_id,
+            snapshot_id,
+            body.subagent_name,
+            body.msg_indice,
+            body.substitute_msg,
+        )
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="快照不存在")
+    except snapshot_service.SnapshotNotEditable as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

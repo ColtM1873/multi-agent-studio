@@ -782,7 +782,6 @@ const I18N_EN = {
   "确定删除该 multi-agent 的全部快照": "Delete all snapshots of this multi-agent?",
   "重命名": "Rename",
   "重命名快照": "Rename snapshot",
-  "只修改快照的会话名称，其余信息保持不变。": "Only the snapshot's session name changes; everything else stays the same.",
   "会话名称": "Session name",
   "快照名称不能为空": "Snapshot name cannot be empty",
   "已重命名": "Renamed",
@@ -2995,7 +2994,15 @@ function render() {
   app.innerHTML = "";
   $$(".edit-popup").forEach(p => p.remove());
   const errWrap = $(".edit-error-wrap");
-  if (errWrap && (S.view !== "chat" || errWrap.dataset.thread !== String(S.threadId))) errWrap.remove();
+  if (errWrap) {
+    // 编辑写入失败的常驻报错条：同一会话/同一快照内保留（用户点 ✕ 才消失），
+    // 离开该视图时清掉，避免陈旧报错条串台。
+    const scope = errWrap.dataset.scope || "";
+    const keep =
+      (S.view === "chat" && scope === `chat:${S.threadId}`) ||
+      (S.view === "snapshot" && scope === `snapshot:${S.agentId}:${S.snapshotId}`);
+    if (!keep) errWrap.remove();
+  }
   isRunning = false; ws = null; currentReplyEl = null; editorDirty = false; statusMode = "idle";
   if (S.view === "agents") renderAgents();
   else if (S.view === "editor") renderEditorView();
@@ -7002,7 +7009,932 @@ function hideFailBubble() {
   pendingFailMsg = null;
 }
 
+/* ═════════════════ 历史消息编辑模式（共享：会话 / 快照） ═════════════════
+   会话页与快照页共用同一套编辑模式 UI 与交互（进入/退出、绿色行 hover、原始 md
+   编辑窗口、确认/撤销、提交确认、写入中徽标、失败横幅、成功气泡 + 粒子、滚动锚点）。
+   唯一差别由 createHistoryEditor 的 opts 提供：
+     · fetchMessages：原始消息从哪来（会话走 /messages；快照读快照 JSON）
+     · submitEdit：一条替换消息怎么写回（会话跑图；快照只改 JSON 文件）
+     · reload：提交后如何重拉历史（会话拉 /history；快照重读快照 JSON）
+   这样两侧行为严格同源，不会出现「改了一边忘另一边」的漂移。 */
+
+function splitEditableSegments(rawText) {
+  const lines = String(rawText == null ? "" : rawText).replace(/\r\n?/g, "\n").split("\n");
+  const segs = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    const t = line.replace(/^\s+/, "");
+    const fence = /^(`{3,}|~{3,})/.exec(line);
+    if (fence) {
+      const ch = fence[1][0];
+      const len = fence[1].length;
+      const closeRe = new RegExp("^\\s*" + (ch === "`" ? "`" : "~") + "{" + len + ",}\\s*$");
+      let j = i + 1;
+      while (j < lines.length && !closeRe.test(lines[j])) j++;
+      const end = j < lines.length ? j + 1 : lines.length;
+      segs.push(lines.slice(i, end).join("\n"));
+      i = end;
+      continue;
+    }
+    // 展示公式 $$...$$ / \[...\]（可能跨多行）
+    const isDollar = t.startsWith("$$");
+    const isBracket = t.length >= 2 && t.charCodeAt(0) === 92 && t[1] === "[";
+    if (isDollar || isBracket) {
+      const inlineClosed = isDollar ? t.indexOf("$$", 2) !== -1 : t.indexOf("\\]", 2) !== -1;
+      if (inlineClosed) { segs.push(line); i++; continue; }
+      let j = i + 1;
+      while (j < lines.length) {
+        const lj = lines[j];
+        const hasClose = isDollar ? lj.indexOf("$$") !== -1 : lj.replace(/\s+$/, "").endsWith("\\]");
+        j++;
+        if (hasClose) break;
+      }
+      segs.push(lines.slice(i, j).join("\n"));
+      i = j;
+      continue;
+    }
+    // 表格：连续以 | 开头的行
+    if (/^\s*\|/.test(line)) {
+      let j = i;
+      while (j < lines.length && /^\s*\|/.test(lines[j])) j++;
+      segs.push(lines.slice(i, j).join("\n"));
+      i = j;
+      continue;
+    }
+    segs.push(line);
+    i++;
+  }
+  return segs;
+}
+
+function editableLinesHTML(rawText, field, blockIndex, toolCallIndex, msgIndice) {
+  const segs = splitEditableSegments(rawText);
+  return segs.map((seg, pi) => {
+    const b64 = utf8ToB64(seg);
+    const inner = seg ? renderMd(seg) : "&nbsp;";
+    return `<div class="edit-line" data-msg="${msgIndice}" data-field="${field}" data-block="${blockIndex == null ? "" : blockIndex}" data-toolcall="${toolCallIndex == null ? "" : toolCallIndex}" data-para="${pi}" data-raw-b64="${b64}">${inner}</div>`;
+  }).join("");
+}
+
+function aiTokStr(msg) {
+  const um = msg.usage_metadata || {};
+  const i = um.input_tokens != null ? um.input_tokens : "?";
+  const o = um.output_tokens != null ? um.output_tokens : "?";
+  const cache = (um.input_token_details && um.input_token_details.cache_read) || 0;
+  let s = `↑${i} ↓${o}`;
+  if (cache) s += `  💾cache:${cache}`;
+  return s;
+}
+
+function renderEditableMessage(msg, settings) {
+  const allTypes = !!settings.edit_all_message_types;
+  const idx = msg.msg_indice;
+  const idn = chatIdentity();
+  if (msg.type === "HumanMessage") {
+    const raw = String(msg.content ?? "");
+    const body = allTypes
+      ? editableLinesHTML(raw, "human_content", null, null, idx)
+      : esc(raw).replace(/\n/g, "<br>");
+    return `<div class="user-msg-block" data-msg-indice="${idx}"><div class="user-msg-head">${esc(idn.userIcon)} <strong>${esc(idn.userName)}</strong></div><blockquote class="user-msg-quote">${body}</blockquote></div>`;
+  }
+  if (msg.type === "AIMessage") {
+    let html = `<div class="ai-msg-block" data-msg-indice="${idx}" style="border-left: 3px solid #4CAF50; padding-left: 12px;">`;
+    html += `<strong>${esc(idn.assistantIcon)} ${esc(idn.assistantName)}</strong>  <sub>${aiTokStr(msg)}</sub>`;
+    const content = msg.content;
+    if (Array.isArray(content)) {
+      content.forEach((blk, bi) => {
+        if (!blk) return;
+        if (blk.type === "reasoning") {
+          const open = settings.reasoning_expanded !== false ? " open" : "";
+          const r = String(blk.reasoning ?? "");
+          // 思考过程始终渲染（公式/加粗/标题）；是否可点击编辑仍由「所有类型可编辑」开关决定。
+          const inner = allTypes
+            ? editableLinesHTML(r, "reasoning", bi, null, idx)
+            : renderMd(r);
+          html += `<details class="reasoning-block"${open}><summary>${esc(idn.reasoningIcon)} ${t("思考过程")}</summary><div class="reasoning-body reasoning-md">${inner}</div></details>`;
+        } else if (blk.type === "text") {
+          html += editableLinesHTML(String(blk.text ?? ""), "text", bi, null, idx);
+        }
+      });
+    } else if (typeof content === "string") {
+      html += editableLinesHTML(content, "text", null, null, idx);
+    }
+    if (msg.tool_calls && msg.tool_calls.length) {
+      msg.tool_calls.forEach((tc, ti) => {
+        const open = settings.tool_call_expanded ? " open" : "";
+        const argsJson = JSON.stringify(tc.args || {}, null, 2);
+        const body = allTypes
+          ? editableLinesHTML(argsJson, "tool_call_args", null, ti, idx)
+          : renderMd("```json\n" + argsJson + "\n```");
+        html += `<details${open}><summary>🔧 \`${esc(tc.name || "?")}\`</summary>${body}</details>`;
+      });
+    }
+    html += `</div>`;
+    return html;
+  }
+  if (msg.type === "ToolMessage") {
+    const name = msg.name || "unknown_tool";
+    let c = msg.content;
+    if (Array.isArray(c)) c = c.filter(b => b && b.type === "text").map(b => b.text).join("\n\n");
+    const raw = String(c ?? "");
+    const lineCount = raw.split("\n").length;
+    const open = settings.tool_result_expanded ? " open" : "";
+    const body = allTypes
+      ? editableLinesHTML(raw, "tool_content", null, null, idx)
+      : `<div class="tool-result-body">${esc(raw).replace(/\r\n/g, "\n").replace(/\n/g, "<br>")}</div>`;
+    return `<details${open} data-msg-indice="${idx}"><summary>✅ ${t("工具结果")}: \`${esc(name)}\` (${lineCount} ${t("行")})</summary>${body}</details>`;
+  }
+  return "";
+}
+
+function computeEditableMessages(messages, settings) {
+  const msgs = messages || [];
+  const allTime = !!settings.edit_any_history;
+  const allTypes = !!settings.edit_all_message_types;
+  const editableIdx = new Set();
+  if (allTime) {
+    msgs.forEach((m, i) => editableIdx.add(i));
+  } else {
+    let h = -1;
+    msgs.forEach((m, i) => { if (m.type === "HumanMessage") h = i; });
+    for (let i = h + 1; i < msgs.length; i++) editableIdx.add(i);
+  }
+  const editable = new Set();
+  msgs.forEach((m, i) => {
+    if (!editableIdx.has(i)) return;
+    if (m.type === "AIMessage") editable.add(i);
+    else if (allTypes && (m.type === "HumanMessage" || m.type === "ToolMessage")) editable.add(i);
+  });
+  return editable;
+}
+
+function applyParaEditsToText(rawText, paraEdits) {
+  const segs = splitEditableSegments(rawText);
+  paraEdits.forEach(pe => { segs[pe.paraIndex] = pe.newText; });
+  return segs.join("\n");
+}
+
+function buildSubstituteMessage(original, itemEdits) {
+  const clone = JSON.parse(JSON.stringify(original));
+  const byField = {};
+  itemEdits.forEach(e => {
+    const fk = `${e.field}|${e.blockIndex}|${e.toolCallIndex}`;
+    (byField[fk] = byField[fk] || []).push(e);
+  });
+  for (const fk of Object.keys(byField)) {
+    const parts = fk.split("|");
+    const field = parts[0];
+    const bi = parts[1] === "" ? null : parts[1];
+    const ti = parts[2] === "" ? null : parts[2];
+    const paraEdits = byField[fk];
+    if (field === "text" || field === "reasoning") {
+      const blocks = Array.isArray(clone.content) ? clone.content : null;
+      if (bi != null && blocks && blocks[bi]) {
+        blocks[bi][field] = applyParaEditsToText(blocks[bi][field], paraEdits);
+      } else if (field === "text" && !blocks && typeof clone.content === "string") {
+        clone.content = applyParaEditsToText(clone.content, paraEdits);
+      }
+    } else if (field === "tool_call_args") {
+      const tc = clone.tool_calls && clone.tool_calls[ti];
+      if (tc) {
+        const jsonStr = JSON.stringify(tc.args || {}, null, 2);
+        const newJson = applyParaEditsToText(jsonStr, paraEdits);
+        try { tc.args = JSON.parse(newJson); } catch (err) { /* 无效 JSON：保留原值 */ }
+      }
+    } else if (field === "tool_content" || field === "human_content") {
+      let raw = clone.content;
+      if (Array.isArray(raw)) raw = raw.filter(b => b && b.type === "text").map(b => b.text).join("\n\n");
+      clone.content = applyParaEditsToText(String(raw), paraEdits);
+    }
+  }
+  return clone;
+}
+
+function applyLineEdit(line, newText, edits) {
+  const oldRaw = b64ToUtf8(line.dataset.rawB64 || "");
+  if (newText === oldRaw) return;
+  line.innerHTML = newText ? renderMd(newText) : "&nbsp;";
+  line.dataset.rawB64 = utf8ToB64(newText);
+  const msgIndice = +line.dataset.msg;
+  const field = line.dataset.field;
+  const blockIndex = line.dataset.block === "" ? null : +line.dataset.block;
+  const toolCallIndex = line.dataset.toolcall === "" ? null : +line.dataset.toolcall;
+  const paraIndex = +line.dataset.para;
+  const existing = edits.find(e =>
+    e.msgIndice === msgIndice && e.field === field &&
+    e.blockIndex === blockIndex && e.toolCallIndex === toolCallIndex &&
+    e.paraIndex === paraIndex);
+  if (existing) existing.newText = newText;
+  else edits.push({ msgIndice, field, blockIndex, toolCallIndex, paraIndex, newText });
+}
+
+/* ---- 编辑模式滚动锚点：结构化文本锚点（message + 模块 + 标题 + 顶部行文本） ----
+   进入/退出编辑模式会改变块内行高（编辑态把段落拆成 .edit-line、去掉 margin），
+   只保留旧的像素 scrollTop 会让视口里的文字整体错位。这里记录：
+     视口顶部第一行文本 + 它归属的 message(data-msg-indice) / 模块(reason/text/tool_calls)
+     / 标题(##)，重渲染后在同一作用域内按文本搜索匹配该行，把它拉回原来的视口纵向位置。 */
+function normAnchorText(s) {
+  return String(s == null ? "" : s).replace(/\s+/g, "");
+}
+
+// 跳过「对锚点不可见」的文本：
+// ① KaTeX 隐藏的 MathML（position:absolute+clip，getBoundingClientRect 恒为 (0,0)）；
+// ② 折叠 <details> 里的内容——Chrome 对折叠内容仍会报告布局矩形（甚至超大），但它并不显示，
+//    绝不能当锚点/匹配目标；<summary> 本身仍可见，故不跳过（只跳过非 summary 的折叠内容）。
+function isAnchorHidden(node) {
+  const pe = node.parentElement;
+  if (!pe) return false;
+  if (pe.closest(".katex-mathml")) return true;
+  // 注入型 UI（导出按钮 / 记忆附着按钮 / 工具 content 按钮等）在编辑态会消失，不能当锚点。
+  if (pe.closest(".export-html-row, .mem-attach-btn, .tool-content-btn, .mem-attach-panel, .tool-result-trunc")) return true;
+  const closed = pe.closest("details:not([open])");
+  if (closed) {
+    const sum = pe.closest("summary");
+    if (!(sum && sum.closest("details") === closed)) return true;
+  }
+  return false;
+}
+
+// 取某文字节点第一段有高度的行矩形。
+function firstLineRect(node) {
+  const range = document.createRange();
+  range.selectNodeContents(node);
+  const rects = range.getClientRects();
+  for (let i = 0; i < rects.length; i++) {
+    if (rects[i].height >= 0.5) return rects[i];
+  }
+  return null;
+}
+
+// 取某文字节点里第 i 个字符的矩形（用于定位「可见行的起始字符」）。
+function charRectAt(node, i) {
+  const len = node.data.length;
+  if (len === 0) return null;
+  const k = Math.min(Math.max(0, i), len - 1);
+  const range = document.createRange();
+  range.setStart(node, k);
+  range.setEnd(node, Math.min(k + 1, len));
+  const rects = range.getClientRects();
+  return rects.length ? rects[0] : null;
+}
+
+// 二分找出「落在 top≈targetTop 那一行」的起始字符索引。
+// 关键：顶部可见行常常是某个长段落（单个文字节点、软换行折成多行）的中间一行，
+// 必须从这一行的起始字符开始截取；否则会把「整段开头」当成锚点、对齐到错误位置。
+function lineStartOffset(node, targetTop) {
+  const len = node.data.length;
+  let lo = 0, hi = len;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    const r = charRectAt(node, mid);
+    if (r && (r.top + r.height / 2) < targetTop) lo = mid + 1;
+    else hi = mid;
+  }
+  return Math.max(0, Math.min(lo, len));
+}
+
+// 取 root 内 node 之后的下一个文字节点（文档顺序）。
+function nextTextNodeWithin(root, node) {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+  let n, hit = false;
+  while ((n = walker.nextNode())) {
+    if (hit) return n;
+    if (n === node) hit = true;
+  }
+  return null;
+}
+
+// 找到「视口顶部第一条可见文字行」：扫描文字节点的行矩形，取 top 最小的可见行。
+function findTopVisibleLine(pane) {
+  const pr = pane.getBoundingClientRect();
+  const paneTop = pr.top, paneBottom = pr.bottom;
+  const walker = document.createTreeWalker(pane, NodeFilter.SHOW_TEXT, null);
+  let n, best = null, bestTop = Infinity;
+  while ((n = walker.nextNode())) {
+    if (!n.data || !/\S/.test(n.data)) continue;
+    if (isAnchorHidden(n)) continue;
+    const block = n.parentElement && n.parentElement.closest("[data-msg-indice]");
+    if (!block) continue;
+    const pe = n.parentElement;
+    if (pe) {
+      const er = pe.getBoundingClientRect();
+      if (er.bottom <= paneTop + 0.5) continue;   // 该节点整体在视口上方
+      if (er.top >= paneBottom) {                 // 该节点整体在视口下方
+        if (best) break;                          // 已找到顶部可见行：其后的只会更靠下
+        continue;
+      }
+    }
+    const range = document.createRange();
+    range.selectNodeContents(n);
+    const rects = range.getClientRects();
+    for (let i = 0; i < rects.length; i++) {
+      const r = rects[i];
+      if (r.height < 0.5) continue;
+      if (r.bottom <= paneTop + 0.5) continue;
+      if (r.top >= paneBottom) continue;
+      if (r.top < bestTop) { bestTop = r.top; best = { node: n, rect: r, block }; }
+    }
+  }
+  return best;
+}
+
+// 判断节点属于哪个模块（重渲染后在同一模块内搜索）。
+function moduleOf(node, block) {
+  const pe = node.parentElement;
+  if (pe && pe.closest(".reasoning-body")) return "reasoning";
+  if (pe && pe.closest(".tool-result-wrap")) return "tool_result";
+  if (block && block.matches && block.matches("details[data-msg-indice]")) return "tool_result";
+  if (pe && pe.closest("details")) return "tool_call";
+  if (block && block.classList && block.classList.contains("user-msg-block")) return "human";
+  return "text";
+}
+
+function moduleSummaryOf(node) {
+  const pe = node.parentElement;
+  const d = pe && pe.closest("details");
+  if (!d) return "";
+  const s = d.querySelector("summary");
+  return s ? normAnchorText(s.textContent) : "";
+}
+
+// 模块容器（用于定位标题作用域）。
+function moduleContainer(node, block, module) {
+  const pe = node.parentElement;
+  if (module === "reasoning") return pe ? pe.closest(".reasoning-body") : null;
+  if (module === "tool_result") return (pe && pe.closest(".tool-result-wrap")) || block;
+  if (module === "tool_call") return pe ? pe.closest("details") : null;
+  if (module === "human") return (pe && pe.closest(".user-msg-quote")) || block;
+  return block;
+}
+
+// 捕获「顶部那一行」的文本：从**可见行起始字符**开始向后累积，遇到新的一行即止。
+// 至少累积一小段，便于唯一匹配。命中公式时由调用方改用整个公式文本。
+function collectLineText(pane, startNode, startRect) {
+  const block = startNode.parentElement && startNode.parentElement.closest("[data-msg-indice]");
+  const lineH = startRect.height || 20;
+  const startOff = lineStartOffset(startNode, startRect.top);
+  let text = isAnchorHidden(startNode) ? "" : startNode.data.slice(startOff);
+  let node = startNode;
+  while (normAnchorText(text).length < 64) {
+    node = nextTextNodeWithin(pane, node);
+    if (!node) break;
+    const nb = node.parentElement && node.parentElement.closest("[data-msg-indice]");
+    if (!nb || nb !== block) break;   // 只在本消息块内累积，避免跨块拼出匹配不到的串
+    const r = firstLineRect(node);
+    if (r && r.top > startRect.top + lineH * 0.7 && normAnchorText(text).length >= 20) break;
+    if (!isAnchorHidden(node)) text += node.data;
+  }
+  return normAnchorText(text);
+}
+
+// 捕获锚点：顶部行文本 + message + 模块 + 标题（+ 视口纵向位置）。
+function captureMsgAnchor() {
+  const pane = $("#historyPane");
+  if (!pane) return null;
+  const pr = pane.getBoundingClientRect();
+  if (pr.height < 8) return null;
+  const found = findTopVisibleLine(pane);
+  if (!found) {
+    // 回退：消息块级
+    const blocks = pane.querySelectorAll("[data-msg-indice]");
+    for (const b of blocks) {
+      const r = b.getBoundingClientRect();
+      if (r.bottom > pr.top + 8) return { msgIndice: b.getAttribute("data-msg-indice"), beforeTop: r.top, offsetRatio: 0 };
+    }
+    return { scrollTop: pane.scrollTop };
+  }
+  const block = found.block;
+  const module = moduleOf(found.node, block);
+  const container = moduleContainer(found.node, block, module);
+
+  // 标题作用域：容器内、位于该行之前、文本非空的最近一个标题（##）。
+  let headingText = null;
+  if (container) {
+    const heads = container.querySelectorAll("h1, h2, h3, h4, h5, h6");
+    let chosen = null;
+    for (const h of heads) {
+      if (module === "text" && (h.closest(".reasoning-body") || h.closest("details"))) continue;
+      if (h.compareDocumentPosition(found.node) & Node.DOCUMENT_POSITION_FOLLOWING) chosen = h;
+    }
+    if (chosen) headingText = normAnchorText(chosen.textContent);
+  }
+
+  // 顶部行文本：命中公式时按整个公式捕获（`\[...\]` 源文多行、渲染成一行）。
+  let lineText, beforeTop;
+  const katexEl = found.node.parentElement && found.node.parentElement.closest(".katex");
+  if (katexEl) {
+    const html = katexEl.querySelector(".katex-html") || katexEl;
+    lineText = normAnchorText(html.textContent || "");
+    beforeTop = katexEl.getBoundingClientRect().top;
+  } else {
+    lineText = collectLineText(pane, found.node, found.rect);
+    beforeTop = found.rect.top;
+  }
+
+  const blockRect = block.getBoundingClientRect();
+  return {
+    msgIndice: block.getAttribute("data-msg-indice"),
+    module,
+    headingText,
+    lineText,
+    beforeTop,
+    containerSummary: (module === "tool_call" || module === "tool_result") ? moduleSummaryOf(found.node) : "",
+    offsetRatio: (beforeTop - blockRect.top) / (blockRect.height || 1),
+  };
+}
+
+// 在 root 内按「忽略所有空白」查找 needle，返回所有出现处的 Range。
+function findRangesByText(root, needle) {
+  const nNeedle = normAnchorText(needle);
+  const out = [];
+  if (!nNeedle) return out;
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+  const nodes = [];
+  let full = "", n;
+  while ((n = walker.nextNode())) {
+    if (isAnchorHidden(n)) continue;
+    nodes.push({ node: n, start: full.length });
+    full += n.data;
+  }
+  let norm = "";
+  const map = [];
+  for (let i = 0; i < full.length; i++) {
+    if (/\s/.test(full[i])) continue;
+    norm += full[i];
+    map.push(i);
+  }
+  const locate = (idx) => {
+    for (let k = nodes.length - 1; k >= 0; k--) {
+      if (idx >= nodes[k].start) return { node: nodes[k].node, offset: Math.min(idx - nodes[k].start, nodes[k].node.data.length) };
+    }
+    return nodes.length ? { node: nodes[0].node, offset: 0 } : null;
+  };
+  let from = 0;
+  while (true) {
+    const j = norm.indexOf(nNeedle, from);
+    if (j < 0) break;
+    const s = locate(map[j]);
+    const e = locate(map[j + nNeedle.length - 1] + 1);
+    if (s && e) {
+      const r = document.createRange();
+      r.setStart(s.node, s.offset);
+      r.setEnd(e.node, e.offset);
+      out.push(r);
+    }
+    from = j + 1;
+  }
+  return out;
+}
+
+// 匹配是否落在锚点所记录的模块作用域内。
+function matchesModule(node, block, anchor) {
+  const pe = node.parentElement;
+  if (!pe) return false;
+  if (anchor.module === "reasoning") return !!pe.closest(".reasoning-body");
+  if (anchor.module === "tool_result") return !!pe.closest(".tool-result-wrap") || !block.querySelector(".tool-result-wrap");
+  if (anchor.module === "tool_call") {
+    const d = pe.closest("details");
+    if (!d || d === block) return false;
+    if (!anchor.containerSummary) return true;
+    const s = d.querySelector("summary");
+    return !!(s && normAnchorText(s.textContent) === anchor.containerSummary);
+  }
+  if (anchor.module === "human") return !!pe.closest(".user-msg-quote");
+  // text：排除思考块与工具 details
+  return !pe.closest(".reasoning-body") && !pe.closest("details");
+}
+
+// 匹配是否位于锚点所记录的标题之后。
+function afterAnchorHeading(block, range, anchor) {
+  if (!anchor.headingText) return true;
+  const heads = block.querySelectorAll("h1, h2, h3, h4, h5, h6");
+  for (const h of heads) {
+    if (normAnchorText(h.textContent) !== anchor.headingText) continue;
+    if (h.compareDocumentPosition(range.startContainer) & Node.DOCUMENT_POSITION_FOLLOWING) return true;
+  }
+  return false;
+}
+
+// 把「锚点行上方、但仍探入视口」的可见文字行推回视口之上，
+// 保证锚点行是视口显示的第一行（上方块间距/行高变化时的残余修正）。
+function pushLinesAbove(pane, anchorTopViewport) {
+  const pr = pane.getBoundingClientRect();
+  const walker = document.createTreeWalker(pane, NodeFilter.SHOW_TEXT, null);
+  let n, maxBottom = -Infinity;
+  while ((n = walker.nextNode())) {
+    if (!n.data || !/\S/.test(n.data)) continue;
+    if (isAnchorHidden(n)) continue;
+    if (!n.parentElement || !n.parentElement.closest("[data-msg-indice]")) continue;
+    const pe = n.parentElement;
+    const er = pe.getBoundingClientRect();
+    if (er.bottom <= pr.top + 0.5) continue;
+    if (er.top >= pr.bottom) continue;
+    const range = document.createRange();
+    range.selectNodeContents(n);
+    const rects = range.getClientRects();
+    for (let i = 0; i < rects.length; i++) {
+      const r = rects[i];
+      if (r.height < 0.5) continue;
+      if (r.bottom <= pr.top + 0.5) continue;
+      if (r.top >= pr.bottom) continue;
+      if (r.top >= anchorTopViewport - 0.5) continue;   // 不是锚点行上方的行
+      if (r.bottom > maxBottom) maxBottom = r.bottom;
+    }
+  }
+  if (maxBottom > pr.top + 0.5) pane.scrollTop += (maxBottom - pr.top);
+}
+
+// 回滚锚点：在同一 message / 模块 / 标题作用域内找到该行文本，拉回原视口位置。
+function restoreMsgAnchor(anchor) {
+  if (!anchor) return;
+  const pane = $("#historyPane");
+  if (!pane) return;
+  if (anchor.msgIndice == null) {
+    if (anchor.scrollTop != null) pane.scrollTop = anchor.scrollTop;
+    return;
+  }
+  const block = pane.querySelector(`[data-msg-indice="${anchor.msgIndice}"]`);
+  if (!block) {
+    if (anchor.scrollTop != null) pane.scrollTop = anchor.scrollTop;
+    return;
+  }
+
+  let target = null;
+  if (anchor.lineText) {
+    const cands = findRangesByText(block, anchor.lineText);
+    let scoped = cands.filter(r => r.startContainer && matchesModule(r.startContainer, block, anchor) && afterAnchorHeading(block, r, anchor));
+    if (!scoped.length) scoped = cands.filter(r => r.startContainer && matchesModule(r.startContainer, block, anchor));
+    if (!scoped.length) scoped = cands;
+    if (scoped.length) {
+      const blockRect = block.getBoundingClientRect();
+      const wantTop = blockRect.top + (anchor.offsetRatio || 0) * (blockRect.height || 1);
+      let bestDiff = Infinity;
+      for (const r of scoped) {
+        const rr = r.getBoundingClientRect();
+        if (!rr || !rr.height) continue;
+        const diff = Math.abs(rr.top - wantTop);
+        if (diff < bestDiff) { bestDiff = diff; target = rr; }
+      }
+    }
+  }
+  if (!target) {
+    const blockRect = block.getBoundingClientRect();
+    target = { top: blockRect.top + (anchor.offsetRatio || 0) * (blockRect.height || 1) };
+  }
+  pane.scrollTop += (target.top - anchor.beforeTop);
+  pushLinesAbove(pane, anchor.beforeTop);
+}
+
+/* ---- 编辑弹窗 / 成功气泡 ---- */
+
+function closeEditPopup() {
+  $$(".edit-popup").forEach(p => {
+    rememberEditPopupSize(p.offsetWidth, p.offsetHeight);
+    p.remove();
+  });
+}
+
+// 编辑框尺寸全局记忆（本机偏好，localStorage 会被 ui_prefs_bridge 落盘到后端，
+// 换渲染外壳 / 清缓存都不丢）。只存宽高，位置每次按被点行重新定位。
+const EDIT_POPUP_SIZE_KEY = "edit-popup-size";
+function readEditPopupSize() {
+  try {
+    const v = JSON.parse(localStorage.getItem(EDIT_POPUP_SIZE_KEY) || "null");
+    if (v && v.w > 0 && v.h > 0) return v;
+  } catch (e) { /* ignore */ }
+  return null;
+}
+function rememberEditPopupSize(w, h) {
+  if (!(w > 0 && h > 0)) return;
+  try { localStorage.setItem(EDIT_POPUP_SIZE_KEY, JSON.stringify({ w: Math.round(w), h: Math.round(h) })); } catch (e) { /* ignore */ }
+}
+
+// 编辑框挂在 #historyPane（滚动容器）内的滚动内容坐标系里，紧贴被编辑行、随内容滚动。
+// rect 是行的视口坐标；换算成「相对滚动内容」的坐标（加上 scrollLeft/scrollTop）。
+function positionEditPopup(popup, rect) {
+  const pane = $("#historyPane");
+  if (!pane) return;
+  const pr = pane.getBoundingClientRect();
+  const pad = 6;
+  const pw = popup.offsetWidth, ph = popup.offsetHeight;
+  let left = (rect.left - pr.left) + pane.scrollLeft;
+  let top = (rect.bottom - pr.top) + pane.scrollTop + pad;
+  // 下方放不下就翻到被编辑行的上方
+  if (rect.bottom + pad + ph > pr.bottom) {
+    top = (rect.top - pr.top) + pane.scrollTop - ph - pad;
+  }
+  // 水平方向不越出可视区，避免撑出横向滚动条
+  const minLeft = pane.scrollLeft + 8;
+  const maxLeft = pane.scrollLeft + pane.clientWidth - pw - 8;
+  if (left > maxLeft) left = Math.max(minLeft, maxLeft);
+  if (left < minLeft) left = minLeft;
+  popup.style.left = Math.round(left) + "px";
+  popup.style.top = Math.round(top) + "px";
+}
+
+function openEditPopup(line, historyEl, applyEdit) {
+  closeEditPopup();
+  const raw = b64ToUtf8(line.dataset.rawB64 || "");
+  const rect = line.getBoundingClientRect();
+  const popup = document.createElement("div");
+  popup.className = "edit-popup";
+  popup.innerHTML = `
+    <div class="edit-popup-toolbar">
+      <button class="btn small primary" data-act="apply">${t("确认改动")}</button>
+      <button class="btn small" data-act="cancel">${t("撤销改动")}</button>
+    </div>
+    <textarea></textarea>`;
+  const ta = popup.querySelector("textarea");
+  ta.value = raw;
+  const pane = $("#historyPane") || document.body;
+  pane.appendChild(popup);
+  const stored = readEditPopupSize();
+  if (stored) {
+    // 记忆尺寸：宽度按聊天区宽度夹取（避免撑出横向滚动条），高度按视口夹取
+    const availW = (pane.clientWidth || window.innerWidth) - 16;
+    popup.style.width = Math.min(stored.w, Math.max(240, availW)) + "px";
+    popup.style.height = Math.min(stored.h, window.innerHeight - 16) + "px";
+  } else {
+    // 首次：动态宽度 = 一行文本（正文渲染区）宽度的 0.75 倍
+    const lineWidth = (historyEl && historyEl.clientWidth) || (window.innerWidth - 44);
+    popup.style.width = Math.max(280, Math.round(lineWidth * 0.75)) + "px";
+  }
+  positionEditPopup(popup, rect);
+  popup.querySelector('[data-act="apply"]').onclick = () => { applyEdit(line, ta.value); closeEditPopup(); };
+  popup.querySelector('[data-act="cancel"]').onclick = () => closeEditPopup();
+  ta.focus();
+}
+
+function showAppliedBubble() {
+  const el = document.createElement("div");
+  el.className = "edit-applied-bubble";
+  el.textContent = t("更改已生效");
+  document.body.appendChild(el);
+  setTimeout(() => particleDissolve(el, () => el.remove()), 1300);
+}
+
+function roundRectPath(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+function particleDissolve(el, done) {
+  const rect = el.getBoundingClientRect();
+  const w = Math.max(1, Math.round(rect.width));
+  const h = Math.max(1, Math.round(rect.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  canvas.style.cssText = `position:fixed;left:${rect.left}px;top:${rect.top}px;width:${w}px;height:${h}px;pointer-events:none;z-index:1101;`;
+  const ctx = canvas.getContext("2d");
+  document.body.appendChild(canvas);
+
+  ctx.fillStyle = "#16a34a";
+  roundRectPath(ctx, 0, 0, w, h, 12);
+  ctx.fill();
+  ctx.fillStyle = "#fff";
+  ctx.font = "700 16px -apple-system, 'Segoe UI', sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(el.textContent, w / 2, h / 2);
+
+  const data = ctx.getImageData(0, 0, w, h).data;
+  const particles = [];
+  const step = 2;
+  for (let y = 0; y < h; y += step) {
+    for (let x = 0; x < w; x += step) {
+      const a = data[(y * w + x) * 4 + 3];
+      if (a > 128) {
+        particles.push({
+          x, y,
+          color: `rgb(${data[(y * w + x) * 4]},${data[(y * w + x) * 4 + 1]},${data[(y * w + x) * 4 + 2]})`,
+          vx: -Math.random() * 2 - 1.5,
+          vy: (Math.random() - 0.5) * 1.5,
+          life: 1,
+          decay: 0.01 + Math.random() * 0.03,
+        });
+      }
+    }
+  }
+  el.style.opacity = "0";
+
+  const tick = () => {
+    ctx.clearRect(0, 0, w, h);
+    let alive = 0;
+    for (const p of particles) {
+      p.x += p.vx;
+      p.y += p.vy;
+      p.life -= p.decay;
+      if (p.life <= 0) continue;
+      alive++;
+      ctx.globalAlpha = Math.max(0, p.life);
+      ctx.fillStyle = p.color;
+      ctx.fillRect(p.x, p.y, step, step);
+    }
+    ctx.globalAlpha = 1;
+    if (alive > 0) requestAnimationFrame(tick);
+    else { canvas.remove(); done(); }
+  };
+  requestAnimationFrame(tick);
+}
+
+/* ---- 控制器：由各视图提供「取数 / 写回 / 重拉」三件事 ---- */
+function createHistoryEditor(opts) {
+  const historyEl = opts.historyEl;
+  const editBtn = opts.editBtn || null;
+  const badgeEl = opts.badgeEl || null;
+  const getSettings = opts.getSettings || (() => settingsCache || {});
+  const scopeKey = opts.scopeKey || (() => "");
+  let on = false;
+  let raw = [];
+  let subName = null;
+  let edits = [];
+
+  function setBadge(mode) {
+    if (editBtn) editBtn.textContent = (mode === "off") ? `✏️ ${t("进入编辑模式")}` : `✏️ ${t("退出编辑模式")}`;
+    if (!badgeEl) return;
+    if (mode === "off") {
+      badgeEl.style.display = "none";
+    } else {
+      badgeEl.style.display = "";
+      if (mode === "loading") {
+        badgeEl.textContent = `⏳ ${t("加载模型中")}`;
+        badgeEl.className = "edit-mode-badge loading";
+      } else if (mode === "writing") {
+        badgeEl.textContent = `✏️ ${t("写入中")}`;
+        badgeEl.className = "edit-mode-badge writing";
+      } else {
+        badgeEl.textContent = `✏️ ${t("编辑模式")}`;
+        badgeEl.className = "edit-mode-badge";
+      }
+    }
+  }
+
+  /* 持久化报错：右上角常驻，用户点叉号才消失（区别于 4 秒自动消失的 toast） */
+  function showError(reason) {
+    let wrap = $(".edit-error-wrap");
+    if (!wrap) {
+      wrap = document.createElement("div");
+      wrap.className = "edit-error-wrap";
+      document.body.appendChild(wrap);
+    }
+    wrap.dataset.scope = String(scopeKey());
+    wrap.innerHTML = "";  // 同一会话/快照重复失败只保留最新一条，避免堆叠
+    const el = document.createElement("div");
+    el.className = "edit-error-banner";
+    const text = document.createElement("div");
+    text.className = "edit-error-text";
+    text.textContent = `${t("写入失败，失败原因：")}${reason}`;
+    const btn = document.createElement("button");
+    btn.className = "edit-error-close";
+    btn.type = "button";
+    btn.setAttribute("aria-label", t("关闭"));
+    btn.textContent = "✕";
+    btn.onclick = () => {
+      el.remove();
+      if (!wrap.children.length) wrap.remove();
+    };
+    el.appendChild(text);
+    el.appendChild(btn);
+    wrap.appendChild(el);
+  }
+
+  function renderEditMode() {
+    if (!historyEl) return;
+    const anchor = captureMsgAnchor();
+    const settings = getSettings();
+    const editable = computeEditableMessages(raw, settings);
+    raw.forEach((m, i) => {
+      if (!editable.has(i)) return;
+      const el = historyEl.querySelector(`[data-msg-indice="${i}"]`);
+      if (el) el.outerHTML = renderEditableMessage(m, settings);
+    });
+    restoreMsgAnchor(anchor);
+  }
+
+  function bind() {
+    if (!historyEl) return;
+    historyEl.addEventListener("mouseover", (e) => {
+      if (!on) return;
+      const line = e.target.closest(".edit-line");
+      const prev = historyEl.querySelector(".edit-line.hover");
+      if (prev && prev !== line) prev.classList.remove("hover");
+      if (!line) return;
+      if (line.closest("details:not([open])")) return;
+      line.classList.add("hover");
+    });
+    historyEl.addEventListener("mouseleave", () => {
+      historyEl.querySelectorAll(".edit-line.hover").forEach(el => el.classList.remove("hover"));
+    });
+    historyEl.addEventListener("click", (e) => {
+      if (!on) return;
+      const line = e.target.closest(".edit-line");
+      if (!line) return;
+      if (line.closest("details:not([open])")) return;
+      e.preventDefault();
+      openEditPopup(line, historyEl, (lineEl, text) => applyLineEdit(lineEl, text, edits));
+    });
+  }
+
+  async function submitEdits() {
+    const groups = {};
+    edits.forEach(e => { (groups[e.msgIndice] = groups[e.msgIndice] || []).push(e); });
+    const groupKeys = Object.keys(groups);
+    for (let i = 0; i < groupKeys.length; i++) {
+      const msgIndice = +groupKeys[i];
+      const original = raw[msgIndice];
+      if (!original) continue;
+      const substitute = buildSubstituteMessage(original, groups[groupKeys[i]]);
+      const res = await opts.submitEdit({
+        request_for_subagent: !!subName,
+        subagent_name: subName || null,
+        msg_indice: msgIndice,
+        substitute_msg: substitute,
+      }, (stage) => setBadge(stage));
+      if (!res.ok) {
+        const remaining = groupKeys.length - i - 1;
+        let reason = res.reason || t("未知错误");
+        if (remaining > 0) reason += t("（已停止提交剩余 {n} 处改动）").replace("{n}", remaining);
+        return { ok: false, reason };
+      }
+    }
+    return { ok: true };
+  }
+
+  function leave() {
+    closeEditPopup();
+    on = false;
+    edits = [];
+    raw = [];
+    subName = null;
+    setBadge("off");
+  }
+
+  async function enter() {
+    on = true;
+    edits = [];
+    setBadge("edit");
+    try {
+      const res = await opts.fetchMessages();
+      raw = (res && res.messages) || [];
+      subName = (res && res.subName) || null;
+      renderEditMode();
+    } catch (e) {
+      toast(e.message, true);
+      leave();
+    }
+  }
+
+  async function exit() {
+    let shouldSubmit = false;
+    if (edits.length) {
+      const ans = await askConfirm(t("是否提交对历史消息的更改"));
+      if (ans === "yes") shouldSubmit = true;
+    }
+    if (shouldSubmit) {
+      const res = await submitEdits();
+      if (res.ok) showAppliedBubble();
+      else showError(res.reason);
+    }
+    leave();
+    await opts.reload();
+  }
+
+  async function refreshData() {
+    try {
+      const res = await opts.fetchMessages();
+      raw = (res && res.messages) || [];
+      subName = (res && res.subName) || null;
+      renderEditMode();
+    } catch (e) { toast(e.message, true); }
+  }
+
+  return {
+    bind,
+    enter,
+    exit,
+    leave,
+    refreshData,
+    isOn: () => on,
+    hasEdits: () => edits.length > 0,
+    clearEdits: () => { edits = []; },
+    toggle: () => (on ? exit() : enter()),
+    closePopups: () => closeEditPopup(),
+    captureAnchor: captureMsgAnchor,
+    restoreAnchor: restoreMsgAnchor,
+  };
+}
+
 async function renderChatView() {
+  // 编辑模式控制器在本视图加载完成后创建；返回按钮可能在这些 await 期间被点到，
+  // 所以先声明为 null，所有使用处都做 editor && 判空（避免 TDZ）。
+  let editor = null;
   app.innerHTML = topbar(t("返回会话"), () => leaveChatView());
   const view = document.createElement("div");
   view.className = "chat-view";
@@ -7650,764 +8582,22 @@ async function renderChatView() {
   $("#msgDirBtn").onclick = (e) => toggleMsgDrawer(e);
   $("#proactiveSummaryBtn").onclick = () => openProactiveSummary();
 
-  /* ================= 编辑模式 ================= */
-  let editModeOn = false;
-  let editRawMessages = null;
-  let editSubName = null;
-  let edits = [];
+  /* ================= 编辑模式（共享控制器接线） ================= */
+  // 编辑模式本体的 UI/交互在模块级 createHistoryEditor 里（会话页与快照页共用同一份，
+  // 避免两套行为漂移）；这里只提供「取数 / 写回 / 重拉」三件事，并在下方创建控制器。
+  let editModeBtn = null;
+  let editModeBadge = null;
 
-  const editModeBtn = $("#editModeBtn");
-  const editModeBadge = $("#editModeBadge");
-
-  function setEditBadge(mode) {
-    if (editModeBtn) editModeBtn.textContent = (mode === "off") ? `✏️ ${t("进入编辑模式")}` : `✏️ ${t("退出编辑模式")}`;
-    if (!editModeBadge) return;
-    if (mode === "off") {
-      editModeBadge.style.display = "none";
-    } else {
-      editModeBadge.style.display = "";
-      if (mode === "loading") {
-        editModeBadge.textContent = `⏳ ${t("加载模型中")}`;
-        editModeBadge.className = "edit-mode-badge loading";
-      } else if (mode === "writing") {
-        editModeBadge.textContent = `✏️ ${t("写入中")}`;
-        editModeBadge.className = "edit-mode-badge writing";
-      } else {
-        editModeBadge.textContent = `✏️ ${t("编辑模式")}`;
-        editModeBadge.className = "edit-mode-badge";
-      }
-    }
-  }
-
-  /* 持久化报错：右上角常驻，用户点叉号才消失（区别于 4 秒自动消失的 toast） */
-  function showEditError(reason) {
-    let wrap = $(".edit-error-wrap");
-    if (!wrap) {
-      wrap = document.createElement("div");
-      wrap.className = "edit-error-wrap";
-      document.body.appendChild(wrap);
-    }
-    wrap.dataset.thread = String(S.threadId);
-    wrap.innerHTML = "";  // 同一会话重复失败只保留最新一条，避免堆叠
-    const el = document.createElement("div");
-    el.className = "edit-error-banner";
-    const text = document.createElement("div");
-    text.className = "edit-error-text";
-    text.textContent = `${t("写入失败，失败原因：")}${reason}`;
-    const btn = document.createElement("button");
-    btn.className = "edit-error-close";
-    btn.type = "button";
-    btn.setAttribute("aria-label", t("关闭"));
-    btn.textContent = "✕";
-    btn.onclick = () => {
-      el.remove();
-      if (!wrap.children.length) wrap.remove();
-    };
-    el.appendChild(text);
-    el.appendChild(btn);
-    wrap.appendChild(el);
-  }
-
-  // 把字段原文切成「可编辑段」：默认按行（自然段），但代码围栏 / 展示公式 / 表格
-  // 这类跨行的 markdown 结构必须保持在同一段里，否则每行单独 renderMd 会渲染不完整
-  //（`\[...\]`、``` 代码块、`|` 表格被按行拆开）。不变量：segs.join("\n") 等于原文（\r\n 归一为 \n）。
-  function splitEditableSegments(rawText) {
-    const lines = String(rawText == null ? "" : rawText).replace(/\r\n?/g, "\n").split("\n");
-    const segs = [];
-    let i = 0;
-    while (i < lines.length) {
-      const line = lines[i];
-      const t = line.replace(/^\s+/, "");
-      const fence = /^(`{3,}|~{3,})/.exec(line);
-      if (fence) {
-        const ch = fence[1][0];
-        const len = fence[1].length;
-        const closeRe = new RegExp("^\\s*" + (ch === "`" ? "`" : "~") + "{" + len + ",}\\s*$");
-        let j = i + 1;
-        while (j < lines.length && !closeRe.test(lines[j])) j++;
-        const end = j < lines.length ? j + 1 : lines.length;
-        segs.push(lines.slice(i, end).join("\n"));
-        i = end;
-        continue;
-      }
-      // 展示公式 $$...$$ / \[...\]（可能跨多行）
-      const isDollar = t.startsWith("$$");
-      const isBracket = t.length >= 2 && t.charCodeAt(0) === 92 && t[1] === "[";
-      if (isDollar || isBracket) {
-        const inlineClosed = isDollar ? t.indexOf("$$", 2) !== -1 : t.indexOf("\\]", 2) !== -1;
-        if (inlineClosed) { segs.push(line); i++; continue; }
-        let j = i + 1;
-        while (j < lines.length) {
-          const lj = lines[j];
-          const hasClose = isDollar ? lj.indexOf("$$") !== -1 : lj.replace(/\s+$/, "").endsWith("\\]");
-          j++;
-          if (hasClose) break;
-        }
-        segs.push(lines.slice(i, j).join("\n"));
-        i = j;
-        continue;
-      }
-      // 表格：连续以 | 开头的行
-      if (/^\s*\|/.test(line)) {
-        let j = i;
-        while (j < lines.length && /^\s*\|/.test(lines[j])) j++;
-        segs.push(lines.slice(i, j).join("\n"));
-        i = j;
-        continue;
-      }
-      segs.push(line);
-      i++;
-    }
-    return segs;
-  }
-
-  function editableLinesHTML(rawText, field, blockIndex, toolCallIndex, msgIndice) {
-    const segs = splitEditableSegments(rawText);
-    return segs.map((seg, pi) => {
-      const b64 = utf8ToB64(seg);
-      const inner = seg ? renderMd(seg) : "&nbsp;";
-      return `<div class="edit-line" data-msg="${msgIndice}" data-field="${field}" data-block="${blockIndex == null ? "" : blockIndex}" data-toolcall="${toolCallIndex == null ? "" : toolCallIndex}" data-para="${pi}" data-raw-b64="${b64}">${inner}</div>`;
-    }).join("");
-  }
-
-  function aiTokStr(msg) {
-    const um = msg.usage_metadata || {};
-    const i = um.input_tokens != null ? um.input_tokens : "?";
-    const o = um.output_tokens != null ? um.output_tokens : "?";
-    const cache = (um.input_token_details && um.input_token_details.cache_read) || 0;
-    let s = `↑${i} ↓${o}`;
-    if (cache) s += `  💾cache:${cache}`;
-    return s;
-  }
-
-  function renderEditableMessage(msg, settings) {
-    const allTypes = !!settings.edit_all_message_types;
-    const idx = msg.msg_indice;
-    const idn = chatIdentity();
-    if (msg.type === "HumanMessage") {
-      const raw = String(msg.content ?? "");
-      const body = allTypes
-        ? editableLinesHTML(raw, "human_content", null, null, idx)
-        : esc(raw).replace(/\n/g, "<br>");
-      return `<div class="user-msg-block" data-msg-indice="${idx}"><div class="user-msg-head">${esc(idn.userIcon)} <strong>${esc(idn.userName)}</strong></div><blockquote class="user-msg-quote">${body}</blockquote></div>`;
-    }
-    if (msg.type === "AIMessage") {
-      let html = `<div class="ai-msg-block" data-msg-indice="${idx}" style="border-left: 3px solid #4CAF50; padding-left: 12px;">`;
-      html += `<strong>${esc(idn.assistantIcon)} ${esc(idn.assistantName)}</strong>  <sub>${aiTokStr(msg)}</sub>`;
-      const content = msg.content;
-      if (Array.isArray(content)) {
-        content.forEach((blk, bi) => {
-          if (!blk) return;
-          if (blk.type === "reasoning") {
-            const open = settings.reasoning_expanded !== false ? " open" : "";
-            const r = String(blk.reasoning ?? "");
-            // 思考过程始终渲染（公式/加粗/标题）；是否可点击编辑仍由「所有类型可编辑」开关决定。
-            const inner = allTypes
-              ? editableLinesHTML(r, "reasoning", bi, null, idx)
-              : renderMd(r);
-            html += `<details class="reasoning-block"${open}><summary>${esc(idn.reasoningIcon)} ${t("思考过程")}</summary><div class="reasoning-body reasoning-md">${inner}</div></details>`;
-          } else if (blk.type === "text") {
-            html += editableLinesHTML(String(blk.text ?? ""), "text", bi, null, idx);
-          }
-        });
-      } else if (typeof content === "string") {
-        html += editableLinesHTML(content, "text", null, null, idx);
-      }
-      if (msg.tool_calls && msg.tool_calls.length) {
-        msg.tool_calls.forEach((tc, ti) => {
-          const open = settings.tool_call_expanded ? " open" : "";
-          const argsJson = JSON.stringify(tc.args || {}, null, 2);
-          const body = allTypes
-            ? editableLinesHTML(argsJson, "tool_call_args", null, ti, idx)
-            : renderMd("```json\n" + argsJson + "\n```");
-          html += `<details${open}><summary>🔧 \`${esc(tc.name || "?")}\`</summary>${body}</details>`;
-        });
-      }
-      html += `</div>`;
-      return html;
-    }
-    if (msg.type === "ToolMessage") {
-      const name = msg.name || "unknown_tool";
-      let c = msg.content;
-      if (Array.isArray(c)) c = c.filter(b => b && b.type === "text").map(b => b.text).join("\n\n");
-      const raw = String(c ?? "");
-      const lineCount = raw.split("\n").length;
-      const open = settings.tool_result_expanded ? " open" : "";
-      const body = allTypes
-        ? editableLinesHTML(raw, "tool_content", null, null, idx)
-        : `<div class="tool-result-body">${esc(raw).replace(/\r\n/g, "\n").replace(/\n/g, "<br>")}</div>`;
-      return `<details${open} data-msg-indice="${idx}"><summary>✅ ${t("工具结果")}: \`${esc(name)}\` (${lineCount} ${t("行")})</summary>${body}</details>`;
-    }
-    return "";
-  }
-
+  // 取原始消息：主图 / 子图（与快照视图的 fetchMessages 返回形态保持一致）
   async function fetchRawMessagesForEdit() {
     const base = `/api/agents/${encodeURIComponent(S.agentId)}/threads/${encodeURIComponent(S.threadId)}`;
     const isSub = !!sel.value;
-    const url = isSub ? `${base}/subgraphs/${encodeURIComponent(sel.value)}/messages` : `${base}/messages`;
+    const url = isSub
+      ? `${base}/subgraphs/${encodeURIComponent(sel.value)}/messages`
+      : `${base}/messages`;
     const r = await api(url);
-    editSubName = isSub ? sel.value : null;
-    editRawMessages = r.messages || [];
+    return { messages: r.messages || [], subName: isSub ? sel.value : null };
   }
-
-  function computeEditableMessages(settings) {
-    const msgs = editRawMessages || [];
-    const allTime = !!settings.edit_any_history;
-    const allTypes = !!settings.edit_all_message_types;
-    let editableIdx = new Set();
-    if (allTime) {
-      msgs.forEach((m, i) => editableIdx.add(i));
-    } else {
-      let h = -1;
-      msgs.forEach((m, i) => { if (m.type === "HumanMessage") h = i; });
-      for (let i = h + 1; i < msgs.length; i++) editableIdx.add(i);
-    }
-    const editable = new Set();
-    msgs.forEach((m, i) => {
-      if (!editableIdx.has(i)) return;
-      if (m.type === "AIMessage") editable.add(i);
-      else if (allTypes && (m.type === "HumanMessage" || m.type === "ToolMessage")) editable.add(i);
-    });
-    return editable;
-  }
-
-  // ---- 编辑模式滚动锚点：结构化文本锚点（message + 模块 + 标题 + 顶部行文本） ----
-  // 进入/退出编辑模式会改变块内行高（编辑态把段落拆成 .edit-line、去掉 margin），
-  // 只保留旧的像素 scrollTop 会让视口里的文字整体错位。这里不再用「去空白字符计数」
-  // 做位置映射（公式 \[...\] 源文多行、渲染成一行时计数会错位），而是记录：
-  //   视口顶部第一行文本 + 它归属的 message(data-msg-indice) / 模块(reason/text/tool_calls)
-  //   / 标题(##)
-  // 重渲染后在同一作用域内按文本搜索匹配该行，把它拉回原来的视口纵向位置。
-  // 旧实现见 app/static/js/obsolete.js。
-
-  function normAnchorText(s) {
-    return String(s == null ? "" : s).replace(/\s+/g, "");
-  }
-
-  // 跳过「对锚点不可见」的文本：
-  // ① KaTeX 隐藏的 MathML（position:absolute+clip，getBoundingClientRect 恒为 (0,0)）；
-  // ② 折叠 <details> 里的内容——Chrome 对折叠内容仍会报告布局矩形（甚至超大），但它并不显示，
-  //    绝不能当锚点/匹配目标；<summary> 本身仍可见，故不跳过（只跳过非 summary 的折叠内容）。
-  function isAnchorHidden(node) {
-    const pe = node.parentElement;
-    if (!pe) return false;
-    if (pe.closest(".katex-mathml")) return true;
-    // 注入型 UI（导出按钮 / 记忆附着按钮 / 工具 content 按钮等）在编辑态会消失，不能当锚点。
-    if (pe.closest(".export-html-row, .mem-attach-btn, .tool-content-btn, .mem-attach-panel, .tool-result-trunc")) return true;
-    const closed = pe.closest("details:not([open])");
-    if (closed) {
-      const sum = pe.closest("summary");
-      if (!(sum && sum.closest("details") === closed)) return true;
-    }
-    return false;
-  }
-
-  // 取某文字节点第一段有高度的行矩形。
-  function firstLineRect(node) {
-    const range = document.createRange();
-    range.selectNodeContents(node);
-    const rects = range.getClientRects();
-    for (let i = 0; i < rects.length; i++) {
-      if (rects[i].height >= 0.5) return rects[i];
-    }
-    return null;
-  }
-
-  // 取某文字节点里第 i 个字符的矩形（用于定位「可见行的起始字符」）。
-  function charRectAt(node, i) {
-    const len = node.data.length;
-    if (len === 0) return null;
-    const k = Math.min(Math.max(0, i), len - 1);
-    const range = document.createRange();
-    range.setStart(node, k);
-    range.setEnd(node, Math.min(k + 1, len));
-    const rects = range.getClientRects();
-    return rects.length ? rects[0] : null;
-  }
-
-  // 二分找出「落在 top≈targetTop 那一行」的起始字符索引。
-  // 关键：顶部可见行常常是某个长段落（单个文字节点、软换行折成多行）的中间一行，
-  // 必须从这一行的起始字符开始截取；否则会把「整段开头」当成锚点、对齐到错误位置，
-  // 进/退出编辑模式就会出现视口跳变（这正是本轮修复的 bug）。
-  function lineStartOffset(node, targetTop) {
-    const len = node.data.length;
-    let lo = 0, hi = len;
-    while (lo < hi) {
-      const mid = (lo + hi) >> 1;
-      const r = charRectAt(node, mid);
-      if (r && (r.top + r.height / 2) < targetTop) lo = mid + 1;
-      else hi = mid;
-    }
-    return Math.max(0, Math.min(lo, len));
-  }
-
-  // 取 root 内 node 之后的下一个文字节点（文档顺序）。
-  function nextTextNodeWithin(root, node) {
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
-    let n, hit = false;
-    while ((n = walker.nextNode())) {
-      if (hit) return n;
-      if (n === node) hit = true;
-    }
-    return null;
-  }
-
-  // 找到「视口顶部第一条可见文字行」：扫描文字节点的行矩形，取 top 最小的可见行。
-  function findTopVisibleLine(pane) {
-    const pr = pane.getBoundingClientRect();
-    const paneTop = pr.top, paneBottom = pr.bottom;
-    const walker = document.createTreeWalker(pane, NodeFilter.SHOW_TEXT, null);
-    let n, best = null, bestTop = Infinity;
-    while ((n = walker.nextNode())) {
-      if (!n.data || !/\S/.test(n.data)) continue;
-      if (isAnchorHidden(n)) continue;
-      const block = n.parentElement && n.parentElement.closest("[data-msg-indice]");
-      if (!block) continue;
-      const pe = n.parentElement;
-      if (pe) {
-        const er = pe.getBoundingClientRect();
-        if (er.bottom <= paneTop + 0.5) continue;   // 该节点整体在视口上方
-        if (er.top >= paneBottom) {                 // 该节点整体在视口下方
-          if (best) break;                          // 已找到顶部可见行：其后的只会更靠下
-          continue;
-        }
-      }
-      const range = document.createRange();
-      range.selectNodeContents(n);
-      const rects = range.getClientRects();
-      for (let i = 0; i < rects.length; i++) {
-        const r = rects[i];
-        if (r.height < 0.5) continue;
-        if (r.bottom <= paneTop + 0.5) continue;
-        if (r.top >= paneBottom) continue;
-        if (r.top < bestTop) { bestTop = r.top; best = { node: n, rect: r, block }; }
-      }
-    }
-    return best;
-  }
-
-  // 判断节点属于哪个模块（重渲染后在同一模块内搜索）。
-  function moduleOf(node, block) {
-    const pe = node.parentElement;
-    if (pe && pe.closest(".reasoning-body")) return "reasoning";
-    if (pe && pe.closest(".tool-result-wrap")) return "tool_result";
-    if (block && block.matches && block.matches("details[data-msg-indice]")) return "tool_result";
-    if (pe && pe.closest("details")) return "tool_call";
-    if (block && block.classList && block.classList.contains("user-msg-block")) return "human";
-    return "text";
-  }
-
-  function moduleSummaryOf(node) {
-    const pe = node.parentElement;
-    const d = pe && pe.closest("details");
-    if (!d) return "";
-    const s = d.querySelector("summary");
-    return s ? normAnchorText(s.textContent) : "";
-  }
-
-  // 模块容器（用于定位标题作用域）。
-  function moduleContainer(node, block, module) {
-    const pe = node.parentElement;
-    if (module === "reasoning") return pe ? pe.closest(".reasoning-body") : null;
-    if (module === "tool_result") return (pe && pe.closest(".tool-result-wrap")) || block;
-    if (module === "tool_call") return pe ? pe.closest("details") : null;
-    if (module === "human") return (pe && pe.closest(".user-msg-quote")) || block;
-    return block;
-  }
-
-  // 捕获「顶部那一行」的文本：从**可见行起始字符**开始向后累积，遇到新的一行即止。
-  // 至少累积一小段，便于唯一匹配。命中公式时由调用方改用整个公式文本。
-  function collectLineText(pane, startNode, startRect) {
-    const block = startNode.parentElement && startNode.parentElement.closest("[data-msg-indice]");
-    const lineH = startRect.height || 20;
-    const startOff = lineStartOffset(startNode, startRect.top);
-    let text = isAnchorHidden(startNode) ? "" : startNode.data.slice(startOff);
-    let node = startNode;
-    while (normAnchorText(text).length < 64) {
-      node = nextTextNodeWithin(pane, node);
-      if (!node) break;
-      const nb = node.parentElement && node.parentElement.closest("[data-msg-indice]");
-      if (!nb || nb !== block) break;   // 只在本消息块内累积，避免跨块拼出匹配不到的串
-      const r = firstLineRect(node);
-      if (r && r.top > startRect.top + lineH * 0.7 && normAnchorText(text).length >= 20) break;
-      if (!isAnchorHidden(node)) text += node.data;
-    }
-    return normAnchorText(text);
-  }
-
-  // 捕获锚点：顶部行文本 + message + 模块 + 标题（+ 视口纵向位置）。
-  function captureMsgAnchor() {
-    const pane = $("#historyPane");
-    if (!pane) return null;
-    const pr = pane.getBoundingClientRect();
-    if (pr.height < 8) return null;
-    const found = findTopVisibleLine(pane);
-    if (!found) {
-      // 回退：消息块级
-      const blocks = pane.querySelectorAll("[data-msg-indice]");
-      for (const b of blocks) {
-        const r = b.getBoundingClientRect();
-        if (r.bottom > pr.top + 8) return { msgIndice: b.getAttribute("data-msg-indice"), beforeTop: r.top, offsetRatio: 0 };
-      }
-      return { scrollTop: pane.scrollTop };
-    }
-    const block = found.block;
-    const module = moduleOf(found.node, block);
-    const container = moduleContainer(found.node, block, module);
-
-    // 标题作用域：容器内、位于该行之前、文本非空的最近一个标题（##）。
-    let headingText = null;
-    if (container) {
-      const heads = container.querySelectorAll("h1, h2, h3, h4, h5, h6");
-      let chosen = null;
-      for (const h of heads) {
-        if (module === "text" && (h.closest(".reasoning-body") || h.closest("details"))) continue;
-        if (h.compareDocumentPosition(found.node) & Node.DOCUMENT_POSITION_FOLLOWING) chosen = h;
-      }
-      if (chosen) headingText = normAnchorText(chosen.textContent);
-    }
-
-    // 顶部行文本：命中公式时按整个公式捕获（`\[...\]` 源文多行、渲染成一行）。
-    let lineText, beforeTop;
-    const katexEl = found.node.parentElement && found.node.parentElement.closest(".katex");
-    if (katexEl) {
-      const html = katexEl.querySelector(".katex-html") || katexEl;
-      lineText = normAnchorText(html.textContent || "");
-      beforeTop = katexEl.getBoundingClientRect().top;
-    } else {
-      lineText = collectLineText(pane, found.node, found.rect);
-      beforeTop = found.rect.top;
-    }
-
-    const blockRect = block.getBoundingClientRect();
-    return {
-      msgIndice: block.getAttribute("data-msg-indice"),
-      module,
-      headingText,
-      lineText,
-      beforeTop,
-      containerSummary: (module === "tool_call" || module === "tool_result") ? moduleSummaryOf(found.node) : "",
-      offsetRatio: (beforeTop - blockRect.top) / (blockRect.height || 1),
-    };
-  }
-
-  // 在 root 内按「忽略所有空白」查找 needle，返回所有出现处的 Range。
-  function findRangesByText(root, needle) {
-    const nNeedle = normAnchorText(needle);
-    const out = [];
-    if (!nNeedle) return out;
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
-    const nodes = [];
-    let full = "", n;
-    while ((n = walker.nextNode())) {
-      if (isAnchorHidden(n)) continue;
-      nodes.push({ node: n, start: full.length });
-      full += n.data;
-    }
-    let norm = "";
-    const map = [];
-    for (let i = 0; i < full.length; i++) {
-      if (/\s/.test(full[i])) continue;
-      norm += full[i];
-      map.push(i);
-    }
-    const locate = (idx) => {
-      for (let k = nodes.length - 1; k >= 0; k--) {
-        if (idx >= nodes[k].start) return { node: nodes[k].node, offset: Math.min(idx - nodes[k].start, nodes[k].node.data.length) };
-      }
-      return nodes.length ? { node: nodes[0].node, offset: 0 } : null;
-    };
-    let from = 0;
-    while (true) {
-      const j = norm.indexOf(nNeedle, from);
-      if (j < 0) break;
-      const s = locate(map[j]);
-      const e = locate(map[j + nNeedle.length - 1] + 1);
-      if (s && e) {
-        const r = document.createRange();
-        r.setStart(s.node, s.offset);
-        r.setEnd(e.node, e.offset);
-        out.push(r);
-      }
-      from = j + 1;
-    }
-    return out;
-  }
-
-  // 匹配是否落在锚点所记录的模块作用域内。
-  function matchesModule(node, block, anchor) {
-    const pe = node.parentElement;
-    if (!pe) return false;
-    if (anchor.module === "reasoning") return !!pe.closest(".reasoning-body");
-    if (anchor.module === "tool_result") return !!pe.closest(".tool-result-wrap") || !block.querySelector(".tool-result-wrap");
-    if (anchor.module === "tool_call") {
-      const d = pe.closest("details");
-      if (!d || d === block) return false;
-      if (!anchor.containerSummary) return true;
-      const s = d.querySelector("summary");
-      return !!(s && normAnchorText(s.textContent) === anchor.containerSummary);
-    }
-    if (anchor.module === "human") return !!pe.closest(".user-msg-quote");
-    // text：排除思考块与工具 details
-    return !pe.closest(".reasoning-body") && !pe.closest("details");
-  }
-
-  // 匹配是否位于锚点所记录的标题之后。
-  function afterAnchorHeading(block, range, anchor) {
-    if (!anchor.headingText) return true;
-    const heads = block.querySelectorAll("h1, h2, h3, h4, h5, h6");
-    for (const h of heads) {
-      if (normAnchorText(h.textContent) !== anchor.headingText) continue;
-      if (h.compareDocumentPosition(range.startContainer) & Node.DOCUMENT_POSITION_FOLLOWING) return true;
-    }
-    return false;
-  }
-
-  // 把「锚点行上方、但仍探入视口」的可见文字行推回视口之上，
-  // 保证锚点行是视口显示的第一行（上方块间距/行高变化时的残余修正）。
-  function pushLinesAbove(pane, anchorTopViewport) {
-    const pr = pane.getBoundingClientRect();
-    const walker = document.createTreeWalker(pane, NodeFilter.SHOW_TEXT, null);
-    let n, maxBottom = -Infinity;
-    while ((n = walker.nextNode())) {
-      if (!n.data || !/\S/.test(n.data)) continue;
-      if (isAnchorHidden(n)) continue;
-      if (!n.parentElement || !n.parentElement.closest("[data-msg-indice]")) continue;
-      const pe = n.parentElement;
-      const er = pe.getBoundingClientRect();
-      if (er.bottom <= pr.top + 0.5) continue;
-      if (er.top >= pr.bottom) continue;
-      const range = document.createRange();
-      range.selectNodeContents(n);
-      const rects = range.getClientRects();
-      for (let i = 0; i < rects.length; i++) {
-        const r = rects[i];
-        if (r.height < 0.5) continue;
-        if (r.bottom <= pr.top + 0.5) continue;
-        if (r.top >= pr.bottom) continue;
-        if (r.top >= anchorTopViewport - 0.5) continue;   // 不是锚点行上方的行
-        if (r.bottom > maxBottom) maxBottom = r.bottom;
-      }
-    }
-    if (maxBottom > pr.top + 0.5) pane.scrollTop += (maxBottom - pr.top);
-  }
-
-  // 回滚锚点：在同一 message / 模块 / 标题作用域内找到该行文本，拉回原视口位置。
-  function restoreMsgAnchor(anchor) {
-    if (!anchor) return;
-    const pane = $("#historyPane");
-    if (!pane) return;
-    if (anchor.msgIndice == null) {
-      if (anchor.scrollTop != null) pane.scrollTop = anchor.scrollTop;
-      return;
-    }
-    const block = pane.querySelector(`[data-msg-indice="${anchor.msgIndice}"]`);
-    if (!block) {
-      if (anchor.scrollTop != null) pane.scrollTop = anchor.scrollTop;
-      return;
-    }
-
-    let target = null;
-    if (anchor.lineText) {
-      const cands = findRangesByText(block, anchor.lineText);
-      let scoped = cands.filter(r => r.startContainer && matchesModule(r.startContainer, block, anchor) && afterAnchorHeading(block, r, anchor));
-      if (!scoped.length) scoped = cands.filter(r => r.startContainer && matchesModule(r.startContainer, block, anchor));
-      if (!scoped.length) scoped = cands;
-      if (scoped.length) {
-        const blockRect = block.getBoundingClientRect();
-        const wantTop = blockRect.top + (anchor.offsetRatio || 0) * (blockRect.height || 1);
-        let bestDiff = Infinity;
-        for (const r of scoped) {
-          const rr = r.getBoundingClientRect();
-          if (!rr || !rr.height) continue;
-          const diff = Math.abs(rr.top - wantTop);
-          if (diff < bestDiff) { bestDiff = diff; target = rr; }
-        }
-      }
-    }
-    if (!target) {
-      const blockRect = block.getBoundingClientRect();
-      target = { top: blockRect.top + (anchor.offsetRatio || 0) * (blockRect.height || 1) };
-    }
-    pane.scrollTop += (target.top - anchor.beforeTop);
-    pushLinesAbove(pane, anchor.beforeTop);
-  }
-
-  function renderEditMode() {
-    const anchor = captureMsgAnchor();
-    const settings = settingsCache || {};
-    const editable = computeEditableMessages(settings);
-    (editRawMessages || []).forEach((m, i) => {
-      if (!editable.has(i)) return;
-      const el = historyEl.querySelector(`[data-msg-indice="${i}"]`);
-      if (el) el.outerHTML = renderEditableMessage(m, settings);
-    });
-    restoreMsgAnchor(anchor);
-  }
-
-  function applyLineEdit(line, newText) {
-    const oldRaw = b64ToUtf8(line.dataset.rawB64 || "");
-    if (newText === oldRaw) return;
-    line.innerHTML = newText ? renderMd(newText) : "&nbsp;";
-    line.dataset.rawB64 = utf8ToB64(newText);
-    const msgIndice = +line.dataset.msg;
-    const field = line.dataset.field;
-    const blockIndex = line.dataset.block === "" ? null : +line.dataset.block;
-    const toolCallIndex = line.dataset.toolcall === "" ? null : +line.dataset.toolcall;
-    const paraIndex = +line.dataset.para;
-    const existing = edits.find(e =>
-      e.msgIndice === msgIndice && e.field === field &&
-      e.blockIndex === blockIndex && e.toolCallIndex === toolCallIndex &&
-      e.paraIndex === paraIndex);
-    if (existing) existing.newText = newText;
-    else edits.push({ msgIndice, field, blockIndex, toolCallIndex, paraIndex, newText });
-  }
-
-  function closeEditPopup() {
-    $$(".edit-popup").forEach(p => {
-      rememberEditPopupSize(p.offsetWidth, p.offsetHeight);
-      p.remove();
-    });
-  }
-
-  // 编辑框尺寸全局记忆（本机偏好，localStorage 会被 ui_prefs_bridge 落盘到后端，
-  // 换渲染外壳 / 清缓存都不丢）。只存宽高，位置每次按被点行重新定位。
-  const EDIT_POPUP_SIZE_KEY = "edit-popup-size";
-  function readEditPopupSize() {
-    try {
-      const v = JSON.parse(localStorage.getItem(EDIT_POPUP_SIZE_KEY) || "null");
-      if (v && v.w > 0 && v.h > 0) return v;
-    } catch (e) { /* ignore */ }
-    return null;
-  }
-  function rememberEditPopupSize(w, h) {
-    if (!(w > 0 && h > 0)) return;
-    try { localStorage.setItem(EDIT_POPUP_SIZE_KEY, JSON.stringify({ w: Math.round(w), h: Math.round(h) })); } catch (e) { /* ignore */ }
-  }
-
-  // 编辑框挂在 #historyPane（滚动容器）内的滚动内容坐标系里，紧贴被编辑行、随内容滚动。
-  // rect 是行的视口坐标；换算成「相对滚动内容」的坐标（加上 scrollLeft/scrollTop）。
-  function positionEditPopup(popup, rect) {
-    const pane = $("#historyPane");
-    if (!pane) return;
-    const pr = pane.getBoundingClientRect();
-    const pad = 6;
-    const pw = popup.offsetWidth, ph = popup.offsetHeight;
-    let left = (rect.left - pr.left) + pane.scrollLeft;
-    let top = (rect.bottom - pr.top) + pane.scrollTop + pad;
-    // 下方放不下就翻到被编辑行的上方
-    if (rect.bottom + pad + ph > pr.bottom) {
-      top = (rect.top - pr.top) + pane.scrollTop - ph - pad;
-    }
-    // 水平方向不越出可视区，避免撑出横向滚动条
-    const minLeft = pane.scrollLeft + 8;
-    const maxLeft = pane.scrollLeft + pane.clientWidth - pw - 8;
-    if (left > maxLeft) left = Math.max(minLeft, maxLeft);
-    if (left < minLeft) left = minLeft;
-    popup.style.left = Math.round(left) + "px";
-    popup.style.top = Math.round(top) + "px";
-  }
-
-  function openEditPopup(line) {
-    closeEditPopup();
-    const raw = b64ToUtf8(line.dataset.rawB64 || "");
-    const rect = line.getBoundingClientRect();
-    const popup = document.createElement("div");
-    popup.className = "edit-popup";
-    popup.innerHTML = `
-      <div class="edit-popup-toolbar">
-        <button class="btn small primary" data-act="apply">${t("确认改动")}</button>
-        <button class="btn small" data-act="cancel">${t("撤销改动")}</button>
-      </div>
-      <textarea></textarea>`;
-    const ta = popup.querySelector("textarea");
-    ta.value = raw;
-    const pane = $("#historyPane") || document.body;
-    pane.appendChild(popup);
-    const stored = readEditPopupSize();
-    if (stored) {
-      // 记忆尺寸：宽度按聊天区宽度夹取（避免撑出横向滚动条），高度按视口夹取
-      const availW = (pane.clientWidth || window.innerWidth) - 16;
-      popup.style.width = Math.min(stored.w, Math.max(240, availW)) + "px";
-      popup.style.height = Math.min(stored.h, window.innerHeight - 16) + "px";
-    } else {
-      // 首次：动态宽度 = 一行文本（正文渲染区）宽度的 0.75 倍
-      const lineWidth = (historyEl && historyEl.clientWidth) || (window.innerWidth - 44);
-      popup.style.width = Math.max(280, Math.round(lineWidth * 0.75)) + "px";
-    }
-    positionEditPopup(popup, rect);
-    popup.querySelector('[data-act="apply"]').onclick = () => { applyLineEdit(line, ta.value); closeEditPopup(); };
-    popup.querySelector('[data-act="cancel"]').onclick = () => closeEditPopup();
-    ta.focus();
-  }
-
-  function bindEditLineEvents() {
-    historyEl.addEventListener("mouseover", (e) => {
-      if (!editModeOn) return;
-      const line = e.target.closest(".edit-line");
-      const prev = historyEl.querySelector(".edit-line.hover");
-      if (prev && prev !== line) prev.classList.remove("hover");
-      if (!line) return;
-      if (line.closest("details:not([open])")) return;
-      line.classList.add("hover");
-    });
-    historyEl.addEventListener("mouseleave", () => {
-      historyEl.querySelectorAll(".edit-line.hover").forEach(el => el.classList.remove("hover"));
-    });
-    historyEl.addEventListener("click", (e) => {
-      if (!editModeOn) return;
-      const line = e.target.closest(".edit-line");
-      if (!line) return;
-      if (line.closest("details:not([open])")) return;
-      e.preventDefault();
-      openEditPopup(line);
-    });
-  }
-
-  function applyParaEditsToText(rawText, paraEdits) {
-    const segs = splitEditableSegments(rawText);
-    paraEdits.forEach(pe => { segs[pe.paraIndex] = pe.newText; });
-    return segs.join("\n");
-  }
-
-  function buildSubstituteMessage(original, itemEdits) {
-    const clone = JSON.parse(JSON.stringify(original));
-    const byField = {};
-    itemEdits.forEach(e => {
-      const fk = `${e.field}|${e.blockIndex}|${e.toolCallIndex}`;
-      (byField[fk] = byField[fk] || []).push(e);
-    });
-    for (const fk of Object.keys(byField)) {
-      const parts = fk.split("|");
-      const field = parts[0];
-      const bi = parts[1] === "" ? null : parts[1];
-      const ti = parts[2] === "" ? null : parts[2];
-      const paraEdits = byField[fk];
-      if (field === "text" || field === "reasoning") {
-        const blocks = Array.isArray(clone.content) ? clone.content : null;
-        if (bi != null && blocks && blocks[bi]) {
-          blocks[bi][field] = applyParaEditsToText(blocks[bi][field], paraEdits);
-        } else if (field === "text" && !blocks && typeof clone.content === "string") {
-          clone.content = applyParaEditsToText(clone.content, paraEdits);
-        }
-      } else if (field === "tool_call_args") {
-        const tc = clone.tool_calls && clone.tool_calls[ti];
-        if (tc) {
-          const jsonStr = JSON.stringify(tc.args || {}, null, 2);
-          const newJson = applyParaEditsToText(jsonStr, paraEdits);
-          try { tc.args = JSON.parse(newJson); } catch (err) { /* 无效 JSON：保留原值 */ }
-        }
-      } else if (field === "tool_content" || field === "human_content") {
-        let raw = clone.content;
-        if (Array.isArray(raw)) raw = raw.filter(b => b && b.type === "text").map(b => b.text).join("\n\n");
-        clone.content = applyParaEditsToText(String(raw), paraEdits);
-      }
-    }
-    return clone;
-  }
-
-  /* 编辑写入阶段超时（不含「加载模型」阶段；加载阶段由状态徽标单独提示，不设超时）。 */
-  const EDIT_WRITE_TIMEOUT_MS = 30000;
 
   function submitEditRequest(req, onStage) {
     return new Promise((resolve) => {
@@ -8467,32 +8657,6 @@ async function renderChatView() {
     });
   }
 
-  async function submitEdits() {
-    const groups = {};
-    edits.forEach(e => { (groups[e.msgIndice] = groups[e.msgIndice] || []).push(e); });
-    const groupKeys = Object.keys(groups);
-    for (let i = 0; i < groupKeys.length; i++) {
-      const msgIndice = +groupKeys[i];
-      const original = (editRawMessages || [])[msgIndice];
-      if (!original) continue;
-      const substitute = buildSubstituteMessage(original, groups[groupKeys[i]]);
-      const isSub = !!editSubName;
-      const res = await submitEditRequest({
-        request_for_subagent: isSub,
-        subagent_name: isSub ? editSubName : null,
-        msg_indice: msgIndice,
-        substitute_msg: substitute,
-      }, (stage) => setEditBadge(stage));
-      if (!res.ok) {
-        const remaining = groupKeys.length - i - 1;
-        let reason = res.reason || t("未知错误");
-        if (remaining > 0) reason += t("（已停止提交剩余 {n} 处改动）").replace("{n}", remaining);
-        return { ok: false, reason };
-      }
-    }
-    return { ok: true };
-  }
-
   async function refreshHistory() {
     const anchor = captureMsgAnchor();
     try {
@@ -8508,137 +8672,15 @@ async function renderChatView() {
     }
   }
 
-  function leaveEditMode() {
-    closeEditPopup();
-    editModeOn = false;
-    edits = [];
-    editRawMessages = null;
-    editSubName = null;
-    setEditBadge("off");
-  }
-
-  async function enterEditMode() {
-    editModeOn = true;
-    edits = [];
-    setEditBadge("edit");
-    try {
-      await fetchRawMessagesForEdit();
-      renderEditMode();
-    } catch (e) {
-      toast(e.message, true);
-      leaveEditMode();
-    }
-  }
-
-  async function exitEditMode() {
-    let shouldSubmit = false;
-    if (edits.length) {
-      const ans = await askConfirm(t("是否提交对历史消息的更改"));
-      if (ans === "yes") shouldSubmit = true;
-    }
-    if (shouldSubmit) {
-      const res = await submitEdits();
-      if (res.ok) showAppliedBubble();
-      else showEditError(res.reason);
-    }
-    leaveEditMode();
-    await refreshHistory();
-  }
-
   async function leaveChatView() {
-    if (editModeOn) {
+    if (editor && editor.isOn()) {
       const ans = await askConfirm(t("当前处于编辑模式，请先退出编辑模式后再离开。是否退出编辑模式？"));
       if (ans !== "yes") return;
-      await exitEditMode();
+      await editor.exit();
     }
     flushCurrentDraft();
     draftFlushFn = null;
     goThreads(S.agentId, S.agentName);
-  }
-
-  async function refreshEditModeData() {
-    try {
-      await fetchRawMessagesForEdit();
-      renderEditMode();
-    } catch (e) { toast(e.message, true); }
-  }
-
-  function showAppliedBubble() {
-    const el = document.createElement("div");
-    el.className = "edit-applied-bubble";
-    el.textContent = t("更改已生效");
-    document.body.appendChild(el);
-    setTimeout(() => particleDissolve(el, () => el.remove()), 1300);
-  }
-
-  function roundRectPath(ctx, x, y, w, h, r) {
-    ctx.beginPath();
-    ctx.moveTo(x + r, y);
-    ctx.arcTo(x + w, y, x + w, y + h, r);
-    ctx.arcTo(x + w, y + h, x, y + h, r);
-    ctx.arcTo(x, y + h, x, y, r);
-    ctx.arcTo(x, y, x + w, y, r);
-    ctx.closePath();
-  }
-
-  function particleDissolve(el, done) {
-    const rect = el.getBoundingClientRect();
-    const w = Math.max(1, Math.round(rect.width));
-    const h = Math.max(1, Math.round(rect.height));
-    const canvas = document.createElement("canvas");
-    canvas.width = w;
-    canvas.height = h;
-    canvas.style.cssText = `position:fixed;left:${rect.left}px;top:${rect.top}px;width:${w}px;height:${h}px;pointer-events:none;z-index:1101;`;
-    const ctx = canvas.getContext("2d");
-    document.body.appendChild(canvas);
-
-    ctx.fillStyle = "#16a34a";
-    roundRectPath(ctx, 0, 0, w, h, 12);
-    ctx.fill();
-    ctx.fillStyle = "#fff";
-    ctx.font = "700 16px -apple-system, 'Segoe UI', sans-serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText(el.textContent, w / 2, h / 2);
-
-    const data = ctx.getImageData(0, 0, w, h).data;
-    const particles = [];
-    const step = 2;
-    for (let y = 0; y < h; y += step) {
-      for (let x = 0; x < w; x += step) {
-        const a = data[(y * w + x) * 4 + 3];
-        if (a > 128) {
-          particles.push({
-            x, y,
-            color: `rgb(${data[(y * w + x) * 4]},${data[(y * w + x) * 4 + 1]},${data[(y * w + x) * 4 + 2]})`,
-            vx: -Math.random() * 2 - 1.5,
-            vy: (Math.random() - 0.5) * 1.5,
-            life: 1,
-            decay: 0.01 + Math.random() * 0.03,
-          });
-        }
-      }
-    }
-    el.style.opacity = "0";
-
-    const tick = () => {
-      ctx.clearRect(0, 0, w, h);
-      let alive = 0;
-      for (const p of particles) {
-        p.x += p.vx;
-        p.y += p.vy;
-        p.life -= p.decay;
-        if (p.life <= 0) continue;
-        alive++;
-        ctx.globalAlpha = Math.max(0, p.life);
-        ctx.fillStyle = p.color;
-        ctx.fillRect(p.x, p.y, step, step);
-      }
-      ctx.globalAlpha = 1;
-      if (alive > 0) requestAnimationFrame(tick);
-      else { canvas.remove(); done(); }
-    };
-    requestAnimationFrame(tick);
   }
 
   const updatePinBtn = () => { pinBtn.classList.toggle("active", pinned); };
@@ -8720,8 +8762,20 @@ async function renderChatView() {
 
   const input = $("#msgInput"), sendBtn = $("#sendBtn"), stopBtn = $("#stopBtn");
 
-  editModeBtn.onclick = () => { if (editModeOn) exitEditMode(); else enterEditMode(); };
-  bindEditLineEvents();
+  editModeBtn = $("#editModeBtn");
+  editModeBadge = $("#editModeBadge");
+  editor = createHistoryEditor({
+    historyEl,
+    editBtn: editModeBtn,
+    badgeEl: editModeBadge,
+    scopeKey: () => `chat:${S.threadId}`,
+    getSettings: () => settingsCache || {},
+    fetchMessages: fetchRawMessagesForEdit,
+    submitEdit: submitEditRequest,
+    reload: refreshHistory,
+  });
+  if (editModeBtn) editModeBtn.onclick = () => editor.toggle();
+  editor.bind();
   const memoryBtn = $("#memoryStoreBtn");
   if (memoryBtn) memoryBtn.onclick = () => openMemoryStoreModal();
   const sessionPromptBtn = $("#editSessionPromptBtn");
@@ -8752,7 +8806,7 @@ async function renderChatView() {
       const h = await api(`/api/agents/${encodeURIComponent(S.agentId)}/threads/${encodeURIComponent(S.threadId)}/subgraphs/${encodeURIComponent(sel.value)}/history`);
       $("#historyMd").innerHTML = renderMd(h.markdown);
       injectExportButtons($("#historyMd"));
-      if (editModeOn) { edits = []; await refreshEditModeData(); }
+      if (editor && editor.isOn()) { editor.clearEdits(); await editor.refreshData(); }
     } catch (e) { toast(e.message, true); }
   };
 
@@ -8814,10 +8868,10 @@ async function renderChatView() {
     if (!userText && !injectDate && !injectTime && !injectCommon && !injectTakeover && !injectSensitive) return;
     // 编辑模式：有未保存改动则提示、不发送；无改动则先自动退出编辑模式（与「退出编辑模式」
     // 按钮同一套逻辑），再走正常发送流程，避免在编辑态 DOM 上发送导致流式回复不显示。
-    if (editModeOn) {
-      if (edits.length) { showEditSendWarn(); return; }
+    if (editor && editor.isOn()) {
+      if (editor.hasEdits()) { showEditSendWarn(); return; }
       sendBusy = true;
-      try { await exitEditMode(); }
+      try { await editor.exit(); }
       catch (e) { sendBusy = false; toast(e.message, true); return; }
       finally { sendBusy = false; }
     }
@@ -8951,7 +9005,7 @@ async function renderChatView() {
     if (ans !== "archive" && ans !== "delete") return;
     const archive = ans === "archive";
     // 待删除的历史中包含编辑态正在编辑的消息，直接退出编辑模式（放弃未提交的改动）。
-    if (editModeOn) leaveEditMode();
+    if (editor && editor.isOn()) editor.leave();
     setRunning(true, "loading");
     stream.beginRun(historyEl);
     const ok = await openChatWs("", false, null, null, archive ? "archive" : true);
@@ -9064,7 +9118,6 @@ function openSnapshotRenameModal(agentId, snap, after) {
   mask.innerHTML = `
     <div class="modal" style="width:520px;" data-modal-key="snapshotRename">
       <h3>✏️ ${t("重命名快照")}</h3>
-      <div class="muted" style="margin-bottom:12px;line-height:1.7;">${t("只修改快照的会话名称，其余信息保持不变。")}</div>
       <div class="field full">
         <label>${t("会话名称")}</label>
         <input id="snapRenameInput" type="text" maxlength="80" spellcheck="false" value="${esc(currentName)}">
@@ -9116,7 +9169,19 @@ async function renderSnapshotView() {
   // 从「已删除 multi-agent 的快照」进入时，原 agent 已不存在，返回主界面；
   // 否则返回该 agent 的会话列表。
   const fromDeleted = !!S.snapshotFromDeleted;
-  const backFn = () => (fromDeleted ? goAgents() : goThreads(S.agentId, S.agentName));
+  // 编辑模式控制器在视图加载完成后创建；返回按钮可能在这些 await 期间被点到，故先声明为 null。
+  let editor = null;
+  const goBack = () => (fromDeleted ? goAgents() : goThreads(S.agentId, S.agentName));
+  const leaveSnapshotView = async () => {
+    // 与聊天页完全一致：编辑模式中离开前先确认，并走同一套「退出编辑模式」（含提交）流程。
+    if (editor && editor.isOn()) {
+      const ans = await askConfirm(t("当前处于编辑模式，请先退出编辑模式后再离开。是否退出编辑模式？"));
+      if (ans !== "yes") return;
+      await editor.exit();
+    }
+    goBack();
+  };
+  const backFn = () => { leaveSnapshotView(); };
   app.innerHTML = topbar(fromDeleted ? t("返回") : t("返回会话"), backFn);
   const view = document.createElement("div");
   view.className = "chat-view";
@@ -9133,7 +9198,7 @@ async function renderSnapshotView() {
     return;
   }
 
-  const subMap = {};
+  let subMap = {};
   (snap.subgraphs || []).forEach(s => { subMap[s.name] = s.markdown; });
   const subNames = Object.keys(subMap);
 
@@ -9144,6 +9209,8 @@ async function renderSnapshotView() {
         <span class="muted">${esc(snap.created_at || "")}</span>
       </div>
       <div class="chat-head-right">
+      <span class="edit-mode-badge" id="editModeBadge" style="display:none;">✏️ ${t("编辑模式")}</span>
+      <button class="btn small" id="editModeBtn" style="display:none;">✏️ ${t("进入编辑模式")}</button>
       <div class="zoom-controls">
         <span class="zoom-btn" id="rZoomOut" title="${t("思考字号减小")}">−</span>
         <span class="zoom-label" id="rZoomLabel" title="${t("思考字号（相对正文）")}">🧠</span>
@@ -9178,17 +9245,87 @@ async function renderSnapshotView() {
   $("#rZoomIn").onclick = () => { changeReasoningZoom(10); updateReasoningZoomLabel(); };
   $("#msgDirBtn").onclick = (e) => toggleMsgDrawer(e);
 
+  const sel = $("#subgraphSel");
+  subNames.forEach(n => { const o = document.createElement("option"); o.value = n; o.textContent = n; sel.appendChild(o); });
+
   const historyEl = $("#historyMd");
+  const renderCurrentChannel = () => {
+    historyEl.innerHTML = renderMd(sel.value ? (subMap[sel.value] || "") : (snap.main || ""));
+    injectExportButtons(historyEl);
+  };
   historyEl.innerHTML = renderMd(snap.main || "");
   injectExportButtons(historyEl);
 
-  const sel = $("#subgraphSel");
-  subNames.forEach(n => { const o = document.createElement("option"); o.value = n; o.textContent = n; sel.appendChild(o); });
-  sel.onchange = () => {
-    const v = sel.value;
-    historyEl.innerHTML = renderMd(v ? subMap[v] : (snap.main || ""));
-    injectExportButtons(historyEl);
+  /* ── 快照内编辑模式：UI/交互与会话页共用 createHistoryEditor，
+        只把「取数 / 写回 / 重拉」换成快照 JSON 的三件事：
+          · /messages 读快照里保存的原始消息
+          · /edit 只改快照 JSON（替换消息 + 重渲染 markdown），不跑图、不碰会话数据库
+          · reload 重读快照 JSON 并原地重绘当前通道 */
+  const editModeBtn = $("#editModeBtn");
+  const editModeBadge = $("#editModeBadge");
+  const editSettings = settingsCache || {};
+  const canEdit = snap.editable !== false && editSettings.edit_mode_enabled !== false;
+  if (editModeBtn) editModeBtn.style.display = canEdit ? "" : "none";
+
+  async function fetchSnapshotMessages() {
+    const sub = sel.value;
+    const q = sub ? `?subagent_name=${encodeURIComponent(sub)}` : "";
+    const r = await api(`/api/agents/${encodeURIComponent(S.agentId)}/snapshots/${encodeURIComponent(S.snapshotId)}/messages${q}`);
+    return { messages: r.messages || [], subName: sub || null };
+  }
+
+  async function submitSnapshotEdit(req, onStage) {
+    // 快照编辑是本地 JSON 读写（毫秒级），没有「加载模型」阶段，直接进入「写入中」。
+    if (onStage) onStage("writing");
+    try {
+      await api(`/api/agents/${encodeURIComponent(S.agentId)}/snapshots/${encodeURIComponent(S.snapshotId)}/edit`, {
+        method: "POST",
+        body: JSON.stringify({
+          subagent_name: req.subagent_name,
+          msg_indice: req.msg_indice,
+          substitute_msg: req.substitute_msg,
+        }),
+      });
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, reason: e.message || t("未知错误") };
+    }
+  }
+
+  async function reloadSnapshot() {
+    const anchor = captureMsgAnchor();
+    try {
+      const next = await api(`/api/agents/${encodeURIComponent(S.agentId)}/snapshots/${encodeURIComponent(S.snapshotId)}`);
+      snap = next;
+      subMap = {};
+      (snap.subgraphs || []).forEach(s => { subMap[s.name] = s.markdown; });
+      renderCurrentChannel();
+      restoreMsgAnchor(anchor);
+    } catch (e) {
+      historyEl.innerHTML = `<div class="muted">${esc(e.message)}</div>`;
+    }
+  }
+
+  if (canEdit) {
+    editor = createHistoryEditor({
+      historyEl,
+      editBtn: editModeBtn,
+      badgeEl: editModeBadge,
+      scopeKey: () => `snapshot:${S.agentId}:${S.snapshotId}`,
+      getSettings: () => settingsCache || {},
+      fetchMessages: fetchSnapshotMessages,
+      submitEdit: submitSnapshotEdit,
+      reload: reloadSnapshot,
+    });
+    if (editModeBtn) editModeBtn.onclick = () => editor.toggle();
+    editor.bind();
+  }
+
+  sel.onchange = async () => {
+    renderCurrentChannel();
     const pane = $("#historyPane"); if (pane) pane.scrollTop = 0;
+    // 与聊天页一致：编辑模式中切子 agent → 丢弃未提交改动、重新取该子 agent 的消息并重渲染编辑态
+    if (editor && editor.isOn()) { editor.clearEdits(); await editor.refreshData(); }
   };
 }
 

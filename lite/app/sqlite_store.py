@@ -389,17 +389,18 @@ async def _collect_snapshot_data(agent_id: str, thread_id: str) -> dict | None:
     settings = snapshot_service._history_settings()
 
     main_md = None
-    main_count = 0
+    main_messages: list = []
+    main_meta: dict = {}
     saver = await _ensure_saver(agent_id)
     main_tuple = await saver.aget_tuple({"configurable": {"thread_id": thread_id}})
     if main_tuple:
         main_md = render_checkpoint_to_markdown_string(main_tuple, **settings)
-        main_count = snapshot_service._count_messages(
-            main_tuple.checkpoint.get("channel_values", {})
-        )
+        # 与普通版一致：额外保存原始消息，快照内才能编辑（只改 JSON，不跑图）
+        main_messages = snapshot_service._main_messages_of(main_tuple.checkpoint)
+        main_meta = snapshot_service._main_checkpoint_meta(main_tuple)
 
     subgraphs = []
-    total = main_count
+    total = len(main_messages)
     nodes = await list_subgraph_nodes(agent_id, thread_id)
     for node in nodes:
         name = node["node_name"]
@@ -409,13 +410,26 @@ async def _collect_snapshot_data(agent_id: str, thread_id: str) -> dict | None:
         md = render_messages_to_markdown_string(
             merged, title=f"子图 [{name}] 历史", **settings
         )
-        subgraphs.append({"name": name, "markdown": md})
+        subgraphs.append(
+            {
+                "name": name,
+                "markdown": md,
+                "messages": snapshot_service._message_dicts(merged),
+            }
+        )
         total += len(merged)
 
     if main_md is None and not subgraphs:
         return None
 
-    return {"main": main_md or "", "subgraphs": subgraphs, "total_messages": total}
+    return {
+        "main": main_md or "",
+        "subgraphs": subgraphs,
+        "total_messages": total,
+        "main_messages": snapshot_service._message_dicts(main_messages),
+        "main_meta": main_meta,
+        "render_settings": settings,
+    }
 
 
 async def capture_snapshot(
@@ -449,6 +463,11 @@ async def capture_snapshot(
         "total_messages": total,
         "main": data["main"],
         "subgraphs": data["subgraphs"],
+        # 快照内编辑所需（与普通版格式一致）
+        "format_version": snapshot_service.SNAPSHOT_FORMAT_VERSION,
+        "main_messages": data["main_messages"],
+        "main_meta": data["main_meta"],
+        "render_settings": data["render_settings"],
     }
 
     try:
@@ -456,7 +475,8 @@ async def capture_snapshot(
         out_dir.mkdir(parents=True, exist_ok=True)
         out_path = out_dir / filename
         out_path.write_text(
-            json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8"
+            json.dumps(record, ensure_ascii=False, indent=2, default=str),
+            encoding="utf-8",
         )
     except Exception:  # noqa: BLE001
         logger.exception("写 SQLite 快照文件失败 (agent_id=%s)", agent_id)

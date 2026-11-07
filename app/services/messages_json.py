@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 
 def message_to_dict(msg) -> dict[str, Any]:
@@ -58,4 +58,6 @@ def dict_to_message(d: dict[str, Any]):
         kwargs["name"] = d.get("name")
         kwargs["tool_call_id"] = d.get("tool_call_id")
         return ToolMessage(content=content, **kwargs)
+    if t == "SystemMessage":
+        return SystemMessage(content=content, **kwargs)
     raise ValueError(f"unsupported message type: {t}")
