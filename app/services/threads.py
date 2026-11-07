@@ -317,3 +317,45 @@ async def get_subgraph_history_by_node(
         export_html=export_html,
         labels=labels,
     )
+
+
+# ── 会话导出 / 导入（PostgreSQL 版；Lite SQLite 版在 lite/app/sqlite_store.py）──
+
+
+async def list_thread_namespaces(conn_string: str, thread_id: str) -> list[str]:
+    """该会话里出现过的所有 checkpoint namespace（`''` = 主图，其余为子 agent 名）。"""
+    async with _connect(conn_string) as conn:
+        await conn.set_autocommit(True)
+        try:
+            rows = await conn.execute(
+                "SELECT DISTINCT checkpoint_ns FROM checkpoints WHERE thread_id = %s",
+                (thread_id,),
+            )
+            return [r[0] for r in await rows.fetchall()]
+        except errors.UndefinedTable:
+            # checkpoints 表尚未创建（该 agent 还没进行过任何对话）→ 没有可导出的内容
+            return []
+
+
+async def export_thread_checkpoints(conn_string: str, thread_id: str) -> dict:
+    """把会话每个 namespace 的最新 checkpoint 序列化成可移植的 dict。"""
+    from app.services import thread_transfer
+
+    namespaces = await list_thread_namespaces(conn_string, thread_id)
+    if not namespaces:
+        return {"thread_id": thread_id, "namespaces": {}}
+    async with AsyncPostgresSaver.from_conn_string(conn_string) as cp:
+        await cp.setup()
+        return await thread_transfer.read_thread(cp, thread_id, namespaces)
+
+
+async def import_thread_checkpoints(
+    conn_string: str, thread_id: str, payload: dict
+) -> list[str]:
+    """把导出的会话数据写进 ``thread_id``（调用方保证该名字是新会话）。"""
+    from app.services import thread_transfer
+
+    async with AsyncPostgresSaver.from_conn_string(conn_string) as cp:
+        await cp.setup()
+        return await thread_transfer.write_thread(cp, thread_id, payload)
+

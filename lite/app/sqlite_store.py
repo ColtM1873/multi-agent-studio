@@ -346,6 +346,42 @@ async def get_subgraph_history_by_node(
     )
 
 
+# ── 会话导出 / 导入（与 PostgreSQL 版共用 app/services/thread_transfer 的格式）──
+
+
+async def list_thread_namespaces(agent_id: str, thread_id: str) -> list[str]:
+    """该会话出现过的 checkpoint namespace（`''` = 主图，其余为子 agent 名）。"""
+    saver = await _ensure_saver(agent_id)
+    rows = await _fetchall(
+        saver,
+        "SELECT DISTINCT checkpoint_ns FROM checkpoints WHERE thread_id = ?",
+        (thread_id,),
+    )
+    return [str(r[0]) for r in rows]
+
+
+async def export_thread_checkpoints(agent_id: str, thread_id: str) -> dict:
+    """导出会话：每个 namespace 的最新 checkpoint（与普通版格式完全一致）。"""
+    from app.services import thread_transfer
+
+    namespaces = await list_thread_namespaces(agent_id, thread_id)
+    if not namespaces:
+        return {"thread_id": thread_id, "namespaces": {}}
+    saver = await _ensure_saver(agent_id)
+    return await thread_transfer.read_thread(saver, thread_id, namespaces)
+
+
+async def import_thread_checkpoints(
+    agent_id: str, thread_id: str, payload: dict
+) -> list[str]:
+    """把导出的会话数据写进 ``thread_id``（调用方保证该名字在新库中不冲突）。"""
+    from app.services import thread_transfer
+
+    saver = await _ensure_saver(agent_id)
+    return await thread_transfer.write_thread(saver, thread_id, payload)
+
+
+
 # ── 快照（Lite 保留快照功能；数据源换成 SQLite）─────────────────────
 
 

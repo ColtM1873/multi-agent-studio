@@ -20,6 +20,10 @@ const SSL_OPTIONS = [
 const OFFICIAL_PROVIDERS = ["openai", "anthropic", "deepseek", "google_genai"];
 const isOfficialProvider = (name) => OFFICIAL_PROVIDERS.includes(String(name || "").trim().toLowerCase());
 
+// 导出会话加密的固定前缀：密码少于 10 个字符时后端会自动拼在密码前面。
+// 必须与 app/services/session_archive.py 的 PASSWORD_PREFIX 完全一致（仅用于界面展示）。
+const SESSION_PASSWORD_PREFIX = "Multi-Agent-Studio-Session-Password";
+
 /* 把历史配置里的 llm_provider_name 拆成「供应商 + 模型名」。
  * 内置供应商存的是 provider:model；OpenAI 兼容模式只存裸模型名。 */
 function splitModelRef(ref) {
@@ -296,6 +300,9 @@ const I18N_EN = {
   "点击开启：发送时把敏感信息替换列表附加到消息之后，供后台把 <名称> 替换为真实值": "Click to enable: append the sensitive-info replacement list after your message when sending, so the backend can replace <name> with real values.",
   "请遇到如下需要填写的内容时，直接将下述列表中的名称原文加上<>包裹后填入。比如，若下述列表中有「姓名」，那么在遇到「请输入你姓名」之后的可填入元素时，直接填写为<姓名>即可。CDP 在后台实现时，会将下列列表中的名称原文（带<>包裹）替换为真实值；若列表中没有对应名称，则按原文原样填入。": "When you encounter a field to fill, write the name from the list below wrapped in <> and fill that in. For example, if the list contains \"Name\", then for a fillable element after \"Please enter your name\", fill it with <Name>. The CDP backend will replace the wrapped name with the real value; if a name is not in the list, fill it exactly as written.",
   "敏感信息表单为空，请先在主界面「编辑敏感信息表单」中添加": "The sensitive-info form is empty. Please add entries via \"Edit sensitive info form\" on the main screen first.",
+  // 这条 key 必须与 app.js 里 buildSensitiveText() 的实际文案逐字一致（含 \n），
+  // 否则英文界面下会静默显示中文（原有旧 key 已与代码脱节，故补上正确的一条）。
+  "请遇到如下需要填写的内容时，直接将下述列表中的名称原文加上<>包裹后填入。\n比如，若下述列表中有「姓名」，那么在遇到以「请输入你姓名」为提示的可输入元素时，直接填写为<姓名>即可。\nCDP 在后台实现时，会识别使用<>包裹的通义替换词，并将其替换为具体的真实值。": "When you need to fill in a field, write the name from the list below wrapped in <>. For example, if the list contains \"Name\", then for an input whose hint is \"Please enter your name\", fill in <Name>. The CDP backend recognizes such wrapped names and replaces them with the real values.",
   "暂无会话": "No conversations yet",
   "所有会话均已隐藏": "All conversations are hidden",
   "隐藏": "Hide",
@@ -864,6 +871,58 @@ const I18N_EN = {
   "该 multi-agent 有会话正在进行": "A conversation of this multi-agent is in progress",
   "该会话的浏览器已打开（每个会话使用独立浏览器实例）": "This conversation's browser is open (each conversation uses an independent browser instance)",
   "该会话正在运行或等待验收，暂时不能删除。请等它完成并验收后再删除。": "This conversation is running or awaiting acceptance and cannot be deleted yet. Please wait until it is completed and accepted.",
+  /* ── 会话导出 / 导入 ─────────────────────────────────────────── */
+  "开启导出对话功能": "Enable conversation export",
+  "开启后，会话选择页底部会出现「导出会话」按钮，可把选中的会话连同所属 multi-agent 配置一起打包导出；主界面也会出现「导入会话」按钮。": "When enabled, an “Export conversations” button appears at the bottom of the conversation list: it packs the selected conversations together with their multi-agent config into one file. An “Import conversations” button also appears on the main screen.",
+  "导出会话加密": "Encrypt exported conversations",
+  "导出的会话会包含该 multi-agent 配置里的模型调用 API key（以及子 agent 的 key、MCP 鉴权头等敏感内容）。若导出文件会离开本机，建议开启加密；开启后导入时必须输入同一个密码。": "Exported conversations contain the model API keys of that multi-agent config (plus sub-agent keys, MCP auth headers and other sensitive data). If the file may leave this machine, encryption is recommended. When enabled, the same password is required to import.",
+  "配置导出会话加密密码": "Export encryption password",
+  "配置密码": "Set password",
+  "已设置（{n} 个字符）": "Set ({n} characters)",
+  "未设置": "Not set",
+  "密码已记录，点「保存」后生效": "Password recorded — click “Save” to apply",
+  "显示密码": "Show password",
+  "显示前缀": "Show prefix",
+  "隐藏前缀": "Hide prefix",
+  "固定前缀（密码少于 10 个字符时会自动拼在密码前面，可选中复制）：": "Fixed prefix (prepended automatically when the password is shorter than 10 characters; you can select and copy it):",
+  "导出会话会把该 multi-agent 的完整配置一起打包，其中包含模型调用 API key。设置密码后，导出的文件会用 AES-256-GCM 加密（扩展名 .zip.enc），导入时必须输入同一个密码。": "Exporting a conversation also packs the whole multi-agent config, which contains model API keys. With a password set, the exported file is encrypted with AES-256-GCM (extension .zip.enc) and the same password is required to import it.",
+  "密码少于 10 个字符时，程序会自动在密码前面补上固定的长前缀再用于加密；导入时输入同样的原始密码即可，不需要自己加前缀。": "If the password is shorter than 10 characters, the app automatically prepends a fixed long prefix before encrypting. When importing, just enter the same original password — you do not need to type the prefix.",
+  "导出会话": "Export conversations",
+  "确定导出": "Confirm export",
+  "正在导出，请稍候…": "Exporting, please wait…",
+  "已取消导出": "Export canceled",
+  "已导出到：{path}": "Exported to: {path}",
+  "已导出 {n} 个会话": "{n} conversation(s) exported",
+  "（{m} 个空会话已跳过）": " ({m} empty conversation(s) skipped)",
+  "请先选择要导出的会话": "Please select the conversation(s) to export first",
+  "导出的会话会包含模型 API key；若文件会离开本机，建议在系统设置里开启「导出会话加密」": "Exported conversations contain model API keys; if the file may leave this machine, consider enabling “Encrypt exported conversations” in Settings",
+  "导入会话": "Import conversations",
+  "选择要导入的会话文件": "Choose a conversation export file",
+  "选择会话导出位置": "Choose where to save the exported file",
+  "请输入导出时设置的密码：": "Enter the password used when exporting:",
+  "确定": "OK",
+  "来自「{name}」的 {n} 个会话": "{n} conversation(s) from “{name}”",
+  "导出文件里的子 agent：": "Sub-agents in this file: ",
+  "（无子 agent）": " (none)",
+  "加载到本机已有的 multi-agent 配置": "Load into an existing multi-agent on this machine",
+  "连同原来的 multi-agent 配置一并导入": "Import the original multi-agent config as well",
+  "（无法迁入）": " (cannot be migrated)",
+  "无法迁入：{reason}": "cannot be migrated: {reason}",
+  "本机已有的配置都无法迁入（原因见上面的选项）；可以选择「连同原来的 multi-agent 配置一并导入」，或点「取消」。": "None of the local configs can take these conversations (see the reasons above). You can choose “Import the original multi-agent config as well”, or click “Cancel”.",
+  "只把会话并进去，不会新建配置，也不会改动那张卡片的模型 / prompt / 子 agent 设置。": "Only merges the conversations into it — no new config is created and that card's model / prompt / sub-agent settings are not changed.",
+  "总会新建一个 multi-agent 配置（名称不能与已有配置重名）。": "Always creates a new multi-agent config (the name must not duplicate an existing one).",
+  "本机有重名的 multi-agent 卡片。若你其实想把这些会话并进那张卡片，请选择上面的": "A local multi-agent card already has this name. If you actually want to merge these conversations into that card, choose",
+  "；若要连同配置一并导入，给下面新建的配置起一个不重名的名称即可。": " above; if you want to import the config as well, just give the new config below a unique name.",
+  "本机已有同名配置「{name}」，但与要导入的会话不匹配：{reason}。请给下面新建的配置起一个不重名的名称。": "A local config named “{name}” already exists but does not match these conversations: {reason}. Please give the new config below a unique name.",
+  "新建 multi-agent 配置的名称（不能与本机已有配置重名）：": "Name of the new multi-agent config (must not duplicate an existing one):",
+  "请填写新建的 multi-agent 配置名称": "Please enter a name for the new multi-agent config",
+  "本机已有同名配置，请换一个名称": "A local config already uses that name; please choose another",
+  "正在导入，请稍候…": "Importing, please wait…",
+  "已为导入的会话新建 multi-agent 配置「{name}」": "Created multi-agent “{name}” for the imported conversations",
+  "已导入 {n} 个会话到「{name}」": "{n} conversation(s) imported into “{name}”",
+  "有 {n} 个会话导入失败": "{n} conversation(s) failed to import",
+  "会话「{a}」已重命名为「{b}」（本机已有同名会话）": "“{a}” was renamed to “{b}” because a conversation with that name already exists",
+  "请选择要导入到哪个本机配置": "Please choose which local config to import into",
 };
 const t = (s) => (lang === "zh" || !I18N_EN[s]) ? s : I18N_EN[s];
 function setLang(l) {
@@ -1429,6 +1488,282 @@ function askSummaryPercent(defaultPercent, totalTokens) {
     mask.querySelector("#sumPctStart").onclick = () => { mask.remove(); resolve(pct); };
     updatePreview();
   });
+}
+
+/* ================= 会话导入（主界面「导入会话」） =================
+   流程：后端弹资源管理器选文件 → 加密则输入密码 → 后端解析出「迁移计划」
+        → 这里问「导入到本机已有配置」还是「连同原配置一并导入」→ 执行 → 报告结果。
+   密码规则（少于 10 个字符自动补前缀）完全在后端，用户只需记住原始密码。 */
+function askSessionPassword(promptText) {
+  return new Promise(resolve => {
+    const mask = document.createElement("div");
+    mask.className = "modal-mask";
+    mask.innerHTML = `
+      <div class="modal" style="width:440px;" data-modal-key="sessionPassword">
+        <h3>🔐 ${t("导入会话")}</h3>
+        <div class="modal-body">${esc(promptText)}</div>
+        <input type="password" id="sessionPwInput" autocomplete="off" style="width:100%;">
+        <div class="modal-actions">
+          <button class="btn" id="sessionPwCancel">${t("取消")}</button>
+          <button class="btn primary" id="sessionPwOk">${t("确定")}</button>
+        </div>
+      </div>`;
+    document.body.appendChild(mask);
+    const input = mask.querySelector("#sessionPwInput");
+    const done = (value) => { mask.remove(); resolve(value); };
+    mask.querySelector("#sessionPwCancel").onclick = () => done(null);
+    mask.querySelector("#sessionPwOk").onclick = () => done(input.value);
+    input.onkeydown = (e) => {
+      if (e.key === "Enter") { e.preventDefault(); done(input.value); }
+      if (e.key === "Escape") { e.preventDefault(); done(null); }
+    };
+    input.focus();
+  });
+}
+
+function askImportTargetChoice(plan) {
+  return new Promise(resolve => {
+    const locals = plan.local_configs || [];
+    const usable = locals.filter(c => c.compatible);
+    const same = plan.same_name_config || null;
+    const subNames = (plan.exported_agent.sub_agents || []).join("、");
+    const sessionLines = (plan.sessions || []).slice(0, 20).map(s =>
+      `<div class="muted" style="font-size:12px;line-height:1.6;">· ${esc(s.name || s.thread_id)}（${s.message_count} ${t("条消息")}）</div>`
+    ).join("");
+    // 两种语义：
+    // ① 加载到本机已有配置 —— 只会把会话并进去，永不新建配置；
+    // ② 连同原配置一并导入 —— 永远新建一个配置，所以名称不能与任何本机配置重名。
+    const options = locals.map(c => {
+      const selected = (same && same.agent_id === c.agent_id && c.compatible) ? " selected" : "";
+      // 不能迁入的配置：直接被禁选，并把人话原因写进选项文本（tooltip 在深色下拉里看不到）
+      const label = c.compatible
+        ? esc(c.name)
+        : `${esc(c.name)} — ${t("无法迁入：{reason}").replace("{reason}", esc(c.reason || ""))}`;
+      return `<option value="${esc(c.agent_id)}"${c.compatible ? "" : " disabled"}${selected} title="${esc(c.reason || "")}">${label}</option>`;
+    }).join("");
+    const noUsableHint = usable.length
+      ? ""
+      : `<div class="warn-hint" style="margin:6px 0 10px 26px;line-height:1.7;">${t("本机已有的配置都无法迁入（原因见上面的选项）；可以选择「连同原来的 multi-agent 配置一并导入」，或点「取消」。")}</div>`;
+    // 选「连同原配置一并导入」时，如果有重名配置：兼容 → 提示可以改选第 1 个选项（高亮选项名）；
+    // 不兼容 → 说明原因。两者都要求给新建的配置填一个不重名的名称。
+    const sameHint = !same
+      ? ""
+      : (same.compatible
+          ? `<div class="import-same-hint" style="margin:10px 0 8px 26px;">
+               ${t("本机有重名的 multi-agent 卡片。若你其实想把这些会话并进那张卡片，请选择上面的")}
+               <b class="opt-ref">${t("加载到本机已有的 multi-agent 配置")}</b>${t("；若要连同配置一并导入，给下面新建的配置起一个不重名的名称即可。")}
+             </div>`
+          : `<div class="warn-hint" style="margin:10px 0 8px 26px;line-height:1.7;">
+               ${t("本机已有同名配置「{name}」，但与要导入的会话不匹配：{reason}。请给下面新建的配置起一个不重名的名称。")
+                   .replace("{name}", esc(same.name)).replace("{reason}", esc(same.reason || ""))}
+             </div>`);
+    const mask = document.createElement("div");
+    mask.className = "modal-mask";
+    mask.innerHTML = `
+      <div class="modal" style="width:620px;max-height:82vh;overflow:auto;" data-modal-key="importSession">
+        <h3>📥 ${t("导入会话")}</h3>
+        <div class="muted" style="line-height:1.8;margin-bottom:8px;">
+          ${t("来自「{name}」的 {n} 个会话").replace("{name}", esc(plan.exported_agent.name || plan.exported_agent.agent_id || "?")).replace("{n}", String((plan.sessions || []).length))}<br/>
+          ${t("导出文件里的子 agent：")}${subNames ? esc(subNames) : t("（无子 agent）")}
+        </div>
+        <div class="muted" style="max-height:110px;overflow:auto;margin-bottom:12px;">${sessionLines}</div>
+        <label class="import-mode-row">
+          <input type="radio" name="importMode" value="existing" id="importModeExisting" ${usable.length ? "checked" : "disabled"}>
+          <span>${t("加载到本机已有的 multi-agent 配置")}</span>
+        </label>
+        <div class="muted" style="margin:2px 0 6px 26px;font-size:12px;line-height:1.6;">${t("只把会话并进去，不会新建配置，也不会改动那张卡片的模型 / prompt / 子 agent 设置。")}</div>
+        <select id="importTargetSel" style="width:calc(100% - 26px);margin:0 0 10px 26px;${usable.length ? "" : "display:none;"}" ${usable.length ? "" : "disabled"}>
+          ${options}
+        </select>
+        ${noUsableHint}
+        <label class="import-mode-row">
+          <input type="radio" name="importMode" value="with_config" id="importModeNew" ${usable.length ? "" : "checked"}>
+          <span>${t("连同原来的 multi-agent 配置一并导入")}</span>
+        </label>
+        <div class="muted" style="margin:2px 0 0 26px;font-size:12px;line-height:1.6;">${t("总会新建一个 multi-agent 配置（名称不能与已有配置重名）。")}</div>
+        <div id="importSameHint" style="display:none;">${sameHint}</div>
+        <div id="importNewNameRow" style="display:none;margin:8px 0 4px 26px;">
+          <div class="muted" style="margin-bottom:6px;">${t("新建 multi-agent 配置的名称（不能与本机已有配置重名）：")}</div>
+          <input type="text" id="importNewName" class="export-pw-input" value="${esc(plan.suggested_name || "")}">
+          <div class="err-hint" id="importNewNameHint" style="display:none;margin-top:6px;"></div>
+        </div>
+        <div class="modal-actions">
+          <button class="btn" id="importCancel">${t("取消")}</button>
+          <button class="btn primary" id="importOk">${t("确定")}</button>
+        </div>
+      </div>`;
+    document.body.appendChild(mask);
+    const existingRadio = mask.querySelector("#importModeExisting");
+    const newRadio = mask.querySelector("#importModeNew");
+    const sel = mask.querySelector("#importTargetSel");
+    const nameRow = mask.querySelector("#importNewNameRow");
+    const nameInput = mask.querySelector("#importNewName");
+    const nameHint = mask.querySelector("#importNewNameHint");
+    const sameHintBox = mask.querySelector("#importSameHint");
+    const syncMode = () => {
+      const useExisting = !!(existingRadio && existingRadio.checked);
+      if (sel) sel.disabled = !useExisting;
+      if (nameRow) nameRow.style.display = useExisting ? "none" : "";
+      if (sameHintBox) sameHintBox.style.display = useExisting ? "none" : "";
+      if (nameHint) nameHint.style.display = "none";
+    };
+    if (existingRadio) existingRadio.onchange = syncMode;
+    if (newRadio) newRadio.onchange = syncMode;
+    syncMode();
+    mask.querySelector("#importCancel").onclick = () => { mask.remove(); resolve(null); };
+    mask.querySelector("#importOk").onclick = () => {
+      if (existingRadio && existingRadio.checked) {
+        const target = (sel && sel.value) || "";
+        if (!target) { toast(t("请选择要导入到哪个本机配置"), true); return; }
+        mask.remove();
+        resolve({ mode: "existing", target_agent_id: target });
+        return;
+      }
+      // 「连同原配置一并导入」：必须填一个不重名的新名称
+      const name = String((nameInput && nameInput.value) || "").trim();
+      const fail = (msg) => {
+        if (!nameHint) { toast(msg, true); return; }
+        nameHint.textContent = msg;
+        nameHint.style.display = "";
+        if (nameInput) nameInput.focus();
+      };
+      if (!name) { fail(t("请填写新建的 multi-agent 配置名称")); return; }
+      const nameErr = validateAgentName(name);
+      if (nameErr) { fail(nameErr); return; }
+      const clash = locals.find(c =>
+        String(c.name || "").toLowerCase() === name.toLowerCase() ||
+        String(c.agent_id || "").toLowerCase() === name.toLowerCase()
+      );
+      if (clash) { fail(t("本机已有同名配置，请换一个名称")); return; }
+      mask.remove();
+      resolve({ mode: "with_config", new_agent_name: name });
+    };
+  });
+}
+
+async function startImportSession() {
+  let selected;
+  try {
+    selected = await api("/api/session-import/select", {
+      method: "POST",
+      body: JSON.stringify({ title: t("选择要导入的会话文件") }),
+    });
+  } catch (e) { toast(e.message, true); return; }
+  if (!selected || selected.canceled) return;
+
+  let password = "";
+  if (selected.encrypted) {
+    password = await askSessionPassword(t("请输入导出时设置的密码："));
+    if (password === null) return;
+  }
+
+  let plan;
+  try {
+    plan = await api("/api/session-import/plan", {
+      method: "POST",
+      body: JSON.stringify({ path: selected.path, password }),
+    });
+  } catch (e) { toast(e.message, true); return; }
+
+  const choice = await askImportTargetChoice(plan);
+  if (!choice) return;
+
+  const body = {
+    path: selected.path,
+    password,
+    mode: choice.mode,
+    target_agent_id: choice.target_agent_id || "",
+    new_agent_name: choice.new_agent_name || "",
+  };
+
+  toast(t("正在导入，请稍候…"));
+  let res;
+  try {
+    res = await api("/api/session-import/apply", { method: "POST", body: JSON.stringify(body) });
+  } catch (e) { toast(e.message, true); return; }
+
+  (res.warnings || []).forEach(w => toast(w));
+  if (res.created_config) {
+    toast(t("已为导入的会话新建 multi-agent 配置「{name}」").replace("{name}", res.agent_name));
+  }
+  if (res.imported) {
+    toast(t("已导入 {n} 个会话到「{name}」").replace("{n}", String(res.imported)).replace("{name}", res.agent_name));
+  }
+  if (res.failed) {
+    const firstError = (res.results || []).find(r => !r.ok);
+    toast(
+      t("有 {n} 个会话导入失败").replace("{n}", String(res.failed)) +
+      (firstError && firstError.error ? `：${firstError.error}` : ""),
+      true
+    );
+  }
+  (res.results || []).filter(r => r.ok && r.renamed).forEach(r => {
+    toast(t("会话「{a}」已重命名为「{b}」（本机已有同名会话）")
+      .replace("{a}", r.source_thread_id).replace("{b}", r.thread_id));
+  });
+  if (res.ok) {
+    settingsCache = null;
+    renderAgents();
+  }
+}
+
+/* 导出会话加密密码：单独一个浮层（设置面板里只放按钮 + 状态）。
+   窄窗口下把输入框挤在主设置列表的右列会窄得没法输入，所以拆出来。 */
+function openExportPasswordModal(current, onSaved) {
+  const mask = document.createElement("div");
+  mask.className = "modal-mask";
+  mask.innerHTML = `
+    <div class="modal" style="width:520px;" data-modal-key="exportSessionPassword">
+      <h3>🔐 ${t("配置导出会话加密密码")}</h3>
+      <div class="muted" style="line-height:1.8;margin-bottom:12px;">
+        ${t("导出会话会把该 multi-agent 的完整配置一起打包，其中包含模型调用 API key。设置密码后，导出的文件会用 AES-256-GCM 加密（扩展名 .zip.enc），导入时必须输入同一个密码。")}
+      </div>
+      <input type="password" id="exportPwInput" class="export-pw-input" autocomplete="new-password">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:10px;">
+        <label class="import-mode-row" style="margin:0;">
+          <input type="checkbox" id="exportPwShow"><span>${t("显示密码")}</span>
+        </label>
+        <button class="btn small" id="exportPwPrefixBtn" type="button">${t("显示前缀")}</button>
+      </div>
+      <div id="exportPwPrefixRow" style="display:none;margin-top:10px;">
+        <div class="muted" style="margin-bottom:4px;">${t("固定前缀（密码少于 10 个字符时会自动拼在密码前面，可选中复制）：")}</div>
+        <div class="export-pw-prefix" id="exportPwPrefix">${esc(SESSION_PASSWORD_PREFIX)}</div>
+      </div>
+      <div class="muted" style="line-height:1.7;margin-top:10px;">
+        ${t("密码少于 10 个字符时，程序会自动在密码前面补上固定的长前缀再用于加密；导入时输入同样的原始密码即可，不需要自己加前缀。")}
+      </div>
+      <div class="modal-actions">
+        <button class="btn" id="exportPwCancel">${t("取消")}</button>
+        <button class="btn primary" id="exportPwSave">${t("保存")}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(mask);
+  const input = mask.querySelector("#exportPwInput");
+  input.value = current || "";
+  const save = () => {
+    const value = input.value;
+    mask.remove();
+    onSaved(value);
+  };
+  mask.querySelector("#exportPwShow").onchange = (e) => {
+    input.type = e.target.checked ? "text" : "password";
+  };
+  // 「显示前缀」：把后端会拼上去的固定前缀灰字显示出来（只读，但可以选中复制）
+  const prefixRow = mask.querySelector("#exportPwPrefixRow");
+  const prefixBtn = mask.querySelector("#exportPwPrefixBtn");
+  prefixBtn.onclick = () => {
+    const open = prefixRow.style.display === "none";
+    prefixRow.style.display = open ? "" : "none";
+    prefixBtn.textContent = open ? t("隐藏前缀") : t("显示前缀");
+  };
+  mask.querySelector("#exportPwCancel").onclick = () => mask.remove();
+  mask.querySelector("#exportPwSave").onclick = save;
+  input.onkeydown = (e) => {
+    if (e.key === "Enter") { e.preventDefault(); save(); }
+    if (e.key === "Escape") { e.preventDefault(); mask.remove(); }
+  };
+  input.focus();
+  input.select();
 }
 
 function parseHeaders(str) {
@@ -2691,6 +3026,7 @@ async function renderAgents() {
       <div class="spacer" style="flex:1;"></div>
       <button class="btn small" id="langBtn" title="切换语言 / Switch language">${lang === "zh" ? "EN" : "中文"}</button>
       <button class="gear-btn" id="gearBtn" title="${t("系统设置")}">⚙️</button>
+      <button class="btn small" id="importSessionBtn">${t("导入会话")}</button>
       <button class="btn small" id="editSensitiveBtn">${t("编辑敏感信息表单")}</button>
       <button class="btn small" id="editGlobalPromptBtn" style="display:none;">${t("编辑全局常用prompt")}</button>
       <button class="btn small" id="editDefaultBtn">${t("编辑默认配置")}</button>
@@ -2717,6 +3053,9 @@ async function renderAgents() {
   $("#newBtn").onclick = () => { S.editingDefault = false; S.agentId = null; S.view = "editor"; render(); };
   $("#editDefaultBtn").onclick = () => { S.editingDefault = true; S.agentId = null; S.view = "editor"; render(); };
   $("#editSensitiveBtn").onclick = () => openSensitiveForm();
+  // 「导入会话」：与「导出会话」共用同一个总开关（关闭时隐藏按钮，后端也会拒绝）
+  const importSessionBtn = $("#importSessionBtn");
+  if (importSessionBtn) importSessionBtn.onclick = () => startImportSession();
   // 「编辑全局常用prompt」：显示与否由系统设置「开启常用prompt注入功能」决定（关闭时隐藏，数据保留）
   const globalPromptBtn = $("#editGlobalPromptBtn");
   if (globalPromptBtn) {
@@ -2724,7 +3063,11 @@ async function renderAgents() {
     try {
       const st = await getSettings();
       globalPromptBtn.style.display = st.common_prompt_enabled === false ? "none" : "";
-    } catch (e) { globalPromptBtn.style.display = "none"; }
+      if (importSessionBtn) importSessionBtn.style.display = st.export_session_enabled === false ? "none" : "";
+    } catch (e) {
+      globalPromptBtn.style.display = "none";
+      if (importSessionBtn) importSessionBtn.style.display = "none";
+    }
   }
   $("#gearBtn").onclick = () => openSettings();
   $("#langBtn").onclick = () => setLang(lang === "zh" ? "en" : "zh");
@@ -3061,6 +3404,27 @@ async function openSettings() {
       </div>
       <div class="settings-group">
         <div class="switch-row">
+          <span class="sw-label">📤 ${t("开启导出对话功能")} <i class="info-icon">!<span class="tip">${t("开启后，会话选择页底部会出现「导出会话」按钮，可把选中的会话连同所属 multi-agent 配置一起打包导出；主界面也会出现「导入会话」按钮。")}</span></i></span>
+          <label class="toggle"><input type="checkbox" id="set_export_session" ${s.export_session_enabled !== false ? "checked" : ""}><span class="track"></span></label>
+        </div>
+        <div id="exportSessionFields" style="${s.export_session_enabled !== false ? "" : "display:none;"}">
+          <div class="switch-row">
+            <span class="sw-label">🔐 ${t("导出会话加密")} <i class="info-icon">!<span class="tip">${t("导出的会话会包含该 multi-agent 配置里的模型调用 API key（以及子 agent 的 key、MCP 鉴权头等敏感内容）。若导出文件会离开本机，建议开启加密；开启后导入时必须输入同一个密码。")}</span></i></span>
+            <label class="toggle"><input type="checkbox" id="set_export_session_encrypt" ${s.export_session_encrypt ? "checked" : ""}><span class="track"></span></label>
+          </div>
+          <div id="exportSessionPwFields" style="${s.export_session_encrypt ? "" : "display:none;"}">
+            <div class="switch-row">
+              <span class="sw-label">${t("配置导出会话加密密码")} <i class="info-icon">!<span class="tip">${t("密码少于 10 个字符时，程序会自动在密码前面补上固定的长前缀再用于加密；导入时输入同样的原始密码即可，不需要自己加前缀。")}</span></i></span>
+              <span class="sw-inline">
+                <span class="muted" id="set_export_session_pw_state"></span>
+                <button class="btn small" id="set_export_session_pw" type="button">${t("配置密码")}</button>
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="settings-group">
+        <div class="switch-row">
           <span class="sw-label">✏️ ${t("开启编辑模式")} <i class="info-icon">!<span class="tip">${t("开启后，会话界面右上角会出现「进入编辑模式」按钮，可编辑历史消息。")}</span></i></span>
           <label class="toggle"><input type="checkbox" id="set_edit_enabled" ${s.edit_mode_enabled !== false ? "checked" : ""}><span class="track"></span></label>
         </div>
@@ -3111,6 +3475,29 @@ async function openSettings() {
   mask.querySelector("#set_export_md").addEventListener("change", e => {
     mask.querySelector("#exportMdFields").style.display = e.target.checked ? "" : "none";
   });
+  mask.querySelector("#set_export_session").addEventListener("change", e => {
+    mask.querySelector("#exportSessionFields").style.display = e.target.checked ? "" : "none";
+  });
+  mask.querySelector("#set_export_session_encrypt").addEventListener("change", e => {
+    mask.querySelector("#exportSessionPwFields").style.display = e.target.checked ? "" : "none";
+  });
+  // 密码单独用一个浮层配置：设置面板里只放一个按钮 + 状态，避免窄窗口下输入框被挤成一条缝。
+  let exportPassword = String(s.export_session_password || "");
+  const renderExportPasswordState = () => {
+    const el = mask.querySelector("#set_export_session_pw_state");
+    if (!el) return;
+    el.textContent = exportPassword
+      ? t("已设置（{n} 个字符）").replace("{n}", String(exportPassword.length))
+      : t("未设置");
+  };
+  renderExportPasswordState();
+  mask.querySelector("#set_export_session_pw").onclick = () => {
+    openExportPasswordModal(exportPassword, (value) => {
+      exportPassword = value;
+      renderExportPasswordState();
+      toast(t("密码已记录，点「保存」后生效"));
+    });
+  };
   mask.querySelector("#set_edit_enabled").addEventListener("change", e => {
     mask.querySelector("#editFields").style.display = e.target.checked ? "" : "none";
   });
@@ -3155,6 +3542,9 @@ async function openSettings() {
         show_local_md_convert_button: mask.querySelector("#set_local_md_convert").checked,
         export_md: mask.querySelector("#set_export_md").checked,
         export_md_path: mask.querySelector("#set_export_md_path").value,
+        export_session_enabled: mask.querySelector("#set_export_session").checked,
+        export_session_encrypt: mask.querySelector("#set_export_session_encrypt").checked,
+        export_session_password: exportPassword,
         edit_mode_enabled: mask.querySelector("#set_edit_enabled").checked,
         edit_any_history: mask.querySelector("#set_edit_any").checked,
         edit_all_message_types: mask.querySelector("#set_edit_types").checked,
@@ -5989,11 +6379,16 @@ async function renderThreadsView() {
     <div style="display:flex;align-items:center;margin-bottom:20px;gap:12px;">
       <h2 class="section-title" style="margin:0;">${t("会话")} — ${esc(S.agentName)}</h2>
       <div class="spacer" style="flex:1;"></div>
+      <button class="btn" id="cancelExportBtn" style="display:none;">${t("取消")}</button>
       <button class="btn primary" id="newThreadBtn">+ ${t("新建会话")}</button>
     </div>
     <div id="threadsBox" style="flex:1;overflow:auto;min-height:0;"><div class="muted">${t("加载中…")}</div></div>
     <div class="snapshot-drawer" id="snapshotDrawer">
       <button class="snapshot-handle" id="snapshotHandle" type="button">📸 <span id="snapshotLabel">${t("快照")}</span></button>
+      <div class="export-zone-wrap" id="exportZoneWrap" style="display:none;">
+        <button class="export-zone" id="exportZone" type="button">📤 <span id="exportZoneLabel">${t("导出会话")}</span></button>
+        <div class="export-hint" id="exportHint" style="display:none;"></div>
+      </div>
       <button class="showhidden-zone" id="showHiddenZone" type="button" style="display:none;">
         <span class="sw-label" id="showHiddenLabel"></span>
         <span class="toggle"><input type="checkbox" id="showHiddenChk"><span class="track"></span></span>
@@ -6057,10 +6452,52 @@ async function renderThreadsView() {
   catch (e) { snapshots = []; }
   if (!alive()) return;
 
+  // 导出会话：是否显示底部「导出会话」按钮由系统设置决定（默认开启）。
+  // 选择态、已选会话都是**本视图的局部变量**：离开本页再进来自然回到普通界面（需求如此）。
+  let exportOn = false;
+  try { const st = await getSettings(); exportOn = st.export_session_enabled !== false; }
+  catch (e) { exportOn = false; }
+  if (!alive()) return;
+  let exportSelecting = false;
+  let exportBusy = false;
+  const exportSelected = new Set();
+  let exportHintTimer = null;
+  const exportButtonLabel = () => {
+    if (exportBusy) return t("正在导出，请稍候…");
+    return exportSelected.size ? `${t("确定导出")}（${exportSelected.size}）` : t("确定导出");
+  };
+  const toggleExportPick = (tid) => {
+    if (exportSelected.has(tid)) exportSelected.delete(tid);
+    else exportSelected.add(tid);
+    drawThreadsBox();
+  };
+  // 提示气泡：贴在「确定导出」按钮上方浮出（用 toast 会飘到右上角、挡住页头的
+  // 「取消 / 新建会话」）。isError=true 时用红色警示样式。
+  function showExportHint(text, isError = false) {
+    const hint = $("#exportHint");
+    if (!hint) return;
+    hint.textContent = text;
+    hint.classList.toggle("warn", !!isError);
+    hint.style.display = "block";
+    if (exportHintTimer) clearTimeout(exportHintTimer);
+    exportHintTimer = setTimeout(() => {
+      exportHintTimer = null;
+      if (!alive()) return;
+      const el = $("#exportHint");
+      if (el) el.style.display = "none";
+    }, 15000);
+  }
+  function hideExportHint() {
+    if (exportHintTimer) { clearTimeout(exportHintTimer); exportHintTimer = null; }
+    const hint = $("#exportHint");
+    if (hint) hint.style.display = "none";
+  }
+
   // 底部栏可见性（与主界面一致）：
   // - 没有快照 → 不显示「快照」按钮
   // - 没有隐藏会话 → 不显示「显示隐藏对话」
-  // - 两者都没有 → 整条底栏都不显示
+  // - 导出功能开启 → 「导出会话」按钮常驻
+  // - 三者都没有 → 整条底栏都不显示
   function updateThreadsFooter() {
     const hiddenCnt = threads.filter(t => hiddenSet.has(t.thread_id)).length;
     const hasSnap = snapshots.length > 0;
@@ -6069,7 +6506,7 @@ async function renderThreadsView() {
       $("#showHiddenChk").checked = localStorage.getItem(showKey) === "1";
       $("#showHiddenLabel").textContent = t("显示隐藏对话") + `（${hiddenCnt}）`;
       zone.style.display = "flex";
-      zone.style.borderLeft = hasSnap ? "" : "none";
+      zone.style.borderLeft = (hasSnap || exportOn) ? "" : "none";
     } else {
       zone.style.display = "none";
     }
@@ -6077,7 +6514,26 @@ async function renderThreadsView() {
     $("#snapshotLabel").textContent = t("快照") + (snapshots.length ? `（${snapshots.length}）` : "");
     $("#snapshotHandle").style.display = hasSnap ? "" : "none";
     if (!hasSnap) $("#snapshotPanel").style.display = "none";
-    $("#snapshotDrawer").style.display = (hasSnap || hiddenCnt > 0) ? "" : "none";
+    const exportWrap = $("#exportZoneWrap");
+    if (exportWrap) {
+      exportWrap.style.display = exportOn ? "" : "none";
+      exportWrap.style.borderLeft = hasSnap ? "" : "none";
+    }
+    const exportZone = $("#exportZone");
+    if (exportZone) {
+      exportZone.classList.toggle("on", exportSelecting);
+      exportZone.disabled = exportBusy;
+      $("#exportZoneLabel").textContent = exportSelecting ? exportButtonLabel() : t("导出会话");
+    }
+    const cancelBtn = $("#cancelExportBtn");
+    if (cancelBtn) {
+      cancelBtn.style.display = exportSelecting ? "" : "none";
+      cancelBtn.disabled = exportBusy;
+    }
+    // 导出选择期间「新建会话」置灰：避免选到一半跳走 / 误建会话
+    const newThreadBtn = $("#newThreadBtn");
+    if (newThreadBtn) newThreadBtn.disabled = exportSelecting || exportBusy;
+    $("#snapshotDrawer").style.display = (hasSnap || hiddenCnt > 0 || exportOn) ? "" : "none";
   }
 
   // 复用已加载的 threads，仅原地重绘列表，避免整页 flash /「加载中」闪屏
@@ -6144,21 +6600,33 @@ async function renderThreadsView() {
             const browserStyle = browserTheme
               ? `--thread-browser-color:${browserBorder};--thread-browser-accent:${browserAccent};--thread-browser-tint:${browserColorTint(browserBorder, 0.07)};--thread-browser-tint-hover:${browserColorTint(browserBorder, 0.14)};`
               : "";
+            // 导出选择模式：最左边出现选择框，点整行即勾选/取消；隐藏与删除按钮先收起，
+            // 避免在「挑要导出的会话」时误删/误隐藏（本视图的状态，离开即复位）。
+            const picked = exportSelecting && exportSelected.has(th.thread_id);
+            const checkHtml = exportSelecting
+              ? `<span class="export-check${picked ? " on" : ""}" role="checkbox" aria-checked="${picked ? "true" : "false"}">✓</span>`
+              : "";
+            const actionsHtml = exportSelecting ? "" : `
+              <button class="btn card-btn card-btn-hide small" data-hide="${esc(th.thread_id)}" ${locked ? "disabled" : ""} title="${lockTitle}">${hidden ? t("取消隐藏") : t("隐藏")}</button>
+              <button class="btn card-btn card-btn-danger small" data-del="${esc(th.thread_id)}" ${locked ? "disabled" : ""} title="${lockTitle}">${t("删除")}</button>`;
             return `
-            <div class="thread-row ${hidden ? "thread-hidden" : ""}${browserTheme ? " thread-browser-open" : ""}" data-tid="${esc(th.thread_id)}"${browserTheme ? ` data-browser-open="1" data-browser-border="${browserBorder}" data-browser-accent="${browserAccent}"` : ""}${browserStyle ? ` style="${browserStyle}"` : ""}>
+            <div class="thread-row ${hidden ? "thread-hidden" : ""}${browserTheme ? " thread-browser-open" : ""}${exportSelecting ? " export-selecting" : ""}${picked ? " export-picked" : ""}" data-tid="${esc(th.thread_id)}"${browserTheme ? ` data-browser-open="1" data-browser-border="${browserBorder}" data-browser-accent="${browserAccent}"` : ""}${browserStyle ? ` style="${browserStyle}"` : ""}>
+              ${checkHtml}
               ${browserTheme ? `<span class="thread-browser-dot" role="img" title="${esc(browserTitle)}" aria-label="${esc(browserTitle)}"></span>` : ""}
               <span class="tid">${esc(th.thread_id)}</span>
               ${threadStateHtml(info)}
               <span class="meta"><small>${esc(cpText)}</small><small>${esc(th.last_updated || "")}</small>${hidden ? `<small class="hidden-tag">${t("已隐藏")}</small>` : ""}</span>
-              <button class="btn card-btn card-btn-hide small" data-hide="${esc(th.thread_id)}" ${locked ? "disabled" : ""} title="${lockTitle}">${hidden ? t("取消隐藏") : t("隐藏")}</button>
-              <button class="btn card-btn card-btn-danger small" data-del="${esc(th.thread_id)}" ${locked ? "disabled" : ""} title="${lockTitle}">${t("删除")}</button>
+              ${actionsHtml}
             </div>`;
           }).join("")}
         </div>`;
 
       $$("#threadsBox .thread-row").forEach(row => {
         const tid = row.dataset.tid;
-        row.onclick = () => goChat(agentId, agentName, tid);
+        row.onclick = () => {
+          if (exportSelecting) { toggleExportPick(tid); return; }
+          goChat(agentId, agentName, tid);
+        };
         const delBtn = row.querySelector("[data-del]");
         const hideBtn = row.querySelector("[data-hide]");
         if (delBtn && !delBtn.disabled) delBtn.onclick = (e) => { e.stopPropagation(); deleteThread(tid); };
@@ -6207,6 +6675,69 @@ async function renderThreadsView() {
     const chk = $("#showHiddenChk");
     chk.checked = !chk.checked;
     chk.dispatchEvent(new Event("change"));
+  };
+
+  // ── 导出会话（本页局部状态：离开本页再进来就回到普通界面）──────────────
+  async function doExportSession() {
+    const threadIds = [...exportSelected];
+    if (!threadIds.length) {
+      // 没选会话的提示也走同一个气泡（不再飘到右上角挡住页头按钮）
+      showExportHint(t("请先选择要导出的会话"), true);
+      return;
+    }
+    exportBusy = true;
+    updateThreadsFooter();
+    try {
+      const res = await api("/api/session-export", {
+        method: "POST",
+        body: JSON.stringify({
+          agent_id: agentId,
+          thread_ids: threadIds,
+          title: t("选择会话导出位置"),
+        }),
+      });
+      if (res.canceled) { toast(t("已取消导出")); return; }
+      let msg = t("已导出 {n} 个会话").replace("{n}", String((res.sessions || []).length));
+      if (res.skipped && res.skipped.length) {
+        msg += t("（{m} 个空会话已跳过）").replace("{m}", String(res.skipped.length));
+      }
+      toast(t("已导出到：{path}").replace("{path}", res.path));
+      toast(msg);
+      exportSelecting = false;
+      exportSelected.clear();
+      hideExportHint();
+    } catch (e) {
+      toast(e.message, true);
+    } finally {
+      exportBusy = false;
+      if (alive()) drawThreadsBox();
+    }
+  }
+  $("#exportZone").onclick = () => {
+    if (exportBusy) return;
+    if (!exportSelecting) {
+      exportSelecting = true;
+      exportSelected.clear();
+      drawThreadsBox();
+      // 需求：提示导出的会话含模型 API key，建议开启加密（只在未开启时提示一次）。
+      // 提示贴在「确定导出」按钮上方，不占用页面右上角的提示通道。
+      getSettings()
+        .then((st) => {
+          if (st.export_session_encrypt !== true && alive()) {
+            showExportHint(t("导出的会话会包含模型 API key；若文件会离开本机，建议在系统设置里开启「导出会话加密」"));
+          }
+        })
+        .catch(() => {});
+      return;
+    }
+    doExportSession();
+  };
+  $("#cancelExportBtn").onclick = () => {
+    if (exportBusy) return;
+    exportSelecting = false;
+    exportSelected.clear();
+    hideExportHint();
+    drawThreadsBox();
   };
 
   // ── 快照抽屉 ─────────────────────────────

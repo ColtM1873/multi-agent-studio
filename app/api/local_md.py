@@ -47,22 +47,12 @@ class ConvertLocalMdRequest(BaseModel):
 
 
 def _owner_hwnd() -> int:
-    """尽量拿到桌面版（pywebview / WebView2）主窗口句柄，让对话框成为它的模态子窗口。"""
-    try:
-        import ctypes
+    """桌面版（pywebview / WebView2）主窗口句柄，让对话框成为它的模态子窗口。
 
-        import desktop_app
-
-        window = getattr(desktop_app, "_window", None)
-        native = getattr(window, "native", None)
-        if native is not None:
-            hwnd = int(native.Handle.ToInt64())
-            # 窗口可能已销毁/隐藏到托盘；只有仍有效的句柄才交给通用对话框
-            if hwnd and ctypes.windll.user32.IsWindow(hwnd):
-                return hwnd
-    except Exception:  # noqa: BLE001 - 浏览器标签页模式 / 窗口尚未创建
-        pass
-    return 0
+    实现已上移到 `app/services/win_file_dialog.owner_hwnd()`（会话导出/导入也要用），
+    这里保留同名函数只为兼容既有调用点与文档。
+    """
+    return win_file_dialog.owner_hwnd()
 
 
 def _read_markdown_text(path: Path) -> str:
@@ -112,7 +102,11 @@ def convert_local_md(body: ConvertLocalMdRequest | None = None):
     try:
         selected = win_file_dialog.open_file_dialog(
             title=(body.title if body else "") or _DEFAULT_DIALOG_TITLE,
-            owner_hwnd=_owner_hwnd(),
+            owner=_owner_hwnd(),
+            filters=(
+                "Markdown 文件 (*.md;*.markdown)\0*.md;*.markdown\0"
+                "所有文件 (*.*)\0*.*\0\0"
+            ),
         )
     except Exception as e:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=f"无法打开系统文件选择窗口：{e}")

@@ -155,6 +155,18 @@ class Settings(BaseModel):
     # MD 导出：默认开启；输出路径为空时需先在设置里填写
     export_md: bool = True
     export_md_path: str = ""
+    # 会话导出 / 导入：总开关。开启后，会话选择页底部出现「导出会话」按钮（可勾选多个
+    # 会话，连同所属 multi-agent 配置打包成 zip），主界面出现「导入会话」按钮。
+    # 纯前端显示开关 + 后端端点校验，不参与图编译，无需 invalidate_all。默认开启。
+    export_session_enabled: bool = True
+    # 导出会话加密：开启后导出的 zip 会用「密码 → scrypt/PBKDF2 → AES-256-GCM」加密，
+    # 文件扩展名变为 .zip.enc；导入时需要输入同一个密码。
+    # 导出的会话包含该 multi-agent 配置里的模型调用 API key，因此可离开本机时建议开启。
+    export_session_encrypt: bool = False
+    # 导出会话加密密码（用户原始密码）。少于 10 个字符时，导出/导入两端都会自动在
+    # 前面补上固定长前缀（见 app/services/session_archive.py），因此**用户只需记住这个
+    # 原始密码**，导入时输入同样的原文即可。
+    export_session_password: str = ""
     # 历史消息编辑：总开关（默认开启）
     edit_mode_enabled: bool = True
     # 历史消息编辑：是否允许编辑任意久远的历史消息（默认只编辑最新一轮对话）

@@ -121,3 +121,24 @@ class LiteChatManager(ChatManager):
                 agent_id, thread_id, sub_agent
             )
         return await super().history_token_usage(agent_id, thread_id, sub_agent)
+
+    # ── 会话导出 / 导入：SQLite 模式走 sqlite_store，其余继承普通实现 ──
+
+    async def thread_namespaces(self, agent_id: str, thread_id: str) -> list[str]:
+        if self._use_sqlite():
+            return await sqlite_store.list_thread_namespaces(agent_id, thread_id)
+        return await super().thread_namespaces(agent_id, thread_id)
+
+    async def export_thread_checkpoints(self, agent_id: str, thread_id: str) -> dict:
+        if self._use_sqlite():
+            return await sqlite_store.export_thread_checkpoints(agent_id, thread_id)
+        return await super().export_thread_checkpoints(agent_id, thread_id)
+
+    async def import_thread_checkpoints(
+        self, agent_id: str, thread_id: str, payload: dict
+    ) -> list[str]:
+        if self._use_sqlite():
+            return await sqlite_store.import_thread_checkpoints(
+                agent_id, thread_id, payload
+            )
+        return await super().import_thread_checkpoints(agent_id, thread_id, payload)

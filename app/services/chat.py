@@ -269,3 +269,28 @@ class ChatManager:
         return await threads_service.get_history_token_usage(
             config.checkpoint_conn_string, thread_id, sub_agent
         )
+
+    # ── 会话导出 / 导入（Lite 只在 SQLite 模式下覆盖这三个方法）────────────
+
+    async def thread_namespaces(self, agent_id: str, thread_id: str) -> list[str]:
+        """该会话出现过的 checkpoint namespace（`''` = 主图，其余为子 agent 名）。"""
+        config = self.config_store.load(agent_id)
+        return await threads_service.list_thread_namespaces(
+            config.checkpoint_conn_string, thread_id
+        )
+
+    async def export_thread_checkpoints(self, agent_id: str, thread_id: str) -> dict:
+        """导出会话：每个 namespace 的最新 checkpoint（后端中立的 dict）。"""
+        config = self.config_store.load(agent_id)
+        return await threads_service.export_thread_checkpoints(
+            config.checkpoint_conn_string, thread_id
+        )
+
+    async def import_thread_checkpoints(
+        self, agent_id: str, thread_id: str, payload: dict
+    ) -> list[str]:
+        """把导出的会话数据写进 ``thread_id``（调用方保证该名字在新库中不冲突）。"""
+        config = self.config_store.load(agent_id)
+        return await threads_service.import_thread_checkpoints(
+            config.checkpoint_conn_string, thread_id, payload
+        )

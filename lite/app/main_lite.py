@@ -42,6 +42,7 @@ from app.api import (
     common_prompts,
     drafts,
     export_html,
+    session_transfer,
     sessions,
     settings,
     snapshots,
@@ -213,6 +214,7 @@ app.include_router(sessions.router)
 app.include_router(chat_ws.router)
 app.include_router(settings.router)
 app.include_router(export_html.router)
+app.include_router(session_transfer.router)
 app.include_router(drafts.router)
 app.include_router(common_prompts.router)
 app.include_router(ui_prefs.router)

@@ -20,5 +20,9 @@ markitdown[pdf,docx,pptx,xlsx,xls]==0.1.7
 # 浏览器接管工具（browser_agent）：CDP WebSocket 客户端 + HTTP 就绪探测
 websocket-client==1.9.0
 requests==2.34.2
+# 会话导出加密（AES-256-GCM）：普通版与 Lite 版共用同一种导出格式。
+# 它本来就会随 markitdown / google-auth 装进环境，这里显式锁定版本，
+# 避免依赖链路变化导致「加密导出」在客户机上不可用。
+cryptography==49.0.0
 # 桌面应用窗口：用 Edge WebView2 承载前端界面（独立任务栏/Alt+Tab，不依附浏览器）
 pywebview==6.2.1
