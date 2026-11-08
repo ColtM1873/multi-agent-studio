@@ -25,6 +25,10 @@
       `find_tables()`（**基于框线**）抽表格，把表格按位置嵌回正文。这样既避免 MarkItDown 的
       pdfplumber 启发式（`x_tolerance=3`）把字距小的正文粘连成 `Publishedasaconferencepaper...`，
       又能拿到真正的线框表格。可用全局设置 `Settings.pdf_table_extraction` 关闭表格提取。
+      另外：矢量图内的文字（Visio/Word 子集字体没有 Unicode 映射，任何提取器都只能得到
+      `!"#$%&'` 这类乱码）会被识别并替换成一条**占位提示**，不再输出乱码；数学字体
+      （LaTeX txfonts 等）的符号按 PDF 里的字形名还原（∑ / ≠ / 矩阵括号 / `(cid:N)`）；
+      页脚页码会被剔除、双栏页面按「左栏读到底再读右栏」排序、行尾连字符会合并。
     - **其余格式**：用 MarkItDown 转 Markdown。
   - **转换副本落盘**：读取**专有格式**（`_PROPRIETARY_DOC_EXTENSIONS`）时，会把完整转换结果
     **落成相同目录下的同名 `.md` 副本**（如 `the-new-SOTA-paper.pdf` → `the-new-SOTA-paper.md`；
@@ -254,6 +258,221 @@ def _md_copy_note(source_path: str, md_path: str, status: str) -> str:
 # 「词坐标对齐」表格启发式不看框线，常把双栏正文/图注误判成表格。
 # 这里改为：正文交给 pdfminer（空格 + 双栏阅读顺序可靠），表格交给 pdfplumber
 # 的 find_tables()（默认 lines 策略，真正的框线检测）。
+#
+# 2026-11 质量修复（P0/P1/P2）：
+# - **图内文字**：矢量图里的文字常来自 Visio/Word 子集字体（ArialMT /
+#   TimesNewRomanPSMT / Calibri…），这些字体**没有 ToUnicode**，字符码被重排成
+#   连续 ASCII，任何提取器（pdfminer / pdfplumber / pypdfium2 实测一致）都只能得到
+#   `!"#$%&'` 这类乱码。判断方式：字体不在数学字体白名单、且「字母数字占比」低于
+#   阈值（实测图内 0.00–0.40、正文 0.83–1.00）。判定为图内文字后**不输出乱码**，
+#   只留一条占位提示。
+# - **假表格**：矢量图的框线会被 find_tables()（lines 策略）当成真表格。除原有的
+#   行/列/填充数过滤外，再要求「内容可读」（字母数字占比 >= 0.6）；不可读的候选
+#   记为 garbage，只输出占位，不输出乱码表格。
+# - **数学字体还原**：LaTeX 用 txfonts（txex/txsy…）时同样没有 ToUnicode，pdfminer
+#   会把「字体编码」原样输出（如码位 0x58 的 summationdisplay 变成字母 `X`、txsyc
+#   码位 0x2C 的 nequal 变成 `,`）。PDF 的 `/Differences` 里有确定字形名，按
+#   「字体 + 解码字符」还原：`X`→`∑`、`,`→`≠`、PUA→⎡⎢⎣⎤⎥⎦、(cid:2/3)→[]。
+# - **版面**：剔除页脚/页码；双栏页面按「左栏读到底再读右栏」重排；合并行尾连字符。
+# - **Markdown 安全**：表格单元格转义 `$ _ * ` [ ] ~ & < > #`，表格块之间留空行，
+#   避免前端 texmath 把乱码里的 `$...$` 当公式渲染出 KaTeX ParseError。
+
+# 数学字体（TeX/LaTeX 与 Word 公式常用）：字符大多是可读的符号，不能按「可读率低」
+# 判成图内噪声，否则公式会被整块丢弃。
+_PDF_MATH_FONT_PREFIXES = (
+    "tx", "rtx", "MSBM", "CM", "LatinModernMath", "STIX", "XITS", "Asana",
+    "Euclid", "Symbol", "msam", "msbm", "cmmi", "cmsy", "cmex", "cmr",
+)
+
+# txfonts 无 ToUnicode 时的「字体 + 解码字符 → 正确 Unicode」映射（来自 PDF 的
+# /Differences：txex 码位 88 是 summationdisplay；txsyc 码位 44 是 nequal）。
+# 只收录能确证的字形，宁缺毋滥：映射错比不映射更糟。
+_PDF_MATH_GLYPH_MAP: dict[str, dict[str, str]] = {
+    "txex": {"X": "\u2211"},   # summationdisplay → ∑
+    "txsyc": {",": "\u2260"},  # nequal → ≠
+}
+
+# txex 的括号延展构件（/Differences: bracketlefttp/ex/bt、bracketrighttp/ex/bt）。
+# pdfminer 对缺失 Unicode 映射的码位会输出私有区字符（U+F8EE…），这里还原成
+# Unicode 的「括号组件」，让矩阵的左右括号重新可见。
+_PDF_PUA_GLYPH_MAP = {
+    "\uf8ee": "\u23a1",  # bracketlefttp  → ⎡
+    "\uf8ef": "\u23a2",  # bracketleftex  → ⎢
+    "\uf8f0": "\u23a3",  # bracketleftbt  → ⎣
+    "\uf8f9": "\u23a4",  # bracketrighttp → ⎤
+    "\uf8fa": "\u23a5",  # bracketrightex → ⎥
+    "\uf8fb": "\u23a6",  # bracketrightbt → ⎦
+}
+
+# pdfminer 无法解码时的 `(cid:N)` 占位（txex：2/3=bracketleftbig/rightbig，
+# 16/17=parenleftBig/rightBig，50..55=括号延展件）。
+_PDF_CID_GLYPH_MAP = {
+    "2": "[", "3": "]",
+    "16": "(", "17": ")",
+    "50": "\u23a1", "51": "\u23a4", "52": "\u23a3",
+    "53": "\u23a6", "54": "\u23a2", "55": "\u23a5",
+}
+
+# 图内文字被识别出来后输出的占位（保留「这里原本有图内文字」的信息，不输出乱码）。
+_FIGURE_TEXT_PLACEHOLDER = "> [图内文字无法可靠提取，已省略（图形区域文字缺少 Unicode 映射）]"
+
+# 可读率阈值：图内乱码实测 0.00–0.40，正文 0.83–1.00，取 0.6 两侧都有余量。
+_READABLE_RATIO_THRESHOLD = 0.6
+
+
+def _pdf_font_base(fontname: str) -> str:
+    """去掉子集前缀（如 `JTOLEZ+txex` → `txex`）。"""
+    return (fontname or "").split("+")[-1]
+
+
+def _is_pdf_math_font(fontname: str) -> bool:
+    """是否是数学/公式字体（这些字体的低可读率是正常的，不能当图内噪声丢掉）。"""
+    return _pdf_font_base(fontname).startswith(_PDF_MATH_FONT_PREFIXES)
+
+
+def _readable_ratio(text: str) -> float:
+    """「字母数字 / 非空白字符」占比：乱码里的符号多，正文里字母多。"""
+    chars = [c for c in (text or "") if not c.isspace()]
+    if not chars:
+        return 0.0
+    return sum(1 for c in chars if c.isalnum()) / len(chars)
+
+
+def _map_pdf_text_segment(text: str, fontname: str) -> str:
+    """把一个 LTChar 的文字按字体映射回正确的 Unicode。"""
+    if not text:
+        return ""
+    # pdfminer 对无 Unicode 映射的字符输出 `(cid:N)`，整段替换（不是逐字符）。
+    m = re.fullmatch(r"\(cid:(\d+)\)", text)
+    if m:
+        if _is_pdf_math_font(fontname):
+            return _PDF_CID_GLYPH_MAP.get(m.group(1), text)
+        return text
+    base = _pdf_font_base(fontname)
+    glyph_map = _PDF_MATH_GLYPH_MAP.get(base)
+    out = []
+    for ch in text:
+        if ch in _PDF_PUA_GLYPH_MAP:
+            out.append(_PDF_PUA_GLYPH_MAP[ch])
+        elif glyph_map and ch in glyph_map:
+            out.append(glyph_map[ch])
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+def _iter_lt_pieces(element):
+    """递归取出 pdfminer 布局元素下的字符/标注，**保留顺序与字体**。
+
+    关键：不能只取 LTChar——PDF 里的空格往往不是字形，而是 pdfminer 生成的
+    `LTAnno(" ")`。只拼 LTChar 会把整行单词粘在一起（实测 `AdversarialFiltering...`）。
+    LTAnno 没有字体，返回 font=None，映射时原样保留。
+    """
+    from pdfminer.layout import LTAnno, LTChar
+
+    for child in element:
+        if isinstance(child, LTChar):
+            yield (child.fontname or "", child.get_text())
+        elif isinstance(child, LTAnno):
+            yield (None, child.get_text())
+        elif hasattr(child, "__iter__"):
+            try:
+                yield from _iter_lt_pieces(child)
+            except TypeError:
+                pass
+
+
+def _pdf_font_family(fontname: str) -> str:
+    """字体族（`NimbusRomNo9L-Medi` → `NimbusRomNo9L`），用于判断「正文主字体」。"""
+    base = _pdf_font_base(fontname)
+    return base.split("-")[0] if base else ""
+
+
+def _is_page_furniture(bbox: tuple, page_height: float, text: str) -> bool:
+    """判断是否是页脚/页码/页眉这类版面家具（不是正文）。"""
+    stripped = (text or "").strip()
+    if not stripped or len(stripped) > 90:
+        return False
+    if (bbox[3] - bbox[1]) > 22:  # 多行大块不算
+        return False
+    bottom_gap = bbox[1]
+    top_gap = page_height - bbox[3]
+    # 底部 12%（页脚常见区）或顶部 5%（页眉常见区）；顶部取更保守，避免误删正文首行。
+    return bottom_gap < page_height * 0.12 or top_gap < page_height * 0.05
+
+
+def _is_figure_text_block(text: str, fontname: str, main_families: set[str]) -> bool:
+    """判断文本块是否来自矢量图内部（字体无 Unicode 映射 → 乱码）。
+
+    三个条件同时满足才算：不是数学字体（公式符号多但可读）、字体族不是本页正文主字体、
+    字母数字占比低于阈值。这样 `xi(1, 1)`（正文主字体、占比 0.5）不会被误杀，而
+    `!"#$%&'`（图内 ArialMT、占比 0.0）会被识别。
+    """
+    stripped = (text or "").strip()
+    if not stripped:
+        return False
+    if _is_pdf_math_font(fontname):
+        return False
+    if _pdf_font_family(fontname) in main_families:
+        return False
+    # 图内乱码常是「数字+符号」拼成的（如 `355',4.2'$678`，字母占比 0），
+    # 单看字母数字占比会误判成可读；这里补一条「无字母 + 有一定长度」的判据。
+    letters = sum(1 for c in stripped if c.isalpha())
+    if len(stripped) >= 4 and letters == 0:
+        return True
+    return _readable_ratio(stripped) < _READABLE_RATIO_THRESHOLD
+
+
+def _dehyphenate(text: str) -> str:
+    """合并行尾连字符（`Evasion at-\\ntacks` → `Evasion attacks`）。
+
+    只合并「连字符 + 换行 + 以字母结尾的小写词」：`set-\\nat-` 这类 PDF 内容流错乱
+    产生的散词（两个不同词的前半）不该被粘成 `setat-`，所以后面紧跟字母/连字符时不合并。
+    """
+    return re.sub(
+        r"([A-Za-z\u00c0-\u024f])-\n([a-z\u00e0-\u00ff]{2,})(?![A-Za-z-])",
+        r"\1\2",
+        text or "",
+    )
+
+
+def _bbox_overlaps(a: tuple, b: tuple) -> bool:
+    return not (a[2] < b[0] or a[0] > b[2] or a[3] < b[1] or a[1] > b[3])
+
+
+def _dedupe_nested_boxes(boxes: list[tuple]) -> list[tuple]:
+    """去掉被其它框完全包含的框（pdfplumber 对同一张图常给出多层候选）。"""
+    kept: list[tuple] = []
+    for bbox in sorted(boxes, key=lambda b: -((b[2] - b[0]) * (b[3] - b[1]))):
+        contained = False
+        for other in kept:
+            if (
+                bbox[0] >= other[0] - 1
+                and bbox[1] >= other[1] - 1
+                and bbox[2] <= other[2] + 1
+                and bbox[3] <= other[3] + 1
+            ):
+                contained = True
+                break
+        if not contained:
+            kept.append(bbox)
+    return kept
+
+
+def _escape_md_cell(text: str) -> str:
+    """把表格单元格里的 Markdown/LaTeX 敏感字符转义，避免污染整篇渲染。
+
+    - `\\` 先转义，避免后续替换产生新的转义序列；
+    - `& < >` 走 HTML 实体（反斜杠转义在 CommonMark 里对它们无效）；
+    - `$` 必须转义：否则前端 markdown-it-texmath 会把乱码里的 `$...$` 当公式，
+      渲染出 KaTeX ParseError（本轮问题的直接触发点）；
+    - `_ * ` [ ] ~ #` 转成字面量，避免被当成强调/代码/链接/标题。
+    """
+    s = str(text).replace("\\", "\\\\")
+    s = s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    for ch in ("$", "_", "*", "`", "[", "]", "~", "#"):
+        s = s.replace(ch, "\\" + ch)
+    return s
 
 
 def _pdf_table_to_markdown(rows: list[list]) -> str:
@@ -263,7 +482,10 @@ def _pdf_table_to_markdown(rows: list[list]) -> str:
         cells: list[str] = []
         for cell in row:
             text = "" if cell is None else str(cell)
-            text = text.replace("\r", " ").replace("\n", "<br>").strip().replace("|", "\\|")
+            # 单元格内换行改 <br>：先占位再转义，最后还原，避免 < 被转成 &lt;
+            text = text.replace("\r", " ").replace("\n", "\x00BR\x00").strip()
+            text = _escape_md_cell(text).replace("\x00BR\x00", "<br>")
+            text = text.replace("|", "\\|")
             cells.append(text)
         if any(cells):
             norm_rows.append(cells)
@@ -287,7 +509,7 @@ def _pdf_table_to_markdown(rows: list[list]) -> str:
 
 
 def _is_useful_pdf_table(rows: list[list], page_area: float, bbox: tuple) -> bool:
-    """过滤 pdfplumber 的误判（矢量图、整页外框等）。"""
+    """过滤 pdfplumber 的误判（矢量图、整页外框、乱码图注等）。"""
     nrows = len(rows)
     ncols = max((len(r) for r in rows), default=0)
     if nrows < 2 or ncols < 2:
@@ -297,6 +519,10 @@ def _is_useful_pdf_table(rows: list[list], page_area: float, bbox: tuple) -> boo
         return False
     wordy = sum(1 for r in rows for c in r if c and re.search(r"[A-Za-z0-9]", str(c)))
     if wordy < 2:
+        return False
+    # 内容必须「像人话」：矢量图里的乱码（!"#$%&' 等）可读率极低，不能当表格输出。
+    flat = " ".join(str(c) for r in rows for c in r if c and str(c).strip())
+    if _readable_ratio(flat) < _READABLE_RATIO_THRESHOLD:
         return False
     try:
         area = (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])
@@ -308,8 +534,38 @@ def _is_useful_pdf_table(rows: list[list], page_area: float, bbox: tuple) -> boo
     return True
 
 
-def _extract_pdf_tables(path: str, enabled: bool) -> dict[int, list[tuple[tuple, str]]]:
-    """逐页用 pdfplumber 基于框线检测表格，返回 {页索引: [(bbox, markdown)]}。"""
+def _looks_like_garbage_table(rows: list[list], bbox: tuple, page_area: float) -> bool:
+    """判断被过滤的表格候选是否「本应是一张图/图注」——用于输出占位。
+
+    只对「有基本表格形状 + 面积合理 + 内容可读率低」的候选返回 True；
+    1×1 的小误判、覆盖整页的外框都不会走到占位。
+    """
+    nrows = len(rows)
+    ncols = max((len(r) for r in rows), default=0)
+    if nrows < 2 or ncols < 2:
+        return False
+    flat = " ".join(str(c) for r in rows for c in r if c and str(c).strip())
+    if not flat.strip():
+        return False
+    try:
+        area = (bbox[2] - bbox[0]) * (bbox[3] - bbox[1])
+    except Exception:
+        area = 0
+    if page_area > 0:
+        ratio = area / page_area
+        if ratio < 0.005 or ratio > 0.9:
+            return False
+    return _readable_ratio(flat) < _READABLE_RATIO_THRESHOLD
+
+
+def _extract_pdf_tables(path: str, enabled: bool) -> dict[int, dict]:
+    """逐页用 pdfplumber 基于框线检测表格。
+
+    返回 {页索引: {"useful": [(bbox, markdown)], "garbage": [bbox]}}：
+    - useful：内容可读、按管道表格输出；
+    - garbage：形状像表格但内容不可读（矢量图的框线/图注乱码），只输出占位。
+    bbox 为 pdfplumber 坐标（左上原点）。
+    """
     if not enabled:
         return {}
     try:
@@ -317,12 +573,13 @@ def _extract_pdf_tables(path: str, enabled: bool) -> dict[int, list[tuple[tuple,
     except Exception:
         return {}
 
-    tables: dict[int, list[tuple[tuple, str]]] = {}
+    tables: dict[int, dict] = {}
     try:
         with pdfplumber.open(path) as pdf:
             for idx, page in enumerate(pdf.pages):
                 page_area = float(page.width) * float(page.height)
-                found: list[tuple[tuple, str]] = []
+                useful: list[tuple[tuple, str]] = []
+                garbage: list[tuple] = []
                 try:
                     raw_tables = page.find_tables()
                 except Exception:
@@ -332,12 +589,17 @@ def _extract_pdf_tables(path: str, enabled: bool) -> dict[int, list[tuple[tuple,
                         rows = table.extract(x_tolerance=1.5)
                     except Exception:
                         continue
-                    if not _is_useful_pdf_table(rows, page_area, table.bbox):
-                        continue
-                    md = _pdf_table_to_markdown(rows)
-                    if md:
-                        found.append((tuple(float(v) for v in table.bbox), md))
-                tables[idx] = found
+                    bbox = tuple(float(v) for v in table.bbox)
+                    if _is_useful_pdf_table(rows, page_area, bbox):
+                        md = _pdf_table_to_markdown(rows)
+                        if md:
+                            useful.append((bbox, md))
+                    elif _looks_like_garbage_table(rows, bbox, page_area):
+                        garbage.append(bbox)
+                tables[idx] = {
+                    "useful": useful,
+                    "garbage": _dedupe_nested_boxes(garbage),
+                }
     except Exception:
         return {}
     return tables
@@ -358,64 +620,199 @@ def _is_vertical_text_noise(text: str, bbox: tuple, page_width: float) -> bool:
     return single / len(lines) > 0.6
 
 
-def _extract_pdf_text_pages(path: str) -> list[tuple[float, list[tuple[tuple, str]]]]:
-    """用 pdfminer 逐页抽取正文块，返回 [(页高, [(bbox, text)]), ...]，保持阅读顺序。"""
+def _extract_pdf_text_pages(path: str) -> list[tuple[float, float, list[tuple[tuple, str, bool]]]]:
+    """用 pdfminer 逐页抽取正文块，保持阅读顺序。
+
+    返回 [(页高, 页宽, [(bbox, text, 是否图内文字)])]：
+    - text 已按字体做过数学符号映射（∑ / ≠ / 括号 / (cid:N)），并保留 LTAnno 空格；
+    - 「是否图内文字」按「字体族是否本页正文主字体 + 字母数字占比」判定。
+    """
     from pdfminer.high_level import extract_pages
     from pdfminer.layout import LTTextBox
 
-    pages: list[tuple[float, list[tuple[tuple, str]]]] = []
+    pages: list[tuple[float, float, list[tuple[tuple, str, bool]]]] = []
     for layout in extract_pages(path):
         height = float(layout.bbox[3])
         width = float(layout.bbox[2])
-        blocks: list[tuple[tuple, str]] = []
+        raw_blocks: list[tuple[tuple, str, str]] = []  # (bbox, text, dominant_family)
+        family_chars: dict[str, int] = {}
         for element in layout:
-            if isinstance(element, LTTextBox):
-                text = element.get_text()
-                if not (text and text.strip()):
+            if not isinstance(element, LTTextBox):
+                continue
+            text_parts: list[str] = []
+            char_counts: dict[str, int] = {}
+            for font, raw in _iter_lt_pieces(element):
+                if not raw:
                     continue
-                bbox = tuple(float(v) for v in element.bbox)
-                if _is_vertical_text_noise(text, bbox, width):
-                    continue
-                blocks.append((bbox, text))
-        pages.append((height, blocks))
+                text_parts.append(_map_pdf_text_segment(raw, font or ""))
+                if font:
+                    family = _pdf_font_family(font)
+                    char_counts[family] = char_counts.get(family, 0) + len(raw)
+            text = "".join(text_parts)
+            if not (text and text.strip()):
+                continue
+            bbox = tuple(float(v) for v in element.bbox)
+            if not char_counts:
+                continue
+            dominant = max(char_counts.items(), key=lambda kv: kv[1])[0]
+            # 数学字体的单字符块（如矩阵大括号的上下角 ⎡⎤）是正文内容，不能当竖排噪声删掉。
+            if not _is_pdf_math_font(dominant) and _is_vertical_text_noise(text, bbox, width):
+                continue
+            for family, count in char_counts.items():
+                family_chars[family] = family_chars.get(family, 0) + count
+            raw_blocks.append((bbox, text, dominant))
+
+        total_chars = sum(family_chars.values()) or 1
+        # 本页「正文主字体族」：覆盖 >= 20% 字符的族（图内 ArialMT/TimesNewRoman 通常 < 15%）。
+        main_families = {f for f, n in family_chars.items() if n >= total_chars * 0.20}
+        blocks: list[tuple[tuple, str, bool]] = [
+            (bbox, text, _is_figure_text_block(text, dominant, main_families))
+            for bbox, text, dominant in raw_blocks
+        ]
+        pages.append((height, width, blocks))
     return pages
 
 
-def _merge_pdf_page(
-    text_blocks: list[tuple[tuple, str]],
-    tables: list[tuple[tuple, str]],
-    page_height: float,
-) -> str:
-    """把某页的正文块与表格按纵向位置合并。"""
-    # 表格 bbox 来自 pdfplumber（左上原点），转为 pdfminer（左下原点）。
-    pm_tables: list[tuple[tuple, str]] = [
-        ((x0, page_height - bottom, x1, page_height - top), md)
-        for (x0, top, x1, bottom), md in tables
-    ]
-    pm_tables.sort(key=lambda item: item[0][3], reverse=True)  # 从页顶往下
+def _is_two_column_page(items: list[dict], page_width: float) -> bool:
+    """判断该页是否「双栏并行」版面。
 
-    def _inside_table(bbox: tuple) -> bool:
-        x0, y0, x1, y1 = bbox
-        for (tx0, ty0, tx1, ty1), _ in pm_tables:
-            if not (x1 < tx0 or x0 > tx1 or y1 < ty0 or y0 > ty1):
-                return True
+    判据：以页宽中点为界，左/右两侧各至少 2 个块，且两栏的 y 区间有实质重叠
+    （重叠高度 >= 较短一栏的 25%）。单栏页面绝大多数块横跨中点，左右两侧块都少，
+    不会误判。
+    """
+    if page_width <= 0 or len(items) < 4:
         return False
+    mid = page_width / 2
+    left = [it for it in items if it["bbox"][0] < mid]
+    right = [it for it in items if it["bbox"][0] >= mid]
+    if len(left) < 2 or len(right) < 2:
+        return False
+    ly0 = min(it["bbox"][1] for it in left)
+    ly1 = max(it["bbox"][3] for it in left)
+    ry0 = min(it["bbox"][1] for it in right)
+    ry1 = max(it["bbox"][3] for it in right)
+    overlap = min(ly1, ry1) - max(ly0, ry0)
+    if overlap <= 0:
+        return False
+    shorter = min(ly1 - ly0, ry1 - ry0)
+    return shorter > 0 and overlap >= 0.25 * shorter
 
-    seq: list[dict] = []
-    for bbox, text in text_blocks:
-        if _inside_table(bbox):
-            continue
-        seq.append({"kind": "text", "bbox": bbox, "text": text.rstrip()})
 
-    for table_bbox, md in pm_tables:
+def _order_page_items(items: list[dict], page_width: float) -> list[dict]:
+    """排列一页的块：先把表格/占位按 y 插入正文序列，再按栏稳定分组。
+
+    两步顺序不能反：
+    1. 表格（含图区占位）必须插到「顶边低于表底边」的第一个块之前，否则 page 1 的
+       Figure 1 占位会跑到图注后面；
+    2. 双栏**只在栏一级做稳定分组**，栏内保持 pdfminer 原顺序——不按 y 重排。
+       原因是公式/矩阵的多个文本块在 y 方向高度重叠，按 y 排序会把
+       `xi =`、`⎡`、`xi(1, 1)` 打乱成毫无意义的顺序（本轮实测的回归）。
+    """
+    texts = [it for it in items if it["kind"] not in ("table", "figure_area")]
+    anchors = sorted(
+        (it for it in items if it["kind"] in ("table", "figure_area")),
+        key=lambda it: -it["bbox"][3],
+    )
+    seq = list(texts)
+    for anchor in anchors:
         insert_at = len(seq)
         for i, item in enumerate(seq):
-            if item["kind"] == "text" and item["bbox"][3] < table_bbox[1]:
+            if item["bbox"][3] < anchor["bbox"][1]:
                 insert_at = i
                 break
-        seq.insert(insert_at, {"kind": "table", "bbox": table_bbox, "text": md})
+        seq.insert(insert_at, anchor)
 
-    return "\n".join(item["text"] for item in seq if item["text"].strip())
+    if not _is_two_column_page(seq, page_width):
+        return seq
+
+    # 双栏：左栏读到底再读右栏。块的起始 x 决定归属；栏内保持原顺序（稳定分组），
+    # 这样公式块、图内占位、表格的相对位置都不会被打乱。
+    mid = page_width / 2
+    left = [it for it in seq if it["bbox"][0] < mid]
+    right = [it for it in seq if it["bbox"][0] >= mid]
+    return left + right
+
+
+def _join_page_items(items: list[dict]) -> str:
+    """拼接一页内容：正文之间软换行，表格/占位前后留空行，连续占位合并。"""
+    parts: list[str] = []
+    prev_kind = ""
+    for item in items:
+        kind = item["kind"]
+        if kind in ("figure", "figure_area"):
+            if prev_kind in ("figure", "figure_area"):
+                continue
+            parts.extend(["", _FIGURE_TEXT_PLACEHOLDER, ""])
+            prev_kind = "figure_area"
+            continue
+        if kind == "table":
+            md = item.get("text") or ""
+            if not md:
+                prev_kind = kind
+                continue
+            parts.extend(["", md, ""])
+        else:
+            text = item.get("text") or ""
+            if text.strip():
+                parts.append(text)
+        prev_kind = kind
+    merged = "\n".join(parts)
+    merged = re.sub(r"\n{3,}", "\n\n", merged)
+    return merged.strip()
+
+
+def _merge_pdf_page(
+    text_blocks: list[tuple[tuple, str, bool]],
+    tables: dict,
+    page_height: float,
+    page_width: float,
+) -> str:
+    """把某页的正文块、表格、图内占位按版面顺序合并成一页 Markdown。"""
+    page_tables = tables or {}
+    # 表格 bbox 来自 pdfplumber（左上原点），转为 pdfminer（左下原点）。
+    pm_useful: list[tuple[tuple, str]] = [
+        ((x0, page_height - bottom, x1, page_height - top), md)
+        for (x0, top, x1, bottom), md in page_tables.get("useful", [])
+    ]
+    pm_garbage: list[tuple] = [
+        (x0, page_height - bottom, x1, page_height - top)
+        for (x0, top, x1, bottom) in page_tables.get("garbage", [])
+    ]
+    blocked = [bbox for bbox, _ in pm_useful] + pm_garbage
+
+    items: list[dict] = []
+    for bbox, text, is_figure in text_blocks:
+        if _is_page_furniture(bbox, page_height, text):
+            continue
+        if any(_bbox_overlaps(bbox, blocked_bbox) for blocked_bbox in blocked):
+            continue  # 表格区域内的文字由表格 / 占位承载，不再重复输出
+        if is_figure:
+            items.append({"kind": "figure", "bbox": bbox, "text": ""})
+            continue
+        cleaned = _dehyphenate(text.rstrip())
+        if cleaned.strip():
+            items.append({"kind": "text", "bbox": bbox, "text": cleaned})
+
+    for bbox, md in pm_useful:
+        if md:
+            items.append({"kind": "table", "bbox": bbox, "text": md})
+    for bbox in pm_garbage:
+        items.append({"kind": "figure_area", "bbox": bbox, "text": ""})
+
+    # 图内文字常被拆成很多小块，中间夹着 (a)/(b)/W 这类短标签；把它们一并归入占位，
+    # 避免同一张图出现好几个占位（Figure 2 实测会被切成 2 段）。
+    for i, item in enumerate(items):
+        if item["kind"] != "text":
+            continue
+        if len((item.get("text") or "").strip()) > 3:
+            continue
+        prev_fig = i > 0 and items[i - 1]["kind"] in ("figure", "figure_area")
+        next_fig = i + 1 < len(items) and items[i + 1]["kind"] in ("figure", "figure_area")
+        if prev_fig or next_fig:
+            item["kind"] = "figure"
+            item["text"] = ""
+
+    return _join_page_items(_order_page_items(items, page_width))
 
 
 def _convert_pdf_to_markdown(path: str, enable_tables: bool) -> tuple[bool, str]:
@@ -430,8 +827,8 @@ def _convert_pdf_to_markdown(path: str, enable_tables: bool) -> tuple[bool, str]
     tables_by_page = _extract_pdf_tables(path, enable_tables)
 
     page_mds: list[str] = []
-    for idx, (height, blocks) in enumerate(text_pages):
-        page_md = _merge_pdf_page(blocks, tables_by_page.get(idx, []), height)
+    for idx, (height, width, blocks) in enumerate(text_pages):
+        page_md = _merge_pdf_page(blocks, tables_by_page.get(idx, {}), height, width)
         if page_md.strip():
             page_mds.append(page_md)
 
@@ -666,7 +1063,7 @@ def build_file_tools(root_dir: str, pdf_table_extraction: bool = True) -> list[B
             str,
             "The path to the file or directory to read (relative to root_dir or absolute). "
             "富/专有格式（.pdf .ppt .pptx .doc .docx .xls .xlsx .odt .ods .odp .epub .html .htm）会自动转成 Markdown 返回，"
-            "其中 PDF 的表格会以 Markdown 表格保留。"
+            "其中 PDF 的表格会以 Markdown 表格保留；矢量图内无法可靠提取的文字会以占位标记（> [图内文字无法可靠提取…]）省略。"
             "仅支持读取。这些格式不支持写入为原格式——写内容请用 write_file 写为同名 .md 文件。"
             "读取专有格式（如 PDF）时，会在相同目录自动生成同名 .md 副本（返回里带 <md_copy> 路径），"
             "之后要修改请直接用 edit_file 编辑那个 .md（可只改几行），不要编辑原文件。",
@@ -681,6 +1078,8 @@ def build_file_tools(root_dir: str, pdf_table_extraction: bool = True) -> list[B
         对以下富/专有格式：pdf、ppt、pptx、doc、docx、xls、xlsx、odt、ods、odp、epub、html、htm，
         会自动转成 Markdown 后返回（内容是 Markdown 文本，并带行号分页）。其中 PDF 用 pdfminer 抽正文、
         用 pdfplumber 基于框线抽取表格；其余格式用 MarkItDown 转换。
+        PDF 里矢量图内的文字（字体没有 Unicode 映射）无法可靠提取，会以
+        `> [图内文字无法可靠提取，已省略…]` 占位标记代替，不会输出乱码。
         注意：这类格式**仅支持读取**（自动转换为 Markdown）——**不支持写入为原格式**；写内容时请改用同名 .md 文件
         （如把内容写到 the-new-SOTA-paper.pdf，实际会保存为 the-new-SOTA-paper.md）。
         读取专有格式时，会把完整转换结果**落成相同目录下的同名 .md 副本**（已存在则不覆盖），

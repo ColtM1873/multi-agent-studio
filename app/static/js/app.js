@@ -2670,6 +2670,36 @@ function autodetectMath(text, aggressive) {
 }
 function bareMathEnabled() { return !!(settingsCache && settingsCache.bare_math_detect); }
 function aggressiveMathEnabled() { return !!(settingsCache && settingsCache.aggressive_math_detect); }
+/* ===== 暂不启用：前端「$ 公式守卫」 =====
+   背景：曾试图在这里把「明显不是公式」的 `$...$` 转义掉，避免 PDF 转换出的乱码
+   （如 `1$#"$`）被 texmath 当公式渲染出 KaTeX ParseError。后经确认：
+   - 该报错出现在 VSCode 的 Markdown 预览里，与本项目的会话渲染链路无关；
+   - PDF 转换侧已在后端把表格单元格里的 `$` 转义成 `\$`，新转换结果不再含裸 `$`。
+   因此**会话界面（历史/流式/快照）的渲染模式保持原样，不启用这段守卫**。
+   若将来需要，在 renderMd 里对 autodetectMath 的结果套一层 sanitizeMathDollars 即可。
+function isGarbageMathContent(inner) {
+  if (!inner || !inner.trim()) return true;
+  // 真正的 HTML 标签（如表格里的 <br>）——不是 `$x<y$` 这种正常不等式
+  if (/<[a-zA-Z][a-zA-Z0-9]*(\s|\/|>)/.test(inner)) return true;
+  // LaTeX 里裸出现的 # % &（`\%` 这种转义过的合法写法不算）
+  if (/(?<!\\)[#%&]/.test(inner)) return true;
+  if (/[\u0000-\u0008\u000b\u000c]/.test(inner)) return true;
+  return false;
+}
+function sanitizeMathDollars(text) {
+  const src = String(text == null ? "" : text);
+  if (src.indexOf("$") === -1) return src;
+  const displays = [];
+  let s = src.replace(/\$\$[\s\S]*?\$\$/g, (m) => {
+    displays.push(m);
+    return "\u0002" + (displays.length - 1) + "\u0002";
+  });
+  s = s.replace(/(^|[^\\])\$([^$\n]*?)\$/g, (m, pre, inner) => {
+    return isGarbageMathContent(inner) ? pre + "\\$" + inner + "\\$" : m;
+  });
+  return s.replace(/\u0002(\d+)\u0002/g, (m, idx) => displays[+idx]);
+}
+   ===== 暂不启用结束 ===== */
 function renderMd(text) {
   const t = text || "";
   if (!md) return esc(t);

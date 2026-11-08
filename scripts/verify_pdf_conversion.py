@@ -27,11 +27,21 @@ sys.path.insert(0, str(ROOT))
 from app.runtime.file_tools import (  # noqa: E402
     _convert_pdf_to_markdown,
     _convert_to_markdown,
+    _dehyphenate,
+    _escape_md_cell,
+    _is_page_furniture,
+    _is_two_column_page,
+    _is_useful_pdf_table,
+    _looks_like_garbage_table,
+    _map_pdf_text_segment,
+    _order_page_items,
     _pdf_table_to_markdown,
+    _readable_ratio,
     build_file_tools,
 )
 
 MAX_ALPHA_RUN = 30
+PUA_RE = re.compile(r"[\ue000-\uf8ff]")
 
 
 def _max_alpha_run(text: str) -> int:
@@ -50,6 +60,72 @@ def _check_table_to_markdown() -> None:
     assert "p<br>q" in md, md
     assert md.count("\n") == 3, md  # 表头 + 分隔 + 2 行（全空行被跳过）
     print("[OK] _pdf_table_to_markdown 转义 / 补齐 / 跳空行")
+
+
+def _check_quality_helpers() -> None:
+    """P0/P1/P2 的新判据与映射（纯函数，离线）。"""
+    # 1. 可读率：图内乱码 vs 正文
+    assert _readable_ratio("!\"#$%&'()*+*+,") < 0.1
+    assert _readable_ratio("The quick brown fox 123") > 0.9
+    assert _readable_ratio("") == 0.0
+
+    # 2. 表格过滤：正常表格通过；乱码图注被拒并判为 garbage
+    good_rows = [["Method", "Accuracy"], ["EEGNet", "90.1%"], ["DeepCNN", "88.7%"]]
+    bad_rows = [["!\"#$%&'", "()*+,--\"$#"], [".,%/0),'", "1$#\"$,,)\"$#"]]
+    assert _is_useful_pdf_table(good_rows, 612 * 792, (100, 100, 400, 300)) is True
+    assert _is_useful_pdf_table(bad_rows, 612 * 792, (100, 100, 400, 300)) is False
+    assert _looks_like_garbage_table(bad_rows, (100, 100, 400, 300), 612 * 792) is True
+    assert _looks_like_garbage_table(good_rows, (100, 100, 400, 300), 612 * 792) is False
+
+    # 3. 数学字体映射（来自 PDF 的 /Differences）
+    assert _map_pdf_text_segment("X", "JTOLEZ+txex") == "\u2211"      # summationdisplay
+    assert _map_pdf_text_segment(",", "CEYAOO+txsyc") == "\u2260"     # nequal
+    assert _map_pdf_text_segment("\uf8ee", "JTOLEZ+txex") == "\u23a1"  # bracketlefttp
+    assert _map_pdf_text_segment("\uf8fa", "JTOLEZ+txex") == "\u23a5"  # bracketrightex
+    assert _map_pdf_text_segment("(cid:2)", "JTOLEZ+txex") == "["
+    assert _map_pdf_text_segment("(cid:3)", "JTOLEZ+txex") == "]"
+    assert _map_pdf_text_segment("X", "QKFYCU+NimbusRomNo9L-Regu") == "X"  # 正文字体不动
+
+    # 4. 连字符合并：正常软连字符合并，跨块的散词不合并
+    assert _dehyphenate("Evasion at-\ntacks have") == "Evasion attacks have"
+    assert _dehyphenate("ad-\nversarial filter") == "adversarial filter"
+    assert _dehyphenate("set-\nat-") == "set-\nat-"
+
+    # 5. 页脚/页码判定（792 高页面）
+    assert _is_page_furniture((72, 87.7, 167.6, 95.7), 792, "Preprint submitted to Elsevier") is True
+    assert _is_page_furniture((303.1, 87.2, 308.1, 97.2), 792, "2") is True
+    assert _is_page_furniture((72, 159, 115, 169), 792, "were used:") is False
+
+    # 6. 表格单元格 Markdown 转义（$ 是前端 KaTeX 报错的直接触发点）
+    escaped = _escape_md_cell("a$b_c*d`e[f]~g#h & <x> | y")
+    assert "\\$" in escaped and "\\_" in escaped and "\\*" in escaped, escaped
+    assert "&amp;" in escaped and "&lt;x&gt;" in escaped, escaped
+
+    # 7. 版面：单栏不误判成双栏；双栏能识别；单栏表格按 y 插入
+    single = [
+        {"kind": "text", "bbox": (72, 600, 540, 650), "text": "a"},
+        {"kind": "text", "bbox": (72, 500, 540, 590), "text": "b"},
+        {"kind": "text", "bbox": (72, 400, 540, 490), "text": "c"},
+        {"kind": "text", "bbox": (72, 300, 540, 390), "text": "d"},
+    ]
+    assert _is_two_column_page(single, 612) is False
+    two = [
+        {"kind": "text", "bbox": (72, 600, 300, 650), "text": "a"},
+        {"kind": "text", "bbox": (72, 400, 300, 450), "text": "b"},
+        {"kind": "text", "bbox": (320, 600, 540, 650), "text": "c"},
+        {"kind": "text", "bbox": (320, 400, 540, 450), "text": "d"},
+    ]
+    assert _is_two_column_page(two, 612) is True
+    table_item = {"kind": "table", "bbox": (72, 495, 540, 520), "text": "| a |"}
+    ordered_single = _order_page_items(single + [table_item], 612)
+    assert [it["kind"] for it in ordered_single] == ["text", "text", "table", "text", "text"], [
+        it["kind"] for it in ordered_single
+    ]
+    # 双栏：稳定分组（左栏读到底再读右栏），栏内顺序不变
+    ordered_two = _order_page_items(two, 612)
+    assert [it["text"] for it in ordered_two] == ["a", "b", "c", "d"], ordered_two
+    print("[OK] 可读率 / 表格过滤 / 数学字体映射 / 连字符合并 / 页脚 / 单元格转义 / 双栏判定")
+
 
 
 def _default_pdfs() -> list[Path]:
@@ -111,11 +187,19 @@ def _check_pdf(path: Path) -> bool:
         return False
     run = _max_alpha_run(text)
     tables = _table_count(text)
-    status = "OK" if run < MAX_ALPHA_RUN else "FAIL"
-    print(f"[{status}] {path.name}: 长度={len(text)} 最长字母串={run} 表格数={tables}")
+    pua = len(PUA_RE.findall(text))
+    cids = text.count("(cid:")
+    status = "OK" if run < MAX_ALPHA_RUN and pua == 0 and cids == 0 else "FAIL"
+    print(f"[{status}] {path.name}: 长度={len(text)} 最长字母串={run} 表格数={tables} PUA={pua} (cid={cids}")
     if run >= MAX_ALPHA_RUN:
         sample = max(re.findall(r"[A-Za-z]{20,}", text), key=len)
         print(f"        粘连样例: {sample}")
+        return False
+    if pua or cids:
+        print(f"        未映射字符：PUA={pua} (cid)={cids}（数学字体映射未生效？）")
+        return False
+
+    if not _check_sample_quality(path, text):
         return False
 
     ok_off, text_off = _convert_to_markdown(str(path), False)
@@ -126,8 +210,41 @@ def _check_pdf(path: Path) -> bool:
     if tables_off != 0:
         print(f"[FAIL] {path.name}: 关闭表格提取后仍有 {tables_off} 张表")
         return False
-    print(f"        [OK] 关闭表格提取：表格数=0 最长字母串={_max_alpha_run(text_off)}")
+    if PUA_RE.search(text_off):
+        print(f"[FAIL] {path.name}: 关闭表格提取后仍有私有区字符")
+        return False
+    print(f"        [OK] 关闭表格提取：表格数=0 最长字母串={_max_alpha_run(text_off)} 无 PUA")
     return True
+
+
+def _check_sample_quality(pdf: Path, text: str) -> bool:
+    """针对本轮样张（arXiv 2412.07231v1）的专项断言。"""
+    if not pdf.name.startswith("2412.07231"):
+        return True
+    checks = [
+        ("页脚已剔除", "Preprint submitted to Elsevier" not in text),
+        ("无裸 $（表格单元格已转义）", text.count("$") == 0),
+        ("∑ 已还原（txex summationdisplay）", text.count("\u2211") > 0),
+        ("≠ 已还原（txsyc nequal）", text.count("\u2260") > 0),
+        ("矩阵括号已还原", "\u23a1" in text and "\u23a3" in text),
+        ("图内文字已用占位替代", "图内文字无法可靠提取" in text),
+        ("Figure 1 不再输出假表格", "| ---" not in text),
+        ("Figure 2 乱码不再出现在正文", "!\"#$%&'()*+*+," not in text),
+        ("双栏顺序修复（4.1 在 4.2 之前）",
+         text.find("4.1. Datasets") != -1
+         and text.find("4.2. Deep Learning Models") != -1
+         and text.find("4.1. Datasets") < text.find("4.2. Deep Learning Models")),
+        ("软连字符合并", "Evasion attacks have also been explored" in text),
+    ]
+    ok = True
+    for label, passed in checks:
+        if not passed:
+            print(f"[FAIL] 样张断言：{label}")
+            ok = False
+    if ok:
+        print("        [OK] 样张专项：页脚/∑/≠/括号/占位/表格/双栏/连字符")
+    return ok
+
 
 
 def main() -> None:
@@ -137,6 +254,7 @@ def main() -> None:
         pass
 
     _check_table_to_markdown()
+    _check_quality_helpers()
 
     pdfs = [Path(p) for p in sys.argv[1:]] or _default_pdfs()
     if not pdfs:
