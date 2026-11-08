@@ -4,6 +4,7 @@
 `<input type="file">` 拿不到完整路径（安全限制），也无法决定「保存到哪」。用到它的功能：
 
 - 会话页「将本地md转换为HTML」：选一个 .md 文件（`open_file_dialog`）；
+- 会话页「将本地PDF转换为md」：选一个 .pdf 文件（`open_file_dialog`）；
 - 会话页「导出会话」：决定导出的 zip 存到哪里（`save_file_dialog`）；
 - 主界面「导入会话」：找到要导入的会话文件（`open_file_dialog`）。
 
@@ -30,7 +31,13 @@ from __future__ import annotations
 
 import ctypes
 import sys
+import threading
 from ctypes import wintypes
+
+# 同一进程同一时刻只允许一个原生文件对话框。
+# 「将本地md转换为HTML」「将本地PDF转换为md」等按钮共用这把锁：避免并发请求
+# 叠出多个模态窗口（用户只能一个个关）。
+DIALOG_LOCK = threading.Lock()
 
 # 通用对话框标志（Win32 commdlg.h）
 OFN_OVERWRITEPROMPT = 0x00000002

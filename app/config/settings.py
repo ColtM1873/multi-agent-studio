@@ -152,6 +152,11 @@ class Settings(BaseModel):
     # 套用上面的 export_html_config 转成 HTML，写在该 md 文件同目录下）。
     # 纯前端显示开关，不参与图编译，无需 invalidate_all。默认开启。
     show_local_md_convert_button: bool = True
+    # 会话页是否显示「将本地PDF转换为md」按钮（用系统文件选择窗口挑一个本地 PDF，
+    # 复用文件工具的 PDF→Markdown 转换，套用进阶设置里的 `pdf_table_extraction`
+    # 决定是否提取表格；转换结果写在该 PDF 文件同目录下，同名 .md 已存在时加时间戳另存）。
+    # 纯前端显示开关，不参与图编译，无需 invalidate_all。默认开启。
+    show_local_pdf_convert_button: bool = True
     # MD 导出：默认开启；输出路径为空时需先在设置里填写
     export_md: bool = True
     export_md_path: str = ""

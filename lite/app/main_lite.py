@@ -42,6 +42,8 @@ from app.api import (
     common_prompts,
     drafts,
     export_html,
+    local_md,
+    local_pdf,
     session_transfer,
     sessions,
     settings,
@@ -214,6 +216,9 @@ app.include_router(sessions.router)
 app.include_router(chat_ws.router)
 app.include_router(settings.router)
 app.include_router(export_html.router)
+# 本地文件转换（会话页按钮）：Lite 版同样提供，避免按钮点了 404。
+app.include_router(local_md.router)
+app.include_router(local_pdf.router)
 app.include_router(session_transfer.router)
 app.include_router(drafts.router)
 app.include_router(common_prompts.router)

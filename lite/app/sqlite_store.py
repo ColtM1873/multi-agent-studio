@@ -386,16 +386,16 @@ async def import_thread_checkpoints(
 
 
 async def _collect_snapshot_data(agent_id: str, thread_id: str) -> dict | None:
-    settings = snapshot_service._history_settings()
+    """采集快照数据：只取消息与渲染头信息（与普通版 v3 格式一致）。
 
-    main_md = None
+    渲染推迟到「浏览快照」时用当前设置进行，因此这里不再生成 Markdown、
+    也不固化 render_settings。
+    """
     main_messages: list = []
     main_meta: dict = {}
     saver = await _ensure_saver(agent_id)
     main_tuple = await saver.aget_tuple({"configurable": {"thread_id": thread_id}})
     if main_tuple:
-        main_md = render_checkpoint_to_markdown_string(main_tuple, **settings)
-        # 与普通版一致：额外保存原始消息，快照内才能编辑（只改 JSON，不跑图）
         main_messages = snapshot_service._main_messages_of(main_tuple.checkpoint)
         main_meta = snapshot_service._main_checkpoint_meta(main_tuple)
 
@@ -407,28 +407,22 @@ async def _collect_snapshot_data(agent_id: str, thread_id: str) -> dict | None:
         merged = await get_subgraph_messages(agent_id, thread_id, name)
         if not merged:
             continue
-        md = render_messages_to_markdown_string(
-            merged, title=f"子图 [{name}] 历史", **settings
-        )
         subgraphs.append(
             {
                 "name": name,
-                "markdown": md,
                 "messages": snapshot_service._message_dicts(merged),
             }
         )
         total += len(merged)
 
-    if main_md is None and not subgraphs:
+    if not main_messages and not subgraphs:
         return None
 
     return {
-        "main": main_md or "",
         "subgraphs": subgraphs,
         "total_messages": total,
         "main_messages": snapshot_service._message_dicts(main_messages),
         "main_meta": main_meta,
-        "render_settings": settings,
     }
 
 
@@ -461,13 +455,13 @@ async def capture_snapshot(
         "thread_id": thread_id,
         "created_at": created_at,
         "total_messages": total,
-        "main": data["main"],
-        "subgraphs": data["subgraphs"],
-        # 快照内编辑所需（与普通版格式一致）
+        # 与普通版 v3 一致：只存原始消息 + 主图渲染头信息。
+        # 浏览时用当前设置实时渲染 Markdown，不再缓存 main / subgraphs[].markdown，
+        # 也不固化 render_settings。
         "format_version": snapshot_service.SNAPSHOT_FORMAT_VERSION,
         "main_messages": data["main_messages"],
         "main_meta": data["main_meta"],
-        "render_settings": data["render_settings"],
+        "subgraphs": data["subgraphs"],
     }
 
     try:

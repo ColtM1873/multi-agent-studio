@@ -630,6 +630,12 @@ const I18N_EN = {
   "选择一个本地 .md 文件，用系统设置里的「HTML 转换配置表」把它转成可打印 HTML，保存在该 md 文件所在目录（同名 .html；已存在时另存为带时间戳的文件）。": "Pick a local .md file and convert it into a printable HTML with the \"HTML export config\" from system settings. The HTML is saved next to the md file (same name .html; a timestamped file is created instead if it already exists).",
   "选择要转换为 HTML 的 Markdown 文件": "Select a Markdown file to convert to HTML",
   "请选择 Markdown 文件…": "Select a Markdown file…",
+  "显示转换本地PDF按钮": "Show the \"Convert local PDF to md\" button",
+  "开启后，会话页「将本地md转换为HTML」左侧会出现「将本地PDF转换为md」按钮：点它可从本机选择一个 .pdf 文件，复用文件工具的 PDF→Markdown 转换（是否提取表格由「进阶设置 → 📄 PDF 表格提取」决定），并保存在该 PDF 文件同目录下（同名 .md；已存在时另存为带时间戳的文件）。": "When enabled, a \"Convert local PDF to md\" button appears to the left of \"Convert local md to HTML\" in the chat view. Click it to pick a local .pdf file; it is converted to Markdown with the same converter used by the file tools (whether tables are extracted is controlled by \"Advanced settings → PDF table extraction\") and saved next to the PDF (same name .md; a timestamped file is created instead if it already exists).",
+  "将本地PDF转换为md": "Convert local PDF to md",
+  "选择一个本地 .pdf 文件，复用文件工具的 PDF→Markdown 转换（是否提取表格由「进阶设置 → 📄 PDF 表格提取」决定），保存在该 PDF 文件所在目录（同名 .md；已存在时另存为带时间戳的文件）。": "Pick a local .pdf file and convert it to Markdown with the same converter used by the file tools (table extraction is controlled by \"Advanced settings → PDF table extraction\"). The .md is saved next to the PDF (same name .md; a timestamped file is created instead if it already exists).",
+  "选择要转换为 Markdown 的 PDF 文件": "Select a PDF file to convert to Markdown",
+  "请选择 PDF 文件…": "Select a PDF file…",
   "已取消": "Cancelled",
   "调整导出 HTML 的纸张、预览与配色。": "Adjust page, preview and color settings of the exported HTML.",
   "纸张": "Page",
@@ -2177,6 +2183,27 @@ async function convertLocalMd(btn) {
   }
 }
 
+// 「将本地PDF转换为md」：后端弹 Windows 文件选择窗口，选中后用文件工具的 PDF → Markdown
+// 转换（是否提取表格由「进阶设置 → 📄 PDF 表格提取」决定）把该 PDF 转成 Markdown，写在
+// 其同目录下（同名 .md；已存在时另存为带时间戳的文件，不覆盖）。对话框是阻塞的，等待期间
+// 按钮置灰并给出提示。
+async function convertLocalPdf(btn) {
+  const original = btn ? btn.textContent : "";
+  if (btn) { btn.disabled = true; btn.textContent = `⏳ ${t("请选择 PDF 文件…")}`; }
+  try {
+    const r = await api("/api/convert-local-pdf", {
+      method: "POST",
+      body: JSON.stringify({ title: t("选择要转换为 Markdown 的 PDF 文件") }),
+    });
+    if (r && r.canceled) { toast(t("已取消")); return; }
+    toast(`${t("已生成 md 文件")}：${r.path}`);
+  } catch (e) {
+    toast(e.message, true);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = original; }
+  }
+}
+
 function injectExportButtons(rootEl) {
   // 先清掉从 innerHTML 快照（SessionStream 的 baseHtml、快照/编辑态恢复）带过来的
   // 旧按钮行：快照不保留 onclick，留着就是点不动的死按钮。每次重建才能保证可点。
@@ -3396,6 +3423,10 @@ async function openSettings() {
           <span class="sw-label">📄 ${t("显示转换本地md按钮")} <i class="info-icon">!<span class="tip">${t("开启后，会话页「编辑会话常用prompt」左侧会出现「将本地md转换为HTML」按钮：点它可从本机选择一个 .md 文件，用上面的「HTML 转换配置表」把它转成可打印 HTML，并保存在该 md 文件同目录下（同名 .html；已存在时另存为带时间戳的文件）。")}</span></i></span>
           <label class="toggle"><input type="checkbox" id="set_local_md_convert" ${s.show_local_md_convert_button !== false ? "checked" : ""}><span class="track"></span></label>
         </div>
+        <div class="switch-row">
+          <span class="sw-label">📄 ${t("显示转换本地PDF按钮")} <i class="info-icon">!<span class="tip">${t("开启后，会话页「将本地md转换为HTML」左侧会出现「将本地PDF转换为md」按钮：点它可从本机选择一个 .pdf 文件，复用文件工具的 PDF→Markdown 转换（是否提取表格由「进阶设置 → 📄 PDF 表格提取」决定），并保存在该 PDF 文件同目录下（同名 .md；已存在时另存为带时间戳的文件）。")}</span></i></span>
+          <label class="toggle"><input type="checkbox" id="set_local_pdf_convert" ${s.show_local_pdf_convert_button !== false ? "checked" : ""}><span class="track"></span></label>
+        </div>
       </div>
       <div class="settings-group">
         <div class="switch-row">
@@ -3547,6 +3578,7 @@ async function openSettings() {
         export_html: mask.querySelector("#set_export_html").checked,
         export_html_path: mask.querySelector("#set_export_html_path").value,
         show_local_md_convert_button: mask.querySelector("#set_local_md_convert").checked,
+        show_local_pdf_convert_button: mask.querySelector("#set_local_pdf_convert").checked,
         export_md: mask.querySelector("#set_export_md").checked,
         export_md_path: mask.querySelector("#set_export_md_path").value,
         export_session_enabled: mask.querySelector("#set_export_session").checked,
@@ -7950,6 +7982,7 @@ async function renderChatView() {
       <div class="chat-head-right">
       <span class="status-indicator" id="statusInd"></span>
       <span class="edit-mode-badge" id="editModeBadge" style="display:none;">✏️ ${t("编辑模式")}</span>
+      <button class="btn small" id="localPdfConvertBtn" style="display:none;" title="${t("选择一个本地 .pdf 文件，复用文件工具的 PDF→Markdown 转换（是否提取表格由「进阶设置 → 📄 PDF 表格提取」决定），保存在该 PDF 文件所在目录（同名 .md；已存在时另存为带时间戳的文件）。")}">📄 ${t("将本地PDF转换为md")}</button>
       <button class="btn small" id="localMdConvertBtn" style="display:none;" title="${t("选择一个本地 .md 文件，用系统设置里的「HTML 转换配置表」把它转成可打印 HTML，保存在该 md 文件所在目录（同名 .html；已存在时另存为带时间戳的文件）。")}">🖨 ${t("将本地md转换为HTML")}</button>
       <button class="btn small" id="editSessionPromptBtn" style="display:none;">📝 ${t("编辑会话常用prompt")}</button>
       <button class="btn small" id="memoryStoreBtn" title="${t("查看/编辑记忆库")}">🧠 ${t("查看/编辑记忆库")}</button>
@@ -8087,9 +8120,15 @@ async function renderChatView() {
   applyReasoningZoom();
   let settings = null;
   try { settings = await getSettings(); } catch (e) {}
-  // 「将本地md转换为HTML」按钮（在「编辑会话常用prompt」左侧）是否显示由系统设置决定；
-  // 这里尽早显隐，避免等历史加载完才「跳出来」。
+  // 「将本地PDF转换为md」「将本地md转换为HTML」两个按钮（都在「编辑会话常用prompt」
+  // 左侧，PDF 按钮在 md 按钮左边）是否显示由系统设置决定；这里尽早显隐，避免等历史
+  // 加载完才「跳出来」。
   {
+    const localPdfBtnEl = $("#localPdfConvertBtn");
+    if (localPdfBtnEl) {
+      const showLocalPdf = !(settings && settings.show_local_pdf_convert_button === false);
+      localPdfBtnEl.style.display = showLocalPdf ? "" : "none";
+    }
     const localMdBtnEl = $("#localMdConvertBtn");
     if (localMdBtnEl) {
       const showLocalMd = !(settings && settings.show_local_md_convert_button === false);
@@ -8787,7 +8826,10 @@ async function renderChatView() {
       refreshCommonPromptUI();
     });
   }
-  // 「将本地md转换为HTML」按钮（位于「编辑会话常用prompt」左侧）；显隐已在上面按设置处理。
+  // 「将本地PDF转换为md」「将本地md转换为HTML」按钮（位于「编辑会话常用prompt」左侧，
+  // PDF 按钮在 md 按钮左边）；显隐已在上面按设置处理。
+  const localPdfBtn = $("#localPdfConvertBtn");
+  if (localPdfBtn) localPdfBtn.onclick = () => convertLocalPdf(localPdfBtn);
   const localMdBtn = $("#localMdConvertBtn");
   if (localMdBtn) localMdBtn.onclick = () => convertLocalMd(localMdBtn);
   const delAllMsgBtn = $("#delAllMsgBtn");

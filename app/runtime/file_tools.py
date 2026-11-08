@@ -164,6 +164,17 @@ def _convert_to_markdown(path: str, pdf_table_extraction: bool = True) -> tuple[
     return _convert_with_markitdown(path)
 
 
+def convert_file_to_markdown(path: str, pdf_table_extraction: bool = True) -> tuple[bool, str]:
+    """把富格式文件转成 Markdown 文本（供 file tools 之外的调用方复用）。
+
+    会话页「将本地PDF转换为md」按钮走这里：与 `read_file` 完全同一套转换路径
+    （PDF 用 pdfminer 正文 + pdfplumber 框线表格；其余格式用 MarkItDown），
+    `pdf_table_extraction` 即进阶设置里的「📄 PDF 表格提取」。
+    返回 (是否成功, Markdown 文本或失败原因)。
+    """
+    return _convert_to_markdown(path, pdf_table_extraction)
+
+
 def _convert_with_markitdown(path: str) -> tuple[bool, str]:
     """用 MarkItDown 转换（可选依赖）。失败返回 (False, 原因)。"""
     md = _get_markitdown()

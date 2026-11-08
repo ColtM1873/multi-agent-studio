@@ -1,9 +1,10 @@
-"""快照服务：在全量总结前，把当前线程的完整历史（主 agent + 所有子 agent）渲染为 Markdown，
-连同元数据一起落盘到 <项目根>/snapshots/<agent_id>/ 下的 JSON 文件。
+"""快照服务：在全量总结 / 手动归档前，把当前线程的完整历史（主 agent + 所有子 agent）
+以**原始消息**的形式落盘到 <项目根>/snapshots/<agent_id>/ 下的 JSON 文件。
 
-原则：渲染历史会话时用什么数据，快照就存什么数据。因此这里直接复用
-`history_render` 与 `threads` 服务里与历史浏览完全相同的读取 + 渲染逻辑，
-前端打开快照后即可获得与「浏览历史会话」一致的体验（含子 agent 切换）。
+原则：渲染历史会话时用什么数据，快照就存什么数据。快照只保存与「浏览历史」完全同源的
+消息列表与渲染头信息；**浏览时再用当前设置实时渲染**——这样聊天图标/称谓、思考/工具
+展开等外观始终跟随当前设置，也省掉了在快照里缓存/查找替换 Markdown 的麻烦。
+（旧版快照仍保留当时的 Markdown，读取时原样返回。）
 """
 
 from __future__ import annotations
@@ -41,21 +42,12 @@ AGENT_META_FILENAME = "_meta.json"
 
 # 快照文件格式版本：
 #   1（历史遗留）= 只存渲染后的 Markdown，不可编辑；
-#   2 = 额外存「原始消息数组」+ 渲染设置 + 主图 checkpoint 元信息，可在快照内编辑
-#       （编辑只改写本 JSON 文件，不跑图、不碰会话数据库）。
-SNAPSHOT_FORMAT_VERSION = 2
+#   2 = Markdown + 原始消息 + 固化渲染设置（历史版本；读取时同样按消息实时渲染）；
+#   3 = **只存原始消息**（+ 主图渲染头信息），不再存渲染后的 Markdown 与
+#       render_settings。浏览快照时用当前设置按「普通历史消息」的方式实时渲染，
+#       编辑时只替换消息 JSON，无需重渲染或写回 Markdown。
+SNAPSHOT_FORMAT_VERSION = 3
 
-# 重新渲染快照时允许透传给 history_render 的渲染开关（key 必须与函数签名一致）。
-_RENDER_SETTING_KEYS = (
-    "reasoning_expanded",
-    "tool_call_expanded",
-    "tool_result_expanded",
-    "tool_result_full",
-    "tool_result_max_lines",
-    "tool_result_max_chars",
-    "export_html",
-    "labels",
-)
 
 
 class SnapshotNotEditable(Exception):
@@ -200,16 +192,17 @@ def _main_checkpoint_meta(cp_tuple: CheckpointTuple) -> dict:
 
 
 async def _collect_snapshot_data(conn_string: str, thread_id: str) -> dict | None:
-    settings = _history_settings()
+    """采集快照数据：只取消息与渲染头信息，不在这里渲染 Markdown。
 
-    main_md = None
+    渲染推迟到「浏览快照」时进行（用当时的设置），保证快照外观与当前设置一致，
+    也避免快照文件里重复存一份可能很大的 Markdown。
+    """
     main_messages: list = []
     main_meta: dict = {}
     async with AsyncPostgresSaver.from_conn_string(conn_string) as cp:
         await cp.setup()
         main_tuple = await cp.aget_tuple({"configurable": {"thread_id": thread_id}})
     if main_tuple:
-        main_md = render_checkpoint_to_markdown_string(main_tuple, **settings)
         main_messages = _main_messages_of(main_tuple.checkpoint)
         main_meta = _main_checkpoint_meta(main_tuple)
 
@@ -221,25 +214,20 @@ async def _collect_snapshot_data(conn_string: str, thread_id: str) -> dict | Non
         merged = await threads_service.get_subgraph_messages(conn_string, thread_id, name)
         if not merged:
             continue
-        md = render_messages_to_markdown_string(merged, title=f"子图 [{name}] 历史", **settings)
-        subgraphs.append({"name": name, "markdown": md, "messages": _message_dicts(merged)})
+        subgraphs.append({"name": name, "messages": _message_dicts(merged)})
         total += len(merged)
 
-    if main_md is None and not subgraphs:
+    if not main_messages and not subgraphs:
         return None
 
     return {
-        "main": main_md or "",
         "subgraphs": subgraphs,
         "total_messages": total,
-        # ── 以下三份是「快照内编辑」所需的原始数据 ──
-        # 原始消息数组（与 /messages 同构）：编辑时按 msg_indice 替换某一条，再用同一套
-        # 渲染函数重新生成上面的 Markdown。旧快照没有这些字段 → 不可编辑。
+        # ── 以下是「浏览 / 快照内编辑」所需的原始数据 ──
+        # 原始消息数组（与 /messages 同构）：浏览时用它按当前设置实时渲染；
+        # 编辑时按 msg_indice 替换某一条后写回 JSON，不重渲染、不跑图。
         "main_messages": _message_dicts(main_messages),
         "main_meta": main_meta,
-        # 固化「生成快照那一刻」的渲染开关（思考/工具是否展开、导出原文、聊天图标称谓），
-        # 编辑后重渲染时复用，保证除被编辑的消息外，快照外观不变。
-        "render_settings": settings,
     }
 
 
@@ -276,13 +264,13 @@ async def capture_snapshot(
         "thread_id": thread_id,
         "created_at": created_at,
         "total_messages": total,
-        "main": data["main"],
-        "subgraphs": data["subgraphs"],
-        # 快照内编辑所需：原始消息数组 + 主图 checkpoint 头信息 + 固化渲染开关
+        # 快照只存原始消息 + 主图渲染头信息（v3）。
+        # 浏览时按当前设置实时渲染 Markdown，因此这里不再缓存 main / subgraphs[].markdown，
+        # 也不固化 render_settings —— 外观始终跟随当前设置。
         "format_version": SNAPSHOT_FORMAT_VERSION,
         "main_messages": data["main_messages"],
         "main_meta": data["main_meta"],
-        "render_settings": data["render_settings"],
+        "subgraphs": data["subgraphs"],
     }
 
     try:
@@ -366,6 +354,14 @@ def read_snapshot(agent_id: str, snapshot_id: str, include_messages: bool = Fals
     if not p.exists():
         return None
     rec = json.loads(p.read_text(encoding="utf-8"))
+    # v2 / v3 快照里保存了原始消息 → 用**当前设置**按普通历史消息的方式实时渲染。
+    # 因此聊天图标/称谓、思考/工具展开等外观永远跟随当前设置，JSON 里也无需再存
+    # 一份（可能过时的）Markdown 或 render_settings。
+    # v1 历史遗留快照只有渲染后的 Markdown，原样返回（不重渲染、保持当时外观）。
+    if snapshot_is_editable(rec):
+        _render_saved_channels(rec)
+    # v2 及更早版本留下的固化渲染设置不再对外返回（新版已不再使用）。
+    rec.pop("render_settings", None)
     # 附带「会话名」，供前端标题显示（与重命名后的名字保持一致）
     rec["name"] = snapshot_display_name(snapshot_id, rec)
     # 是否支持编辑（旧快照没有原始消息 → 前端隐藏「进入编辑模式」）
@@ -409,20 +405,70 @@ def read_snapshot_messages(
     ]
 
 
-def _resolve_render_settings(record: dict | None) -> dict:
-    """取「生成快照那一刻固化的渲染开关」；缺失项用当前设置兜底，并过滤未知 key。"""
-    merged = _history_settings()
-    saved = (record or {}).get("render_settings")
-    if isinstance(saved, dict):
-        merged.update(saved)
-    return {k: merged[k] for k in _RENDER_SETTING_KEYS if k in merged}
+def _render_saved_channels(record: dict) -> None:
+    """用当前设置把快照里的原始消息实时渲染成 Markdown（只改返回值，不落盘）。
+
+    - 主图：用快照记录的渲染头（时间 / Source / Step / Thread / Checkpoint ID）
+      伪造 `CheckpointTuple`，再走与普通历史浏览完全相同的渲染函数；
+    - 子图：标题与 capture 时一致，同样复用 `render_messages_to_markdown_string`。
+
+    渲染失败只影响对应通道（回退到旧版缓存的 Markdown；没有缓存则置空），
+    绝不让整份快照打不开。
+    """
+    settings = _history_settings()
+
+    old_main = record.get("main")
+    main_msgs = record.get("main_messages")
+    try:
+        if isinstance(main_msgs, list) and main_msgs:
+            objs = [dict_to_message(m) for m in main_msgs if isinstance(m, dict)]
+            record["main"] = render_checkpoint_to_markdown_string(
+                _make_main_checkpoint_tuple(record, objs), **settings
+            )
+        else:
+            # 该通道没有原始消息（旧格式）：保留记录里已渲染的 Markdown
+            record["main"] = old_main if isinstance(old_main, str) else ""
+    except Exception:  # noqa: BLE001 — 单条坏消息不应让整份快照打不开
+        logger.exception("实时渲染主图快照失败 (thread_id=%s)", record.get("thread_id"))
+        record["main"] = old_main if isinstance(old_main, str) else ""
+
+    for sub in record.get("subgraphs") or []:
+        if not isinstance(sub, dict):
+            continue
+        name = str(sub.get("name") or "")
+        msgs = sub.get("messages")
+        old_md = sub.get("markdown")
+        try:
+            if isinstance(msgs, list) and msgs:
+                objs = [dict_to_message(m) for m in msgs if isinstance(m, dict)]
+                sub["markdown"] = render_messages_to_markdown_string(
+                    objs, title=f"子图 [{name}] 历史", **settings
+                )
+            else:
+                sub["markdown"] = old_md if isinstance(old_md, str) else ""
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "实时渲染子图快照失败 (thread_id=%s, sub=%s)",
+                record.get("thread_id"),
+                name,
+            )
+            sub["markdown"] = old_md if isinstance(old_md, str) else ""
+
+
+def _drop_cached_markdown(record: dict) -> None:
+    """删除 v2 及更早版本缓存的渲染产物，把记录统一到 v3（只存原始消息）。"""
+    record.pop("main", None)
+    record.pop("render_settings", None)
+    for sub in record.get("subgraphs") or []:
+        if isinstance(sub, dict):
+            sub.pop("markdown", None)
 
 
 def _make_main_checkpoint_tuple(record: dict, messages: list) -> CheckpointTuple:
-    """用快照里保存的 checkpoint 头信息 + 最新消息，伪造一个 tuple 供渲染函数使用。
+    """用快照里保存的 checkpoint 头信息 + 消息，伪造一个 tuple 供渲染函数使用。
 
-    这样编辑后重渲染出来的 Markdown，除被改的消息外与原快照完全一致
-    （时间 / Source / Step / Thread / Checkpoint ID 都不变）。
+    这样实时渲染出来的 Markdown 与快照生成时严格同源（时间 / Source / Step /
+    Thread / Checkpoint ID 都不变），只是按当前设置决定展开/折叠与图标称谓。
     """
     meta = record.get("main_meta") if isinstance(record.get("main_meta"), dict) else {}
     configurable: dict = {}
@@ -447,10 +493,11 @@ def edit_snapshot_message(
     msg_indice: int,
     substitute_msg: dict,
 ) -> dict:
-    """在快照（JSON 文件）内替换一条消息，并重渲染对应通道的 Markdown 后写回。
+    """在快照（JSON 文件）内替换一条消息。
 
     与普通会话的编辑模式语义一致：前端持有完整消息、只改目标字段，其余原样回传；
-    这里只做「替换那一条 + 重新渲染」——**不跑 LangGraph 图，也不碰会话数据库**。
+    这里只做「替换那一条 + 写回 JSON」——**不重渲染 Markdown（浏览时按当前设置实时
+    渲染）、不跑 LangGraph 图，也不碰会话数据库**。
 
     返回新的快照元数据；快照不存在抛 FileNotFoundError，旧快照抛 SnapshotNotEditable，
     其余非法输入抛 ValueError。
@@ -490,20 +537,9 @@ def edit_snapshot_message(
     cleaned = {k: v for k, v in substitute_msg.items() if k != "msg_indice"}
     messages[idx] = cleaned
 
-    settings = _resolve_render_settings(rec)
-    try:
-        objs = [dict_to_message(m) for m in messages]
-    except Exception as e:  # noqa: BLE001 — 前端回传的内容无法还原成消息
-        raise ValueError(f"消息内容无法解析：{e}")
-    if sub is not None:
-        sub["markdown"] = render_messages_to_markdown_string(
-            objs, title=f"子图 [{name}] 历史", **settings
-        )
-    else:
-        rec["main"] = render_checkpoint_to_markdown_string(
-            _make_main_checkpoint_tuple(rec, objs), **settings
-        )
-    rec["render_settings"] = settings
+    # 只改消息 JSON：Markdown 在浏览时用当前设置实时渲染，这里无需（也不应该）重渲染。
+    # 顺手清掉旧版缓存的 Markdown / render_settings，把记录升级到 v3。
+    _drop_cached_markdown(rec)
     rec["format_version"] = SNAPSHOT_FORMAT_VERSION
     p.write_text(json.dumps(rec, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
 

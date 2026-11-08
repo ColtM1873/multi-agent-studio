@@ -21,7 +21,6 @@
 
 from __future__ import annotations
 
-import threading
 from datetime import datetime
 from pathlib import Path
 
@@ -36,7 +35,8 @@ from md2print import markdown_to_html
 router = APIRouter(tags=["local-md"])
 
 # 文件选择窗口同一时刻只弹一个：阻塞式对话框若被并发调用会叠出多个模态窗口。
-_dialog_lock = threading.Lock()
+# 与「将本地PDF转换为md」共用同一把锁（对话框共用同一套 Win32 实现）。
+_dialog_lock = win_file_dialog.DIALOG_LOCK
 
 _DEFAULT_DIALOG_TITLE = "选择一个 Markdown 文件"
 
