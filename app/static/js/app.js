@@ -352,6 +352,13 @@ const I18N_EN = {
   "正文字号减小": "Decrease body font size",
   "正文字号增大": "Increase body font size",
   "进阶设置": "Advanced settings",
+  "聊天界面": "Chat interface",
+  "消息列表可缩放": "Resizable message list",
+  "退出编辑模式按钮颜色": "Exit edit mode button color",
+  "进入编辑模式后，顶栏「退出编辑模式」按钮的边框与文字颜色（底色固定为白色）。点击色块可自定义，默认与编辑模式徽标一致的绿色。": "Border and text color of the 'Exit edit mode' button in the top bar while in edit mode (background stays white). Click the swatch to customize; the default green matches the edit-mode badge.",
+  "开启后，会话页「消息目录」面板可拖动左边缘调整宽度（右边缘固定对齐「消息目录」按钮），消息超过三条时下边缘也可拖动调整高度；大小按窗口比例记忆，关闭后面板恢复固定宽度。": "When enabled, the Message directory panel in the chat view can be resized by dragging its left edge (its right edge stays aligned with the Message directory button); the bottom edge can also be dragged when there are more than three messages. The size is remembered as a share of the window. When disabled, the panel returns to a fixed width.",
+  "拖动调整宽度": "Drag to resize width",
+  "拖动调整高度": "Drag to resize height",
   "全局配置设置": "Global configuration settings",
   "历史浏览时各板块默认展开 / 折叠": "Default expand/collapse of sections when browsing history",
   "历史浏览时，思考过程板块默认展开还是折叠。": "Whether the reasoning section is expanded or collapsed by default when browsing history.",
@@ -1812,12 +1819,26 @@ function showMcpJsonExample(obj) {
 }
 
 /* 系统设置 */
+/* 「退出编辑模式」按钮颜色：只改边框与文字，底色固定白色。
+   颜色存在后端设置里（进阶设置可调），这里把颜色写进 CSS 变量。 */
+const EXIT_EDIT_DEFAULT_COLOR = "#16a34a";
+function normalizeHexColor(v) {
+  const s = String(v || "").trim();
+  return /^#[0-9a-fA-F]{6}$/.test(s) ? s.toLowerCase() : EXIT_EDIT_DEFAULT_COLOR;
+}
+function applyExitEditColor(color) {
+  document.documentElement.style.setProperty("--exit-edit-color", normalizeHexColor(color));
+}
 async function getSettings() {
-  if (!settingsCache) settingsCache = await api("/api/settings");
+  if (!settingsCache) {
+    settingsCache = await api("/api/settings");
+    applyExitEditColor(settingsCache.exit_edit_color);
+  }
   return settingsCache;
 }
 async function saveSettings(s) {
   settingsCache = await api("/api/settings", { method: "PUT", body: JSON.stringify(s) });
+  applyExitEditColor(settingsCache.exit_edit_color);
   return settingsCache;
 }
 
@@ -3049,6 +3070,9 @@ function render() {
   }
   if (S.view !== "chat") reportActiveView(null, null);
   app.innerHTML = "";
+  // 消息目录在开启「消息列表可缩放」后挂在 body 上（fixed），切视图时要一并清理，
+  // 否则会残留到其它页面（grips 也由 dispose 一并移除）。
+  $$(".msg-drawer-panel").forEach((p) => closeMsgDrawer(p));
   $$(".edit-popup").forEach(p => p.remove());
   const errWrap = $(".edit-error-wrap");
   if (errWrap) {
@@ -4351,6 +4375,15 @@ async function openAdvancedSettings() {
         <span class="sw-label">📎 ${t("自动吸附记忆门槛")} <i class="info-icon">!<span class="tip">${t("收到用户消息时自动检索并吸附相关记忆的语义相似度门槛，取值范围 0~1。分数低于该门槛的记忆不会被吸附；数值越大越严格、吸附的记忆越少。")}</span></i></span>
         <span class="sw-inline"><input type="number" id="adv_attach_threshold" min="0" max="1" step="0.05" value="${s.attach_memory_threshold ?? 0.7}"></span>
       </div>
+      <div class="muted" style="margin:10px 0 2px;">${t("聊天界面")}</div>
+      <div class="switch-row">
+        <span class="sw-label">🗂️ ${t("消息列表可缩放")} <i class="info-icon">!<span class="tip">${t("开启后，会话页「消息目录」面板可拖动左边缘调整宽度（右边缘固定对齐「消息目录」按钮），消息超过三条时下边缘也可拖动调整高度；大小按窗口比例记忆，关闭后面板恢复固定宽度。")}</span></i></span>
+        <label class="toggle"><input type="checkbox" id="adv_msg_drawer_resize" ${s.msg_drawer_resizable !== false ? "checked" : ""}><span class="track"></span></label>
+      </div>
+      <div class="switch-row">
+        <span class="sw-label">🎨 ${t("退出编辑模式按钮颜色")} <i class="info-icon">!<span class="tip">${t("进入编辑模式后，顶栏「退出编辑模式」按钮的边框与文字颜色（底色固定为白色）。点击色块可自定义，默认与编辑模式徽标一致的绿色。")}</span></i></span>
+        <span class="sw-inline"><input type="color" id="adv_exit_edit_color" value="${esc(s.exit_edit_color || "#16a34a")}"></span>
+      </div>
       <div class="muted" style="margin:10px 0 2px;">${t("其他")}</div>
       <div class="modal-actions" style="justify-content:flex-start; flex-wrap:wrap;">
         <button class="btn small" id="advBrowserDelay">${t("浏览器交互延迟设置")}</button>
@@ -4384,6 +4417,8 @@ async function openAdvancedSettings() {
         browser_interactive_english: mask.querySelector("#adv_browser_interactive_english").checked, // BID084
         search_memory_threshold: clamp01(mask.querySelector("#adv_search_threshold").value, 0.5),
         attach_memory_threshold: clamp01(mask.querySelector("#adv_attach_threshold").value, 0.7),
+        msg_drawer_resizable: mask.querySelector("#adv_msg_drawer_resize").checked,
+        exit_edit_color: normalizeHexColor(mask.querySelector("#adv_exit_edit_color").value),
       });
       mask.remove();
       toast(t("设置已保存"));
@@ -6902,9 +6937,282 @@ function setStatusIndicator(mode, actor) {
   else { ind.className = "status-indicator"; ind.innerHTML = ""; }
 }
 
+/* ================= 消息目录（可缩放抽屉） =================
+   需求：目录面板从「消息目录」按钮下方弹出；开启「消息列表可缩放」后，
+   可拖动左边缘调宽度（右缘固定对齐按钮），消息超过三条时可拖动下边缘调高度。
+   宽度下限＝默认宽度（只允许拖大，拖大后再拖小也不会小于默认宽度）；
+   高度下限＝完整三行，但实际内容不足时按内容高度显示、下方不留空白。
+   尺寸以「占视口的比例」记忆（localStorage，经 ui_prefs_bridge 落盘），
+   窗口缩放时按比例还原。拖动提示用贴在边缘的极细淡线，
+   不复用浮层系统的角把手，尽量低调、不抢视觉。 */
+const MSG_DRAWER_GEOM_KEY = "msg-drawer-geom";
+const MSG_DRAWER_W = 300;          // 默认宽度，也是宽度下限
+const MSG_DRAWER_H = 360;          // 未拖动过时的默认最大高度
+const MSG_DRAWER_GAP = 8;          // 面板与按钮的垂直间距
+const MSG_DRAWER_MARGIN = 8;       // 与视口边缘的最小距离
+const MSG_DRAWER_MIN_ROWS = 3;     // 高度下限：至少完整显示三行
+
+function loadMsgDrawerGeom() {
+  try {
+    const v = JSON.parse(localStorage.getItem(MSG_DRAWER_GEOM_KEY) || "null");
+    return (v && typeof v === "object") ? v : null;
+  } catch (e) { return null; }
+}
+function saveMsgDrawerGeom(geom) {
+  try { localStorage.setItem(MSG_DRAWER_GEOM_KEY, JSON.stringify(geom)); } catch (e) { /* ignore */ }
+}
+function msgDrawerResizableEnabled() {
+  return !(settingsCache && settingsCache.msg_drawer_resizable === false);
+}
+function closeMsgDrawer(panel) {
+  if (!panel) return;
+  if (typeof panel._msgDrawerDispose === "function") panel._msgDrawerDispose();
+  panel.remove();
+}
+/* 目录项对齐：能完整显示时沿用居中的观感；需要省略号时长项撑满（左对齐）。
+   宽度变化（拖动左缘 / 窗口缩放）或展开子项后都要重新判断。 */
+function syncMsgDrawerLabelAlign(panel) {
+  if (!panel) return;
+  panel.querySelectorAll(".msg-drawer-item").forEach((item) => {
+    const label = item.querySelector(".msg-drawer-label");
+    if (!label) return;
+    const overflow = label.scrollWidth > label.clientWidth + 1;
+    item.classList.toggle("msg-drawer-item-center", !overflow);
+  });
+  panel.querySelectorAll(".msg-drawer-sub-item").forEach((el) => {
+    // 折叠中的子项没有布局盒，量不到宽度，等展开时再判断
+    if (el.offsetParent === null) return;
+    el.classList.toggle("msg-drawer-sub-item-center", el.scrollWidth <= el.clientWidth + 1);
+  });
+}
+function setupMsgDrawerResize(panel, btn) {
+  const vw = () => document.documentElement.clientWidth;
+  const vh = () => document.documentElement.clientHeight;
+  const M = MSG_DRAWER_MARGIN;
+  const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), Math.max(lo, hi));
+  // 三行下限按真实条目高度计算（含条目内边距），再加上面板内边距与边框
+  const itemH = (() => {
+    const it = panel.querySelector(".msg-drawer-item");
+    const h = it ? it.getBoundingClientRect().height : 0;
+    return h > 0 ? h : 35;
+  })();
+  const MIN_H = Math.max(88, Math.round(itemH * MSG_DRAWER_MIN_ROWS + 14));
+  // 右边缘始终对齐「消息目录」按钮右缘（窗口缩放时重新计算），只允许拖左边缘改宽度
+  const anchorRight = () => {
+    const br = btn.getBoundingClientRect();
+    return clamp(Math.round(br.right), M + 1, vw() - M);
+  };
+  const anchorTop = () => {
+    const br = btn.getBoundingClientRect();
+    return clamp(Math.round(br.bottom + MSG_DRAWER_GAP), M, vh() - MIN_H - M);
+  };
+
+  let cur = null;          // { left, top, w, logicalH }；logicalH 是拖动/落盘高度，可大于实际内容
+  let naturalH = 1;        // 内容实际自然高度（含内边距/边框），视觉高度不超过它
+  let baseVW = vw(), baseVH = vh();
+  const stored = loadMsgDrawerGeom();
+  // 只有消息条数超过三条（四条及以上）才启用下边缘拖拽与蓝线提示；
+  // 三条及以下时高度就是内容高度，拖拽不会产生任何视觉变化，因此不显示相关提示。
+  const itemCount = panel.querySelectorAll(".msg-drawer-item").length;
+  const canResizeHeight = itemCount > MSG_DRAWER_MIN_ROWS;
+
+  const maxWAtRight = (right) => Math.max(1, right - M);
+  const minWAtRight = (right) => Math.min(MSG_DRAWER_W, maxWAtRight(right));
+  const maxHAt = (top) => Math.max(1, vh() - top - M);
+
+  // 临时把高度设为 auto 量出内容真实高度，再恢复原来的高度与滚动位置。
+  // 内容少时必须按内容高度显示，浮层下方不留空白。
+  function measureNatural() {
+    const st = panel.scrollTop;
+    const prevH = panel.style.height;
+    const prevMax = panel.style.maxHeight;
+    panel.style.maxHeight = "none";
+    panel.style.height = "auto";
+    const h = panel.getBoundingClientRect().height;
+    panel.style.height = prevH;
+    panel.style.maxHeight = prevMax;
+    panel.scrollTop = st;
+    return Math.max(1, Math.round(h));
+  }
+  const visualH = () => {
+    // 不启用高度拖拽时（消息三条及以下），高度就是内容高度（受视口限制），
+    // 不套用上一次落盘的高度，避免出现没有任何手段能消除的滚动条。
+    const cap = canResizeHeight ? cur.logicalH : maxHAt(cur.top);
+    return Math.max(1, Math.min(naturalH, cap, maxHAt(cur.top)));
+  };
+
+  let dragline = null;
+  if (canResizeHeight) {
+    dragline = document.createElement("div");
+    dragline.className = "msg-drawer-dragline";
+    dragline.style.display = "none";
+    document.body.appendChild(dragline);
+  }
+  function updateDragline(y) {
+    if (!dragline) return;
+    const r = panel.getBoundingClientRect();
+    dragline.style.display = "block";
+    dragline.style.left = Math.round(r.left) + "px";
+    dragline.style.width = Math.round(r.width) + "px";
+    dragline.style.top = Math.round(clamp(y, 0, vh() - 2)) + "px";
+  }
+  function hideDragline() {
+    if (dragline) dragline.style.display = "none";
+  }
+
+  const grips = {};
+  function syncGrips() {
+    const r = panel.getBoundingClientRect();
+    if (!r.width) return;
+    grips.left.style.left = Math.round(r.left - 4) + "px";
+    grips.left.style.top = Math.round(r.top) + "px";
+    grips.left.style.height = Math.round(r.height) + "px";
+    if (grips.bottom) {
+      grips.bottom.style.left = Math.round(r.left) + "px";
+      grips.bottom.style.top = Math.round(r.bottom - 4) + "px";
+      grips.bottom.style.width = Math.round(r.width) + "px";
+    }
+  }
+  function apply() {
+    panel.style.position = "fixed";
+    panel.style.left = Math.round(cur.left) + "px";
+    panel.style.top = Math.round(cur.top) + "px";
+    panel.style.right = "auto";
+    panel.style.width = Math.round(cur.w) + "px";
+    panel.style.height = Math.round(visualH()) + "px";
+    panel.style.maxHeight = "none";
+    syncGrips();
+    syncMsgDrawerLabelAlign(panel);
+  }
+  // 右缘固定：按按钮右缘重新钳制宽度与左边缘
+  function fit() {
+    const right = anchorRight();
+    cur.w = clamp(Math.round(cur.w), minWAtRight(right), maxWAtRight(right));
+    cur.left = right - cur.w;
+    cur.top = Math.min(cur.top, Math.max(M, vh() - MIN_H - M));
+    cur.logicalH = Math.max(MIN_H, Math.min(cur.logicalH, maxHAt(cur.top)));
+  }
+  const startDrag = (ev, side) => {
+    if (ev.button != null && ev.button !== 0) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    const start = { left: cur.left, top: cur.top, w: cur.w };
+    const sx = ev.clientX, sy = ev.clientY;
+    const onMove = (e2) => {
+      if (side === "left") {
+        const right = start.left + start.w;
+        const left = clamp(start.left + (e2.clientX - sx), M, right - minWAtRight(right));
+        cur.left = left;
+        cur.w = right - left;
+      } else {
+        // 高度直接按「光标离面板顶部的距离」映射（最低三行）：
+        // · 蓝线贴在光标上，不再从上次落盘高度开始，避免内容不足时甩到很下面；
+        // · 内容只有一行时，光标可以从一行拖到三行这段平时到不了的区间，
+        //   但落盘高度仍从三行起步（clamp 到 MIN_H）。
+        const cursorY = clamp(e2.clientY, start.top, vh() - M);
+        cur.top = start.top;
+        cur.logicalH = clamp(cursorY - start.top, MIN_H, maxHAt(start.top));
+        updateDragline(cursorY);
+      }
+      apply();
+    };
+    const onUp = () => {
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onUp);
+      document.removeEventListener("pointercancel", onUp);
+      document.body.classList.remove("msg-drawer-resizing", "msg-drawer-resizing-left", "msg-drawer-resizing-bottom");
+      hideDragline();
+      syncGrips();
+      saveMsgDrawerGeom({
+        rw: cur.w / vw(),
+        rh: cur.logicalH / vh(),
+      });
+    };
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onUp);
+    document.addEventListener("pointercancel", onUp);
+    document.body.classList.add("msg-drawer-resizing", `msg-drawer-resizing-${side}`);
+    if (side === "bottom") updateDragline(clamp(sy, start.top, vh() - M));
+  };
+  const gripSides = canResizeHeight ? ["left", "bottom"] : ["left"];
+  gripSides.forEach((side) => {
+    const g = document.createElement("div");
+    g.className = `msg-drawer-grip msg-drawer-grip-${side}`;
+    g.title = side === "bottom" ? t("拖动调整高度") : t("拖动调整宽度");
+    g.addEventListener("pointerdown", (ev) => startDrag(ev, side));
+    document.body.appendChild(g);
+    grips[side] = g;
+  });
+
+  // 先按「右缘对齐按钮」把宽度定下来，再量内容自然高度
+  const top = anchorTop();
+  const right0 = anchorRight();
+  const width0 = (() => {
+    const maxW = maxWAtRight(right0);
+    if (stored && typeof stored.rw === "number" && stored.rw > 0) {
+      return clamp(Math.round(stored.rw * vw()), minWAtRight(right0), maxW);
+    }
+    return Math.min(MSG_DRAWER_W, maxW);
+  })();
+  panel.style.width = Math.round(width0) + "px";
+  panel.style.height = "auto";
+  panel.style.maxHeight = "none";
+  naturalH = measureNatural();
+
+  let logicalH;
+  if (stored && typeof stored.rh === "number" && stored.rh > 0) {
+    // 记忆的是「拖动落盘高度」，可以大于实际内容；显示时仍按内容高度收缩
+    logicalH = clamp(Math.round(stored.rh * vh()), MIN_H, maxHAt(top));
+  } else {
+    // 未拖动过：沿用旧观感（内容自适应，最多 360px）；拖动下限仍是三行
+    logicalH = clamp(Math.max(naturalH, MIN_H), MIN_H, Math.min(MSG_DRAWER_H, maxHAt(top)));
+  }
+  cur = { left: right0 - width0, top, w: width0, logicalH };
+  fit();
+  apply();
+
+  // 展开/收起标题子项后内容高度会变：让面板跟着收缩/增高（最多到落盘高度，下方不留空白）
+  panel._msgDrawerRefreshHeight = () => {
+    naturalH = measureNatural();
+    apply();
+  };
+
+  const onResize = () => {
+    if (!panel.isConnected) return;
+    const nvw = vw(), nvh = vh();
+    const rw = cur.w / baseVW;
+    const rh = cur.logicalH / baseVH;
+    cur.top = anchorTop();
+    naturalH = measureNatural();
+    cur.w = Math.round(rw * nvw);
+    cur.logicalH = Math.round(rh * nvh);
+    fit();
+    apply();
+    baseVW = nvw;
+    baseVH = nvh;
+  };
+  // 面板挂 body 后不再随按钮移动：点面板/按钮/拖拽热区以外的地方（含其它按钮）就收起，
+  // 避免顶栏折行或切换操作后面板停在旧位置。
+  const onDocPointerDown = (ev) => {
+    const tgt = ev.target;
+    if (!tgt || panel.contains(tgt) || btn.contains(tgt)) return;
+    if (tgt.closest && tgt.closest(".msg-drawer-grip")) return;
+    closeMsgDrawer(panel);
+  };
+  window.addEventListener("resize", onResize);
+  document.addEventListener("pointerdown", onDocPointerDown, true);
+  panel._msgDrawerDispose = () => {
+    window.removeEventListener("resize", onResize);
+    document.removeEventListener("pointerdown", onDocPointerDown, true);
+    Object.keys(grips).forEach((k) => grips[k].remove());
+    if (dragline) dragline.remove();
+    delete panel._msgDrawerRefreshHeight;
+  };
+}
+
 function toggleMsgDrawer(e) {
   const existing = $(".msg-drawer-panel");
-  if (existing) { existing.remove(); return; }
+  if (existing) { closeMsgDrawer(existing); return; }
   const btn = e.currentTarget;
   const panel = document.createElement("div");
   panel.className = "msg-drawer-panel";
@@ -6923,10 +7231,23 @@ function toggleMsgDrawer(e) {
 
     const headingMap = {};
     const items = blocks.map((b, i) => {
-      const summary = b.dataset.summary || "";
-      const raw = summary || (b.querySelector(".user-msg-quote")?.innerText || "");
-      const first = raw.split("\n").map(s => s.trim()).filter(Boolean)[0] || "";
-      const label = first.length > 24 ? first.slice(0, 24) + "…" : first;
+      // 目录项读取整条用户消息（后端 data-summary 已把换行折成空格）；
+      // 流式消息没有 data-summary，回退到消息框文本，并排除记忆附着按钮/面板。
+      let raw = b.dataset.summary || "";
+      if (!raw) {
+        const q = b.querySelector(".user-msg-quote");
+        if (q) {
+          const clone = q.cloneNode(true);
+          clone.querySelectorAll(".mem-attach-btn, .mem-attach-panel").forEach((n) => n.remove());
+          // 流式回显用 <br> 表示换行；textContent 不会为它补空白，先换成空格再归一化，
+          // 否则相邻行会粘成一个词（如 "...(2,3,4)]list_a.sort..."）。
+          clone.querySelectorAll("br").forEach((n) => n.replaceWith(" "));
+          raw = clone.textContent || "";
+        }
+      }
+      // 不再按固定字符数截断：把整段压缩成一行，交给 CSS 按抽屉实际宽度
+      // 做省略号——抽屉拖宽后自然显示更多，长消息不会再「只显示一点」。
+      const label = raw.replace(/\s+/g, " ").trim();
 
       const headings = [];
       aiBlocks.forEach((ai, k) => {
@@ -6951,9 +7272,8 @@ function toggleMsgDrawer(e) {
       const labelHtml = `<span class="msg-drawer-label">${esc(label)}</span>`;
       const subHtml = expandable
         ? `<div class="msg-drawer-sub" data-sub="${i}" style="display:none;">${headingMap[i].map((h, j) => {
-            const txt = (h.innerText || "").split("\n").map(s => s.trim()).filter(Boolean)[0] || "";
-            const short = txt.length > 28 ? txt.slice(0, 28) + "…" : txt;
-            return `<div class="msg-drawer-sub-item" data-i="${i}" data-h="${j}">${esc(short)}</div>`;
+            const txt = (h.innerText || "").replace(/\s+/g, " ").trim();
+            return `<div class="msg-drawer-sub-item" data-i="${i}" data-h="${j}">${esc(txt)}</div>`;
           }).join("")}</div>`
         : "";
       return `<div class="msg-drawer-item" data-i="${i}">${caret}${labelHtml}</div>${subHtml}`;
@@ -6968,6 +7288,9 @@ function toggleMsgDrawer(e) {
           const open = sub.style.display !== "none";
           sub.style.display = open ? "none" : "";
           caret.textContent = open ? "▸" : "▾";
+          // 展开/收起会改变内容实际高度：让面板按内容收缩/增高（不超过落盘高度）
+          if (typeof panel._msgDrawerRefreshHeight === "function") panel._msgDrawerRefreshHeight();
+          syncMsgDrawerLabelAlign(panel);
         }
         return;
       }
@@ -6975,29 +7298,38 @@ function toggleMsgDrawer(e) {
       if (subItem) {
         const el = headingMap[+subItem.dataset.i]?.[+subItem.dataset.h];
         if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
-        panel.remove();
+        closeMsgDrawer(panel);
         return;
       }
       const item = ev.target.closest(".msg-drawer-item");
       if (item) {
         const el = blocks[+item.dataset.i];
         if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
-        panel.remove();
+        closeMsgDrawer(panel);
       }
     });
   }
-  btn.appendChild(panel);
-  // 顶栏按钮换行到下一行时，面板可能横向超出视口；append 后按视口做一次校正
-  const margin = 8;
-  const br = btn.getBoundingClientRect();
-  const pr = panel.getBoundingClientRect();
-  if (pr.left < margin) {
-    panel.style.right = "auto";
-    panel.style.left = `${margin - br.left}px`;
-  } else if (pr.right > window.innerWidth - margin) {
-    panel.style.left = "auto";
-    panel.style.right = `${br.right - (window.innerWidth - margin)}px`;
+  // 开关关闭：保持原行为（绝对定位挂在按钮内、固定 300px、内容自适应）。
+  // 开关开启：改为 fixed 挂到 body，由专用几何逻辑支持左/下两边拖拽与记忆。
+  if (!msgDrawerResizableEnabled()) {
+    btn.appendChild(panel);
+    const margin = 8;
+    const br = btn.getBoundingClientRect();
+    const pr = panel.getBoundingClientRect();
+    if (pr.left < margin) {
+      panel.style.right = "auto";
+      panel.style.left = `${margin - br.left}px`;
+    } else if (pr.right > window.innerWidth - margin) {
+      panel.style.left = "auto";
+      panel.style.right = `${br.right - (window.innerWidth - margin)}px`;
+    }
+    syncMsgDrawerLabelAlign(panel);
+    return;
   }
+  panel.classList.add("msg-drawer-floating");
+  document.body.appendChild(panel);
+  setupMsgDrawerResize(panel, btn);
+  syncMsgDrawerLabelAlign(panel);
 }
 
 /* ================= 未发送消息缓存（draft） ================= */
@@ -7819,7 +8151,11 @@ function createHistoryEditor(opts) {
   let edits = [];
 
   function setBadge(mode) {
-    if (editBtn) editBtn.textContent = (mode === "off") ? `✏️ ${t("进入编辑模式")}` : `✏️ ${t("退出编辑模式")}`;
+    if (editBtn) {
+      editBtn.textContent = (mode === "off") ? `✏️ ${t("进入编辑模式")}` : `✏️ ${t("退出编辑模式")}`;
+      // 「退出编辑模式」是该模式唯一出口：改用主题蓝底白字提示（字号/字体/尺寸不变）
+      editBtn.classList.toggle("btn-exit-edit", mode !== "off");
+    }
     if (!badgeEl) return;
     if (mode === "off") {
       badgeEl.style.display = "none";

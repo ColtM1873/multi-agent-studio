@@ -12,6 +12,7 @@
   --shadow-lg: 0 8px 40px rgba(0,0,0,.12);
   --reasoning-color: #6b7280;
   --tool-result-color: #475569;
+  --exit-edit-color: #16a34a;
 }
 
 * { box-sizing: border-box; }
@@ -959,15 +960,46 @@ body.floating-dragging { user-select: none; cursor: grabbing; }
 .pin-btn.active { background: var(--primary); border-color: var(--primary); box-shadow: 0 2px 8px rgba(79,70,229,.35); }
 
 /* ── 消息抽屉 ───────────────────────────── */
-.msg-drawer-panel { position: absolute; right: 0; top: 110%; width: 300px; max-width: calc(100vw - 16px); max-height: 360px; overflow: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow-lg); z-index: 100; padding: 6px; }
+.msg-drawer-panel { position: absolute; right: 0; top: 110%; width: 300px; max-width: calc(100vw - 16px); max-height: 360px; overflow: auto; scrollbar-gutter: stable; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow-lg); z-index: 100; padding: 6px; }
+/* 开启「消息列表可缩放」后的浮动面板：位置/尺寸由 JS 计算（fixed，挂 body）。
+   右边缘固定对齐「消息目录」按钮，只有左 / 下两条边可拖；各有一条透明热区，
+   默认不显示任何图形；鼠标进入面板时只浮现极淡的细线提示可拖动，
+   指针悬停到热区时再略微加深——低调、不抢视觉。 */
+.msg-drawer-floating { position: fixed; right: auto; top: auto; }
+.msg-drawer-grip { position: fixed; z-index: 101; touch-action: none; }
+.msg-drawer-grip::after {
+  content: ""; position: absolute; border-radius: 2px;
+  background: rgba(79, 70, 229, .38); opacity: 0;
+  transition: opacity .15s ease;
+}
+.msg-drawer-grip-left { width: 10px; cursor: col-resize; }
+.msg-drawer-grip-left::after { top: 10px; bottom: 10px; left: 4px; width: 2px; }
+.msg-drawer-grip-bottom { height: 10px; cursor: row-resize; }
+.msg-drawer-grip-bottom::after { left: 10px; right: 10px; top: 4px; height: 2px; }
+.msg-drawer-floating:hover ~ .msg-drawer-grip::after { opacity: .2; }
+.msg-drawer-grip:hover::after { opacity: .85; }
+/* 拖动下边缘时的「落盘高度」指示线：可以露在抽屉下方（内容不足时抽屉不再拉长，
+   但拖动位置仍按光标继续走，松手后按这条线的位置落盘）。 */
+.msg-drawer-dragline {
+  position: fixed; height: 2px; border-radius: 2px;
+  background: rgba(79, 70, 229, .55);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, .65);
+  z-index: 102; pointer-events: none;
+}
+body.msg-drawer-resizing { user-select: none; -webkit-user-select: none; }
+body.msg-drawer-resizing-left { cursor: col-resize; }
+body.msg-drawer-resizing-bottom { cursor: row-resize; }
 .msg-drawer-item { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-radius: 8px; cursor: pointer; font-size: 13px; }
 .msg-drawer-item:hover { background: #eef2ff; }
 .msg-drawer-caret { flex: 0 0 auto; width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center; color: var(--text-muted); font-size: 13px; line-height: 1; user-select: none; cursor: pointer; border-radius: 5px; }
 .msg-drawer-caret:hover { background: #e0e7ff; color: var(--primary); }
 .msg-drawer-caret-empty { cursor: default; }
-.msg-drawer-label { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msg-drawer-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 能完整显示的项沿用居中的观感；需要省略号的长项保持撑满（左对齐） */
+.msg-drawer-item.msg-drawer-item-center .msg-drawer-label { text-align: center; }
 .msg-drawer-sub { margin: 0 0 2px 22px; border-left: 1px solid var(--border); padding-left: 8px; }
 .msg-drawer-sub-item { padding: 5px 8px; border-radius: 6px; cursor: pointer; font-size: 12px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msg-drawer-sub-item.msg-drawer-sub-item-center { text-align: center; }
 .msg-drawer-sub-item:hover { background: #eef2ff; color: var(--primary); }
 
 /* ── 状态指示强化 ───────────────────────── */
@@ -1208,6 +1240,16 @@ body.floating-dragging { user-select: none; cursor: grabbing; }
 .deleted-agent-snaps { padding: 0 6px 6px 20px; border-left: 2px solid var(--border); margin: 0 0 6px 12px; }
 
 /* ── 历史消息编辑模式 ──────────────────── */
+/* 进入编辑模式后，顶栏同一个按钮变成「退出编辑模式」（该模式唯一出口）。
+   字号、字体、按钮尺寸全部不变；默认与编辑模式徽标一致的绿框、绿字、白底，
+   颜色可在「进阶设置 → 退出编辑模式按钮颜色」里自定义（--exit-edit-color）。 */
+.btn.btn-exit-edit,
+.btn.btn-exit-edit:hover {
+  background: #fff;
+  border-color: var(--exit-edit-color, #16a34a);
+  color: var(--exit-edit-color, #16a34a);
+}
+.btn.btn-exit-edit:hover { background: #f8fafc; }
 .edit-mode-badge {
   background: #16a34a; color: #fff;
   font-size: 15px; font-weight: 700;

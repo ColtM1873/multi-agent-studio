@@ -180,6 +180,13 @@ class Settings(BaseModel):
     edit_all_message_types: bool = False
     # 发送消息后自动跳到最新输出并跟随流式（鼠标上滑可停止跟随），默认开启
     auto_scroll_on_send: bool = True
+    # 会话页「消息目录」面板是否允许拖动左 / 右 / 下三条边调整大小（默认开启）。
+    # 尺寸与位置按视口比例记忆在 localStorage（经 ui_prefs_bridge 落盘到后端），
+    # 纯前端展示开关，不参与图编译，无需 invalidate_all。
+    msg_drawer_resizable: bool = True
+    # 进入编辑模式后顶栏「退出编辑模式」按钮的边框与文字颜色（底色固定为白色）。
+    # 默认取与编辑模式徽标一致的绿色；纯前端样式设置，不参与图编译。
+    exit_edit_color: str = "#16a34a"
     # 全量总结默认压缩比例（百分比）：目标 summary 占历史 token 的比例。
     # 默认 20%（即原来的 history_to_summary = 5，五分之一），越小越省 token。
     summary_token_percent: int = 20
