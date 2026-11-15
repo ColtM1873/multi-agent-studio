@@ -24,6 +24,7 @@ from app.config.models import (
 )
 from app.runtime.file_tools import build_file_tools
 from app.runtime.deepseek_reasoning_fix import apply_deepseek_reasoning_fix, is_deepseek_config
+from app.runtime.openai_compat_reasoning import apply_openai_compat_reasoning_capture
 from app.runtime.browser_tools import return_browser_tools
 
 from app.runtime.prompts import (
@@ -122,7 +123,9 @@ def _init_model(llm_provider_name: str, api_key: str, model_cfg: ModelConfig):
     - 非标准参数（top_k/repetition_penalty）通过 model_kwargs 透传，
       交由底层 API 自行解释（各 provider 支持程度不一）。
     - openai_compatible 模式固定 model_provider="openai" 并携带 base_url。
-    - 检测到 DeepSeek 时自动应用 reasoning_content 补丁（无需用户配置）。
+    - openai_compatible 模式自动捕获三方端点的 reasoning_content（ChatOpenAI
+      默认丢弃非标准字段，见 app/runtime/openai_compat_reasoning.py）。
+    - 检测到 DeepSeek 时自动应用 reasoning_content 出站回填补丁（无需用户配置）。
     """
     kwargs: dict[str, Any] = {}
     if model_cfg.temperature is not None:
@@ -148,6 +151,9 @@ def _init_model(llm_provider_name: str, api_key: str, model_cfg: ModelConfig):
             base_url=model_cfg.base_url,
             **kwargs,
         )
+        # 官方 ChatOpenAI 会丢弃三方端点的非标准 reasoning_content，
+        # 这里补上入站解析，否则思考过程既进不了 v3 流式事件，也进不了历史渲染。
+        apply_openai_compat_reasoning_capture(model)
     else:
         model = init_chat_model(model=llm_provider_name, api_key=api_key, **kwargs)
 
