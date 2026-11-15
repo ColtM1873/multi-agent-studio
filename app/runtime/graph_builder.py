@@ -14,6 +14,7 @@ from langchain_core.tools.structured import StructuredTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langgraph.graph.state import CompiledStateGraph, StateGraph, START, END
 from langgraph.types import Command, RetryPolicy, interrupt
+from openai import DefaultAsyncHttpxClient, DefaultHttpxClient
 
 from app.config.models import (
     DEFAULT_HTML_REPORT_PROMPT,
@@ -123,6 +124,9 @@ def _init_model(llm_provider_name: str, api_key: str, model_cfg: ModelConfig):
     - 非标准参数（top_k/repetition_penalty）通过 model_kwargs 透传，
       交由底层 API 自行解释（各 provider 支持程度不一）。
     - openai_compatible 模式固定 model_provider="openai" 并携带 base_url。
+    - openai_compatible 且 base_url_no_proxy 时，给该模型实例配一个
+      trust_env=False 的 httpx client，让请求不读取环境变量 / 系统全局代理。
+      主/子 agent 各有自己的 ModelConfig，因此两边可以一个走代理、一个不走。
     - openai_compatible 模式自动捕获三方端点的 reasoning_content（ChatOpenAI
       默认丢弃非标准字段，见 app/runtime/openai_compat_reasoning.py）。
     - 检测到 DeepSeek 时自动应用 reasoning_content 出站回填补丁（无需用户配置）。
@@ -144,11 +148,20 @@ def _init_model(llm_provider_name: str, api_key: str, model_cfg: ModelConfig):
         kwargs["model_kwargs"] = model_kwargs
 
     if model_cfg.provider_mode == "openai_compatible":
+        compat_kwargs: dict[str, Any] = {}
+        if model_cfg.base_url_no_proxy:
+            # httpx 默认 trust_env=True，会读取 HTTP(S)_PROXY 与 Windows 系统代理；
+            # 本地部署的模型（如 http://127.0.0.1:8000/v1）会被全局代理拦截。
+            # 用 openai 的默认 client 子类，只覆盖 trust_env，其余（timeout/重定向/
+            # 连接池）保持与默认行为一致。同步与异步都传，避免只覆盖一半调用路径。
+            compat_kwargs["http_client"] = DefaultHttpxClient(trust_env=False)
+            compat_kwargs["http_async_client"] = DefaultAsyncHttpxClient(trust_env=False)
         model = init_chat_model(
             model=llm_provider_name,
             api_key=api_key,
             model_provider="openai",
             base_url=model_cfg.base_url,
+            **compat_kwargs,
             **kwargs,
         )
         # 官方 ChatOpenAI 会丢弃三方端点的非标准 reasoning_content，

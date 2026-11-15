@@ -1081,6 +1081,20 @@ body.msg-drawer-resizing-bottom { cursor: row-resize; }
 .model-ref-preview code { background: #f1f5f9; color: var(--text-muted); padding: 1px 6px; border-radius: 5px; font-size: 12px; word-break: break-all; }
 .model-source-card [data-baseurl-field],
 .model-source-card > .field.full { margin-top: 12px; }
+/* base_url 行：输入框 +「不走全局代理」开关同一行；窄窗自动折行。
+ * .model-source-card 前缀是为了压过 .field label 的 flex: 1 1 auto（否则开关会被拉宽）。 */
+.baseurl-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.baseurl-row > input[data-mf="base_url"] { flex: 1 1 260px; min-width: 0; }
+.model-source-card .baseurl-noproxy {
+  flex: 0 0 auto; display: inline-flex; align-items: center; gap: 6px;
+  white-space: nowrap; font-size: 13px; color: var(--text-muted); cursor: pointer;
+}
+/* 覆盖 .field input 的文本输入框外观，只保留原生 checkbox 样式 */
+.model-source-card .baseurl-noproxy input[type="checkbox"] {
+  width: 15px; height: 15px; margin: 0; padding: 0; border: none; background: none;
+  accent-color: var(--primary);
+}
+.baseurl-noproxy-hint { color: #b45309; }
 .radio-list { display: flex; flex-direction: column; gap: 10px; }
 .radio-item { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 14px; font-weight: 500; }
 .radio-item input { accent-color: var(--primary); }

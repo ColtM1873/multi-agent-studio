@@ -344,6 +344,8 @@ const I18N_EN = {
   "填写该供应商提供的模型 ID，例如 deepseek-v4-pro、gpt-5、claude-sonnet-4-5。": "Enter the model ID provided by this vendor, e.g. deepseek-v4-pro, gpt-5, or claude-sonnet-4-5.",
   "例如：deepseek-v4-pro": "e.g. deepseek-v4-pro",
   "非内置供应商需要填写；内置供应商会自动使用官方端点。": "Required for non-built-in providers; built-in providers use their official endpoint automatically.",
+  "base_url 不走全局代理": "Bypass the global proxy for base_url",
+  "本地部署的模型（如 http://127.0.0.1:8000/v1）请勾选「base_url 不走全局代理」，否则请求会走全局代理，连不上本地 server。": "For locally hosted models (e.g. http://127.0.0.1:8000/v1), enable \"Bypass the global proxy for base_url\"; otherwise requests go through the global proxy and cannot reach the local server.",
   "思考过程": "Thinking process",
   "思考字号（相对正文）": "Reasoning font size (relative to body)",
   "思考字号减小": "Decrease reasoning font size",
@@ -5653,8 +5655,12 @@ function modelBlockHTML(llmName, mc, apiKey, apiKeyPlaceholderKey) {
         <div class="model-ref-preview"><span class="model-ref-label">${t("模型标识")}：</span><code data-model-preview>${v(previewRef)}</code></div>
         <div class="field" data-baseurl-field style="${official ? "display:none;" : ""}">
           <label>base_url <i class="info-icon">!<span class="tip">${t("应指向 /v1 根路径，LangChain 会自动拼接 /chat/completions。不要把 /chat/completions 写进 base_url，否则会 404。")}</span></i></label>
-          <input data-mf="base_url" value="${v(mc.base_url)}" placeholder="https://api.openai.com/v1">
+          <div class="baseurl-row">
+            <input data-mf="base_url" value="${v(mc.base_url)}" placeholder="https://api.openai.com/v1">
+            <label class="baseurl-noproxy"><input type="checkbox" data-mf="base_url_no_proxy" ${mc.base_url_no_proxy ? "checked" : ""}> ${t("base_url 不走全局代理")}</label>
+          </div>
           <span class="hint">${t("非内置供应商需要填写；内置供应商会自动使用官方端点。")}</span>
+          <span class="hint baseurl-noproxy-hint">${t("本地部署的模型（如 http://127.0.0.1:8000/v1）请勾选「base_url 不走全局代理」，否则请求会走全局代理，连不上本地 server。")}</span>
         </div>
         <div class="field full">
           <details class="db-help">
@@ -5702,7 +5708,7 @@ function collectModelBlock(root) {
     return {
       llm_provider_name: "",
       api_key: "",
-      model: { provider_mode: "official", provider_name: "", base_url: "" },
+      model: { provider_mode: "official", provider_name: "", base_url: "", base_url_no_proxy: false },
     };
   }
   const provider = (block.querySelector('[data-mf="provider_name"]').value || "").trim();
@@ -5712,11 +5718,14 @@ function collectModelBlock(root) {
   const official = isOfficialProvider(provider);
   const baseUrl = official ? "" : (block.querySelector('[data-mf="base_url"]').value || "").trim();
   if (!official && !baseUrl) throw new Error(t("非内置供应商需要填写 base_url。"));
+  const noProxyEl = block.querySelector('[data-mf="base_url_no_proxy"]');
 
   const out = {
     provider_mode: official ? "official" : "openai_compatible",
     provider_name: official ? "" : provider,
     base_url: baseUrl,
+    // 内置供应商没有 base_url，此开关也随 base_url 字段一起隐藏，统一存 false。
+    base_url_no_proxy: official ? false : !!(noProxyEl && noProxyEl.checked),
   };
   for (const p of EXTRA_PARAMS) {
     const cb = block.querySelector(`[data-opt="${p.key}"]`);

@@ -75,6 +75,10 @@ class ModelConfig(BaseModel):
     provider_mode: Literal["official", "openai_compatible"] = "official"
     provider_name: str = ""
     base_url: str = ""
+    # 只对 openai_compatible 生效：请求 base_url 时不读取环境变量 / 系统全局代理。
+    # 本地部署的模型（如 http://127.0.0.1:8000/v1）必须开启，否则 Clash 等代理会
+    # 把请求转走，表现为连不上本地 server。主/子 agent 各自配置，互不影响。
+    base_url_no_proxy: bool = False
     temperature: float | None = None
     top_k: int | None = None
     top_p: float | None = None
