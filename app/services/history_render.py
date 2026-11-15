@@ -342,9 +342,10 @@ def _render_ai(msg, w, show_reasoning, show_tool_calls, reasoning_expanded=True,
             seen_ids.add(tc.get("id"))
             tool_calls.append(tc)
     um = getattr(msg, "usage_metadata", {}) or {}
-    input_tok = um.get("input_tokens", "?")
-    output_tok = um.get("output_tokens", "?")
-    cache = um.get("input_token_details", {}).get("cache_read", 0)
+    # 缺失的用量字段不显示（不要用 "?" 占位，否则看起来像出错且用户无从处理）。
+    input_tok = um.get("input_tokens")
+    output_tok = um.get("output_tokens")
+    cache = (um.get("input_token_details") or {}).get("cache_read", 0)
 
     data_attr = ""
     if export_html:
@@ -355,11 +356,19 @@ def _render_ai(msg, w, show_reasoning, show_tool_calls, reasoning_expanded=True,
 
     w(f'<div class="ai-msg-block" style="border-left: 3px solid #4CAF50; padding-left: 12px;" data-msg-indice="{msg_indice}"{data_attr}>\n\n')
     # 图标与称谓可在「系统设置 → 聊天图标及称谓自定义」里改（默认 🤖 Assistant）
-    w(f'<strong>{_escape_html(labels["assistant_icon"])} {_escape_html(labels["assistant_name"])}</strong>  ')
-    tok_str = f"↑{input_tok} ↓{output_tok}"
+    header = f'<strong>{_escape_html(labels["assistant_icon"])} {_escape_html(labels["assistant_name"])}</strong>  '
+    # 只拼接「确实存在」的用量项；全都没有时整块不输出（不显示 "↑? ↓?"）。
+    tok_str = ""
+    if input_tok is not None:
+        tok_str += f"↑{input_tok}"
+    if output_tok is not None:
+        tok_str += (" " if tok_str else "") + f"↓{output_tok}"
     if cache:
         tok_str += f"  💾cache:{cache}"
-    w(f"<sub>{tok_str}</sub>\n\n")
+    if tok_str:
+        header += f"<sub>{tok_str}</sub>"
+    # 行尾必须留空行结束 HTML block，否则紧跟的正文会被当成 HTML 原文输出。
+    w(f"{header}\n\n")
 
     if isinstance(content, list):
         for block in content:

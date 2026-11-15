@@ -7472,11 +7472,13 @@ function editableLinesHTML(rawText, field, blockIndex, toolCallIndex, msgIndice)
 }
 
 function aiTokStr(msg) {
+  // 只拼接确实存在的用量项；全都没有时返回空串（调用方不渲染 <sub>，
+  // 避免历史消息显示成 "↑? ↓?" 这种像出错、用户又无从处理的占位）。
   const um = msg.usage_metadata || {};
-  const i = um.input_tokens != null ? um.input_tokens : "?";
-  const o = um.output_tokens != null ? um.output_tokens : "?";
   const cache = (um.input_token_details && um.input_token_details.cache_read) || 0;
-  let s = `↑${i} ↓${o}`;
+  let s = "";
+  if (um.input_tokens != null) s += `↑${um.input_tokens}`;
+  if (um.output_tokens != null) s += `${s ? " " : ""}↓${um.output_tokens}`;
   if (cache) s += `  💾cache:${cache}`;
   return s;
 }
@@ -7494,7 +7496,8 @@ function renderEditableMessage(msg, settings) {
   }
   if (msg.type === "AIMessage") {
     let html = `<div class="ai-msg-block" data-msg-indice="${idx}" style="border-left: 3px solid #4CAF50; padding-left: 12px;">`;
-    html += `<strong>${esc(idn.assistantIcon)} ${esc(idn.assistantName)}</strong>  <sub>${aiTokStr(msg)}</sub>`;
+    const tok = aiTokStr(msg);
+    html += `<strong>${esc(idn.assistantIcon)} ${esc(idn.assistantName)}</strong>${tok ? `  <sub>${tok}</sub>` : ""}`;
     const content = msg.content;
     if (Array.isArray(content)) {
       content.forEach((blk, bi) => {
