@@ -48,7 +48,11 @@
    程序新建 multi-agent配置时，需要填入 安装PostgreSQL时的密码和端口号（以及用户名）（需要这些信息来连接数据库）
 2. （如果是postgres版本）postgres连接设置中，连接串模板  postgresql://用户名:密码@localhost:端口号/?sslmode=disable  （默认本地数据库情景）
 3. 每个选项旁边的 小圆圈，一个感叹号，里面都有比较详细的解释，可以把鼠标移过去查看
-
+4. **本地模型接入**：Multi-Agent配置编辑页面，模型配置栏中：
+   - 模型供应商：随便填，但是不要跟内置支持的冲突（不要填openai这些，可以随便填一个，比如SomeGoodModel）；
+   - 模型名称：按照你本地部署的实际模型调用的暴露名称填写；
+   - API Key：看你本地部署的方式，如果不需要 API Key，留空或者乱填一般都可以；
+   - base_url：填到v1就行，比如 http://127.0.0.1:8888/v1（http://localhost:8888/v1）
 
 ## 版本迁移（升级到新版本）
 
@@ -231,6 +235,11 @@ Supervisor（主 agent）                    Workers（子 agent）
 1. (For the postgres version) When installing PostgreSQL, you will be asked for a password and a port. Do not enter arbitrary values. When creating a multi-agent config, you must enter the PostgreSQL username, password, and port (the app needs them to connect to the database).
 2. (For the postgres version) In the PostgreSQL connection settings, the connection string template is `postgresql://username:password@localhost:port/?sslmode=disable` (the typical local setup).
 3. Each option has a small circled exclamation mark with a detailed explanation; hover over it to read.
+4. **Local model access**: In the multi-agent configuration editor's model section:
+   - **Provider**: enter any name, but do not conflict with the built-in providers (do not enter `openai` etc.; any custom name such as `SomeGoodModel` works);
+   - **Model name**: use the exact model name exposed by your local deployment;
+   - **API Key**: depends on how your local deployment works; if no API key is required, leaving it empty or entering an arbitrary value usually works;
+   - **base_url**: fill it in up to `/v1`, e.g. `http://127.0.0.1:8888/v1` (`http://localhost:8888/v1`).
 
 ## Version migration (upgrading)
 
