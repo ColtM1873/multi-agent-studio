@@ -149,6 +149,13 @@ def _init_model(llm_provider_name: str, api_key: str, model_cfg: ModelConfig):
 
     if model_cfg.provider_mode == "openai_compatible":
         compat_kwargs: dict[str, Any] = {}
+        # 流式也要带回 usage：ChatOpenAI 只在「未传 base_url / 自定义 client」时才把
+        # stream_usage 默认置 True（langchain_openai base.py 的 validate_environment），
+        # 而 openai_compatible 必然传 base_url，于是请求里没有
+        # stream_options={"include_usage": True}，端点不会在最后一帧附带 usage，
+        # AIMessage.usage_metadata 就是 None，聊天界面（历史/编辑模式）便没有 ↑↓ 用量。
+        # 合规的 OpenAI 兼容端点都支持 include_usage；本地网关实测有效。
+        compat_kwargs["stream_usage"] = True
         if model_cfg.base_url_no_proxy:
             # httpx 默认 trust_env=True，会读取 HTTP(S)_PROXY 与 Windows 系统代理；
             # 本地部署的模型（如 http://127.0.0.1:8000/v1）会被全局代理拦截。
