@@ -32,10 +32,14 @@ def apply_edits(existing: MultiAgentConfig, incoming: MultiAgentConfig) -> Multi
     store_database 现在统一由全局设置决定，保存时由 API 覆盖，不再由用户编辑。
     """
     validate_edits(existing, incoming)
-    # 保留原有 state_messages_key / history_token_measure_key / extracted_summary_ai_msg_key（子 agent 名未变，键名也保持稳定）
+    # 保留原有 state_messages_key / history_token_measure_key / extracted_summary_ai_msg_key
+    # / solid_summarize_threshold_key / solid_summarize_mode_key
+    # （子 agent 名未变，键名也保持稳定；键名与历史绑定，不能因为一次编辑而改掉）。
     msg_key_map = {s.name: s.state_messages_key for s in existing.sub_agents}
     token_key_map = {s.name: s.history_token_measure_key for s in existing.sub_agents}
     summary_key_map = {s.name: s.extracted_summary_ai_msg_key for s in existing.sub_agents}
+    solid_threshold_key_map = {s.name: s.solid_summarize_threshold_key for s in existing.sub_agents}
+    solid_mode_key_map = {s.name: s.solid_summarize_mode_key for s in existing.sub_agents}
     for sub in incoming.sub_agents:
         if sub.state_messages_key is None:
             sub.state_messages_key = msg_key_map.get(sub.name)
@@ -43,4 +47,8 @@ def apply_edits(existing: MultiAgentConfig, incoming: MultiAgentConfig) -> Multi
             sub.history_token_measure_key = token_key_map.get(sub.name)
         if sub.extracted_summary_ai_msg_key is None:
             sub.extracted_summary_ai_msg_key = summary_key_map.get(sub.name)
+        if sub.solid_summarize_threshold_key is None:
+            sub.solid_summarize_threshold_key = solid_threshold_key_map.get(sub.name)
+        if sub.solid_summarize_mode_key is None:
+            sub.solid_summarize_mode_key = solid_mode_key_map.get(sub.name)
     return incoming

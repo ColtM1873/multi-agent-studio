@@ -50,6 +50,12 @@ class SummaryConfig(BaseModel):
 
     summarize_gap_tokenwise: int = 8 * 10000
     flush_history_tokenwise: int = 60 * 10000
+    # 硬上下文上限（tokens）：每次「要发起下一轮模型调用」之前先看上一轮实测的
+    # 上下文 token 数，一旦达到该值就先做一次被动全量总结，再继续任务。
+    # 用于「模型一直输出、上下文持续膨胀」这种自动阈值来不及拦的场景（如显存极小
+    # 的本地部署）；建议设为「硬上下文上限 - 5k~10k」。
+    # None = 关闭（不做硬上限保护）。
+    solid_summarize_tokenwise: int | None = None
     reserve_message_round: int = 0
 
 
@@ -57,6 +63,8 @@ class SubSummaryConfig(BaseModel):
     """子 agent 的清空历史阈值。"""
 
     flush_history_tokenwise: int = 20 * 10000
+    # 子 agent 的硬上下文上限（tokens），语义同 SummaryConfig.solid_summarize_tokenwise。
+    solid_summarize_tokenwise: int | None = None
     reserve_message_round: int = 4
 
 
@@ -160,6 +168,12 @@ class SubAgentConfig(BaseModel):
     history_token_measure_key: str | None = None
     # 每个子 agent 独立的「提取的总结 AI 消息」键名，由系统自动生成（父子键必须唯一），用户不填。
     extracted_summary_ai_msg_key: str | None = None
+    # 每个子 agent 独立的「硬上下文上限」state 键名，由系统自动生成（父子/兄弟键必须唯一），用户不填。
+    # 它是「该子 agent 的硬上限 token 数」这个 channel 的名字，与 summary 里的数值分开存。
+    solid_summarize_threshold_key: str | None = None
+    # 每个子 agent 独立的「硬上限模式」state 键名，由系统自动生成（父子/兄弟键必须唯一），用户不填。
+    # 命中硬上限后置 True，收回时（receiving_instruction）读取并复位。
+    solid_summarize_mode_key: str | None = None
     summary: SubSummaryConfig = Field(default_factory=SubSummaryConfig)
     react_prompt: bool = True
 

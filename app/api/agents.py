@@ -31,6 +31,7 @@ from app.services import pg_databases
 from app.runtime.state_factory import (
     assign_extracted_summary_ai_msg_keys,
     assign_history_token_measure_keys,
+    assign_solid_summarize_keys,
     assign_state_messages_keys,
 )
 from app.services import snapshot as snapshot_service
@@ -201,6 +202,7 @@ async def create_agent(cfg: MultiAgentConfig):
     assign_state_messages_keys(cfg)
     assign_history_token_measure_keys(cfg)
     assign_extracted_summary_ai_msg_keys(cfg)
+    assign_solid_summarize_keys(cfg)
 
     await chat_manager.invalidate(cfg.agent_id)
     config_store.save(cfg)
@@ -262,6 +264,7 @@ async def update_agent(agent_id: str, cfg: MultiAgentConfig):
     assign_state_messages_keys(merged)
     assign_history_token_measure_keys(merged)
     assign_extracted_summary_ai_msg_keys(merged)
+    assign_solid_summarize_keys(merged)
 
     await chat_manager.invalidate(agent_id)
     config_store.save(merged)

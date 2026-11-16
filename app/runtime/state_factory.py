@@ -7,6 +7,9 @@
   且不能与主图保留字段 `current_history_token_volume` 重名。
 - 每个子图的「提取总结 AI 消息」键 `extracted_summary_ai_msg_key` 同样必须全局唯一，
   且不能与主图保留字段 `extracted_summary_ai_msg_as_str` 重名。
+- 每个子图的「硬上下文上限」/「硬上限模式」键 `solid_summarize_threshold_key` /
+  `solid_summarize_mode_key` 同样必须全局唯一（兄弟子 agent 之间也不能撞），
+  且不能与主图保留字段 `solid_summarize_mode` 重名。
 - `subagents_reports_submit` / `instructions_for_subagents` 在父子图间故意同名，
   用 merge_dicts reducer 实现"信息穿透"（子→父报告、父→子指令）。
 """
@@ -51,6 +54,10 @@ def make_main_state() -> type:
         instructions_ids: Annotated[dict[str, Any], merge_dicts]
         extracted_human_message: str
         next_summarize_thresh_hold: int
+        # 硬上下文探针命中后置 True，用于区分「被动全量总结（阈值触发）」与
+        # 「硬上限总结」两种收回方式：前者回填后继续正常回答用户，后者要注入
+        # 一句「请继续之前的任务」再继续（用户消息早已被 extract_human_message 消费）。
+        solid_summarize_mode : bool
         current_history_token_volume : int
         extracted_summary_ai_msg_as_str : str
         proactive_summary_requested : bool
@@ -74,12 +81,29 @@ def make_main_state() -> type:
 
 
 
-def make_sub_agent_state(messages_key: str, history_token_measure_key: str, extracted_summary_ai_msg_key: str) -> type:
-    """子图 state，等价于原来的 DocsState / WebSearchState 等。"""
+def make_sub_agent_state(
+    messages_key: str,
+    history_token_measure_key: str,
+    extracted_summary_ai_msg_key: str,
+    solid_summarize_threshold_key: str,
+    solid_summarize_mode_key: str,
+) -> type:
+    """子图 state，等价于原来的 DocsState / WebSearchState 等。
+
+    后四个键名都是「每个子 agent 一份、不能与父图或兄弟子图重名」的通道：
+    - ``history_token_measure_key``：上一次模型调用的 token 数；
+    - ``extracted_summary_ai_msg_key``：清空前抽出的总结文本；
+    - ``solid_summarize_threshold_key``：该子 agent 的硬上下文上限（int | None）；
+    - ``solid_summarize_mode_key``：硬上限探针命中标志（bool）。
+    """
     fields: dict[str, Any] = {
         messages_key: Annotated[list[AnyMessage], add_messages],
         history_token_measure_key: int,
         extracted_summary_ai_msg_key: str,
+        # 硬上限阈值也走 state：值由子图入口节点从配置写入，探针再用动态键名读取，
+        # 这样不同子 agent 的阈值 channel 互不覆盖（键名由 assign_solid_summarize_keys 分配）。
+        solid_summarize_threshold_key: int | None,
+        solid_summarize_mode_key: bool,
         **SHARED_FIELDS,
     }
     return type(
@@ -160,3 +184,34 @@ def assign_extracted_summary_ai_msg_keys(config: MultiAgentConfig) -> None:
             i += 1
         sub.extracted_summary_ai_msg_key = key
         seen.add(key)
+
+
+def assign_solid_summarize_keys(config: MultiAgentConfig) -> None:
+    """为每个子 agent 生成唯一的「硬上限阈值 / 硬上限模式」state 键名（原地写入 config）。
+
+    规则与 ``assign_state_messages_keys`` 完全一致，只是：
+    - 主图保留字段是 ``solid_summarize_mode``（主图硬上限模式）；
+    - 基础键名分别是 ``<slugified_name>_solid_summarize_threshold`` /
+      ``<slugified_name>_solid_summarize_mode``；
+    - 两族键共用同一个 ``seen``，保证「阈值键」不会撞上「模式键」，也不会撞上兄弟子 agent。
+    """
+    seen: set[str] = set()
+    used_by_main = {"solid_summarize_mode", "solid_summarize_threshold"}
+    families = (
+        ("solid_summarize_threshold_key", "_solid_summarize_threshold"),
+        ("solid_summarize_mode_key", "_solid_summarize_mode"),
+    )
+    for sub in config.sub_agents:
+        for attr, suffix in families:
+            current = getattr(sub, attr, None)
+            if current and current not in seen and current not in used_by_main:
+                seen.add(current)
+                continue
+            base = f"{slugify(sub.name)}{suffix}"
+            key = base
+            i = 2
+            while key in seen or key in used_by_main:
+                key = f"{base}_{i}"
+                i += 1
+            setattr(sub, attr, key)
+            seen.add(key)

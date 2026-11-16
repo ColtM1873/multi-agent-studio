@@ -33,7 +33,7 @@ from app.runtime.prompts import (
     ReAct_system_prompt, summary_prompt_generator, 
     subagent_call_prompt, summary_prompt_prefix,trimmed_summary_prompt,
     browser_tools_debug_phrase_prompt,
-    user_choose_stop,
+    user_choose_stop, solid_go_on_prompt,
 )
 from app.runtime.state_factory import make_main_state, make_sub_agent_state
 from app.services import snapshot as snapshot_service
@@ -185,6 +185,8 @@ async def build_sub_agent(
     history_token_measure_key: str,
     extracted_summary_ai_msg_key: str,
     checkpoint_conn_string: str,
+    sub_solid_summarize_threshold : str,
+    sub_solid_summarize_mode : str,
     agent_id: str,
     state_type,
     default_summary_percent: float = 20.0,
@@ -196,6 +198,8 @@ async def build_sub_agent(
     model_api_key = spec.api_key
     flush_threshold = spec.summary.flush_history_tokenwise
     reserve_rounds = spec.summary.reserve_message_round
+    solid_cap = spec.summary.solid_summarize_tokenwise
+
 
     tools: list[Any] = []
     failed: list[str] = []
@@ -266,6 +270,7 @@ async def build_sub_agent(
         msg_list = state[state_messages_key]
         len_msg_list = len(msg_list)
         summary_human_msg_iter = None
+
         # locate last summary HumanMessage
         for msg_iter in range(len_msg_list - 1, -1 , -1):
             msg_here = msg_list[msg_iter]
@@ -285,9 +290,14 @@ async def build_sub_agent(
                     if not reserve_msg_rounds:
                         beginning_human_iter = msg_iter  #beginning_human_iter mains after flush, the beginning human msg iter
                         break
-        if beginning_human_iter <= 0: # reserve too much
-            return {}
-        msg_list_to_delete = msg_list[0:beginning_human_iter] + msg_list[summary_human_msg_iter:]
+        # if beginning_human_iter <= 0: # reserve too much
+        #     return {}
+        msg_list_to_delete = (
+            msg_list[0:beginning_human_iter] + msg_list[summary_human_msg_iter:] 
+            if beginning_human_iter > 0
+            else msg_list[summary_human_msg_iter:]
+        )
+
         extract_ai_summary_msg = msg_list[-1].content
         extract_ai_summary_msg_as_str = None
         for msg_dict in extract_ai_summary_msg:
@@ -301,7 +311,9 @@ async def build_sub_agent(
             history_token_measure_key :0,
             }
     async def refill_summary_msg(state):
-        summary_text = state[extracted_summary_ai_msg_key] or ""
+        # 用 .get 兜底：final_history_flush 在「保留轮数用不完」时会提前 return {}，
+        # 不会写入总结文本；此时回填空串好过 KeyError 把整轮会话打断。
+        summary_text = state.get(extracted_summary_ai_msg_key) or ""
         return {
             state_messages_key:[
                 HumanMessage(content= trimmed_summary_prompt),
@@ -331,21 +343,39 @@ async def build_sub_agent(
 #该子agent也就不会被调用，也就不会取到 过时的或者已经消费的 instruction
 
     async def receiving_instruction(state):
-        instruction = state["instructions_for_subagents"][sub_agent_name]["args"]["instruction"]
-        return {state_messages_key: [HumanMessage(content=instruction + "\n")]}
+        if state.get(sub_solid_summarize_mode , False) == True:
+            return{
+                state_messages_key : [HumanMessage (content = solid_go_on_prompt)],
+                sub_solid_summarize_mode : False,
+                sub_solid_summarize_threshold: solid_cap,
+            }
+        else:
+            instruction = state["instructions_for_subagents"][sub_agent_name]["args"]["instruction"]
+            return {state_messages_key: [HumanMessage(content=instruction + "\n")],
+                    sub_solid_summarize_mode : False,
+                    sub_solid_summarize_threshold :solid_cap,
+                    }
+
 
     async def route_to_proactive_summary(state):
-        proactive_summary_bool = state.get("instructions_for_subagents", {}).get(sub_agent_name, {}).get("proactive_summary", False)
+        proactive_summary_bool = (
+            state
+            .get("instructions_for_subagents", {})
+            .get(sub_agent_name, {})
+            .get("proactive_summary", False)
+        )
+        reset_solid_summarize_mode = { sub_solid_summarize_mode : False}
+
         if state.get("to_complete_tool_results") == True:
-            return Command(goto = "peel_off_human_msg")
+            return Command(goto = "peel_off_human_msg" , update= reset_solid_summarize_mode)
         elif proactive_summary_bool:
-            return Command(goto="proactive_summary_confirm")
+            return Command(goto="proactive_summary_confirm", update= reset_solid_summarize_mode)
         elif ( state.get("request_to_edit_msg_in_the_past") != None 
               and  state["request_to_edit_msg_in_the_past"].get("request_or_not") 
               and  state["request_to_edit_msg_in_the_past"].get("request_for_subagent") ):
-            return Command(goto = "edit_msg_in_the_past_sub")
+            return Command(goto = "edit_msg_in_the_past_sub", update= reset_solid_summarize_mode)
         else:
-            return Command(goto="period_summarize_evaluate")
+            return Command(goto="period_summarize_evaluate", update= reset_solid_summarize_mode)
         
     async def peel_off_human_msg(state):
         msg_list = state.get(state_messages_key, [])
@@ -516,7 +546,28 @@ async def build_sub_agent(
                 result.append(ToolMessage(content=observation, tool_call_id=tc["id"], name=tc["name"]))
             except Exception as e:
                 result.append(ToolMessage(content=str(e), tool_call_id=tc["id"], name=tc["name"]))
-        return {state_messages_key: result}
+
+        last_ai_msg = state[state_messages_key][-1]
+        assert isinstance(last_ai_msg , AIMessage)
+        total_token_usage = last_ai_msg.usage_metadata["total_tokens"] if last_ai_msg.usage_metadata else None
+        solid_summary_cap = state.get(sub_solid_summarize_threshold,None)
+        if total_token_usage and solid_summary_cap and total_token_usage >= solid_summary_cap:
+            return Command(
+                goto= "final_summarization_prompt" ,
+                update={
+                    state_messages_key : result,
+                    history_token_measure_key : total_token_usage,
+                    sub_solid_summarize_mode : True,
+                },
+            )
+        
+        else:            
+            return Command(
+                goto= "call_llm" ,
+                update={
+                    state_messages_key: result,
+                },
+            )
 
     async def should_continue(state) -> Literal["tool_node", "submit_report"]:
         if state[state_messages_key][-1].tool_calls:
@@ -530,7 +581,6 @@ async def build_sub_agent(
     builder.add_node("submit_report", submit_report)
     builder.add_edge("receiving_instruction", "call_llm")
     builder.add_conditional_edges("call_llm", should_continue, {"tool_node": "tool_node", "submit_report": "submit_report"})
-    builder.add_edge("tool_node", "call_llm")
     builder.add_edge("submit_report", END)
 
     return builder.compile(checkpointer=True)
@@ -562,11 +612,14 @@ async def build_world(
         assign_extracted_summary_ai_msg_keys,
         assign_history_token_measure_keys,
         assign_state_messages_keys,
+        assign_solid_summarize_keys,
     )
 
     assign_state_messages_keys(config)
     assign_history_token_measure_keys(config)
     assign_extracted_summary_ai_msg_keys(config)
+    assign_solid_summarize_keys(config)
+
 
     factory = mcp_client_factory or build_mcp_client
 
@@ -595,6 +648,8 @@ async def build_world(
             spec.state_messages_key,
             spec.history_token_measure_key,
             spec.extracted_summary_ai_msg_key,
+            spec.solid_summarize_threshold_key,
+            spec.solid_summarize_mode_key,
         )
         sub_agent_sub_graphs.append(
             await build_sub_agent(
@@ -604,6 +659,8 @@ async def build_world(
                 spec.history_token_measure_key,
                 spec.extracted_summary_ai_msg_key,
                 snapshot_conn_string,
+                spec.solid_summarize_threshold_key,
+                spec.solid_summarize_mode_key,
                 snapshot_agent_id,
                 state_type,
                 default_summary_percent=default_summary_percent,
@@ -677,6 +734,8 @@ async def build_world(
     sum_gap = main_spec.summary.summarize_gap_tokenwise
     flush_threshold = main_spec.summary.flush_history_tokenwise
     reserve_rounds = main_spec.summary.reserve_message_round
+    solid_cap = main_spec.summary.solid_summarize_tokenwise
+
 
     async def is_human_msg_or_not(state):
         human_message = state["messages"][-1]
@@ -699,9 +758,18 @@ async def build_world(
 
     async def extract_human_message(state):
         human_message = state["messages"][-1]
-        return {"messages": [RemoveMessage(id=human_message.id)], "extracted_human_message": human_message.content}
+        return {"messages": [RemoveMessage(id=human_message.id)], 
+                "extracted_human_message": human_message.content,
+                "solid_summarize_mode" : False}
+
 
     async def merge_human_message_with_memory(state):
+        if state.get("solid_summarize_mode",False) == True:
+            return Command(
+                goto= "call_main_llm",
+                update= {"messages" : [HumanMessage(content= solid_go_on_prompt )],
+                         "solid_summarize_mode" : False,}
+            )
         human_message_content = state["extracted_human_message"]
         if memory_attach:
             retrieved_memory = await attach_memory_automatically.coroutine(
@@ -715,7 +783,7 @@ async def build_world(
             )
         else:
             human_message = HumanMessage(content=human_message_content + "\n")
-        return {"messages": [human_message]}
+        return Command(update= {"messages": [human_message]} , goto= "call_main_llm")
 
     async def period_summarize_evaluate(state):
         msg_list = state["messages"]
@@ -806,11 +874,14 @@ async def build_world(
                     if not reserve_msg_rounds:
                         beginning_human_iter = msg_iter  #beginning_human_iter mains after flush, the beginning human msg iter
                         break
-        if beginning_human_iter <= 0: # reserve too much
-            return {}
+        # if beginning_human_iter <= 0: # reserve too much
+        #     return {}
+        msg_list_to_delete = (
+            msg_list[0:beginning_human_iter] + msg_list[summary_human_msg_iter:] 
+            if beginning_human_iter > 0
+            else msg_list[summary_human_msg_iter:]
+        )
         
-        msg_list_to_delete = msg_list[0:beginning_human_iter] + msg_list[summary_human_msg_iter:]
-
         extract_ai_summary_msg = msg_list[-1].content
         extract_ai_summary_msg_as_str = None
         for msg_dict in extract_ai_summary_msg:
@@ -826,7 +897,7 @@ async def build_world(
             }
     
     async def refill_summary_msg(state):
-        summary_text = state["extracted_summary_ai_msg_as_str"] or ""
+        summary_text = state.get("extracted_summary_ai_msg_as_str") or ""
         return {
             "messages":[
                 HumanMessage(content= trimmed_summary_prompt),
@@ -1071,7 +1142,6 @@ async def build_world(
         .add_edge("proactive_kill_tools_final", "proactive_final_summarization")
         .add_edge("proactive_final_history_flush","proactive_refill_summary_msg")
         .add_edge("proactive_refill_summary_msg", END)
-        .add_edge("merge_human_message_with_memory", "call_main_llm")
     )
 
     async def delegate_instructions(state):
@@ -1132,13 +1202,38 @@ async def build_world(
                     )
                 )
         initialized_reports_dict = {agent_name: None for agent_name in reports_dict}
-        return Command(
-            goto="call_main_llm",
-            update={
-                "messages": tool_message_list_to_return,
-                "subagents_reports_submit": initialized_reports_dict,
-            },
+
+        last_ai_msg = None
+        for message in reversed(state["messages"]):
+            if isinstance(message, AIMessage):
+                last_ai_msg = message
+                break
+        total_token_usage = (
+            last_ai_msg.usage_metadata.get("total_tokens")
+            if last_ai_msg and last_ai_msg.usage_metadata
+            else None
         )
+        solid_summary_cap = solid_cap
+        
+        if total_token_usage and solid_summary_cap and total_token_usage >= solid_summary_cap:
+            return Command(
+                goto= "final_summarization_prompt" ,
+                update={
+                    "messages": tool_message_list_to_return,
+                    "subagents_reports_submit": initialized_reports_dict,
+                    "current_history_token_volume" : total_token_usage,
+                    "solid_summarize_mode" : True,
+                },
+            )
+        
+        else:            
+            return Command(
+                goto= "call_main_llm" ,
+                update={
+                    "messages": tool_message_list_to_return,
+                    "subagents_reports_submit": initialized_reports_dict,
+                },
+            )
 
     async def query_to_produce_html(state):
         user_opinion = interrupt("你需要对所给内容输出一份html报告吗？")

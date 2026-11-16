@@ -82,7 +82,7 @@ Respond ONLY with the extracted context. Do not include any additional informati
 
    length_prompt = f"""
 鉴于整个会话长度此时已经达到了{count_for_history}{numerical_unit_for_history}tokens，因此请在总结时不要忌惮长度太长。输出大篇幅的总结是被鼓励的，否则不足以覆盖如此长的会话历史。具体来说，{count_for_summary}{numerical_unit_for_summary}tokens长度的总结都是可以接受的。
-另外##注意##，你在本次回答中不应当调用任何的工具。
+另外**注意**，你在本次回答中不应当调用任何的工具。
 """
    return summary_prompt + length_prompt
 
@@ -120,3 +120,8 @@ browser_tools_debug_phrase_prompt = """
 在浏览器界面解析时，出现『可交互元素』遗漏，名称与功能错位，实际无法交互，等等问题，属于正常情况。
 如果遇到上述浏览器工具相关问题，不要死磕。请停下来向用户汇报状况，待用户帮你完成卡壳的交互后，你再继续。
 """
+
+# 硬上下文上限被动全量总结「收回」时注入给模型的续跑消息。
+# 为什么不用原来的用户消息：那条消息早已被 extract_human_message 消费掉，
+# 而这里只需要一个「接着干」的明确信号，不重复诉求、也不会再次触发总结。
+solid_go_on_prompt = "好的，请你继续之前的任务吧。\n"

@@ -20,6 +20,7 @@ from app.runtime.graph_builder import build_world
 from app.runtime.state_factory import (
     assign_extracted_summary_ai_msg_keys,
     assign_history_token_measure_keys,
+    assign_solid_summarize_keys,
     assign_state_messages_keys,
     make_main_state,
     make_sub_agent_state,
@@ -48,15 +49,26 @@ async def main() -> None:
         assign_state_messages_keys(cfg)
         assign_history_token_measure_keys(cfg)
         assign_extracted_summary_ai_msg_keys(cfg)
+        assign_solid_summarize_keys(cfg)
         make_main_state()
         keys = []
         token_keys = []
         summary_keys = []
+        solid_threshold_keys = []
+        solid_mode_keys = []
         for s in cfg.sub_agents:
-            make_sub_agent_state(s.state_messages_key, s.history_token_measure_key, s.extracted_summary_ai_msg_key)
+            make_sub_agent_state(
+                s.state_messages_key,
+                s.history_token_measure_key,
+                s.extracted_summary_ai_msg_key,
+                s.solid_summarize_threshold_key,
+                s.solid_summarize_mode_key,
+            )
             keys.append(s.state_messages_key)
             token_keys.append(s.history_token_measure_key)
             summary_keys.append(s.extracted_summary_ai_msg_key)
+            solid_threshold_keys.append(s.solid_summarize_threshold_key)
+            solid_mode_keys.append(s.solid_summarize_mode_key)
 
         assert "messages" not in keys, "子图消息键不能与主图 `messages` 冲突"
         assert len(keys) == len(set(keys)), "子图消息键彼此冲突"
@@ -64,6 +76,11 @@ async def main() -> None:
         assert len(token_keys) == len(set(token_keys)), "子图 token 计数键彼此冲突"
         assert "extracted_summary_ai_msg_as_str" not in summary_keys, "子图总结 AI 消息键不能与主图 `extracted_summary_ai_msg_as_str` 冲突"
         assert len(summary_keys) == len(set(summary_keys)), "子图总结 AI 消息键彼此冲突"
+        assert "solid_summarize_mode" not in solid_mode_keys, "子图硬上限模式键不能与主图 `solid_summarize_mode` 冲突"
+        assert None not in solid_threshold_keys, "每个子 agent 都必须分配到硬上限阈值键"
+        assert None not in solid_mode_keys, "每个子 agent 都必须分配到硬上限模式键"
+        solid_all = solid_threshold_keys + solid_mode_keys
+        assert len(solid_all) == len(set(solid_all)), "子图硬上限阈值键 / 模式键彼此冲突"
 
         graph = await build_world(
             cfg,
@@ -74,7 +91,8 @@ async def main() -> None:
         node_count = len(graph.get_graph().nodes)
         print(
             f"[OK] {cfg.agent_id:<12} checkpoint_db={cfg.postgres.checkpoint_database:<24} "
-            f"sub_agents={[s.name for s in cfg.sub_agents]} msg_keys={keys} nodes={node_count}"
+            f"sub_agents={[s.name for s in cfg.sub_agents]} msg_keys={keys} "
+            f"solid_keys={solid_all} nodes={node_count}"
         )
 
 

@@ -281,8 +281,11 @@ class Settings(BaseModel):
     # 是否已经初始化过全局 embedding（首次启动从已有 agent 提取，或用户保存/清空过）。
     global_embedding_configured: bool = False
     # 全局自动（及主动）总结设置：同样是配置界面的「显示捷径」。主 agent 与子 agent
-    # 各保留一套（子 agent 只有 flush_history_tokenwise / reserve_message_round）；
+    # 各保留一套（主 agent：summarize_gap / flush_history / solid_summarize；
+    # 子 agent：flush_history / solid_summarize；两边都有 reserve_message_round）；
     # 空字典表示未设置。这些阈值影响图编译，但每个 agent 仍只读自己那份 summary。
+    # 「关闭某个阈值」不存布尔字段：自动类存本轮约定的超大哨兵值（10000k），
+    # 硬上下文存 null，前端据此熄灭小绿灯并置灰输入框。
     global_summary: dict = Field(default_factory=dict)
     global_summary_configured: bool = False
     global_sub_summary: dict = Field(default_factory=dict)
@@ -458,6 +461,7 @@ def seed_global_summary(config_dir: Path | str, configs: list) -> Settings:
             settings.global_summary = {
                 "summarize_gap_tokenwise": summ.summarize_gap_tokenwise,
                 "flush_history_tokenwise": summ.flush_history_tokenwise,
+                "solid_summarize_tokenwise": summ.solid_summarize_tokenwise,
                 "reserve_message_round": summ.reserve_message_round,
             }
         except Exception:  # noqa: BLE001
@@ -486,6 +490,7 @@ def seed_global_sub_summary(config_dir: Path | str, configs: list) -> Settings:
             summ = subs[0].summary
             settings.global_sub_summary = {
                 "flush_history_tokenwise": summ.flush_history_tokenwise,
+                "solid_summarize_tokenwise": summ.solid_summarize_tokenwise,
                 "reserve_message_round": summ.reserve_message_round,
             }
         except Exception:  # noqa: BLE001

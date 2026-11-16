@@ -527,12 +527,14 @@ async def _create_config_from_export(
     from app.runtime.state_factory import (
         assign_extracted_summary_ai_msg_keys,
         assign_history_token_measure_keys,
+        assign_solid_summarize_keys,
         assign_state_messages_keys,
     )
 
     assign_state_messages_keys(cfg)
     assign_history_token_measure_keys(cfg)
     assign_extracted_summary_ai_msg_keys(cfg)
+    assign_solid_summarize_keys(cfg)
 
     # 复用 agents.py 的建库 / 名称占用校验，避免两套规则漂移
     from app.api.agents import _ensure_agent_databases, _ensure_name_is_free, _is_sqlite_storage

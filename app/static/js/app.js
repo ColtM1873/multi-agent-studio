@@ -498,7 +498,6 @@ const I18N_EN = {
   "该子 agent 可用的工具来源；程序不负责启动，需外部自行启动。": "Tool sources available to this sub-agent; the program does not start them—start them externally.",
   "该子 agent 所用模型的 API 密钥（明文存本地配置）。": "API key for this sub-agent's model (stored in plain text locally).",
   "该子 agent 的系统提示词。": "System prompt for this sub-agent.",
-  "该子 agent 累计 token 达到该值时清空历史（只保留最近几轮）。": "Clear this sub-agent's history when accumulated tokens reach this value (keep recent turns).",
   "该模型供应商的 API 密钥（明文存本地配置）。": "API key for this model provider (stored in plain text locally).",
   "请填写 checkpoint 数据库名": "Please fill in the checkpoint database name",
   "请填写名称": "Please fill in the name",
@@ -595,20 +594,28 @@ const I18N_EN = {
   "展开 / 收起说明": "Expand / collapse description",
   "自动阶段性总结阈值": "Auto stage-summary threshold",
   "自动全量总结阈值": "Auto full-summary threshold",
+  "硬上下文总结": "Hard context summary",
+  "自动总结阈值": "Auto summary thresholds",
+  "已开启（点击关闭）": "On (click to turn off)",
+  "已关闭（点击开启）": "Off (click to turn on)",
+  "已关闭": "Off",
+  "请填写硬上下文总结阈值": "Please fill in the hard context summary threshold",
+  "仅建议在本地部署等「明确知道模型上下文硬上限」的场景下开启。建议填「硬上下文上限 − 5k~10k tokens」（给输出留余量）。开启后，每次要向模型发起下一次请求之前，程序都会用上一轮实测的上下文 token 数做校验：一旦达到该值，就先做一次被动全量总结再继续任务。设置得当可基本保证绝不超出硬上限，防止 OOM。关闭则不做这项保护。": "Only recommended when the model's hard context limit is known (e.g. local deployment). Use 'hard context limit minus 5k-10k tokens' (leaving room for output). Before each next model request, the program checks the context token count measured in the last round; once it reaches this value, a passive full summary is made first, then the task continues. With a sensible value this basically guarantees the hard limit is never exceeded, preventing OOM. When off, this protection is disabled.",
   "自动以及主动全量总结后，需要保留的会话轮数": "Turns to keep after automatic and proactive full summaries",
-  "累计 token 达到该值时触发一次阶段性总结。": "A stage summary is triggered once accumulated tokens reach this value.",
-  "累计 token 达到该值时清空历史（只保留最近几轮）。": "History is cleared once accumulated tokens reach this value (only the most recent turns are kept).",
+  "累计 token 达到该值时触发一次阶段性总结。关闭本开关后不再自动触发。": "A stage summary is triggered once accumulated tokens reach this value. Turning this switch off disables auto triggering.",
+  "累计 token 达到该值时清空历史（只保留最近几轮）。关闭本开关后不再自动触发。": "History is cleared once accumulated tokens reach this value (only the most recent turns are kept). Turning this switch off disables auto triggering.",
   "全局自动（及主动）总结设置": "Global automatic (& proactive) summary settings",
   "使用全局自动（及主动）总结设置": "Use global automatic (& proactive) summary settings",
   "勾选后，本 multi-agent 直接使用主界面「系统设置 → 全局自动（及主动）总结设置」里的自动阶段性总结阈值、自动全量总结阈值与保留轮数；取消勾选可为本 multi-agent 单独设置。": "When checked, this multi-agent uses the auto stage-summary threshold, auto full-summary threshold and turns-to-keep configured under Settings → Global automatic (& proactive) summary settings on the main screen. Uncheck to set them separately for this multi-agent.",
   "当前使用的全局总结配置：": "Current global summary configuration in use:",
   "如需修改，请到主界面齿轮设置 →「全局自动（及主动）总结设置」。": "To change it, go to the main screen gear settings → 'Global automatic (& proactive) summary settings'.",
-  "用途：让所有 multi-agent 共用同一套「自动阶段性总结 / 自动全量总结」阈值，multi-agent 配置页勾选「使用全局自动（及主动）总结设置」即可，无需每个都重复填写。": "Purpose: let all multi-agents share the same 'auto stage-summary / auto full-summary' thresholds; just check 'Use global automatic (& proactive) summary settings' on each multi-agent page instead of filling them in repeatedly.",
+  "用途：让所有 multi-agent 共用同一套「自动阶段性总结 / 自动全量总结 / 硬上下文总结」阈值，multi-agent 配置页勾选「使用全局自动（及主动）总结设置」即可，无需每个都重复填写。": "Purpose: let all multi-agents share the same 'auto stage-summary / auto full-summary / hard-context summary' thresholds; just check 'Use global automatic (& proactive) summary settings' on each multi-agent page instead of filling them in repeatedly.",
   "注意：这些阈值会影响图编译；修改后请保存对应的 multi-agent 才会真正生效。": "Note: these thresholds affect graph compilation; after changing them, save the corresponding multi-agent for the change to take effect.",
   "确定清除全局总结设置吗？清除后各 multi-agent 将恢复为单独填写的界面。": "Clear the global summary settings? After clearing, each multi-agent returns to the individually-filled interface.",
   "已清除全局总结设置": "Global summary settings cleared",
   "全局总结设置已保存": "Global summary settings saved",
-  "子 agent 累计 token 达到该值时清空历史（只保留最近几轮）。": "The sub-agent clears its history once accumulated tokens reach this value (only the most recent turns are kept).",
+  "该子 agent 累计 token 达到该值时清空历史（只保留最近几轮）。关闭本开关后不再自动触发。": "This sub-agent's history is cleared once accumulated tokens reach this value (only the most recent turns are kept). Turning this switch off disables auto triggering.",
+  "子 agent 累计 token 达到该值时清空历史（只保留最近几轮）。关闭本开关后不再自动触发。": "The sub-agent clears its history once accumulated tokens reach this value (only the most recent turns are kept). Turning this switch off disables auto triggering.",
   "子 agent 清空历史时保留最近几轮对话。": "Keep the most recent turns when the sub-agent clears history.",
   "使用全局子 agent 总结设置": "Use global sub-agent summary settings",
   "勾选后，本子 agent 直接使用主界面「系统设置 → 全局自动（及主动）总结设置 → 子 agent」里的清空历史阈值与保留轮数；取消勾选可为本子 agent 单独设置。": "When checked, this sub-agent uses the clear-history threshold and turns-to-keep configured under Settings → Global automatic (& proactive) summary settings → Sub-agent on the main screen. Uncheck to set them separately for this sub-agent.",
@@ -4695,35 +4702,44 @@ async function openGlobalSummarySettings(back) {
   let s;
   try { s = await getSettings(); } catch (e) { toast(e.message, true); return; }
   const g = s.global_summary || {};
-  const gap = tokToUnit(g.summarize_gap_tokenwise != null ? g.summarize_gap_tokenwise : 80000);
-  const flush = tokToUnit(g.flush_history_tokenwise != null ? g.flush_history_tokenwise : 600000);
-  const reserve = (g.reserve_message_round != null ? g.reserve_message_round : 0);
   const gs = s.global_sub_summary || {};
-  const subFlush = tokToUnit(gs.flush_history_tokenwise != null ? gs.flush_history_tokenwise : 200000);
-  const subReserve = (gs.reserve_message_round != null ? gs.reserve_message_round : 4);
 
-  const unitRow = (id, v, u) => `
-    <div class="unit-row">
-      <input id="${id}" value="${esc(v)}" type="number">
-      <select id="${id}_unit"><option value="万" ${u === "万" ? "selected" : ""}>${t("万")}</option><option value="千" ${u === "千" ? "selected" : ""}>${t("千")}</option></select>
-    </div>`;
+  const gapOn = !isAutoSummaryOff(g.summarize_gap_tokenwise);
+  const gap = tokToUnit(autoSummaryDisplay(g.summarize_gap_tokenwise, 80000));
+  const flushOn = !isAutoSummaryOff(g.flush_history_tokenwise);
+  const flush = tokToUnit(autoSummaryDisplay(g.flush_history_tokenwise, 600000));
+  const solidOn = isSolidSummaryOn(g.solid_summarize_tokenwise);
+  const solid = solidOn ? tokToUnit(g.solid_summarize_tokenwise) : { v: "", u: "万" };
+  const reserve = (g.reserve_message_round != null ? g.reserve_message_round : 0);
+
+  const subFlushOn = !isAutoSummaryOff(gs.flush_history_tokenwise);
+  const subFlush = tokToUnit(autoSummaryDisplay(gs.flush_history_tokenwise, 200000));
+  const subSolidOn = isSolidSummaryOn(gs.solid_summarize_tokenwise);
+  const subSolid = subSolidOn ? tokToUnit(gs.solid_summarize_tokenwise) : { v: "", u: "万" };
+  const subReserve = (gs.reserve_message_round != null ? gs.reserve_message_round : 4);
 
   const mask = document.createElement("div");
   mask.className = "modal-mask";
   mask.innerHTML = `
-    <div class="modal" style="width:540px;max-height:84vh;overflow:auto;" data-modal-key="globalSummary">
+    <div class="modal" style="width:560px;max-height:84vh;overflow:auto;" data-modal-key="globalSummary">
       <h3>📉 ${t("全局自动（及主动）总结设置")}</h3>
       <div class="muted" style="margin-bottom:10px;line-height:1.65;">
-        <p style="margin:0 0 6px;">${t("用途：让所有 multi-agent 共用同一套「自动阶段性总结 / 自动全量总结」阈值，multi-agent 配置页勾选「使用全局自动（及主动）总结设置」即可，无需每个都重复填写。")}</p>
+        <p style="margin:0 0 6px;">${t("用途：让所有 multi-agent 共用同一套「自动阶段性总结 / 自动全量总结 / 硬上下文总结」阈值，multi-agent 配置页勾选「使用全局自动（及主动）总结设置」即可，无需每个都重复填写。")}</p>
         <p style="margin:0;">${t("主 agent 与子 agent 各自保留一套：主 agent 用下面「主 agent」三个阈值，子 agent 用「子 agent」两个阈值。注意：这些阈值会影响图编译；修改后请保存对应的 multi-agent 才会真正生效。")}</p>
       </div>
       <div class="muted" style="margin:12px 0 2px;font-weight:700;">${t("主 agent")}</div>
-      <div class="field"><label>${t("自动阶段性总结阈值")} ${info("累计 token 达到该值时触发一次阶段性总结。")}</label>${unitRow("gsum_gap", gap.v, gap.u)}</div>
-      <div class="field"><label>${t("自动全量总结阈值")} ${info("累计 token 达到该值时清空历史（只保留最近几轮）。")}</label>${unitRow("gsum_flush", flush.v, flush.u)}</div>
-      <div class="field"><label>${t("自动以及主动全量总结后，需要保留的会话轮数")} ${info("清空历史时保留最近几轮对话。")}</label><input id="gsum_reserve" value="${esc(reserve)}" type="number"></div>
-      <div class="muted" style="margin:12px 0 2px;font-weight:700;">${t("子 agent")}</div>
-      <div class="field"><label>${t("自动全量总结阈值")} ${info("子 agent 累计 token 达到该值时清空历史（只保留最近几轮）。")}</label>${unitRow("gsum_sub_flush", subFlush.v, subFlush.u)}</div>
-      <div class="field"><label>${t("自动以及主动全量总结后，需要保留的会话轮数")} ${info("子 agent 清空历史时保留最近几轮对话。")}</label><input id="gsum_sub_reserve" value="${esc(subReserve)}" type="number"></div>
+      <div class="sum-grid">
+        ${sumThresholdHTML({ kind: "gap", mode: "auto", label: t("自动阶段性总结阈值"), tip: "累计 token 达到该值时触发一次阶段性总结。关闭本开关后不再自动触发。", on: gapOn, value: gap.v, unit: gap.u })}
+        ${sumThresholdHTML({ kind: "solid", mode: "solid", label: t("硬上下文总结"), tip: "仅建议在本地部署等「明确知道模型上下文硬上限」的场景下开启。建议填「硬上下文上限 − 5k~10k tokens」（给输出留余量）。开启后，每次要向模型发起下一次请求之前，程序都会用上一轮实测的上下文 token 数做校验：一旦达到该值，就先做一次被动全量总结再继续任务。设置得当可基本保证绝不超出硬上限，防止 OOM。关闭则不做这项保护。", on: solidOn, value: solid.v, unit: solid.u })}
+        ${sumThresholdHTML({ kind: "flush", mode: "auto", label: t("自动全量总结阈值"), tip: "累计 token 达到该值时清空历史（只保留最近几轮）。关闭本开关后不再自动触发。", on: flushOn, value: flush.v, unit: flush.u })}
+      </div>
+      <div class="field" style="margin-top:12px;"><label>${t("自动以及主动全量总结后，需要保留的会话轮数")} ${info("清空历史时保留最近几轮对话。")}</label><input id="gsum_reserve" value="${esc(reserve)}" type="number"></div>
+      <div class="muted" style="margin:14px 0 2px;font-weight:700;">${t("子 agent")}</div>
+      <div class="sum-grid">
+        ${sumThresholdHTML({ kind: "sub_flush", mode: "auto", label: t("自动全量总结阈值"), tip: "子 agent 累计 token 达到该值时清空历史（只保留最近几轮）。关闭本开关后不再自动触发。", on: subFlushOn, value: subFlush.v, unit: subFlush.u })}
+        ${sumThresholdHTML({ kind: "sub_solid", mode: "solid", label: t("硬上下文总结"), tip: "仅建议在本地部署等「明确知道模型上下文硬上限」的场景下开启。建议填「硬上下文上限 − 5k~10k tokens」（给输出留余量）。开启后，每次要向模型发起下一次请求之前，程序都会用上一轮实测的上下文 token 数做校验：一旦达到该值，就先做一次被动全量总结再继续任务。设置得当可基本保证绝不超出硬上限，防止 OOM。关闭则不做这项保护。", on: subSolidOn, value: subSolid.v, unit: subSolid.u })}
+      </div>
+      <div class="field" style="margin-top:12px;"><label>${t("自动以及主动全量总结后，需要保留的会话轮数")} ${info("子 agent 清空历史时保留最近几轮对话。")}</label><input id="gsum_sub_reserve" value="${esc(subReserve)}" type="number"></div>
       <div class="modal-actions">
         <button class="btn" id="gsumClear">${t("清除全局设置")}</button>
         <div class="spacer" style="flex:1;"></div>
@@ -4732,6 +4748,7 @@ async function openGlobalSummarySettings(back) {
       </div>
     </div>`;
   document.body.appendChild(mask);
+  bindSumThresholds(mask);
 
   const close = () => mask.remove();
   mask.querySelector("#gsumCancel").onclick = () => { mask.remove(); (back || openSettings)(); };
@@ -4753,12 +4770,14 @@ async function openGlobalSummarySettings(back) {
   mask.querySelector("#gsumSave").onclick = async () => {
     try {
       const summary = {
-        summarize_gap_tokenwise: unitToTok(mask.querySelector("#gsum_gap").value, mask.querySelector("#gsum_gap_unit").value),
-        flush_history_tokenwise: unitToTok(mask.querySelector("#gsum_flush").value, mask.querySelector("#gsum_flush_unit").value),
+        summarize_gap_tokenwise: readSumThreshold(mask, "gap", "auto", 80000),
+        flush_history_tokenwise: readSumThreshold(mask, "flush", "auto", 600000),
+        solid_summarize_tokenwise: readSumThreshold(mask, "solid", "solid"),
         reserve_message_round: +mask.querySelector("#gsum_reserve").value || 0,
       };
       const subSummary = {
-        flush_history_tokenwise: unitToTok(mask.querySelector("#gsum_sub_flush").value, mask.querySelector("#gsum_sub_flush_unit").value),
+        flush_history_tokenwise: readSumThreshold(mask, "sub_flush", "auto", 200000),
+        solid_summarize_tokenwise: readSumThreshold(mask, "sub_solid", "solid"),
         reserve_message_round: +mask.querySelector("#gsum_sub_reserve").value || 0,
       };
       await saveSettings({
@@ -5609,6 +5628,114 @@ function unitField(id, val, unit, extraLabel, tip) {
     </div></div>`;
 }
 
+/* ── 总结阈值控件：小绿灯开关 + 关闭时置灰收缩 ─────────────────────────
+ * 「关闭」不存布尔字段，而是把阈值规范化成哨兵值（后端逻辑）：
+ *   - 自动类（阶段性 / 全量）：关闭 = 10000k = 10,000,000 tokens（任何模型都达不到）；
+ *   - 硬上下文：关闭 = null（不做硬上限保护）。
+ * 前端不展示这两个哨兵值，只把数值框置灰收缩。开关状态 = 「阈值是否有效」，
+ * 与 ID65「显示捷径、不存 per-agent 布尔字段」的取舍一致。 */
+const AUTO_SUMMARY_OFF_TOKENS = 10000000;    // 10000k
+const SOLID_SUMMARY_DEFAULT_TOKENS = 100000; // 打开硬上限开关时的起始建议值（10万）
+
+function isAutoSummaryOff(tokens) {
+  // 缺字段（旧配置 / 空 summary）视为「未关闭」，交给后端默认值兜底。
+  if (tokens === null || tokens === undefined || tokens === "") return false;
+  const n = Number(tokens);
+  return !(n > 0) || n >= AUTO_SUMMARY_OFF_TOKENS;
+}
+
+/* 自动类阈值在界面上的显示值：关闭或缺失时回退到推荐默认值。 */
+function autoSummaryDisplay(tokens, fallback) {
+  if (tokens === null || tokens === undefined || tokens === "") return fallback;
+  return isAutoSummaryOff(tokens) ? fallback : Number(tokens);
+}
+
+function isSolidSummaryOn(tokens) {
+  return tokens !== null && tokens !== undefined && tokens !== "" && Number(tokens) > 0;
+}
+
+/* 两个总结值是否等价（null / undefined / "" 都视为「关闭」）。 */
+function sameSummaryTokens(a, b) {
+  const norm = v => (v === null || v === undefined || v === "" ? null : Number(v));
+  return norm(a) === norm(b);
+}
+
+/* 一行总结阈值：label 前面一个小绿灯；关闭时数值行置灰收缩。
+ * kind 必须在本作用域内唯一（主 agent: gap/flush/solid；子 agent: sub_flush/sub_solid）。 */
+function sumThresholdHTML({ kind, mode, label, tip, on, value, unit }) {
+  const u = unit || "万";
+  return `<div class="field sum-field" data-sum-row="${kind}">
+    <label>
+      <span class="mini-sw" title="${esc(on ? t("已开启（点击关闭）") : t("已关闭（点击开启）"))}">
+        <input type="checkbox" data-sum-sw="${kind}" ${on ? "checked" : ""}>
+        <span class="mini-sw-dot"></span>
+      </span>
+      <span class="sum-label${on ? "" : " is-off"}">${esc(label)}</span>
+      ${tip ? info(tip) : ""}
+    </label>
+    <div class="unit-row${on ? "" : " is-off"}" data-sum-body="${kind}">
+      <input data-sum-val="${kind}" value="${esc(value)}" type="number"${on ? "" : " disabled"}>
+      <select data-sum-unit="${kind}"${on ? "" : " disabled"}>
+        <option value="万" ${u === "万" ? "selected" : ""}>${t("万")}</option>
+        <option value="千" ${u === "千" ? "selected" : ""}>${t("千")}</option>
+      </select>
+    </div>
+  </div>`;
+}
+
+/* 把小绿灯与数值行绑起来：关闭 → 置灰收缩；打开硬上下文时若为空，补一个建议值。 */
+function bindSumThresholds(root) {
+  root.querySelectorAll("[data-sum-sw]").forEach(sw => {
+    const kind = sw.dataset.sumSw;
+    const input = root.querySelector(`[data-sum-val="${kind}"]`);
+    const unit = root.querySelector(`[data-sum-unit="${kind}"]`);
+    const body = root.querySelector(`[data-sum-body="${kind}"]`);
+    const label = sw.closest("label")?.querySelector(".sum-label");
+    const apply = () => {
+      const on = sw.checked;
+      if (body) body.classList.toggle("is-off", !on);
+      if (input) input.disabled = !on;
+      if (unit) unit.disabled = !on;
+      if (label) label.classList.toggle("is-off", !on);
+      sw.parentElement.title = on ? t("已开启（点击关闭）") : t("已关闭（点击开启）");
+      if (on && kind.endsWith("solid") && !String(input.value || "").trim()) {
+        input.value = SOLID_SUMMARY_DEFAULT_TOKENS / 10000;
+      }
+    };
+    sw.addEventListener("change", apply);
+    apply();
+  });
+}
+
+/* 读取一行总结阈值：关闭返回哨兵值（自动 = 10000k，硬上限 = null）。 */
+function readSumThreshold(root, kind, mode, autoDefault) {
+  const sw = root.querySelector(`[data-sum-sw="${kind}"]`);
+  if (sw && !sw.checked) return mode === "solid" ? null : AUTO_SUMMARY_OFF_TOKENS;
+  const input = root.querySelector(`[data-sum-val="${kind}"]`);
+  const unit = root.querySelector(`[data-sum-unit="${kind}"]`);
+  const tok = input ? unitToTok(input.value, unit ? unit.value : "万") : 0;
+  if (mode === "solid") {
+    if (!(tok > 0)) throw new Error(t("请填写硬上下文总结阈值"));
+    return tok;
+  }
+  return tok > 0 ? tok : autoDefault;
+}
+
+/* 展示用：关闭显示「已关闭」，否则「x万 / x千」。 */
+function sumTokensText(on, tokens) {
+  if (!on) return t("已关闭");
+  const x = tokToUnit(tokens);
+  return `${x.v}${t(x.u)}`;
+}
+
+/* 把若干行总结阈值包成一个视觉分组（减少配置页拥挤感）。 */
+function sumGroupHTML(rows, title) {
+  return `<div class="field full sum-group">
+    <div class="sum-group-head">🔁 ${esc(title || t("自动总结阈值"))}</div>
+    <div class="sum-grid">${rows.join("")}</div>
+  </div>`;
+}
+
 /* 模型配置块：模型供应商 + 模型名称 + API Key 同组；base_url 仅非内置供应商显示。
  * 不再让用户选择「内置 / 第三方」，由供应商名称自动判断。 */
 function modelBlockHTML(llmName, mc, apiKey, apiKeyPlaceholderKey) {
@@ -5750,8 +5877,14 @@ function buildForm(cfg, canEditSubs) {
   const sum = main.summary || {};
   const ft = main.file_tools || {};
   const isLocal = isLocalPrefix(pg.prefix);
-  const gap = tokToUnit(sum.summarize_gap_tokenwise);
-  const flush = tokToUnit(sum.flush_history_tokenwise);
+  // 三个自动总结阈值：开关状态由「阈值是否有效」推导，不额外存布尔字段。
+  // 关闭时输入框显示各自的推荐默认值（便于用户重新打开），真正的哨兵值只在保存时写入。
+  const gapOn = !isAutoSummaryOff(sum.summarize_gap_tokenwise);
+  const gap = tokToUnit(autoSummaryDisplay(sum.summarize_gap_tokenwise, 80000));
+  const flushOn = !isAutoSummaryOff(sum.flush_history_tokenwise);
+  const flush = tokToUnit(autoSummaryDisplay(sum.flush_history_tokenwise, 600000));
+  const solidOn = isSolidSummaryOn(sum.solid_summarize_tokenwise);
+  const solid = solidOn ? tokToUnit(sum.solid_summarize_tokenwise) : { v: "", u: "万" };
 
   const suffixCtrl = pgSuffixCtrlHTML(isLocal, pg.suffix);
 
@@ -5789,11 +5922,13 @@ function buildForm(cfg, canEditSubs) {
   const sumEqual = globalSumSet && (
     Number(sum.summarize_gap_tokenwise || 0) === Number(gSum.summarize_gap_tokenwise || 0) &&
     Number(sum.flush_history_tokenwise || 0) === Number(gSum.flush_history_tokenwise || 0) &&
+    sameSummaryTokens(sum.solid_summarize_tokenwise, gSum.solid_summarize_tokenwise) &&
     Number(sum.reserve_message_round || 0) === Number(gSum.reserve_message_round || 0)
   );
   const useGlobalSumInit = globalSumSet && (isNewCfg || sumEqual);
-  const gGap = tokToUnit(gSum.summarize_gap_tokenwise != null ? gSum.summarize_gap_tokenwise : 0);
-  const gFlush = tokToUnit(gSum.flush_history_tokenwise != null ? gSum.flush_history_tokenwise : 0);
+  const gGapOn = !isAutoSummaryOff(gSum.summarize_gap_tokenwise);
+  const gFlushOn = !isAutoSummaryOff(gSum.flush_history_tokenwise);
+  const gSolidOn = isSolidSummaryOn(gSum.solid_summarize_tokenwise);
 
   const pgMode = pgConnMode === "full" ? "full" : "split";
   // 数据库名不再手填：完整连接串里只借用「前缀 / 后缀」，库名由名称自动生成。
@@ -5917,13 +6052,16 @@ function buildForm(cfg, canEditSubs) {
       <div class="field full" id="sumGlobalBlock" style="display:none;">
         <div class="conn-example">
           <div>${t("当前使用的全局总结配置：")}</div>
-          <div style="margin-top:4px;">${t("自动阶段性总结阈值")} <code>${esc(String(gGap.v))}${esc(t(gGap.u))}</code> · ${t("自动全量总结阈值")} <code>${esc(String(gFlush.v))}${esc(t(gFlush.u))}</code> · ${t("自动以及主动全量总结后，需要保留的会话轮数")} <code>${esc(String(gSum.reserve_message_round != null ? gSum.reserve_message_round : 0))}</code></div>
+          <div style="margin-top:4px;">${t("自动阶段性总结阈值")} <code>${esc(sumTokensText(gGapOn, autoSummaryDisplay(gSum.summarize_gap_tokenwise, 80000)))}</code> · ${t("硬上下文总结")} <code>${esc(sumTokensText(gSolidOn, gSum.solid_summarize_tokenwise))}</code> · ${t("自动全量总结阈值")} <code>${esc(sumTokensText(gFlushOn, autoSummaryDisplay(gSum.flush_history_tokenwise, 600000)))}</code> · ${t("自动以及主动全量总结后，需要保留的会话轮数")} <code>${esc(String(gSum.reserve_message_round != null ? gSum.reserve_message_round : 0))}</code></div>
           <div class="muted" style="margin-top:6px;font-size:11px;">${t("如需修改，请到主界面齿轮设置 →「全局自动（及主动）总结设置」。")}</div>
         </div>
       </div>` : ""}
       <div id="sumManualBlock" style="${globalSumSet && useGlobalSumInit ? "display:none;" : "display:contents;"}">
-      ${unitField("f_sum_gap", gap.v, gap.u, t("自动阶段性总结阈值"), "累计 token 达到该值时触发一次阶段性总结。")}
-      ${unitField("f_sum_flush", flush.v, flush.u, t("自动全量总结阈值"), "累计 token 达到该值时清空历史（只保留最近几轮）。")}
+      ${sumGroupHTML([
+        sumThresholdHTML({ kind: "gap", mode: "auto", label: t("自动阶段性总结阈值"), tip: "累计 token 达到该值时触发一次阶段性总结。关闭本开关后不再自动触发。", on: gapOn, value: gap.v, unit: gap.u }),
+        sumThresholdHTML({ kind: "solid", mode: "solid", label: t("硬上下文总结"), tip: "仅建议在本地部署等「明确知道模型上下文硬上限」的场景下开启。建议填「硬上下文上限 − 5k~10k tokens」（给输出留余量）。开启后，每次要向模型发起下一次请求之前，程序都会用上一轮实测的上下文 token 数做校验：一旦达到该值，就先做一次被动全量总结再继续任务。设置得当可基本保证绝不超出硬上限，防止 OOM。关闭则不做这项保护。", on: solidOn, value: solid.v, unit: solid.u }),
+        sumThresholdHTML({ kind: "flush", mode: "auto", label: t("自动全量总结阈值"), tip: "累计 token 达到该值时清空历史（只保留最近几轮）。关闭本开关后不再自动触发。", on: flushOn, value: flush.v, unit: flush.u }),
+      ])}
       <div class="field"><label>${t("自动以及主动全量总结后，需要保留的会话轮数")} ${info("清空历史时保留最近几轮对话。")}</label><input id="f_sum_reserve" value="${esc(sum.reserve_message_round)}" type="number"></div>
       </div>
       <div class="field full"><label>System Prompt ${info("主 agent 的系统提示词，定义其角色与行为。")}</label><textarea id="f_prompt" rows="8"${ph("main_system_prompt")}>${esc(main.system_prompt)}</textarea></div>
@@ -6142,22 +6280,28 @@ function buildForm(cfg, canEditSubs) {
   const addBtn = $("#addSubBtn");
   if (addBtn) addBtn.onclick = () => subsBox.appendChild(subAgentBox(null, Date.now(), true));
 
+  bindSumThresholds($("#sumManualBlock") || form);
   bindModelBlock(form);
 }
 
 function subAgentBox(s, key, canEdit) {
   const isNewSub = !s;
-  s = s || { name: "", description: "", system_prompt: "", api_key: "", llm_provider_name: "deepseek:deepseek-v4-pro", mcp_servers: [], summary: { flush_history_tokenwise: 200000, reserve_message_round: 4 }, react_prompt: true };
-  const flush = tokToUnit((s.summary || {}).flush_history_tokenwise);
+  s = s || { name: "", description: "", system_prompt: "", api_key: "", llm_provider_name: "deepseek:deepseek-v4-pro", mcp_servers: [], summary: { flush_history_tokenwise: 200000, solid_summarize_tokenwise: null, reserve_message_round: 4 }, react_prompt: true };
+  const subFlushOn = !isAutoSummaryOff((s.summary || {}).flush_history_tokenwise);
+  const flush = tokToUnit(autoSummaryDisplay((s.summary || {}).flush_history_tokenwise, 200000));
+  const subSolidOn = isSolidSummaryOn((s.summary || {}).solid_summarize_tokenwise);
+  const subSolid = subSolidOn ? tokToUnit((s.summary || {}).solid_summarize_tokenwise) : { v: "", u: "万" };
   // 全局子 agent 总结设置（与主 agent 那套分开；同样是与全局一致则默认勾选）。
   const gSub = (settingsCache && settingsCache.global_sub_summary) || {};
   const globalSubSet = !!(settingsCache && settingsCache.global_sub_summary_configured) && Object.keys(gSub).length > 0;
   const subEqual = globalSubSet && (
     Number((s.summary || {}).flush_history_tokenwise || 0) === Number(gSub.flush_history_tokenwise || 0) &&
+    sameSummaryTokens((s.summary || {}).solid_summarize_tokenwise, gSub.solid_summarize_tokenwise) &&
     Number((s.summary || {}).reserve_message_round || 0) === Number(gSub.reserve_message_round || 0)
   );
   const useGlobalSubInit = globalSubSet && (isNewSub || subEqual);
-  const gSubFlush = tokToUnit(gSub.flush_history_tokenwise != null ? gSub.flush_history_tokenwise : 0);
+  const gSubFlushOn = !isAutoSummaryOff(gSub.flush_history_tokenwise);
+  const gSubSolidOn = isSolidSummaryOn(gSub.solid_summarize_tokenwise);
   const div = document.createElement("div");
   div.className = "subagent-box";
   div.dataset.key = key;
@@ -6177,12 +6321,15 @@ function subAgentBox(s, key, canEdit) {
       <div class="field full" data-f="sum_global" style="display:none;">
         <div class="conn-example">
           <div>${t("当前使用的全局子 agent 总结配置：")}</div>
-          <div style="margin-top:4px;">${t("自动全量总结阈值")} <code>${esc(String(gSubFlush.v))}${esc(t(gSubFlush.u))}</code> · ${t("自动以及主动全量总结后，需要保留的会话轮数")} <code>${esc(String(gSub.reserve_message_round != null ? gSub.reserve_message_round : 0))}</code></div>
+          <div style="margin-top:4px;">${t("自动全量总结阈值")} <code>${esc(sumTokensText(gSubFlushOn, autoSummaryDisplay(gSub.flush_history_tokenwise, 200000)))}</code> · ${t("硬上下文总结")} <code>${esc(sumTokensText(gSubSolidOn, gSub.solid_summarize_tokenwise))}</code> · ${t("自动以及主动全量总结后，需要保留的会话轮数")} <code>${esc(String(gSub.reserve_message_round != null ? gSub.reserve_message_round : 0))}</code></div>
           <div class="muted" style="margin-top:6px;font-size:11px;">${t("如需修改，请到主界面齿轮设置 →「全局自动（及主动）总结设置」。")}</div>
         </div>
       </div>` : ""}
       <div data-f="sum_manual" style="${globalSubSet && useGlobalSubInit ? "display:none;" : "display:contents;"}">
-      <div class="field"><label>${t("自动全量总结阈值")} ${info("该子 agent 累计 token 达到该值时清空历史（只保留最近几轮）。")}</label><div class="unit-row"><input data-f="flush" value="${esc(flush.v)}" type="number"><select data-f="flush_unit"><option value="万" ${flush.u === "万" ? "selected" : ""}>${t("万")}</option><option value="千" ${flush.u === "千" ? "selected" : ""}>${t("千")}</option></select></div></div>
+      ${sumGroupHTML([
+        sumThresholdHTML({ kind: "sub_flush", mode: "auto", label: t("自动全量总结阈值"), tip: "该子 agent 累计 token 达到该值时清空历史（只保留最近几轮）。关闭本开关后不再自动触发。", on: subFlushOn, value: flush.v, unit: flush.u }),
+        sumThresholdHTML({ kind: "sub_solid", mode: "solid", label: t("硬上下文总结"), tip: "仅建议在本地部署等「明确知道模型上下文硬上限」的场景下开启。建议填「硬上下文上限 − 5k~10k tokens」（给输出留余量）。开启后，每次要向模型发起下一次请求之前，程序都会用上一轮实测的上下文 token 数做校验：一旦达到该值，就先做一次被动全量总结再继续任务。设置得当可基本保证绝不超出硬上限，防止 OOM。关闭则不做这项保护。", on: subSolidOn, value: subSolid.v, unit: subSolid.u }),
+      ])}
       <div class="field"><label>${t("自动以及主动全量总结后，需要保留的会话轮数")} ${info("清空历史时保留最近几轮对话。")}</label><input data-f="reserve" value="${esc((s.summary || {}).reserve_message_round)}" type="number"></div>
       </div>
       <div class="field full"><label>Description ${info("描述该子 agent 能力，作为工具描述呈现给主 agent。")}</label><textarea data-f="description" rows="3"${ph("sub_description")}>${esc(s.description)}</textarea></div>
@@ -6221,6 +6368,7 @@ function subAgentBox(s, key, canEdit) {
     applySubSum();
   }
 
+  bindSumThresholds(div);
   bindModelBlock(div);
   return div;
 }
@@ -6291,12 +6439,14 @@ function collectSubAgent(box) {
     // 使用全局子 agent 总结设置：把当前全局值写回本子 agent。
     const gs = (settingsCache && settingsCache.global_sub_summary) || {};
     summary = {
-      flush_history_tokenwise: +(gs.flush_history_tokenwise != null ? gs.flush_history_tokenwise : unitToTok(box.querySelector('[data-f="flush"]').value, box.querySelector('[data-f="flush_unit"]').value)),
+      flush_history_tokenwise: +(gs.flush_history_tokenwise != null ? gs.flush_history_tokenwise : readSumThreshold(box, "sub_flush", "auto", 200000)),
+      solid_summarize_tokenwise: isSolidSummaryOn(gs.solid_summarize_tokenwise) ? +gs.solid_summarize_tokenwise : null,
       reserve_message_round: +(gs.reserve_message_round != null ? gs.reserve_message_round : +get("reserve")),
     };
   } else {
     summary = {
-      flush_history_tokenwise: unitToTok(box.querySelector('[data-f="flush"]').value, box.querySelector('[data-f="flush_unit"]').value),
+      flush_history_tokenwise: readSumThreshold(box, "sub_flush", "auto", 200000),
+      solid_summarize_tokenwise: readSumThreshold(box, "sub_solid", "solid"),
       reserve_message_round: +get("reserve"),
     };
   }
@@ -6370,19 +6520,23 @@ function buildPayload(cfg) {
     };
   }
   const sumUseGlobalEl = $("#f_sum_use_global");
+  const sumForm = $("#editorForm");
   let summary;
   if (sumUseGlobalEl && sumUseGlobalEl.checked) {
     // 使用全局总结设置：把当前全局值写回本 agent（运行时后端仍只读 agent 自己这份）。
+    // 全局值已按开关规范化过（自动 = 10000k、硬上限 = null），这里原样写回。
     const gs = (settingsCache && settingsCache.global_summary) || {};
     summary = {
-      summarize_gap_tokenwise: +(gs.summarize_gap_tokenwise != null ? gs.summarize_gap_tokenwise : unitToTok(val("f_sum_gap"), val("f_sum_gap_unit"))),
-      flush_history_tokenwise: +(gs.flush_history_tokenwise != null ? gs.flush_history_tokenwise : unitToTok(val("f_sum_flush"), val("f_sum_flush_unit"))),
+      summarize_gap_tokenwise: +(gs.summarize_gap_tokenwise != null ? gs.summarize_gap_tokenwise : readSumThreshold(sumForm, "gap", "auto", 80000)),
+      flush_history_tokenwise: +(gs.flush_history_tokenwise != null ? gs.flush_history_tokenwise : readSumThreshold(sumForm, "flush", "auto", 600000)),
+      solid_summarize_tokenwise: isSolidSummaryOn(gs.solid_summarize_tokenwise) ? +gs.solid_summarize_tokenwise : null,
       reserve_message_round: +(gs.reserve_message_round != null ? gs.reserve_message_round : +val("f_sum_reserve")),
     };
   } else {
     summary = {
-      summarize_gap_tokenwise: unitToTok(val("f_sum_gap"), val("f_sum_gap_unit")),
-      flush_history_tokenwise: unitToTok(val("f_sum_flush"), val("f_sum_flush_unit")),
+      summarize_gap_tokenwise: readSumThreshold(sumForm, "gap", "auto", 80000),
+      flush_history_tokenwise: readSumThreshold(sumForm, "flush", "auto", 600000),
+      solid_summarize_tokenwise: readSumThreshold(sumForm, "solid", "solid"),
       reserve_message_round: +val("f_sum_reserve"),
     };
   }
