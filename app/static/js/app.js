@@ -355,6 +355,8 @@ const I18N_EN = {
   "非内置供应商需要填写；内置供应商会自动使用官方端点。": "Required for non-built-in providers; built-in providers use their official endpoint automatically.",
   "base_url 不走全局代理": "Bypass the global proxy for base_url",
   "本地部署的模型（如 http://127.0.0.1:8000/v1）请勾选「base_url 不走全局代理」，否则请求会走全局代理，连不上本地 server。": "For locally hosted models (e.g. http://127.0.0.1:8000/v1), enable \"Bypass the global proxy for base_url\"; otherwise requests go through the global proxy and cannot reach the local server.",
+  "回传思考内容（reasoning_content）": "Send reasoning content back (reasoning_content)",
+  "需要每轮收到历史思考内容的端点（如阿里云百炼 Qwen3.8 Thinking + 工具调用）请勾选。思考内容会原样放在 assistant 的 reasoning_content 字段回传，不拼进 content。": "Enable for endpoints that require the full historical reasoning content on every turn (e.g. Alibaba Cloud Bailian Qwen3.8 Thinking with tool calls). Reasoning is sent back verbatim in the assistant message's reasoning_content field and is never merged into content.",
   "思考过程": "Thinking process",
   "思考字号（相对正文）": "Reasoning font size (relative to body)",
   "思考字号减小": "Decrease reasoning font size",
@@ -2739,8 +2741,19 @@ function sanitizeMathDollars(text) {
   return s.replace(/\u0002(\d+)\u0002/g, (m, idx) => displays[+idx]);
 }
    ===== 暂不启用结束 ===== */
+/* 模型在思考/正文里写出 `<title>`、`<script>`、`<style>`、`<textarea>` 这类字面量时，
+   markdown-it（html:true）会把它当成真正的 HTML 透传；而这些是 raw-text 元素：一旦没有
+   闭合标签，浏览器会把**它之后的所有内容**都当成该元素的文本吞掉、不再渲染——症状就是
+   「流式或快照渲染到某句话突然停住，后面全都不出现」。在 renderMd 入口统一把它们降级成
+   普通字符（`&lt;`，浏览器显示出来仍是 `<`）。
+   只针对 raw-text 元素与 `<!--` 注释：服务端 history_render 生成的 div/details/summary
+   等展示标签不受影响，数学比较写法（`a < b`）也不受影响。 */
+const RAW_TEXT_TAG_RE = /<(?=\/?(?:title|textarea|script|style|xmp|iframe|noembed|noframes|plaintext|noscript)\b|!--)/gi;
+function guardRawTextTags(s) {
+  return String(s == null ? "" : s).replace(RAW_TEXT_TAG_RE, "&lt;");
+}
 function renderMd(text) {
-  const t = text || "";
+  const t = guardRawTextTags(text);
   if (!md) return esc(t);
   if (aggressiveMathEnabled()) return md.render(autodetectMath(t, true));
   if (bareMathEnabled()) return md.render(autodetectMath(t, false));
@@ -5802,6 +5815,8 @@ function modelBlockHTML(llmName, mc, apiKey, apiKeyPlaceholderKey) {
           </div>
           <span class="hint">${t("非内置供应商需要填写；内置供应商会自动使用官方端点。")}</span>
           <span class="hint baseurl-noproxy-hint">${t("本地部署的模型（如 http://127.0.0.1:8000/v1）请勾选「base_url 不走全局代理」，否则请求会走全局代理，连不上本地 server。")}</span>
+          <label class="baseurl-noproxy reasoning-replay"><input type="checkbox" data-mf="preserve_reasoning_content" ${mc.preserve_reasoning_content ? "checked" : ""}> ${t("回传思考内容（reasoning_content）")}</label>
+          <span class="hint">${t("需要每轮收到历史思考内容的端点（如阿里云百炼 Qwen3.8 Thinking + 工具调用）请勾选。思考内容会原样放在 assistant 的 reasoning_content 字段回传，不拼进 content。")}</span>
         </div>
         <div class="field full">
           <details class="db-help">
@@ -5849,7 +5864,7 @@ function collectModelBlock(root) {
     return {
       llm_provider_name: "",
       api_key: "",
-      model: { provider_mode: "official", provider_name: "", base_url: "", base_url_no_proxy: false },
+      model: { provider_mode: "official", provider_name: "", base_url: "", base_url_no_proxy: false, preserve_reasoning_content: false },
     };
   }
   const provider = (block.querySelector('[data-mf="provider_name"]').value || "").trim();
@@ -5860,6 +5875,7 @@ function collectModelBlock(root) {
   const baseUrl = official ? "" : (block.querySelector('[data-mf="base_url"]').value || "").trim();
   if (!official && !baseUrl) throw new Error(t("非内置供应商需要填写 base_url。"));
   const noProxyEl = block.querySelector('[data-mf="base_url_no_proxy"]');
+  const replayEl = block.querySelector('[data-mf="preserve_reasoning_content"]');
 
   const out = {
     provider_mode: official ? "official" : "openai_compatible",
@@ -5867,6 +5883,9 @@ function collectModelBlock(root) {
     base_url: baseUrl,
     // 内置供应商没有 base_url，此开关也随 base_url 字段一起隐藏，统一存 false。
     base_url_no_proxy: official ? false : !!(noProxyEl && noProxyEl.checked),
+    // 「回传思考内容」只对 openai_compatible 有意义；内置供应商（deepseek 除外）自动置 false，
+    // 避免把 reasoning_content 发给官方 openai / anthropic 等严格端点。
+    preserve_reasoning_content: official ? false : !!(replayEl && replayEl.checked),
   };
   for (const p of EXTRA_PARAMS) {
     const cb = block.querySelector(`[data-opt="${p.key}"]`);
@@ -10319,7 +10338,10 @@ class SessionStream {
     this._disposed = false;
     this._reconnectTimer = null;
     this._reconnectAttempts = 0;
-    this._rafPending = false;
+    // 流式渲染调度（见 _schedule）
+    this._renderScheduled = false;
+    this._rafId = 0;
+    this._renderTimer = 0;
   }
 
   _freshBuffers() {
@@ -10366,6 +10388,10 @@ class SessionStream {
     this.phase = "";
     this.pendingInterrupt = null;
     this._startingCommand = false;
+    // 丢掉挂起的渲染调度，避免旧回复的定时器在新一轮里又触发一次渲染。
+    this._renderScheduled = false;
+    if (this._rafId) { cancelAnimationFrame(this._rafId); this._rafId = 0; }
+    if (this._renderTimer) { clearTimeout(this._renderTimer); this._renderTimer = 0; }
   }
 
   _ensureReplyEl() {
@@ -10855,9 +10881,23 @@ class SessionStream {
   }
 
   _schedule() {
-    if (this._rafPending) return;
-    this._rafPending = true;
-    requestAnimationFrame(() => { this._rafPending = false; this.renderStream(); });
+    if (this._renderScheduled) return;
+    this._renderScheduled = true;
+    const fire = () => {
+      if (!this._renderScheduled) return;
+      this._renderScheduled = false;
+      if (this._rafId) { cancelAnimationFrame(this._rafId); this._rafId = 0; }
+      if (this._renderTimer) { clearTimeout(this._renderTimer); this._renderTimer = 0; }
+      // 单次渲染失败不能让整条流式链路停摆：记录后继续接受下一批事件。
+      try {
+        this.renderStream();
+      } catch (e) {
+        console.error(e);
+      }
+    };
+    this._rafId = requestAnimationFrame(fire);
+    // rAF 在窗口被遮挡 / 合成器暂停时可能长时间不触发，兜底定时器保证渲染继续推进。
+    this._renderTimer = setTimeout(fire, 250);
   }
 
   _reasoningBlock(txt) {
@@ -10873,7 +10913,12 @@ class SessionStream {
     return `<div class="ai-msg-block">${renderMd(b.content)}</div>`;
   }
 
-  _renderBlocks(blocks) { return (blocks || []).map((b) => this._renderBlock(b)).join(""); }
+  _renderBlocks(blocks) {
+    return (blocks || []).map((b) => {
+      try { return this._renderBlock(b); }
+      catch (e) { console.error(e); return `<div class="ai-msg-block">${esc(b.content || "")}</div>`; }
+    }).join("");
+  }
 
   _subOptionLabel(seg, name) {
     return name + (seg.marks[name] === "running" ? " ●" : seg.marks[name] === "done" ? " ✓" : "");
@@ -10950,6 +10995,16 @@ class SessionStream {
       }
     }
     if (pane && (pinned || atBottom)) pane.scrollTop = pane.scrollHeight;
+  }
+
+  /* 外部强制补画一次（窗口重新可见 / 重新聚焦）。
+     WebView2 的窗口被完全遮挡或最小化时，Chromium 可能暂停 rAF；rAF 是流式渲染的
+     唯一驱动，停摆期间事件照收、画面却停在旧内容上。回到前台先补画一帧。 */
+  _forceRender() {
+    this._renderScheduled = false;
+    if (this._rafId) { cancelAnimationFrame(this._rafId); this._rafId = 0; }
+    if (this._renderTimer) { clearTimeout(this._renderTimer); this._renderTimer = 0; }
+    try { this.renderStream(); } catch (e) { console.error(e); }
   }
 
   async _showInterrupt() {
@@ -11268,8 +11323,15 @@ startSessionPolling();
 document.addEventListener("visibilitychange", () => {
   if (S.view === "chat" && activeSessionStream) {
     reportActiveView(S.agentId, S.threadId);
-    if (document.visibilityState === "visible") activeSessionStream.maybeAccept();
+    if (document.visibilityState === "visible") {
+      // 页面在后台/被遮挡期间 rAF 可能一路不回调，回来时先把落后的流式内容补画一次。
+      activeSessionStream._forceRender();
+      activeSessionStream.maybeAccept();
+    }
   }
+});
+window.addEventListener("focus", () => {
+  if (S.view === "chat" && activeSessionStream) activeSessionStream._forceRender();
 });
 // 旧版 store 数据库迁移提示（只弹一次；数据库服务可能还在启动，函数内部会重试）
 maybePromptStoreMigration();
