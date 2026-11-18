@@ -198,12 +198,17 @@ async def build_sub_agent(
     state_type,
     default_summary_percent: float = 20.0,
     builtin_tools: list[Any] | None = None,
+    browser_takeover_active: bool = False,
 ) -> CompiledStateGraph:
     """构建单个子 agent 的子图（checkpointer=True）。
 
-    ``builtin_tools``：程序自带的、已经绑定好工作目录的工具（目前即文件读写工具）。
+    ``builtin_tools``：程序自带的、已经绑定好工作目录的工具（目前即文件读写工具，
+    以及该子 agent 开启浏览器接管时的浏览器接管工具）。
     它们和 MCP 工具一起 bind_tools 给子 agent 的模型；传空列表即「该子 agent 没有
-    文件读写能力」（老版本行为，也是「简化文件读写功能配置」开启时的行为）。
+    这些程序自带工具」（老版本行为，也是「简化文件读写功能配置」开启时的行为）。
+    ``browser_takeover_active``：本子 agent 是否是浏览器接管的**实际开启者**
+    （由 build_world 按「主 agent 优先、其次第一个子 agent」判定），只有为真时才
+    附加浏览器工具的 debug 提示语。
     """
     sub_agent_name = spec.name
     agent_system_prompt = spec.system_prompt
@@ -228,7 +233,8 @@ async def build_sub_agent(
             f"子 agent [{sub_agent_name}] 的 MCP 服务器连接失败：[{', '.join(failed)}]，"
             f"请确认这些服务已启动且鉴权配置正确。原始错误: {' | '.join(error_details)}"
         )
-    # 程序自带的文件读写工具（已按该子 agent 的工作目录绑定好闭包）。
+    # 程序自带的文件读写工具（已按该子 agent 的工作目录绑定好闭包），
+    # 以及该子 agent 开启浏览器接管时附带的浏览器接管工具。
     # 放在 MCP 工具之后：同名时以程序自带工具为准。
     if builtin_tools:
         tools.extend(builtin_tools)
@@ -237,10 +243,19 @@ async def build_sub_agent(
     tools_by_name = {tool.name: tool for tool in tools}
 
     react_prompt = ReAct_system_prompt if spec.react_prompt else ""
+    # 该子 agent 是浏览器接管的实际开启者时，同样告诉它「浏览器工具仍处于 debug 阶段」，
+    # 与主 agent 的 call_main_llm 口径一致（见 browser_tools_debug_phrase_prompt）。
+    sub_browser_debug_prompt = (
+        browser_tools_debug_phrase_prompt if browser_takeover_active else ""
+    )
 
     async def call_llm(state):
         existing = state.get(state_messages_key, [])
-        concate = [SystemMessage(content=agent_system_prompt + react_prompt)] + existing
+        concate = [
+            SystemMessage(
+                content=agent_system_prompt + react_prompt + sub_browser_debug_prompt
+            )
+        ] + existing
         response = await model_with_tools.ainvoke(concate)
         return {state_messages_key: [response]}
 
@@ -681,6 +696,29 @@ async def build_world(
     sub_agent_specs_list = config.sub_agents
     num_of_sub_agents = len(sub_agent_specs_list)
 
+    # ── 浏览器接管工具（主 agent 或某一个子 agent 开启时注入，两者共用同一个浏览器）──
+    # 设计口径：主 agent 与所有子 agent 中只能有一个开启「开启浏览器接管功能」（配置页
+    # 勾选任意一个后隐藏其余开关，保存时 API 也会校验）。同一个会话里主 / 子 agent 用的是
+    # 同一个 BrowserController（按 agent_id + thread_id 路由，见 ID91），所以这里只需按
+    # 「谁开启了」决定把工具注入给谁，不额外改浏览器归属 / 配色。
+    # BID086：把本 multi-agent 的「允许 Agent 保留的最大标签页数」交给工具层——
+    # click / navigate 的描述里要写这个数字，运行时也按它收敛标签页（浏览器进程级）。
+    browser_takeover_owner: tuple[str, str] | None = None  # ("main", "") 或 ("sub", 子 agent 名)
+    if main_spec.browser_takeover:
+        browser_takeover_owner = ("main", "")
+    else:
+        for spec in sub_agent_specs_list:
+            if getattr(spec, "browser_takeover", False):
+                browser_takeover_owner = ("sub", spec.name)
+                break
+    # 唯一性兜底：即使 configs/*.json 被手改成多个开启，也只让第一个（主 agent 优先）真正
+    # 拿到浏览器工具——保存时 API 已经拦掉这种配置，这里只是不让它变成「两套工具抢一个浏览器」。
+    browser_tools = (
+        await return_browser_tools(main_spec.browser_tab_max_number)
+        if browser_takeover_owner is not None
+        else []
+    )
+
     sub_agent_tools = [make_sub_agent_tool(s.name, s.description) for s in sub_agent_specs_list]
 # tool_name is exactly subagent name, is exactly the sub_graph node name
 
@@ -695,6 +733,10 @@ async def build_world(
             spec.solid_summarize_threshold_key,
             spec.solid_summarize_mode_key,
         )
+        # 子 agent 自己的文件工具 + （若它是浏览器接管的开启者）浏览器接管工具。
+        sub_builtin_tools = sub_file_tools_of(spec)
+        if browser_takeover_owner == ("sub", spec.name):
+            sub_builtin_tools = sub_builtin_tools + browser_tools
         sub_agent_sub_graphs.append(
             await build_sub_agent(
                 spec,
@@ -708,7 +750,8 @@ async def build_world(
                 snapshot_agent_id,
                 state_type,
                 default_summary_percent=default_summary_percent,
-                builtin_tools=sub_file_tools_of(spec),
+                builtin_tools=sub_builtin_tools,
+                browser_takeover_active=(browser_takeover_owner == ("sub", spec.name)),
             )
         )
 
@@ -762,14 +805,13 @@ async def build_world(
         return memories
 
     memory_tools = [write_memory, read_memory]
-    # 浏览器接管：开启后把 browser_agent 的 14 个工具并入主 agent 的非子图工具，
-    # 从而被 bind_tools 注入、并由 tool_node_front 执行（见 inner_docs/ID56）。
-    # BID086：把本 multi-agent 的「允许 Agent 保留的最大标签页数」交给工具层——
-    # click / navigate 的描述里要写这个数字，运行时也按它收敛标签页（浏览器进程级）。
-    browser_tools = await return_browser_tools(main_spec.browser_tab_max_number) if main_spec.browser_takeover else []  # BID086
+    # 浏览器接管工具已在上面按「谁开启了接管」统一构建好：主 agent 开启时并入主 agent 的
+    # 非子图工具（从而被 bind_tools 注入、由 tool_node_front 执行，见 inner_docs/ID56）；
+    # 子 agent 开启时在 build_sub_agent 那边作为 builtin_tools 注入（两者只能有一个开启）。
+    main_browser_tools = browser_tools if browser_takeover_owner == ("main", "") else []
     # 记忆读写：关闭后不把记忆工具并入主 agent 的工具集（模型无法读写记忆）。
     selected_memory_tools = memory_tools if main_spec.memory_tools_enabled else []
-    non_agent_tools = selected_memory_tools + pass_in_tools + browser_tools
+    non_agent_tools = selected_memory_tools + pass_in_tools + main_browser_tools
     main_nonagent_tools_by_name = {tool.name: tool for tool in non_agent_tools}
     main_model_with_tools = main_model.bind_tools(sub_agent_tools + non_agent_tools)
 

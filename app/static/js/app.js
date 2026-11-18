@@ -257,9 +257,10 @@ const I18N_EN = {
   "已清空当前会话的常用 prompt": "Cleared this session's common prompt",
   "点击查看完整内容": "Click to view the full content",
   "开启浏览器接管功能": "Enable browser takeover",
-  "开启后，会向主 agent 注入一组浏览器接管工具（占用上下文）。只有需要让 agent 操作浏览器时才开启。": "When enabled, a set of browser-takeover tools is injected into the main agent (consuming context). Only turn it on when the agent needs to operate a browser.",
+  "开启后，会向主 agent 注入一组浏览器接管工具（占用上下文）。只有需要让 agent 操作浏览器时才开启。<br/><br/>⚠ 主 agent 与所有子 agent 中只能有一个开启浏览器接管（同一个会话里主 / 子 agent 共用同一个浏览器实例）：勾选这里之后，所有子 agent 的「开启浏览器接管功能」开关都会隐藏；想换成某个子 agent，先取消这里的勾选。<br/><br/>由主 agent 开启时，会话页有「打开浏览器」「提示Agent开始接管浏览器」「隐私遮蔽模式」「注入 敏感信息替换列表」四个按钮。": "When enabled, a set of browser-takeover tools is injected into the main agent (consuming context). Only turn it on when the agent needs to operate a browser.<br/><br/>⚠ Only one of the main agent and all sub-agents may enable browser takeover (within a conversation the main agent and sub-agents share one browser instance): once this is checked, every sub-agent's \"Enable browser takeover\" switch is hidden; to switch to a sub-agent, uncheck this first.<br/><br/>When enabled on the main agent, the chat page shows four buttons: \"Open browser\", \"Ask the agent to start taking over the browser\", \"Privacy masking mode\" and \"Inject sensitive-info replacement list\".",
+  "开启后，会向该子 agent 注入一组浏览器接管工具（占用上下文）。只有需要让这个子 agent 操作浏览器时才开启。<br/><br/>⚠ 主 agent 与所有子 agent 中只能有一个开启浏览器接管（同一个会话里主 / 子 agent 共用同一个浏览器实例）：主 agent 已开启时这里不会显示；多个子 agent 之间也只能开启一个，勾选后其余开关都会隐藏。<br/><br/>由子 agent 开启时，会话页只显示「打开浏览器」一个按钮（「提示Agent开始接管浏览器」「隐私遮蔽模式」「注入 敏感信息替换列表」目前只在主 agent 开启时提供）。": "When enabled, a set of browser-takeover tools is injected into this sub-agent (consuming context). Only turn it on when this sub-agent needs to operate a browser.<br/><br/>⚠ Only one of the main agent and all sub-agents may enable browser takeover (within a conversation the main agent and sub-agents share one browser instance): this switch is not shown when the main agent already enabled it, and only one of several sub-agents may enable it — once checked, the other switches are hidden.<br/><br/>When enabled on a sub-agent, the chat page shows only the \"Open browser\" button (\"Ask the agent to start taking over the browser\", \"Privacy masking mode\" and \"Inject sensitive-info replacement list\" are currently available only when the main agent enables takeover).",
   "允许 Agent保留的最大标签页数": "Max tabs the agent may keep",
-  "Agent 主动关闭标签页要花掉上下文，实际上很少这么做；于是「目前打开的标签页有哪些」会越列越长、白烧 token。这里设一个上限，超出的标签页按 LRU（最久未使用的先关）自动关闭，并在返回给模型的内容里注明关了哪些。<br/><br/>计数按浏览器进程算：同一个浏览器里的所有标签页都算在内（包括你自己手动打开的），当前聚焦的标签页永不关闭。两个 multi-agent 共用同一个浏览器时，按最近一次配置的 multi-agent 的值为准。<br/><br/>默认 4，最小 3（聚焦页不能关，1~2 会逼出「新页和聚焦页只能留一个」的死结），最大 50。": "Closing tabs costs the agent context, so it rarely does it — and the list of currently open tabs keeps growing, burning tokens for nothing. Set a cap here: tabs beyond it are closed automatically by LRU (least recently used first), and the reply to the model notes which ones were closed.<br/><br/>Tabs are counted per browser process: every tab in that browser counts (including ones you opened yourself), and the focused tab is never closed. If two multi-agents share one browser, the value configured most recently applies.<br/><br/>Default 4, minimum 3 (the focused tab cannot be closed; 1–2 would force a dead end where the new tab and the focused tab cannot coexist), maximum 50.",
+  "Agent 主动关闭标签页要花掉上下文，实际上很少这么做；于是「目前打开的标签页有哪些」会越列越长、白烧 token。这里设一个上限，超出的标签页按 LRU（最久未使用的先关）自动关闭，并在返回给模型的内容里注明关了哪些。<br/><br/>计数按浏览器进程算：同一个浏览器里的所有标签页都算在内（包括你自己手动打开的），当前聚焦的标签页永不关闭。两个 multi-agent 共用同一个浏览器时，按最近一次配置的 multi-agent 的值为准。<br/><br/>默认 4，最小 3（聚焦页不能关，1~2 会逼出「新页和聚焦页只能留一个」的死结），最大 50。<br/><br/>这一项属于浏览器本身（本 multi-agent 共用一份值）：主 agent 或子 agent 谁开启「开启浏览器接管功能」，它就显示在谁的开关下面。": "Closing tabs costs the agent context, so it rarely does it — and the list of currently open tabs keeps growing, burning tokens for nothing. Set a cap here: tabs beyond it are closed automatically by LRU (least recently used first), and the reply to the model notes which ones were closed.<br/><br/>Tabs are counted per browser process: every tab in that browser counts (including ones you opened yourself), and the focused tab is never closed. If two multi-agents share one browser, the value configured most recently applies.<br/><br/>Default 4, minimum 3 (the focused tab cannot be closed; 1–2 would force a dead end where the new tab and the focused tab cannot coexist), maximum 50.<br/><br/>This cap belongs to the browser itself (one shared value per multi-agent): it is shown under the switch of whichever agent (main or sub) enables browser takeover.",
   "开启记忆读取/写入功能": "Enable memory read/write",
   "开启后，会向主 agent 注入记忆读写工具（write_memory / read_memory），让 agent 能长期存取与检索信息；关闭后主 agent 不再拥有记忆读写工具。此设置影响图编译；「记忆吸附」是另一项功能，不受本开关影响。": "When enabled, memory read/write tools (write_memory / read_memory) are injected into the main agent so it can store and retrieve information long-term; when disabled the main agent no longer has memory read/write tools. This affects graph compilation; \"memory attachment\" is a separate feature and is not affected by this switch.",
   "开启文件读写功能": "Enable file read/write",
@@ -6042,11 +6043,11 @@ function buildForm(cfg, canEditSubs) {
     </div></div>
 
     <div class="form-card"><h4>${t("主 agent")}</h4><div class="form-grid">
-      <div class="field full takeover-switch-field">
-        <label style="flex-direction:row;align-items:center;gap:8px;"><input type="checkbox" id="f_browser_takeover" ${browserTakeover ? "checked" : ""}> 🌐 ${t("开启浏览器接管功能")} ${info("开启后，会向主 agent 注入一组浏览器接管工具（占用上下文）。只有需要让 agent 操作浏览器时才开启。")}</label>
+      <div class="field full takeover-switch-field" id="mainBrowserTakeoverField">
+        <label style="flex-direction:row;align-items:center;gap:8px;"><input type="checkbox" id="f_browser_takeover" ${browserTakeover ? "checked" : ""}> 🌐 ${t("开启浏览器接管功能")} ${info("开启后，会向主 agent 注入一组浏览器接管工具（占用上下文）。只有需要让 agent 操作浏览器时才开启。<br/><br/>⚠ 主 agent 与所有子 agent 中只能有一个开启浏览器接管（同一个会话里主 / 子 agent 共用同一个浏览器实例）：勾选这里之后，所有子 agent 的「开启浏览器接管功能」开关都会隐藏；想换成某个子 agent，先取消这里的勾选。<br/><br/>由主 agent 开启时，会话页有「打开浏览器」「提示Agent开始接管浏览器」「隐私遮蔽模式」「注入 敏感信息替换列表」四个按钮。")}</label>
       </div>
       <div class="field full" id="browserTabMaxField" style="${browserTakeover ? "" : "display:none;"}">
-        <label>${t("允许 Agent保留的最大标签页数")} ${info("Agent 主动关闭标签页要花掉上下文，实际上很少这么做；于是「目前打开的标签页有哪些」会越列越长、白烧 token。这里设一个上限，超出的标签页按 LRU（最久未使用的先关）自动关闭，并在返回给模型的内容里注明关了哪些。<br/><br/>计数按浏览器进程算：同一个浏览器里的所有标签页都算在内（包括你自己手动打开的），当前聚焦的标签页永不关闭。两个 multi-agent 共用同一个浏览器时，按最近一次配置的 multi-agent 的值为准。<br/><br/>默认 4，最小 3（聚焦页不能关，1~2 会逼出「新页和聚焦页只能留一个」的死结），最大 50。")}</label>
+        <label>${t("允许 Agent保留的最大标签页数")} ${info("Agent 主动关闭标签页要花掉上下文，实际上很少这么做；于是「目前打开的标签页有哪些」会越列越长、白烧 token。这里设一个上限，超出的标签页按 LRU（最久未使用的先关）自动关闭，并在返回给模型的内容里注明关了哪些。<br/><br/>计数按浏览器进程算：同一个浏览器里的所有标签页都算在内（包括你自己手动打开的），当前聚焦的标签页永不关闭。两个 multi-agent 共用同一个浏览器时，按最近一次配置的 multi-agent 的值为准。<br/><br/>默认 4，最小 3（聚焦页不能关，1~2 会逼出「新页和聚焦页只能留一个」的死结），最大 50。<br/><br/>这一项属于浏览器本身（本 multi-agent 共用一份值）：主 agent 或子 agent 谁开启「开启浏览器接管功能」，它就显示在谁的开关下面。")}</label>
         <input id="f_browser_tab_max" type="number" min="3" max="50" step="1" value="${esc(String(browserTabMax))}">
       </div>
       <div class="field full">
@@ -6309,15 +6310,12 @@ function buildForm(cfg, canEditSubs) {
     });
   }
 
-  // 未启用浏览器接管时，隐藏「允许 Agent保留的最大标签页数」。
+  // 浏览器接管开关：主 agent 与所有子 agent 中只能开启一个——勾选任意一个后，其余
+  // 「开启浏览器接管功能」开关直接隐藏；「允许 Agent保留的最大标签页数」跟着开启者走，
+  // 显示在开启它那个开关的正下方（值本身是浏览器进程级的，本 multi-agent 共用）。
   const browserTakeoverChk = $("#f_browser_takeover");
-  const browserTabMaxField = $("#browserTabMaxField");
-  if (browserTakeoverChk && browserTabMaxField) {
-    const applyBrowserTabMaxVisible = () => {
-      browserTabMaxField.style.display = browserTakeoverChk.checked ? "" : "none";
-    };
-    browserTakeoverChk.addEventListener("change", applyBrowserTabMaxVisible);
-    applyBrowserTabMaxVisible();
+  if (browserTakeoverChk) {
+    browserTakeoverChk.addEventListener("change", () => onBrowserTakeoverToggle(browserTakeoverChk));
   }
 
   // 文件读写功能：开关未开启时「主Agent工作目录」整块不显示；开关变化时同步
@@ -6338,16 +6336,69 @@ function buildForm(cfg, canEditSubs) {
   const subsBox = $("#subs");
   (cfg.sub_agents || []).forEach((s, i) => subsBox.appendChild(subAgentBox(s, i, canEditSubs)));
   const addBtn = $("#addSubBtn");
-  if (addBtn) addBtn.onclick = () => subsBox.appendChild(subAgentBox(null, Date.now(), true));
+  if (addBtn) addBtn.onclick = () => {
+    subsBox.appendChild(subAgentBox(null, Date.now(), true));
+    // 新增子 agent 后重算一次：已勾选的那个开关若在别处，新开关应当是隐藏的。
+    syncBrowserTakeoverUI();
+  };
   syncMainFileTools();
+  syncBrowserTakeoverUI();
 
   bindSumThresholds($("#sumManualBlock") || form);
   bindModelBlock(form);
 }
 
+/* ===== 浏览器接管开关的唯一性约束 =====
+ * 主 agent 与所有子 agent 中只能有一个开启「开启浏览器接管功能」：同一个会话里主 / 子
+ * agent 共用同一个浏览器实例（同一个 profile / CDP 端口 / 配色，见 ID91）。配置了口径：
+ * 勾选任意一个后，其余「开启浏览器接管功能」开关**直接隐藏（不显示）**；被勾选的那个
+ * 保持可见，取消勾选后其余开关恢复显示。
+ */
+function browserTakeoverCheckboxes() {
+  const mainChk = $("#f_browser_takeover");
+  const subChks = $$('.subagent-box [data-f="browser_takeover"]');
+  return [mainChk, ...subChks].filter(Boolean);
+}
+
+// 重算所有「开启浏览器接管功能」开关的显隐，以及「最大标签页数」的显隐与位置。
+function syncBrowserTakeoverUI() {
+  const boxes = browserTakeoverCheckboxes();
+  const owner = boxes.find(chk => chk.checked) || null;
+  boxes.forEach(chk => {
+    const field = chk.closest(".field");
+    if (field) field.style.display = (!owner || owner === chk) ? "" : "none";
+  });
+  // 「允许 Agent保留的最大标签页数」跟着「开启浏览器接管功能」走：值本身属于浏览器
+  // （进程级、本 multi-agent 共用），但显示位置贴在**开启者**的开关下面——谁开启就
+  // 显示在谁的卡片里；都没开启时搬回主 agent 卡片并隐藏。
+  const tabMaxField = $("#browserTabMaxField");
+  const mainField = $("#mainBrowserTakeoverField");
+  if (!tabMaxField) return;
+  if (!owner) {
+    tabMaxField.style.display = "none";
+    if (mainField && tabMaxField.previousElementSibling !== mainField) {
+      mainField.after(tabMaxField);
+    }
+    return;
+  }
+  const ownerField = owner.closest(".field");
+  if (ownerField && tabMaxField.previousElementSibling !== ownerField) {
+    ownerField.after(tabMaxField);
+  }
+  tabMaxField.style.display = "";
+}
+
+// 某个开关被切换：保证「同时只有一个 checked」，然后重算显隐。
+function onBrowserTakeoverToggle(chk) {
+  if (chk && chk.checked) {
+    browserTakeoverCheckboxes().forEach(other => { if (other !== chk) other.checked = false; });
+  }
+  syncBrowserTakeoverUI();
+}
+
 function subAgentBox(s, key, canEdit) {
   const isNewSub = !s;
-  s = s || { name: "", description: "", system_prompt: "", api_key: "", llm_provider_name: "deepseek:deepseek-v4-pro", mcp_servers: [], summary: { flush_history_tokenwise: 200000, solid_summarize_tokenwise: null, reserve_message_round: 4 }, react_prompt: true };
+  s = s || { name: "", description: "", system_prompt: "", api_key: "", llm_provider_name: "deepseek:deepseek-v4-pro", mcp_servers: [], summary: { flush_history_tokenwise: 200000, solid_summarize_tokenwise: null, reserve_message_round: 4 }, react_prompt: true, browser_takeover: false };
   const subFlushOn = !isAutoSummaryOff((s.summary || {}).flush_history_tokenwise);
   const flush = tokToUnit(autoSummaryDisplay((s.summary || {}).flush_history_tokenwise, 200000));
   const subSolidOn = isSolidSummaryOn((s.summary || {}).solid_summarize_tokenwise);
@@ -6382,6 +6433,9 @@ function subAgentBox(s, key, canEdit) {
     <div class="sub-head"><span class="name">🧩 ${t("子 agent")}</span>${canEdit ? `<button class="btn danger small" data-act="remove" type="button">${t("移除")}</button>` : ""}</div>
     <div class="form-grid">
       <div class="field"><label>${t("名称")} name ${info("子 agent 标识，会作为工具名呈现给主 agent，创建后不可更改。")}</label><input data-f="name" value="${esc(s.name)}" ${canEdit ? "" : "readonly"}${ph("sub_name")}></div>
+      <div class="field full takeover-switch-field" data-f="browser_takeover_field">
+        <label style="flex-direction:row;align-items:center;gap:8px;"><input type="checkbox" data-f="browser_takeover" ${s.browser_takeover ? "checked" : ""}> 🌐 ${t("开启浏览器接管功能")} ${info("开启后，会向该子 agent 注入一组浏览器接管工具（占用上下文）。只有需要让这个子 agent 操作浏览器时才开启。<br/><br/>⚠ 主 agent 与所有子 agent 中只能有一个开启浏览器接管（同一个会话里主 / 子 agent 共用同一个浏览器实例）：主 agent 已开启时这里不会显示；多个子 agent 之间也只能开启一个，勾选后其余开关都会隐藏。<br/><br/>由子 agent 开启时，会话页只显示「打开浏览器」一个按钮（「提示Agent开始接管浏览器」「隐私遮蔽模式」「注入 敏感信息替换列表」目前只在主 agent 开启时提供）。")}</label>
+      </div>
       ${modelBlockHTML(s.llm_provider_name, s.model, s.api_key, "sub_api_key")}
       <div class="field full" data-f="ft_toggle_field">
         <label style="flex-direction:row;align-items:center;gap:8px;"><input type="checkbox" data-f="ft_enabled" ${subFt.enabled ? "checked" : ""}> 📁 ${t("开启文件读写功能")} ${info(FILE_TOOLS_SWITCH_TIP)}</label>
@@ -6423,7 +6477,15 @@ function subAgentBox(s, key, canEdit) {
       <div class="field full"><label>${t("MCP 服务器")} ${info("该子 agent 可用的工具来源；程序不负责启动，需外部自行启动。")}</label><div data-f="mcp"></div></div>
     </div>`;
 
-  div.querySelector('[data-act="remove"]')?.addEventListener("click", () => div.remove());
+  div.querySelector('[data-act="remove"]')?.addEventListener("click", () => {
+    // 「最大标签页数」可能正被搬进这个子卡片（它属于浏览器，不随子 agent 删除）：
+    // 先搬回主 agent 卡片，避免随卡片一起被删掉。
+    const tabMaxField = $("#browserTabMaxField");
+    const mainField = $("#mainBrowserTakeoverField");
+    if (tabMaxField && mainField && div.contains(tabMaxField)) mainField.after(tabMaxField);
+    div.remove();
+    syncBrowserTakeoverUI();
+  });
 
   const mcpBox = div.querySelector('[data-f="mcp"]');
   (s.mcp_servers || []).forEach((m, j) => mcpBox.appendChild(mcpRow(m, j)));
@@ -6474,6 +6536,12 @@ function subAgentBox(s, key, canEdit) {
   if (ftToggle) ftToggle.addEventListener("change", applyFileTools);
   if (ftUseMain) ftUseMain.addEventListener("change", applyFileTools);
   applyFileTools();
+
+  // 浏览器接管：切换时保证「主 / 子 agent 中只有一个开启」，并重算其余开关的显隐。
+  const subBrowserTakeover = div.querySelector('[data-f="browser_takeover"]');
+  if (subBrowserTakeover) {
+    subBrowserTakeover.addEventListener("change", () => onBrowserTakeoverToggle(subBrowserTakeover));
+  }
 
   bindSumThresholds(div);
   bindModelBlock(div);
@@ -6566,6 +6634,9 @@ function collectSubAgent(box) {
     root_dir: ftRootEl ? ftRootEl.value : "",
     use_main_root: !!(ftUseMainEl && ftUseMainEl.checked),
   };
+  // 浏览器接管：隐藏（因为别的 agent 已开启）不影响取值——控件仍在 DOM 里，
+  // 是否真的保存为 true 由 buildPayload 统一收敛成「只有一个开启」。
+  const btEl = box.querySelector('[data-f="browser_takeover"]');
   return {
     name: get("name"),
     description: get("description"),
@@ -6577,6 +6648,7 @@ function collectSubAgent(box) {
     file_tools,
     summary,
     react_prompt: box.querySelector('[data-f="react_prompt"]').checked,
+    browser_takeover: !!(btEl && btEl.checked),
   };
 }
 
@@ -6660,7 +6732,7 @@ function buildPayload(cfg) {
   const mainModel = collectModelBlock($("#editorForm"));
   // 简化模式（老版本方式）下表单里没有文件读写开关，此时主 agent 恒开启。
   const mainFileToolsEl = $("#f_file_tools");
-  return {
+  const payload = {
     // 名称是唯一身份输入：agent_id 与 checkpoint 数据库都取同一个值（后端会再校验一次）。
     agent_id: name,
     name,
@@ -6694,6 +6766,15 @@ function buildPayload(cfg) {
     sub_agents: $$(".subagent-box").map(collectSubAgent),
     output: cfg.output || { stream_output_dir: "" },
   };
+  // 浏览器接管：主 agent 与所有子 agent 中只能有一个开启。UI 已经把其余开关隐藏，
+  // 这里再收敛一次（主 agent 优先，其次第一个勾选的子 agent），保证提交的配置合法。
+  let btOwner = payload.main_agent.browser_takeover ? "main" : null;
+  payload.sub_agents = payload.sub_agents.map((sub, index) => {
+    const on = !!sub.browser_takeover && (btOwner === null || btOwner === index);
+    if (on && btOwner === null) btOwner = index;
+    return { ...sub, browser_takeover: on };
+  });
+  return payload;
 }
 
 /* 名称同时是 agent_id（文件名）与 checkpoint 数据库名，前端先做同样的校验，
@@ -8969,15 +9050,25 @@ async function renderChatView() {
     if (!actionsEl || !openBtn || !hintBtn || !sensitiveBtn || !privacyBtn || !sensitiveBlockEl || !takeoverBlockEl) return;
 
     let takeoverOn = false;
+    // 由子 agent 开启（主 agent 未开启）时：只显示「打开浏览器」一个按钮。
+    // 「提示Agent开始接管浏览器」「隐私遮蔽模式」「注入 敏感信息替换列表」需要额外的
+    // 子 agent 消息注入路径，本轮不做，因此这几个按钮直接不显示。
+    let takeoverBySubOnly = false;
     try {
       const cfg = await api(`/api/agents/${encodeURIComponent(S.agentId)}`);
-      takeoverOn = !!(cfg.main_agent && cfg.main_agent.browser_takeover);
+      const mainTakeoverOn = !!(cfg.main_agent && cfg.main_agent.browser_takeover);
+      const subTakeoverOn = (cfg.sub_agents || []).some(s => !!(s && s.browser_takeover));
+      takeoverOn = mainTakeoverOn || subTakeoverOn;
+      takeoverBySubOnly = !mainTakeoverOn && subTakeoverOn;
     } catch (e) { return; }
     if (!takeoverOn) return;
     // 视图可能已被重新渲染，元素已脱离文档：放弃绑定
     if (!actionsEl.isConnected) return;
 
     actionsEl.style.display = "flex";
+    if (takeoverBySubOnly) {
+      [hintBtn, privacyBtn, sensitiveBtn].forEach(btn => { btn.style.display = "none"; });
+    }
 
     let paused = false;
     let lastConnected = false;

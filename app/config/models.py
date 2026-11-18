@@ -195,6 +195,12 @@ class SubAgentConfig(BaseModel):
     solid_summarize_mode_key: str | None = None
     summary: SubSummaryConfig = Field(default_factory=SubSummaryConfig)
     react_prompt: bool = True
+    # 浏览器接管：开启后向该子 agent 注入一组浏览器接管工具（占用上下文，按需开启）。
+    # 约束：主 agent 与所有子 agent 中**只能有一个**开启（同一个会话里主 / 子 agent 共用
+    # 同一个浏览器 profile / CDP 端口 / 配色，见 ID91）。配置页勾选任意一个后其余开关
+    # 隐藏，保存时 API 还会再校验一次。影响图编译（工具绑定），改动后由 update_agent
+    # 的 invalidate 触发重建。
+    browser_takeover: bool = False
 
 
 class OutputConfig(BaseModel):
@@ -216,3 +222,23 @@ class MultiAgentConfig(BaseModel):
     @property
     def store_conn_string(self) -> str:
         return self.postgres.store_conn_string()
+
+    def browser_takeover_agents(self) -> list[str]:
+        """返回开启了浏览器接管的 agent 标识（主 agent 记为 ``"main"``，子 agent 记其 name）。
+
+        设计口径：**主 agent 与所有子 agent 中只能有一个开启**——同一个会话里主 / 子
+        agent 共用同一个浏览器 profile / CDP 端口 / 配色（ID91）。正常配置下这里最多
+        一个元素；出现多个说明 JSON 被手改过，调用方可据此报错或兜底。
+        """
+        owners: list[str] = []
+        if self.main_agent.browser_takeover:
+            owners.append("main")
+        for sub in self.sub_agents:
+            if sub.browser_takeover:
+                owners.append(sub.name)
+        return owners
+
+    @property
+    def has_browser_takeover(self) -> bool:
+        """本 multi-agent 是否需要浏览器（主 agent 或任一子 agent 任一开启即为真）。"""
+        return bool(self.browser_takeover_agents())

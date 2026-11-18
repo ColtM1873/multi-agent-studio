@@ -139,6 +139,23 @@ class BrowserSession:
     _disconnect_count: int = 0
 
 
+def _config_has_browser_takeover(cfg) -> bool:
+    """本 multi-agent 是否开启了浏览器接管。
+
+    主 agent 与所有子 agent 中**只有一个**能开启（配置页隐藏其余开关，API 保存时校验），
+    但判定时两边都要看：子 agent 开启后，同一个会话同样需要这个浏览器实例。
+    """
+    try:
+        if bool(getattr(cfg.main_agent, "browser_takeover", False)):
+            return True
+    except Exception:  # noqa: BLE001
+        pass
+    for sub in getattr(cfg, "sub_agents", None) or []:
+        if bool(getattr(sub, "browser_takeover", False)):
+            return True
+    return False
+
+
 @contextlib.contextmanager
 def use_browser_session(agent_id: str, thread_id: str, agent_name: str = ""):
     """把当前上下文路由到某会话的浏览器 controller。"""
@@ -151,7 +168,7 @@ def use_browser_session(agent_id: str, thread_id: str, agent_name: str = ""):
             # 离线测试 / 配置已被删除：不要把测试会话写成真实 profile。
             yield None
             return
-        if not getattr(cfg.main_agent, "browser_takeover", False):
+        if not _config_has_browser_takeover(cfg):
             yield None
             return
         agent_name = agent_name or cfg.name or agent_id

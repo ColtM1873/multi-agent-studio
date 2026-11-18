@@ -164,6 +164,27 @@ async def _ensure_agent_databases(cfg: MultiAgentConfig) -> None:
         raise HTTPException(status_code=400, detail=f"自动创建数据库失败：{exc}")
 
 
+def _ensure_single_browser_takeover(cfg: MultiAgentConfig) -> None:
+    """主 agent 与所有子 agent 中只能有一个开启「浏览器接管功能」。
+
+    同一个会话里主 / 子 agent 共用同一个浏览器实例（profile / CDP 端口 / 配色，见 ID91），
+    多个同时开启只会抢同一个浏览器，因此保存时强制唯一。配置页已经把其余开关隐藏，
+    这里是对直接调用 API / 手改 JSON 的兜底。
+    """
+    owners = cfg.browser_takeover_agents()
+    if len(owners) <= 1:
+        return
+    labels = ["主 agent" if owner == "main" else f"子 agent「{owner}」" for owner in owners]
+    raise HTTPException(
+        status_code=400,
+        detail=(
+            "主 agent 与所有子 agent 中只能有一个开启浏览器接管功能"
+            "（同一个会话共用同一个浏览器），当前同时开启了："
+            + "、".join(labels)
+        ),
+    )
+
+
 @router.post("/agents")
 async def create_agent(cfg: MultiAgentConfig):
     # 只需要用户填名称；另外两个身份字段由名称直接派生（见 app/config/db_names.py）。
@@ -180,6 +201,7 @@ async def create_agent(cfg: MultiAgentConfig):
         if not sub.name or not sub.name.strip():
             raise HTTPException(status_code=400, detail="子 agent 名称不能为空")
 
+    _ensure_single_browser_takeover(cfg)
     _ensure_name_is_free(name)
     cfg.postgres.store_namespace = _normalize_namespace(cfg.postgres.store_namespace)
 
@@ -256,6 +278,8 @@ async def update_agent(agent_id: str, cfg: MultiAgentConfig):
     for sub in merged.sub_agents:
         if not sub.name or not sub.name.strip():
             raise HTTPException(status_code=400, detail="子 agent 名称不能为空")
+
+    _ensure_single_browser_takeover(merged)
 
     # 编辑保存时同样自动补齐 checkpoint / store 数据库
     await _ensure_agent_databases(merged)
