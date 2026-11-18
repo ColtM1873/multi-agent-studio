@@ -129,7 +129,9 @@ def _init_model(llm_provider_name: str, api_key: str, model_cfg: ModelConfig):
       主/子 agent 各有自己的 ModelConfig，因此两边可以一个走代理、一个不走。
     - openai_compatible 模式自动捕获三方端点的 reasoning_content（ChatOpenAI
       默认丢弃非标准字段，见 app/runtime/openai_compat_reasoning.py）。
-    - 检测到 DeepSeek 时自动应用 reasoning_content 出站回填补丁（无需用户配置）。
+    - 检测到 DeepSeek 时自动应用 reasoning_content 出站回填补丁（无需用户配置）；
+      其它需要每轮回传思考内容的模型（如百炼 Qwen3.8 Thinking + 工具调用）由
+      ModelConfig.preserve_reasoning_content 显式开启（仅 openai_compatible）。
     """
     kwargs: dict[str, Any] = {}
     if model_cfg.temperature is not None:
@@ -179,7 +181,13 @@ def _init_model(llm_provider_name: str, api_key: str, model_cfg: ModelConfig):
 
     # DeepSeek 自动修复：检测到 DeepSeek 就回填历史 assistant 的 reasoning_content，
     # 不再要求用户手动勾选（见 inner_docs/ID29）。
-    if is_deepseek_config(llm_provider_name, model_cfg):
+    # 其它要求「每轮完整回传思考内容」的模型（如百炼 Qwen3.8 Thinking + 工具调用）
+    # 由模型配置里的「回传思考内容」开关显式开启；只对 openai_compatible 生效，
+    # 避免把 reasoning_content 发给官方 openai/anthropic 等严格端点。
+    if is_deepseek_config(llm_provider_name, model_cfg) or (
+        model_cfg.provider_mode == "openai_compatible"
+        and model_cfg.preserve_reasoning_content
+    ):
         apply_deepseek_reasoning_fix(model)
 
     return model

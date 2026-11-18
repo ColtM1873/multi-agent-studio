@@ -74,6 +74,38 @@ def main() -> None:
     assert p_compat["messages"][1].get("reasoning_content") == "think!", p_compat["messages"][1]
     print("[OK] OpenAI 兼容模式的 DeepSeek 也会自动回填")
 
+    # 显式开关「回传思考内容」：只对 openai_compatible 生效，用于 Qwen3.8 Thinking 等
+    # 「必须每轮回传 reasoning_content」的端点。
+    qwen_cfg = dict(
+        provider_mode="openai_compatible",
+        provider_name="Local",
+        base_url="http://127.0.0.1:9/v1",
+    )
+    qwen_on = _init_model(
+        "qwen3.8-27b", "fake", ModelConfig(**qwen_cfg, preserve_reasoning_content=True)
+    )
+    p_qwen_on = qwen_on._get_request_payload(msgs)
+    assert p_qwen_on["messages"][1].get("reasoning_content") == "think!", p_qwen_on["messages"][1]
+    print("[OK] openai_compatible + 开关开启：Qwen 等非 DeepSeek 模型也回填")
+
+    qwen_off = _init_model("qwen3.8-27b", "fake", ModelConfig(**qwen_cfg))
+    p_qwen_off = qwen_off._get_request_payload(msgs)
+    assert "reasoning_content" not in p_qwen_off["messages"][1], p_qwen_off["messages"][1]
+    print("[OK] openai_compatible + 开关关闭：不回填（默认行为不变）")
+
+    official_sw = _init_model(
+        "openai:gpt-5", "fake", ModelConfig(preserve_reasoning_content=True)
+    )
+    p_official = official_sw._get_request_payload(msgs)
+    assert "reasoning_content" not in p_official["messages"][1], p_official["messages"][1]
+    print("[OK] 官方 provider：开关不生效（不会发给 openai/anthropic 等严格端点）")
+
+    # Qwen 的多轮工具调用要求「带 tool_calls 的 assistant 轮也要有 reasoning_content」。
+    p_tool_on = qwen_on._get_request_payload(tool_msgs)
+    assert p_tool_on["messages"][1].get("reasoning_content") == "need tool", p_tool_on["messages"][1]
+    assert "reasoning_content" not in p_tool_on["messages"][2], p_tool_on["messages"][2]
+    print("[OK] 开关开启 + 工具轮：带 tool_calls 的 assistant 也回填，tool 消息不受影响")
+
 
 if __name__ == "__main__":
     main()

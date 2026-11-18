@@ -1124,6 +1124,8 @@ body.msg-drawer-resizing-bottom { cursor: row-resize; }
   accent-color: var(--primary);
 }
 .baseurl-noproxy-hint { color: #b45309; }
+/* 「回传思考内容」开关：接在 base_url 提示语下方，单独占一行（复用 noproxy 的 checkbox 外观） */
+.model-source-card .reasoning-replay { display: flex; margin-top: 8px; }
 .radio-list { display: flex; flex-direction: column; gap: 10px; }
 .radio-item { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 14px; font-weight: 500; }
 .radio-item input { accent-color: var(--primary); }

@@ -92,8 +92,11 @@ class ModelConfig(BaseModel):
     top_p: float | None = None
     max_tokens: int | None = None
     repetition_penalty: float | None = None
-    # 兼容旧配置的遗留字段。DeepSeek 修复现在由 graph_builder 自动启用，
-    # 不再需要用户勾选，因此该字段不再参与判断（见 inner_docs/ID29）。
+    # 显式开关：把历史 assistant 消息的 reasoning_content 原样回传给模型。
+    # 只对 openai_compatible 生效——部分端点（如阿里云百炼 Qwen3.8 Thinking +
+    # 工具调用，preserve_thinking 默认 true）要求每轮完整回传历史思考内容，
+    # 缺失或截断会掉性能甚至调用失败。DeepSeek 配置仍由 graph_builder 自动回填，
+    # 无需勾选（见 inner_docs/ID29）；复用 v1.3.0 的字段名，旧配置里的 true 继续有效。
     preserve_reasoning_content: bool = False
 
 
