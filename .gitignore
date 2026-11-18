@@ -66,3 +66,6 @@ opencode.json
 
 # 本地规划稿（与内网文档同源，本地保留，不入库）
 /ID91_MULTI_INSTANCE_SESSIONS_PLAN.md
+
+# PDF / MD 转换调试产物（原始 PDF、中间 MD，本地保留，不入库）
+/PDF_MD_Debug/
