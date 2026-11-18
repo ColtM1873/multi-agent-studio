@@ -198,6 +198,7 @@ class ChatManager:
             search_memory_threshold=settings.search_memory_threshold,
             attach_memory_threshold=settings.attach_memory_threshold,
             pdf_table_extraction=settings.pdf_table_extraction,
+            simplified_file_tools=settings.simplified_file_tools,
         )
         return AgentRuntime(config, graph, stack)
 

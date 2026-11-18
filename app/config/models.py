@@ -98,7 +98,22 @@ class ModelConfig(BaseModel):
 
 
 class FileToolsConfig(BaseModel):
+    """文件读写工具配置（主 agent 与子 agent 共用同一套字段）。
+
+    字段语义：
+    - ``enabled``：是否向该 agent 注入程序自带的文件读写工具（read_file / write_file /
+      edit_file / list_directory / file_search / copy_file / move_file / file_delete）。
+      关闭后该 agent 没有任何本地文件读写能力，``root_dir`` 也就不再有任何意义
+      （前端会把工作目录填入项置灰，可读不可写）。影响图编译。
+    - ``root_dir``：该 agent 读写本地文件的根目录。
+    - ``use_main_root``：**仅子 agent 有意义**。为 True 时该子 agent 实时使用主 agent 的
+      工作目录（主 agent 的目录改了它也跟着改），自己那份 ``root_dir`` 只是被保留着，
+      等开关关掉后继续用。主 agent 忽略该字段。
+    """
+
+    enabled: bool = True
     root_dir: str = ""
+    use_main_root: bool = False
 
 
 class MCPServerConfig(BaseModel):
@@ -162,6 +177,10 @@ class SubAgentConfig(BaseModel):
     llm_provider_name: str = "deepseek:deepseek-v4-pro"
     model: ModelConfig = Field(default_factory=ModelConfig)
     mcp_servers: list[MCPServerConfig] = Field(default_factory=list)
+    # 子 agent 自己的文件读写工具配置。
+    # 老配置里没有这个字段 → 默认「关闭」，保持老版本「子 agent 没有文件读写工具」的行为；
+    # 用户在配置页给子 agent 打开后才会在构建子图时注入文件工具。
+    file_tools: FileToolsConfig = Field(default_factory=lambda: FileToolsConfig(enabled=False))
     # 消息通道键名，由系统自动生成（父子消息键必须唯一），用户不填。
     state_messages_key: str | None = None
     # 每个子 agent 独立的 token 计数键名，由系统自动生成（父子键必须唯一），用户不填。

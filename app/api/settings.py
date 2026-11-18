@@ -113,6 +113,7 @@ async def put_settings(body: Settings):
         or old.search_memory_threshold != body.search_memory_threshold
         or old.attach_memory_threshold != body.attach_memory_threshold
         or old.pdf_table_extraction != body.pdf_table_extraction
+        or old.simplified_file_tools != body.simplified_file_tools
         or old.browser_interactive_merge != body.browser_interactive_merge  # BID084
         or old.browser_interactive_merge_separator != body.browser_interactive_merge_separator  # BID084
         or old.browser_interactive_english != body.browser_interactive_english  # BID084

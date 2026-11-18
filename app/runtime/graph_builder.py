@@ -197,8 +197,14 @@ async def build_sub_agent(
     agent_id: str,
     state_type,
     default_summary_percent: float = 20.0,
+    builtin_tools: list[Any] | None = None,
 ) -> CompiledStateGraph:
-    """构建单个子 agent 的子图（checkpointer=True）。"""
+    """构建单个子 agent 的子图（checkpointer=True）。
+
+    ``builtin_tools``：程序自带的、已经绑定好工作目录的工具（目前即文件读写工具）。
+    它们和 MCP 工具一起 bind_tools 给子 agent 的模型；传空列表即「该子 agent 没有
+    文件读写能力」（老版本行为，也是「简化文件读写功能配置」开启时的行为）。
+    """
     sub_agent_name = spec.name
     agent_system_prompt = spec.system_prompt
     llm_provider_name = spec.llm_provider_name
@@ -222,6 +228,10 @@ async def build_sub_agent(
             f"子 agent [{sub_agent_name}] 的 MCP 服务器连接失败：[{', '.join(failed)}]，"
             f"请确认这些服务已启动且鉴权配置正确。原始错误: {' | '.join(error_details)}"
         )
+    # 程序自带的文件读写工具（已按该子 agent 的工作目录绑定好闭包）。
+    # 放在 MCP 工具之后：同名时以程序自带工具为准。
+    if builtin_tools:
+        tools.extend(builtin_tools)
     model = _init_model(llm_provider_name, model_api_key, spec.model)
     model_with_tools = model.bind_tools(tools)
     tools_by_name = {tool.name: tool for tool in tools}
@@ -605,12 +615,16 @@ async def build_world(
     search_memory_threshold: float = SEARCH_MEMORY_THRESHOLD,
     attach_memory_threshold: float = ATTACH_MEMORY_THRESHOLD,
     pdf_table_extraction: bool = True,
+    simplified_file_tools: bool = False,
 ) -> CompiledStateGraph:
     """构建 Supervisor-Worker 主图（等价于原来的 TheWorld）。
 
     调用方需确保 checkpointer/store 已 setup。
     mcp_client_factory: 可选，用于注入 MCP 客户端（默认 build_mcp_client），
     便于离线测试时替换为假客户端。
+    simplified_file_tools: 进阶设置里的「简化 文件读写功能 配置选项」。为 True 时回到
+    老版本方式——主 agent 恒注入文件读写工具、子 agent 恒不注入（忽略各 agent 自己的
+    ``file_tools.enabled``）；为 False 时主 / 子 agent 各自按自己的开关与工作目录生效。
     """
     store_namespace = config.postgres.store_namespace
 
@@ -637,9 +651,32 @@ async def build_world(
     snapshot_conn_string = config.checkpoint_conn_string
     snapshot_agent_id = config.agent_id
 
-    pass_in_tools = build_file_tools(
-        main_spec.file_tools.root_dir, pdf_table_extraction
+    # ── 文件读写工具（主 / 子 agent 各自可开关，工作目录也可以各不相同）──
+    # 「简化文件读写功能配置」开启时回到老版本方式：主 agent 恒开启、子 agent 恒关闭。
+    file_tools_simplified = bool(simplified_file_tools)
+    main_file_tools = main_spec.file_tools
+    main_file_tools_on = True if file_tools_simplified else bool(main_file_tools.enabled)
+    main_root_dir = (main_file_tools.root_dir or "").strip()
+
+    pass_in_tools = (
+        build_file_tools(main_root_dir, pdf_table_extraction) if main_file_tools_on else []
     )
+
+    def sub_file_tools_of(spec: SubAgentConfig) -> list[Any]:
+        """按该子 agent 的配置构建文件读写工具；关闭 / 简化模式返回空列表。
+
+        「使用主agent工作目录」是**实时跟随**：只在主 agent 的文件读写功能开启且目录
+        已填时生效，此时忽略子 agent 自己那份 root_dir（它只被保留着，等开关关掉再用）。
+        """
+        if file_tools_simplified:
+            return []
+        sub_file_tools = spec.file_tools
+        if not sub_file_tools.enabled:
+            return []
+        root_dir = (sub_file_tools.root_dir or "").strip()
+        if sub_file_tools.use_main_root and main_file_tools_on and main_root_dir:
+            root_dir = main_root_dir
+        return build_file_tools(root_dir, pdf_table_extraction)
 
     sub_agent_specs_list = config.sub_agents
     num_of_sub_agents = len(sub_agent_specs_list)
@@ -671,6 +708,7 @@ async def build_world(
                 snapshot_agent_id,
                 state_type,
                 default_summary_percent=default_summary_percent,
+                builtin_tools=sub_file_tools_of(spec),
             )
         )
 

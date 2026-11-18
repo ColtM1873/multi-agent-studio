@@ -625,15 +625,42 @@ class SessionHub:
                     html_files.append(fp)
             await self.emit(rec, event)
 
+        def file_tool_roots() -> list[str]:
+            """本轮可能被文件工具当作根目录的路径（主 agent + 各子 agent）。
+
+            主 / 子 agent 的工作目录可以互不相同（子 agent 还可能「使用主agent工作目录」），
+            所以自动打开 html 时要把所有候选根目录都试一遍，不能只认主 agent 的那一个。
+            """
+            roots: list[str] = []
+            try:
+                main_root = (runtime.config.main_agent.file_tools.root_dir or "").strip()
+            except Exception:  # noqa: BLE001 - 老配置 / 测试桩可能没有该字段
+                main_root = ""
+            if main_root:
+                roots.append(main_root)
+            for sub in getattr(runtime.config, "sub_agents", None) or []:
+                try:
+                    sub_root = (sub.file_tools.root_dir or "").strip()
+                except Exception:  # noqa: BLE001
+                    sub_root = ""
+                if sub_root and sub_root not in roots:
+                    roots.append(sub_root)
+            return roots
+
         def open_html_files() -> None:
+            roots = file_tool_roots()
             for fp in html_files:
-                root = runtime.config.main_agent.file_tools.root_dir
-                full = fp if os.path.isabs(fp) else os.path.join(root, fp)
-                if os.path.exists(full):
+                candidates = [fp] if os.path.isabs(fp) else [
+                    os.path.join(root, fp) for root in (roots or [""])
+                ]
+                for full in candidates:
+                    if not os.path.exists(full):
+                        continue
                     try:
                         os.startfile(full)  # noqa: F821 — Windows
                     except Exception:  # noqa: BLE001
                         pass
+                    break
 
         async def finish(result, *, allow_backfill: bool) -> None:
             if result.drained:

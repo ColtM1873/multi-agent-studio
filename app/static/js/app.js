@@ -118,7 +118,6 @@ const I18N_EN = {
   "不会删除数据库里的会话历史": "Conversation history in the database will not be deleted",
   "个": "",
   "主 agent": "main agent",
-  "主Agent读写本地文件的根目录": "Root directory where the main agent reads/writes local files.",
   "主 agent 的系统提示词，定义其角色与行为。": "System prompt for the main agent, defining its role and behavior.",
   "主 agent 输出完后，询问是否将结果生成 HTML 报告。": "After the main agent finishes, ask whether to generate an HTML report from the result.",
   "主会话": "Main conversation",
@@ -263,6 +262,15 @@ const I18N_EN = {
   "Agent 主动关闭标签页要花掉上下文，实际上很少这么做；于是「目前打开的标签页有哪些」会越列越长、白烧 token。这里设一个上限，超出的标签页按 LRU（最久未使用的先关）自动关闭，并在返回给模型的内容里注明关了哪些。<br/><br/>计数按浏览器进程算：同一个浏览器里的所有标签页都算在内（包括你自己手动打开的），当前聚焦的标签页永不关闭。两个 multi-agent 共用同一个浏览器时，按最近一次配置的 multi-agent 的值为准。<br/><br/>默认 4，最小 3（聚焦页不能关，1~2 会逼出「新页和聚焦页只能留一个」的死结），最大 50。": "Closing tabs costs the agent context, so it rarely does it — and the list of currently open tabs keeps growing, burning tokens for nothing. Set a cap here: tabs beyond it are closed automatically by LRU (least recently used first), and the reply to the model notes which ones were closed.<br/><br/>Tabs are counted per browser process: every tab in that browser counts (including ones you opened yourself), and the focused tab is never closed. If two multi-agents share one browser, the value configured most recently applies.<br/><br/>Default 4, minimum 3 (the focused tab cannot be closed; 1–2 would force a dead end where the new tab and the focused tab cannot coexist), maximum 50.",
   "开启记忆读取/写入功能": "Enable memory read/write",
   "开启后，会向主 agent 注入记忆读写工具（write_memory / read_memory），让 agent 能长期存取与检索信息；关闭后主 agent 不再拥有记忆读写工具。此设置影响图编译；「记忆吸附」是另一项功能，不受本开关影响。": "When enabled, memory read/write tools (write_memory / read_memory) are injected into the main agent so it can store and retrieve information long-term; when disabled the main agent no longer has memory read/write tools. This affects graph compilation; \"memory attachment\" is a separate feature and is not affected by this switch.",
+  "开启文件读写功能": "Enable file read/write",
+  "开启后，会向该 agent 注入文件读写工具（read_file / write_file / edit_file / list_directory / file_search 等）。关闭后该 agent 不再拥有任何本地文件读写能力，下方的工作目录相关内容也会一起隐藏。此设置影响图编译。": "When enabled, file read/write tools (read_file / write_file / edit_file / list_directory / file_search, etc.) are injected into this agent. When disabled the agent has no local file access at all and the working-directory options below are hidden as well. This affects graph compilation.",
+  "主Agent读写本地文件的根目录；仅在「开启文件读写功能」打开时生效。": "Root directory where the main agent reads/writes local files; only takes effect when \"Enable file read/write\" is on.",
+  "子Agent工作目录": "Sub-agent working directory",
+  "该子 agent 读写本地文件的根目录，可以与其他子 agent、主 agent 都不相同；仅在它自己的「开启文件读写功能」打开时生效。": "Root directory where this sub-agent reads/writes local files. It may differ from the main agent and from other sub-agents; only takes effect when this sub-agent's own \"Enable file read/write\" is on.",
+  "使用主agent工作目录": "Use main agent working directory",
+  "开启后，本子 agent 直接使用主 agent 的工作目录（主 agent 的目录改了，这里也跟着改）；下方「子Agent工作目录」填入项会隐藏。": "When enabled, this sub-agent uses the main agent's working directory directly (if the main directory changes later, this follows). The \"Sub-agent working directory\" field below is then hidden.",
+  "简化 文件读写功能 配置选项": "Simplify file read/write options",
+  "开启后回到老版本方式：主 agent 恒拥有文件读写工具、子 agent 恒没有；配置页不再显示「开启文件读写功能」「使用主agent工作目录」「子Agent工作目录」，主Agent工作目录始终可编辑。关闭后，主 / 子 agent 各自都能单独开启文件读写功能并设置自己的工作目录。": "When enabled, the old behaviour returns: the main agent always has the file tools and sub-agents never do; the editor no longer shows \"Enable file read/write\", \"Use main agent working directory\" or \"Sub-agent working directory\", and the main agent working directory stays editable. When disabled, the main agent and every sub-agent can each enable the file tools and set their own working directory.",
   "显示浏览器接管说明弹窗": "Show the browser-takeover intro popup",
   "每次打开浏览器时，弹窗说明红色浮动按钮（停止/继续）的作用。关闭后不再弹出。": "Each time the browser is opened, show a popup explaining the red floating button (Stop/Continue). Turn off to suppress it.",
   "提示Agent开始接管浏览器": "Ask the agent to start taking over the browser",
@@ -4345,6 +4353,10 @@ async function openAdvancedSettings() {
         <span class="sw-label">📄 ${t("PDF 表格提取")} <i class="info-icon">!<span class="tip">${t("读取 PDF 时，用基于框线的检测把表格转成 Markdown 并嵌回正文；关闭后只返回正文文本。")}</span></i></span>
         <label class="toggle"><input type="checkbox" id="adv_pdf_tables" ${s.pdf_table_extraction !== false ? "checked" : ""}><span class="track"></span></label>
       </div>
+      <div class="switch-row">
+        <span class="sw-label">📁 ${t("简化 文件读写功能 配置选项")} <i class="info-icon">!<span class="tip">${t("开启后回到老版本方式：主 agent 恒拥有文件读写工具、子 agent 恒没有；配置页不再显示「开启文件读写功能」「使用主agent工作目录」「子Agent工作目录」，主Agent工作目录始终可编辑。关闭后，主 / 子 agent 各自都能单独开启文件读写功能并设置自己的工作目录。")}</span></i></span>
+        <label class="toggle"><input type="checkbox" id="adv_simplified_file_tools" ${s.simplified_file_tools ? "checked" : ""}><span class="track"></span></label>
+      </div>
       <div class="muted" style="margin:10px 0 2px;">${t("输入消息缓存")}</div>
       <div class="switch-row">
         <span class="sw-label">💾 ${t("已输入未发送消息跨multi-agent流转")} <i class="info-icon">!<span class="tip">${t("开启后，你在任意 multi-agent 输入框中输入的内容，会同步更新所有 multi-agent 的未发送消息缓存（等效于共用一个缓存）；关闭后各 multi-agent 独立保存。未发送的消息会持久化到本地，退出程序后下次打开仍会保留。")}</span></i></span>
@@ -4417,6 +4429,7 @@ async function openAdvancedSettings() {
         tool_result_expanded: mask.querySelector("#adv_tool_result").checked,
         show_sub_agent_tools: mask.querySelector("#adv_sub_tools").checked,
         pdf_table_extraction: mask.querySelector("#adv_pdf_tables").checked,
+        simplified_file_tools: mask.querySelector("#adv_simplified_file_tools").checked,
         cross_agent_draft_flow: mask.querySelector("#adv_cross_draft").checked,
         browser_takeover_debug: mask.querySelector("#adv_browser_debug").checked,
         browser_image_tags: mask.querySelector("#adv_browser_image_tags").checked, // BID080
@@ -5869,6 +5882,26 @@ function collectModelBlock(root) {
   };
 }
 
+/* ── 文件读写功能：主 / 子 agent 各自可开关，工作目录也可以各不相同 ───────────
+ * 「简化 文件读写功能 配置选项」（进阶设置里的全局设置）开启后回到老版本方式：
+ * 主 agent 恒开启文件读写工具、子 agent 恒关闭，配置页也不再显示这些开关。 */
+const FILE_TOOLS_SWITCH_TIP = "开启后，会向该 agent 注入文件读写工具（read_file / write_file / edit_file / list_directory / file_search 等）。关闭后该 agent 不再拥有任何本地文件读写能力，下方的工作目录相关内容也会一起隐藏。此设置影响图编译。";
+
+function simplifiedFileTools() {
+  return !!(settingsCache && settingsCache.simplified_file_tools);
+}
+
+/* 主 agent 当前的文件读写状态（实时读主表单 DOM）。
+ * 子 agent 的「使用主agent工作目录」只在「主 agent 已开启且已填目录」且「该子 agent
+ * 自己也开启了文件读写」时才显示并生效。 */
+function mainFileToolsState() {
+  if (simplifiedFileTools()) return { enabled: true, ready: true };
+  const chk = $("#f_file_tools");
+  const dir = $("#f_rootdir");
+  const enabled = chk ? !!chk.checked : true;
+  return { enabled, ready: enabled && !!(dir && String(dir.value || "").trim()) };
+}
+
 function buildForm(cfg, canEditSubs) {
   const form = $("#editorForm");
   const pg = cfg.postgres || {};
@@ -5959,6 +5992,11 @@ function buildForm(cfg, canEditSubs) {
   const browserTakeover = !!main.browser_takeover;
   const browserTabMax = Math.min(50, Math.max(3, parseInt(main.browser_tab_max_number, 10) || 4));
   const memoryTools = main.memory_tools_enabled !== false;
+  // 「简化 文件读写功能 配置选项」（进阶设置里的全局设置）为真时：不显示文件读写开关，
+  // 主 agent 恒开启（老版本行为），工作目录始终可编辑。
+  const fileToolsSimple = simplifiedFileTools();
+  const fileToolsOn = ft.enabled !== false;
+  const fileToolsEditable = fileToolsSimple || fileToolsOn;
 
   form.innerHTML = `
     <div class="form-card"><h4>${t("基本信息")}</h4><div class="form-grid">
@@ -6015,7 +6053,14 @@ function buildForm(cfg, canEditSubs) {
         <label style="flex-direction:row;align-items:center;gap:8px;"><input type="checkbox" id="f_memory_tools" ${memoryTools ? "checked" : ""}> 🧠 ${t("开启记忆读取/写入功能")} ${info("开启后，会向主 agent 注入记忆读写工具（write_memory / read_memory），让 agent 能长期存取与检索信息；关闭后主 agent 不再拥有记忆读写工具。此设置影响图编译；「记忆吸附」是另一项功能，不受本开关影响。")}</label>
       </div>
       ${modelBlockHTML(main.llm_provider_name, main.model, main.api_key, "main_api_key")}
-      <div class="field full"><label>${t("主Agent工作目录")} ${info("主Agent读写本地文件的根目录")}</label><input id="f_rootdir" value="${esc(ft.root_dir)}"${ph("root_dir")}></div>
+      ${fileToolsSimple ? "" : `
+      <div class="field full" id="f_file_tools_field">
+        <label style="flex-direction:row;align-items:center;gap:8px;"><input type="checkbox" id="f_file_tools" ${fileToolsOn ? "checked" : ""}> 📁 ${t("开启文件读写功能")} ${info(FILE_TOOLS_SWITCH_TIP)}</label>
+      </div>`}
+      <div class="field full" id="mainRootDirField" style="${fileToolsEditable ? "" : "display:none;"}">
+        <label>${t("主Agent工作目录")} ${info("主Agent读写本地文件的根目录；仅在「开启文件读写功能」打开时生效。")}</label>
+        <input id="f_rootdir" value="${esc(ft.root_dir)}"${ph("root_dir")}>
+      </div>
       ${globalEmbSet ? `
       <div class="field full">
         <div class="global-toggle-row">
@@ -6275,10 +6320,26 @@ function buildForm(cfg, canEditSubs) {
     applyBrowserTabMaxVisible();
   }
 
+  // 文件读写功能：开关未开启时「主Agent工作目录」整块不显示；开关变化时同步
+  // 主目录显隐，以及各子 agent 的工作目录 / 「使用主agent工作目录」显隐。
+  const fileToolsChk = $("#f_file_tools");
+  const rootDirField = $("#mainRootDirField");
+  const syncMainFileTools = () => {
+    if (rootDirField) {
+      rootDirField.style.display = (fileToolsSimple || (fileToolsChk ? fileToolsChk.checked : true)) ? "" : "none";
+    }
+    $$(".subagent-box").forEach(box => {
+      if (typeof box.__syncFileTools === "function") box.__syncFileTools();
+    });
+  };
+  if (fileToolsChk) fileToolsChk.addEventListener("change", syncMainFileTools);
+  if ($("#f_rootdir")) $("#f_rootdir").addEventListener("input", syncMainFileTools);
+
   const subsBox = $("#subs");
   (cfg.sub_agents || []).forEach((s, i) => subsBox.appendChild(subAgentBox(s, i, canEditSubs)));
   const addBtn = $("#addSubBtn");
   if (addBtn) addBtn.onclick = () => subsBox.appendChild(subAgentBox(null, Date.now(), true));
+  syncMainFileTools();
 
   bindSumThresholds($("#sumManualBlock") || form);
   bindModelBlock(form);
@@ -6302,6 +6363,18 @@ function subAgentBox(s, key, canEdit) {
   const useGlobalSubInit = globalSubSet && (isNewSub || subEqual);
   const gSubFlushOn = !isAutoSummaryOff(gSub.flush_history_tokenwise);
   const gSubSolidOn = isSolidSummaryOn(gSub.solid_summarize_tokenwise);
+  // 文件读写：子 agent 自己一份开关 + 工作目录（可以与主 agent、其它子 agent 都不同）。
+  // 新增子 agent 时：主 agent 的文件读写功能已开启且已填目录 → 默认开启并「使用主agent工作目录」；
+  // 已有子 agent：读它自己那份配置（老配置里没有该字段 → 默认关闭，保持老版本行为）。
+  const subFtSimple = simplifiedFileTools();
+  const mainFtState = mainFileToolsState();
+  const subFt = isNewSub
+    ? { enabled: !subFtSimple && mainFtState.ready, root_dir: "", use_main_root: !subFtSimple && mainFtState.ready }
+    : {
+        enabled: (s.file_tools || {}).enabled === true,
+        root_dir: String((s.file_tools || {}).root_dir || ""),
+        use_main_root: (s.file_tools || {}).use_main_root === true,
+      };
   const div = document.createElement("div");
   div.className = "subagent-box";
   div.dataset.key = key;
@@ -6310,6 +6383,16 @@ function subAgentBox(s, key, canEdit) {
     <div class="form-grid">
       <div class="field"><label>${t("名称")} name ${info("子 agent 标识，会作为工具名呈现给主 agent，创建后不可更改。")}</label><input data-f="name" value="${esc(s.name)}" ${canEdit ? "" : "readonly"}${ph("sub_name")}></div>
       ${modelBlockHTML(s.llm_provider_name, s.model, s.api_key, "sub_api_key")}
+      <div class="field full" data-f="ft_toggle_field">
+        <label style="flex-direction:row;align-items:center;gap:8px;"><input type="checkbox" data-f="ft_enabled" ${subFt.enabled ? "checked" : ""}> 📁 ${t("开启文件读写功能")} ${info(FILE_TOOLS_SWITCH_TIP)}</label>
+      </div>
+      <div class="field full" data-f="ft_use_main_field">
+        <label style="flex-direction:row;align-items:center;gap:8px;"><input type="checkbox" data-f="ft_use_main" ${subFt.use_main_root ? "checked" : ""}> 🗂️ ${t("使用主agent工作目录")} ${info("开启后，本子 agent 直接使用主 agent 的工作目录（主 agent 的目录改了，这里也跟着改）；下方「子Agent工作目录」填入项会隐藏。")}</label>
+      </div>
+      <div class="field full" data-f="ft_root_field">
+        <label>${t("子Agent工作目录")} ${info("该子 agent 读写本地文件的根目录，可以与其他子 agent、主 agent 都不相同；仅在它自己的「开启文件读写功能」打开时生效。")}</label>
+        <input data-f="rootdir" value="${esc(subFt.root_dir)}"${ph("root_dir")}>
+      </div>
       ${globalSubSet ? `
       <div class="field full">
         <div class="global-toggle-row">
@@ -6367,6 +6450,30 @@ function subAgentBox(s, key, canEdit) {
     subSumUseGlobal.addEventListener("change", applySubSum);
     applySubSum();
   }
+
+  // ── 文件读写：开关未开启时工作目录相关内容不显示；「使用主agent工作目录」→ 隐藏自己的工作目录 ──
+  const ftToggle = div.querySelector('[data-f="ft_enabled"]');
+  const ftUseMain = div.querySelector('[data-f="ft_use_main"]');
+  const ftToggleField = div.querySelector('[data-f="ft_toggle_field"]');
+  const ftUseMainField = div.querySelector('[data-f="ft_use_main_field"]');
+  const ftRootField = div.querySelector('[data-f="ft_root_field"]');
+  const applyFileTools = () => {
+    // 简化模式（老版本方式）：整块隐藏，子 agent 没有文件读写配置项。
+    [ftToggleField, ftUseMainField, ftRootField].forEach(el => {
+      if (el) el.style.display = subFtSimple ? "none" : "";
+    });
+    if (subFtSimple) return;
+    // 子 agent 自己的文件读写没开启 → 工作目录相关内容（含「使用主agent工作目录」）都不显示。
+    const subOn = !!(ftToggle && ftToggle.checked);
+    const mainState = mainFileToolsState();
+    if (ftUseMainField) ftUseMainField.style.display = mainState.ready && subOn ? "" : "none";
+    const useMain = subOn && mainState.ready && !!(ftUseMain && ftUseMain.checked);
+    if (ftRootField) ftRootField.style.display = subOn && !useMain ? "" : "none";
+  };
+  div.__syncFileTools = applyFileTools;
+  if (ftToggle) ftToggle.addEventListener("change", applyFileTools);
+  if (ftUseMain) ftUseMain.addEventListener("change", applyFileTools);
+  applyFileTools();
 
   bindSumThresholds(div);
   bindModelBlock(div);
@@ -6450,6 +6557,15 @@ function collectSubAgent(box) {
       reserve_message_round: +get("reserve"),
     };
   }
+  // 文件读写：隐藏（简化模式 / 开关未开启）不影响取值——控件仍在 DOM 里，读到的是原配置值。
+  const ftEnabledEl = box.querySelector('[data-f="ft_enabled"]');
+  const ftUseMainEl = box.querySelector('[data-f="ft_use_main"]');
+  const ftRootEl = box.querySelector('[data-f="rootdir"]');
+  const file_tools = {
+    enabled: !!(ftEnabledEl && ftEnabledEl.checked),
+    root_dir: ftRootEl ? ftRootEl.value : "",
+    use_main_root: !!(ftUseMainEl && ftUseMainEl.checked),
+  };
   return {
     name: get("name"),
     description: get("description"),
@@ -6458,6 +6574,7 @@ function collectSubAgent(box) {
     llm_provider_name: modelBlock.llm_provider_name,
     model: modelBlock.model,
     mcp_servers: mcp,
+    file_tools,
     summary,
     react_prompt: box.querySelector('[data-f="react_prompt"]').checked,
   };
@@ -6541,6 +6658,8 @@ function buildPayload(cfg) {
     };
   }
   const mainModel = collectModelBlock($("#editorForm"));
+  // 简化模式（老版本方式）下表单里没有文件读写开关，此时主 agent 恒开启。
+  const mainFileToolsEl = $("#f_file_tools");
   return {
     // 名称是唯一身份输入：agent_id 与 checkpoint 数据库都取同一个值（后端会再校验一次）。
     agent_id: name,
@@ -6556,7 +6675,13 @@ function buildPayload(cfg) {
       api_key: mainModel.api_key,
       llm_provider_name: mainModel.llm_provider_name,
       model: mainModel.model,
-      file_tools: { root_dir: val("f_rootdir") },
+      // 文件读写：简化模式（老版本方式）下主 agent 恒开启；否则按开关保存。
+      // use_main_root 只对子 agent 有意义，主 agent 恒为 false。
+      file_tools: {
+        enabled: mainFileToolsEl ? !!mainFileToolsEl.checked : true,
+        root_dir: val("f_rootdir"),
+        use_main_root: false,
+      },
       embedding,
       summary,
       html_report: $("#f_html_report").checked,

@@ -199,6 +199,12 @@ class Settings(BaseModel):
     # 读取 PDF 时是否用「基于框线」的表格提取（pdfplumber），并把表格嵌回正文。
     # 关闭后 PDF 只返回正文文本。影响图编译（file tools 闭包），默认开启。
     pdf_table_extraction: bool = True
+    # 简化「文件读写功能」配置选项（进阶设置）。为 True 时回到老版本方式：
+    # 主 agent 恒开启文件读写工具、子 agent 恒不注入文件读写工具（忽略各 agent 自己的
+    # `file_tools.enabled`），配置页也不再显示「开启文件读写功能」「使用主agent工作目录」
+    # 「子Agent工作目录」等选项。为 False（默认）时，主 / 子 agent 各自都能单独开启文件
+    # 读写功能并设置自己的工作目录。影响图编译（工具绑定），改动后需 invalidate_all。
+    simplified_file_tools: bool = False
     # 已输入未发送消息跨 multi-agent 流转：开启后，在任一 multi-agent 输入框输入的内容
     # 会同步更新所有 multi-agent 的未发送消息缓存（等效共用一个缓存）；关闭则各自独立。
     # 纯前端同步逻辑，不参与图编译，无需 invalidate_all。默认开启。

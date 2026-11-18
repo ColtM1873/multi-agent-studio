@@ -493,6 +493,14 @@ def _config_warnings(cfg: MultiAgentConfig) -> list[str]:
     root_dir = (cfg.main_agent.file_tools.root_dir or "").strip()
     if root_dir and not os.path.isdir(root_dir):
         warnings.append(f"文件工具工作目录在本机不存在：{root_dir}")
+    # 子 agent 也可以有自己的文件读写工具与工作目录（且可以与主 agent 不同）。
+    for sub in cfg.sub_agents or []:
+        sub_ft = sub.file_tools
+        sub_root = (sub_ft.root_dir or "").strip()
+        if sub_ft.enabled and not sub_ft.use_main_root and sub_root and not os.path.isdir(sub_root):
+            warnings.append(
+                f"文件工具工作目录在本机不存在：{sub_root}（子 agent {sub.name}）"
+            )
     out_dir = (cfg.output.stream_output_dir or "").strip()
     if out_dir and not os.path.isdir(out_dir):
         warnings.append(f"流式输出目录在本机不存在：{out_dir}")
