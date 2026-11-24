@@ -207,6 +207,7 @@ async def build_sub_agent(
     default_summary_percent: float = 20.0,
     builtin_tools: list[Any] | None = None,
     browser_takeover_active: bool = False,
+    mcp_tools_mode: str = "strict",
 ) -> CompiledStateGraph:
     """构建单个子 agent 的子图（checkpointer=True）。
 
@@ -217,6 +218,13 @@ async def build_sub_agent(
     ``browser_takeover_active``：本子 agent 是否是浏览器接管的**实际开启者**
     （由 build_world 按「主 agent 优先、其次第一个子 agent」判定），只有为真时才
     附加浏览器工具的 debug 提示语。
+    ``mcp_tools_mode``：MCP 工具列表的获取策略（见 ``build_world``）。
+
+    - ``"strict"``（默认，普通聊天）：任何一个 MCP server 取工具失败就抛错——
+      聊天确实需要这些工具，静默降级会让子 agent 少工具却不自知。
+    - ``"skip"``：**完全不连接任何 MCP server**，工具列表直接为空。用于编辑历史
+      消息 / 删除全部历史这类纯本地图操作：它们只用主图内部的改写节点，一个工具
+      都不用，没理由因为 MCP 断线而建不出图（详见 ``ChatManager.get_local_runtime``）。
     """
     sub_agent_name = spec.name
     agent_system_prompt = spec.system_prompt
@@ -230,17 +238,20 @@ async def build_sub_agent(
     tools: list[Any] = []
     failed: list[str] = []
     error_details: list[str] = []
-    for server in spec.mcp_servers:
-        try:
-            tools.extend(await tools_mcp_client.get_tools(server_name=server.name))
-        except Exception as e:  # noqa: BLE001
-            failed.append(f"{server.name} ({server.transport})")
-            error_details.append(f"{server.name}: {describe_mcp_error(e)}")
-    if failed:
-        raise RuntimeError(
-            f"子 agent [{sub_agent_name}] 的 MCP 服务器连接失败：[{', '.join(failed)}]，"
-            f"请确认这些服务已启动且鉴权配置正确。原始错误: {' | '.join(error_details)}"
-        )
+    # mcp_tools_mode="skip" 时连 get_tools 都不调用：不产生任何网络 / 子进程请求，
+    # 断网也能把图建出来（MCP 客户端对象本身只是配置容器，不连接）。
+    if mcp_tools_mode != "skip":
+        for server in spec.mcp_servers:
+            try:
+                tools.extend(await tools_mcp_client.get_tools(server_name=server.name))
+            except Exception as e:  # noqa: BLE001
+                failed.append(f"{server.name} ({server.transport})")
+                error_details.append(f"{server.name}: {describe_mcp_error(e)}")
+        if failed:
+            raise RuntimeError(
+                f"子 agent [{sub_agent_name}] 的 MCP 服务器连接失败：[{', '.join(failed)}]，"
+                f"请确认这些服务已启动且鉴权配置正确。原始错误: {' | '.join(error_details)}"
+            )
     # 程序自带的文件读写工具（已按该子 agent 的工作目录绑定好闭包），
     # 以及该子 agent 开启浏览器接管时附带的浏览器接管工具。
     # 放在 MCP 工具之后：同名时以程序自带工具为准。
@@ -639,6 +650,7 @@ async def build_world(
     attach_memory_threshold: float = ATTACH_MEMORY_THRESHOLD,
     pdf_table_extraction: bool = True,
     simplified_file_tools: bool = False,
+    mcp_tools_mode: str = "strict",
 ) -> CompiledStateGraph:
     """构建 Supervisor-Worker 主图（等价于原来的 TheWorld）。
 
@@ -648,8 +660,14 @@ async def build_world(
     simplified_file_tools: 进阶设置里的「简化 文件读写功能 配置选项」。为 True 时回到
     老版本方式——主 agent 恒注入文件读写工具、子 agent 恒不注入（忽略各 agent 自己的
     ``file_tools.enabled``）；为 False 时主 / 子 agent 各自按自己的开关与工作目录生效。
+    mcp_tools_mode: 见 ``build_sub_agent``。``"skip"`` 时完全不连接 MCP、也不注入
+    浏览器工具，只建「主图 + 子图」骨架——纯本地历史编辑 / 删除全部历史走这条路径。
     """
     store_namespace = config.postgres.store_namespace
+
+    # 只认 "skip" / "strict" 两种取值：拼错或未来新增的取值一律按 strict 处理
+    # （宁可报错也不要静默少工具）。
+    mcp_tools_mode = "skip" if mcp_tools_mode == "skip" else "strict"
 
     # 为每个子 agent 生成唯一消息键（若尚未生成）
     from app.runtime.state_factory import (
@@ -711,14 +729,17 @@ async def build_world(
     # 「谁开启了」决定把工具注入给谁，不额外改浏览器归属 / 配色。
     # BID086：把本 multi-agent 的「允许 Agent 保留的最大标签页数」交给工具层——
     # click / navigate 的描述里要写这个数字，运行时也按它收敛标签页（浏览器进程级）。
+    # mcp_tools_mode="skip"（纯本地历史编辑）时完全不注入工具，浏览器工具也不构造。
+    local_only = mcp_tools_mode == "skip"
     browser_takeover_owner: tuple[str, str] | None = None  # ("main", "") 或 ("sub", 子 agent 名)
-    if main_spec.browser_takeover:
-        browser_takeover_owner = ("main", "")
-    else:
-        for spec in sub_agent_specs_list:
-            if getattr(spec, "browser_takeover", False):
-                browser_takeover_owner = ("sub", spec.name)
-                break
+    if not local_only:
+        if main_spec.browser_takeover:
+            browser_takeover_owner = ("main", "")
+        else:
+            for spec in sub_agent_specs_list:
+                if getattr(spec, "browser_takeover", False):
+                    browser_takeover_owner = ("sub", spec.name)
+                    break
     # 唯一性兜底：即使 configs/*.json 被手改成多个开启，也只让第一个（主 agent 优先）真正
     # 拿到浏览器工具——保存时 API 已经拦掉这种配置，这里只是不让它变成「两套工具抢一个浏览器」。
     browser_tools = (
@@ -733,7 +754,9 @@ async def build_world(
 
     sub_agent_sub_graphs = []
     for spec in sub_agent_specs_list:
-        mcp_client = factory(spec.mcp_servers)
+        # skip 模式：不构造 MCP 客户端（MultiServerMCPClient 只是配置容器，但没必要建），
+        # build_sub_agent 在该模式下也不会调用它的 get_tools。
+        mcp_client = None if local_only else factory(spec.mcp_servers)
         state_type = make_sub_agent_state(
             spec.state_messages_key,
             spec.history_token_measure_key,
@@ -760,6 +783,7 @@ async def build_world(
                 default_summary_percent=default_summary_percent,
                 builtin_tools=sub_builtin_tools,
                 browser_takeover_active=(browser_takeover_owner == ("sub", spec.name)),
+                mcp_tools_mode=mcp_tools_mode,
             )
         )
 

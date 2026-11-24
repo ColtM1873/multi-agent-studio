@@ -2,10 +2,14 @@
 
 运行所有权在 ``app.services.session_hub.SessionHub``，本端点只负责：
 
-1. 确保运行时就绪（下发 loading / ready / sub_agents）；
+1. 下发前端渲染需要的 ``sub_agents``（读配置，**不建图**；常驻运行时恰好已就绪时
+   补一个 ``status: ready``，保持老前端的时序不变）；
 2. 收客户端 ``attach``，向 hub 注册订阅者并回放当前 run 事件；
 3. 把 send / stop / edit / resume 等命令转给 hub；
 4. 连接断开只退订，**不取消运行**（页面刷新 / 托盘隐藏后可重新 attach）。
+
+运行时的构建发生在命令层（``SessionHub.start``）：聊天用常驻运行时，编辑历史消息 /
+删除全部历史用不连接 MCP 的本地运行时——所以 MCP 掉线不会让这个 WebSocket 连不上。
 
 客户端→服务端：
   {"type": "attach", "run_id": "...", "since": 123}
@@ -34,7 +38,6 @@ import logging
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.deps import chat_manager, session_hub
-from app.services.session_hub import _format_build_error
 
 router = APIRouter()
 
@@ -45,19 +48,26 @@ logger = logging.getLogger(__name__)
 async def chat_ws(websocket: WebSocket, agent_id: str, thread_id: str):
     await websocket.accept()
 
+    # 握手**不再构建运行时**。原实现会 ``await chat_manager.get_runtime(...)``，等于把
+    # 整个「子 agent MCP 连接超时」背在每一次 WebSocket 连接上：MCP 一断，编辑历史消息
+    # / 删除全部历史这些纯本地操作连连接都建不起来（表现为静默失败 / 只报一句笼统的
+    # 「无法初始化运行环境」）。
+    #
+    # 现在拆分职责：
+    #   - 常驻（聊天用）运行时：进入会话时由 /api/agents/{id}/warmup 后台预热，或由
+    #     SessionHub.start() 按需构建；构建失败会在 start() 里用 error 事件把**真正
+    #     原因**（哪个子 agent 的哪个 MCP server）说清楚；
+    #   - 纯本地操作运行时：由 ChatManager.get_local_runtime() 按需构建（不连接 MCP）。
+    # 握手只发前端渲染需要的东西（sub_agents 读配置即可，不建图、不联网）；常驻运行时
+    # 恰好已经建好时顺手补一个 ready，保持老前端的时序不变。
     try:
-        if not chat_manager.has_runtime(agent_id):
-            await websocket.send_json({"type": "status", "status": "loading"})
-        runtime = await chat_manager.get_runtime(agent_id)
+        names = [s.name for s in chat_manager.config_store.load(agent_id).sub_agents]
+    except Exception:  # noqa: BLE001 - 配置都读不到时前端按空列表处理
+        logger.exception("读取 multi-agent 配置失败 (agent_id=%s)", agent_id)
+        names = []
+    if chat_manager.has_runtime(agent_id):
         await websocket.send_json({"type": "status", "status": "ready"})
-        await websocket.send_json(
-            {"type": "sub_agents", "names": [s.name for s in runtime.config.sub_agents]}
-        )
-    except Exception as e:  # noqa: BLE001
-        logger.exception("构建运行时失败 (agent_id=%s, thread_id=%s)", agent_id, thread_id)
-        await websocket.send_json({"type": "error", "message": _format_build_error(e)})
-        await websocket.close()
-        return
+    await websocket.send_json({"type": "sub_agents", "names": names})
 
     # 第一条消息应当是 attach；兼容旧客户端直接发命令（视为 since=0 全量附着）。
     first: dict | None = None

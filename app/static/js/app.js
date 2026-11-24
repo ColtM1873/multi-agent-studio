@@ -862,6 +862,10 @@ const I18N_EN = {
   "已归档为快照（{n} 条消息）": "Archived as snapshot ({n} messages)",
   "归档快照失败，已取消删除": "Failed to archive snapshot; deletion cancelled",
   "删除全部历史消息失败": "Failed to delete all history messages",
+  "归档快照失败，失败原因：": "Failed to archive snapshot. Reason: ",
+  "删除全部历史消息失败，失败原因：": "Failed to delete all history messages. Reason: ",
+  "操作未完成，请重试。": "The operation did not complete. Please retry.",
+  "连接已断开，操作未完成。": "Connection closed; the operation did not complete.",
   "namespace": "namespace",
   "唯一标识：同时用作 agent_id（配置文件名 configs/&lt;名称&gt;.json）与 checkpoint 数据库名。创建后不可更改；不能与其他 multi-agent 重名。": "Unique identity: used both as agent_id (config file configs/<name>.json) and as the checkpoint database name. Cannot be changed after creation; must be unique across multi-agents.",
   "该 multi-agent 的内部标识（agent_id / checkpoint 数据库）仍与名称不一致：程序下次启动会自动改名；如果一直不变，请查看 logs/server.log 或 configs/identity_migration.json。": "This multi-agent's internal identifiers (agent_id / checkpoint database) still differ from its name. The app will try to rename them on the next start; if this persists, check logs/server.log or configs/identity_migration.json.",
@@ -8565,8 +8569,10 @@ function createHistoryEditor(opts) {
     }
   }
 
-  /* 持久化报错：右上角常驻，用户点叉号才消失（区别于 4 秒自动消失的 toast） */
-  function showError(reason) {
+  /* 持久化报错：右上角常驻，用户点叉号才消失（区别于 4 秒自动消失的 toast）
+     title 可覆盖前缀文案：编辑模式用「写入失败，失败原因：」，
+     删除全部历史 / 归档快照各自用更贴切的标题（ID55 的错误 UI 复用）。 */
+  function showError(reason, title) {
     let wrap = $(".edit-error-wrap");
     if (!wrap) {
       wrap = document.createElement("div");
@@ -8579,7 +8585,7 @@ function createHistoryEditor(opts) {
     el.className = "edit-error-banner";
     const text = document.createElement("div");
     text.className = "edit-error-text";
-    text.textContent = `${t("写入失败，失败原因：")}${reason}`;
+    text.textContent = `${title || t("写入失败，失败原因：")}${reason}`;
     const btn = document.createElement("button");
     btn.className = "edit-error-close";
     btn.type = "button";
@@ -8715,6 +8721,7 @@ function createHistoryEditor(opts) {
     clearEdits: () => { edits = []; },
     toggle: () => (on ? exit() : enter()),
     closePopups: () => closeEditPopup(),
+    showError,
     captureAnchor: captureMsgAnchor,
     restoreAnchor: restoreMsgAnchor,
   };
@@ -9836,7 +9843,16 @@ async function renderChatView() {
       setRunning(false);
     } else {
       setRunning(false);
+      // 失败原因不能只写在流式区：收尾时那段 DOM 会被换掉，用户只看到一句通用 toast。
+      // 用右上角常驻报错条（与编辑模式共用，点 ✕ 才关）把真正的原因摆出来。
+      const reason = (stream.lastCommandError || "").trim() || t("操作未完成，请重试。");
       toast(archive ? t("归档快照失败，已取消删除") : t("删除全部历史消息失败"), true);
+      if (editor && editor.showError) {
+        editor.showError(
+          reason,
+          archive ? t("归档快照失败，失败原因：") : t("删除全部历史消息失败，失败原因：")
+        );
+      }
     }
   }
 
@@ -10333,6 +10349,9 @@ class SessionStream {
     this._commandPromise = null;
     this._commandResolve = null;
     this._startingCommand = false;
+    // 最近一次命令失败的原因（error 事件里的 message）。命令返回 false 时，
+    // 调用方用它把「到底为什么失败」显示出来，而不是只弹一句通用文案。
+    this.lastCommandError = "";
     this._accepting = false;
     this._historyPending = false;
     this._disposed = false;
@@ -10538,15 +10557,21 @@ class SessionStream {
   }
 
   async sendCommand(command) {
+    this.lastCommandError = "";
     this._commandPromise = new Promise((resolve) => { this._commandResolve = resolve; });
     this._startingCommand = true;
     const attached = await this.connect();
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      this.lastCommandError = t("无法连接到服务端，请确认程序仍在运行后重试。");
       this._resolveCommand(false);
       return false;
     }
     try { this.ws.send(JSON.stringify(command)); }
-    catch (e) { this._resolveCommand(false); return false; }
+    catch (e) {
+      this.lastCommandError = t("连接已断开，操作未完成。");
+      this._resolveCommand(false);
+      return false;
+    }
     return await this._commandPromise;
   }
 
@@ -10635,7 +10660,8 @@ class SessionStream {
         if (this.view && !result.stopped && this.view.onDone) this.view.onDone(result);
         refreshSessions();
       } else if (!this.isBusy() && this.status === "idle" && this._commandPromise) {
-        // 命令在断线时丢了：没有 run 可等，直接按失败处理。
+        // 命令在断线时丢了：没有 run 可等，直接按失败处理（原因尽量说清楚）。
+        this.lastCommandError = this.lastCommandError || t("连接已断开，操作未完成。");
         this._resolveCommand(false);
       }
       if (this.status === "completed" && !this.accepted) this.maybeAccept();
@@ -10842,6 +10868,10 @@ class SessionStream {
         break;
       }
       case "error":
+        // 记下原因：命令（发送 / 删除全部历史 / 主动总结）失败时调用方只拿到
+        // false，光靠流式区那行 ⚠️ 用户经常看不到（尤其接完手就清 DOM），
+        // 失败原因不能就这么丢掉。
+        this.lastCommandError = msg.message || t("未知错误");
         this._pushMain("tool", `\n\n> ⚠️ ${brk(msg.message)}\n\n`);
         this._schedule();
         this._resolveCommand(false);

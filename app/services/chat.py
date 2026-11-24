@@ -155,12 +155,27 @@ class ChatManager:
     def __init__(self, config_store: ConfigStore):
         self.config_store = config_store
         self._runtimes: dict[str, AgentRuntime] = {}
+        # 纯本地历史操作（编辑历史消息 / 删除全部历史）专用的「不连接 MCP」运行时。
+        # 单独一张表：它建出来的子图工具集和常驻运行时不同，绝不能混用。
+        self._local_runtimes: dict[str, AgentRuntime] = {}
         self._build_locks: dict[str, asyncio.Lock] = {}
+        self._local_build_locks: dict[str, asyncio.Lock] = {}
 
     def _lock(self, agent_id: str) -> asyncio.Lock:
         if agent_id not in self._build_locks:
             self._build_locks[agent_id] = asyncio.Lock()
         return self._build_locks[agent_id]
+
+    def _local_lock(self, agent_id: str) -> asyncio.Lock:
+        """纯本地运行时的构建锁，**必须与常驻运行时的锁分开**。
+
+        常驻运行时的构建可能卡在「MCP 连接超时」上（几十秒）。如果两者共用一把锁，
+        用户点「编辑模式」提交时就会在锁上排队等 MCP 超时——等于换了个地方被拖住，
+        「不联网也能编辑」就名存实亡了。
+        """
+        if agent_id not in self._local_build_locks:
+            self._local_build_locks[agent_id] = asyncio.Lock()
+        return self._local_build_locks[agent_id]
 
     async def get_runtime(self, agent_id: str) -> AgentRuntime:
         if agent_id in self._runtimes:
@@ -174,11 +189,43 @@ class ChatManager:
             self._runtimes[agent_id] = runtime
             return runtime
 
+    async def get_local_runtime(self, agent_id: str) -> AgentRuntime:
+        """取「纯本地历史操作」用的运行时（编辑历史消息 / 删除全部历史）。
+
+        这两类操作是**纯本地**的：它们只跑主图里的改写节点（``edit_msg_in_the_past*``
+        / ``clean_all_msg`` / ``refill_msg_list_after_edit``），一个工具都不调用。但
+        它们以前和聊天共用 ``get_runtime``，而 ``build_world`` 建图时必须先向每个
+        子 agent 的 MCP server 要工具列表——MCP 一断线，编辑与「删除全部历史并存快照」
+        就整条链不可用，用户只看到一句「无法初始化该会话的运行环境」。
+
+        这里给它们建一个**同构但不连接任何 MCP** 的运行时（``mcp_tools_mode="skip"``）：
+        图结构、checkpointer、store 与常驻运行时一致，写到同一个会话，因此编辑/删除
+        的结果和之后正常聊天看到的历史完全一致。断网也能用。
+
+        常驻运行时已存在时直接复用它（省一份图与连接池）。
+        """
+        if agent_id in self._runtimes:
+            return self._runtimes[agent_id]
+        if agent_id in self._local_runtimes:
+            return self._local_runtimes[agent_id]
+
+        async with self._local_lock(agent_id):
+            if agent_id in self._runtimes:
+                return self._runtimes[agent_id]
+            if agent_id in self._local_runtimes:
+                return self._local_runtimes[agent_id]
+            config = self.config_store.load(agent_id)
+            runtime = await self._build_runtime(config, local_only=True)
+            self._local_runtimes[agent_id] = runtime
+            return runtime
+
     def has_runtime(self, agent_id: str) -> bool:
-        """运行时是否已构建并缓存（用于前端决定是否显示 embedding 加载状态）。"""
+        """常驻运行时是否已构建并缓存（warmup 判重 / 握手决定是否补一个 ready）。"""
         return agent_id in self._runtimes
 
-    async def _build_runtime(self, config: MultiAgentConfig) -> AgentRuntime:
+    async def _build_runtime(
+        self, config: MultiAgentConfig, *, local_only: bool = False
+    ) -> AgentRuntime:
         from app.config.settings import load_settings
 
         settings = load_settings(self.config_store._dir)
@@ -200,6 +247,7 @@ class ChatManager:
                 attach_memory_threshold=settings.attach_memory_threshold,
                 pdf_table_extraction=settings.pdf_table_extraction,
                 simplified_file_tools=settings.simplified_file_tools,
+                mcp_tools_mode="skip" if local_only else "strict",
             )
         except BaseException:
             # 建图失败（MCP 连不上、库没起来、子 agent 配置非法…）必须把已经打开的
@@ -213,14 +261,23 @@ class ChatManager:
     async def invalidate(self, agent_id: str) -> None:
         """配置变更后使运行时失效，下次访问重建。"""
         runtime = self._runtimes.pop(agent_id, None)
-        if runtime is not None:
-            await runtime.close()
+        local = self._local_runtimes.pop(agent_id, None)
+        closed: set[int] = set()
+        for rt in (runtime, local):
+            if rt is not None and id(rt) not in closed:
+                closed.add(id(rt))
+                await rt.close()
 
     async def invalidate_all(self) -> None:
         """使所有运行时失效（全局设置变更时使用）。"""
-        runtimes = list(self._runtimes.values())
+        runtimes = list(self._runtimes.values()) + list(self._local_runtimes.values())
         self._runtimes.clear()
+        self._local_runtimes.clear()
+        closed: set[int] = set()
         for runtime in runtimes:
+            if id(runtime) in closed:
+                continue
+            closed.add(id(runtime))
             await runtime.close()
 
     # ── 线程数据访问（转发） ────────────────────────────────────

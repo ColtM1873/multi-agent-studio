@@ -52,8 +52,14 @@ class FakeRuntime:
 class FakeChatManager:
     def __init__(self, runtime):
         self.runtime = runtime
+        self.local_calls = 0
 
     async def get_runtime(self, agent_id):
+        return self.runtime
+
+    async def get_local_runtime(self, agent_id):
+        # 编辑历史消息 / 删除全部历史走这条（不连接 MCP）；离线验证里复用同一个 fake。
+        self.local_calls += 1
         return self.runtime
 
     async def thread_history(self, agent_id, thread_id):
@@ -154,6 +160,35 @@ async def main() -> int:
         texts = [e.get("text") for e in events if e.get("type") == "text" and e.get("source") == "main"]
         assert texts == ["parallel"], texts
     await hub4.shutdown()
+
+    # 编辑历史消息 / 删除全部历史必须走 get_local_runtime（该运行时完全不连接 MCP），
+    # 普通发送仍走常驻 get_runtime——MCP 连不上时前者照样能用、后者才报原因。
+    mgr5 = FakeChatManager(FakeRuntime(delay=0.01))
+    hub5 = SessionHub(mgr5)
+    await hub5.attach("e", "t", "", 0)
+    ok, err = await hub5.start(
+        "e",
+        "t",
+        kind="edit",
+        edit_request={
+            "request_for_subagent": False,
+            "msg_indice": 0,
+            "substitute_msg": {"type": "HumanMessage", "content": "改后"},
+        },
+    )
+    assert ok, err
+    assert await wait_for(lambda: hub5.get_record("e", "t").status == "completed")
+    assert mgr5.local_calls == 1, "编辑历史消息应走 get_local_runtime"
+    ok, err = await hub5.start("e", "t", clean_all=True, kind="clean_all")
+    assert ok, err
+    assert await wait_for(lambda: hub5.get_record("e", "t").status == "completed")
+    assert mgr5.local_calls == 2, "删除全部历史应走 get_local_runtime"
+    ok, err = await hub5.start("e", "t", content="hi")
+    assert ok, err
+    assert await wait_for(lambda: hub5.get_record("e", "t").status == "completed")
+    assert mgr5.local_calls == 2, "普通发送不该走本地运行时"
+    await hub5.shutdown()
+    print("[OK] edit / clean_all 走 get_local_runtime，send 走 get_runtime")
 
     await hub.detach(sid)
     await hub.detach(sid2)

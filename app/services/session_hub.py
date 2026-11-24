@@ -67,7 +67,7 @@ def _is_bad_request(e: BaseException) -> bool:
     return False
 
 
-def _format_build_error(e: Exception) -> str:
+def _format_build_error(e: Exception, *, local_only: bool = False) -> str:
     text = str(e)
     lowered = text.lower()
     if "vector" in lowered and ("not available" in lowered or "extension" in lowered):
@@ -75,6 +75,15 @@ def _format_build_error(e: Exception) -> str:
             "未检测到 PostgreSQL 的 pgvector 扩展，长期记忆/会话存储无法初始化。"
             "请双击运行项目根目录的 install_pgvector.bat 一键安装，"
             "完成后重启本程序并重试。"
+        )
+    if ("mcp" in lowered and "连接失败" in lowered) or "mcp server" in lowered:
+        # 原始文案里已经带了「哪个子 agent 的哪个 MCP server」，直接透出最有用
+        # （见 graph_builder.build_sub_agent 抛出的 RuntimeError）。
+        head = text.split("，请确认")[0].strip()
+        return (
+            f"{head}。\n"
+            "请确认这些 MCP 服务已启动、网络可用、请求头（鉴权）填写正确后重试。\n"
+            "（历史消息的「编辑模式」与「删除全部历史」不需要 MCP，可以照常使用。）"
         )
     if any(
         k in lowered
@@ -104,6 +113,13 @@ def _format_build_error(e: Exception) -> str:
             "在 PostgreSQL 里找不到这个 multi-agent 绑定的数据库。\n"
             "请检查创建 / 编辑该 multi-agent 时填写的「checkpoint 数据库名」是否正确，"
             "并确认该库已在 PostgreSQL 中创建；改正后重试。"
+        )
+    if local_only:
+        # 走到这里说明连「不连 MCP 的本地运行时」都建不起来：历史编辑 / 删除依赖的
+        # 只有本地数据库与磁盘，所以九成是数据库或 pgvector 的问题（上面已优先匹配）。
+        return (
+            "历史消息的编辑 / 删除需要用到本地会话数据库，但这次没能初始化成功，操作没有执行。\n"
+            "请确认 PostgreSQL 服务仍在运行后重试；若持续出现，请查看服务端日志 logs/server.log。"
         )
     return "无法初始化该会话的运行环境，请稍后重试；若持续出现，请查看服务端日志 logs/server.log。"
 
@@ -450,12 +466,23 @@ class SessionHub:
             self._publish_locked(rec, {"type": "status", "status": "loading"})
             run_id = rec.run_id
 
+        # 编辑历史消息 / 删除全部历史是**纯本地图操作**（只跑主图里的改写节点，一个
+        # 工具都不调用）：给它们用「不连接 MCP」的运行时。以前这两条链路和聊天共用
+        # get_runtime，MCP 一断线就整条链不可用，而且只报一句笼统的「无法初始化运行
+        # 环境」——用户完全不知道是 MCP 的锅（见 ChatManager.get_local_runtime）。
+        local_only = kind == "edit" or clean_all
         try:
-            runtime = await self.chat_manager.get_runtime(agent_id)
+            if local_only:
+                runtime = await self.chat_manager.get_local_runtime(agent_id)
+            else:
+                runtime = await self.chat_manager.get_runtime(agent_id)
             baseline = await self.chat_manager.thread_history(agent_id, thread_id)
         except Exception as exc:  # noqa: BLE001
             logger.exception("构建运行时失败 (agent_id=%s, thread_id=%s)", agent_id, thread_id)
-            await self.emit(rec, {"type": "error", "message": _format_build_error(exc)})
+            await self.emit(
+                rec,
+                {"type": "error", "message": _format_build_error(exc, local_only=local_only)},
+            )
             await self._complete(rec, run_id, "error", error=str(exc))
             return False, ""
 

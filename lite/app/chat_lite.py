@@ -26,7 +26,7 @@ class LiteChatManager(ChatManager):
     def _use_sqlite(self) -> bool:
         return storage.is_sqlite(self.config_store._dir)
 
-    async def _build_runtime(self, config):
+    async def _build_runtime(self, config, *, local_only: bool = False):
         settings = load_settings(self.config_store._dir)
 
         lite_config = config.model_copy(deep=True)
@@ -55,6 +55,8 @@ class LiteChatManager(ChatManager):
             attach_memory_threshold=settings.attach_memory_threshold,
             pdf_table_extraction=settings.pdf_table_extraction,
             simplified_file_tools=settings.simplified_file_tools,
+            # 与普通版一致：编辑历史消息 / 删除全部历史这类纯本地操作不连接 MCP。
+            mcp_tools_mode="skip" if local_only else "strict",
         )
         return AgentRuntime(lite_config, graph, stack)
 
