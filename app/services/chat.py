@@ -184,22 +184,30 @@ class ChatManager:
         settings = load_settings(self.config_store._dir)
         saver, store = await build_persistence(config)
         stack = AsyncExitStack()
-        checkpointer = await stack.enter_async_context(saver)
-        store_ctx = await stack.enter_async_context(store)
-        await checkpointer.setup()
-        await store_ctx.setup()
-        graph = await build_world(
-            config,
-            store=store_ctx,
-            checkpointer=checkpointer,
-            memory_attach=settings.memory_attach,
-            num_memories_attached=settings.num_memories_attached,
-            default_summary_percent=settings.summary_token_percent,
-            search_memory_threshold=settings.search_memory_threshold,
-            attach_memory_threshold=settings.attach_memory_threshold,
-            pdf_table_extraction=settings.pdf_table_extraction,
-            simplified_file_tools=settings.simplified_file_tools,
-        )
+        try:
+            checkpointer = await stack.enter_async_context(saver)
+            store_ctx = await stack.enter_async_context(store)
+            await checkpointer.setup()
+            await store_ctx.setup()
+            graph = await build_world(
+                config,
+                store=store_ctx,
+                checkpointer=checkpointer,
+                memory_attach=settings.memory_attach,
+                num_memories_attached=settings.num_memories_attached,
+                default_summary_percent=settings.summary_token_percent,
+                search_memory_threshold=settings.search_memory_threshold,
+                attach_memory_threshold=settings.attach_memory_threshold,
+                pdf_table_extraction=settings.pdf_table_extraction,
+                simplified_file_tools=settings.simplified_file_tools,
+            )
+        except BaseException:
+            # 建图失败（MCP 连不上、库没起来、子 agent 配置非法…）必须把已经打开的
+            # checkpointer / store 连接关掉。以前直接往外抛，AsyncExitStack 没有执行，
+            # 失败的那次构建留下的数据库连接会一直挂着（server.log 里累积了几百次
+            # 「构建运行时失败」，每次都在漏连接）。
+            await stack.aclose()
+            raise
         return AgentRuntime(config, graph, stack)
 
     async def invalidate(self, agent_id: str) -> None:
