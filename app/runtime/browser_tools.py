@@ -48,14 +48,14 @@ async def tool_01_click(
 @langchain_tool
 async def tool_02_type_in_content(
     elem_mark: Annotated[str, "<可输入元素 eN>的标识符eN"],
-    type_in_cotent: Annotated[str, "你打算在这里输入的内容"],
+    type_in_content: Annotated[str, "你打算在这里输入的内容"],
     press_enter :Annotated[bool, "是否在输入完毕后按下回车。在搜索栏情况下，有可能是应用搜索；在文本栏情况下，有可能是普通换行。网页会如何响应取决于具体情况。默认值为False（不按）"] = False,
 ) -> str|dict:
     """用于在当前页面中所有仍然生效的<可输入元素>的位置，输入你需要输入的内容。
 通常会返回这一次输入的内容本身"""
     sync_func_here = current_browser_controller().interact_fill_in
-    type_in_cotent = apply_sensitive_replacement(str(type_in_cotent))
-    return await   _wrap_up(sync_func_here ,name =  _normalize_elem_mark(elem_mark), fill =  type_in_cotent ,press_enter = press_enter)  # BID084
+    type_in_content = apply_sensitive_replacement(str(type_in_content))
+    return await   _wrap_up(sync_func_here ,name =  _normalize_elem_mark(elem_mark), fill =  type_in_content ,press_enter = press_enter)  # BID084
 
 
 @langchain_tool
@@ -84,25 +84,25 @@ async def tool_04_drag(
 @langchain_tool
 async def tool_05_type_in_select(
     elem_mark: Annotated[str, "<可选择元素 eN>的标识符eN"],
-    type_in_cotent_to_match: Annotated[str, "输入选项中的一个以达成匹配"],
+    type_in_content_to_match: Annotated[str, "输入选项中的一个以达成匹配"],
 ) -> str|dict:
     """<可选择元素> 对于输入的值有匹配要求，只能输入备选项中的一个。第一次调用可以使用空字符串来得到候选项列表。"""
     sync_func_here = current_browser_controller().interact_select
-    type_in_cotent_to_match = apply_sensitive_replacement(str(type_in_cotent_to_match))
-    return await   _wrap_up(sync_func_here ,name =  _normalize_elem_mark(elem_mark), fill =  type_in_cotent_to_match)  # BID084
+    type_in_content_to_match = apply_sensitive_replacement(str(type_in_content_to_match))
+    return await   _wrap_up(sync_func_here ,name =  _normalize_elem_mark(elem_mark), fill =  type_in_content_to_match)  # BID084
 
 
 @langchain_tool
 async def tool_06_interact_sequence(
     elem_mark_list: Annotated[list, "<可互动元素 eN>的标识符eN组成的列表（这里是互动指“输入”或者“点击”）。例如['e4', 'e5', 'e6']"],
-    type_in_cotent_list: Annotated[list, "对应每个<可输入元素>的位置，相应的要输入的内容"],
+    type_in_content_list: Annotated[list, "对应每个<可输入元素>的位置，相应的要输入的内容"],
 ) -> str|dict:
     """用于一次性在多个地方进行填入，并可选性的在末尾附加一个点击
-附加点击时，type_in_cotent_list  的长度比  elem_mark_list  多一；否则，两者长度应当相等。"""
+附加点击时，type_in_content_list  的长度比  elem_mark_list  多一；否则，两者长度应当相等。"""
     sync_func_here = current_browser_controller().interact_many
-    type_in_cotent_list = [apply_sensitive_replacement(str(arg_here)) for arg_here in type_in_cotent_list ]
+    type_in_content_list = [apply_sensitive_replacement(str(arg_here)) for arg_here in type_in_content_list ]
     name_list = [_normalize_elem_mark(value) for value in (elem_mark_list or [])]  # BID084
-    return await   _wrap_up(sync_func_here , name_list = name_list, fill_list = type_in_cotent_list)  # BID084
+    return await   _wrap_up(sync_func_here , name_list = name_list, fill_list = type_in_content_list)  # BID084
 
 
 
@@ -280,7 +280,7 @@ _EN_DESC = {
     "tool_05_type_in_select": "<Select elem>（可选择元素）对于输入的值有匹配要求，只能输入备选项中的一个。第一次调用可以使用空字符串来得到候选项列表。",
     "tool_06_interact_sequence": (
         "用于一次性在多个地方进行 Type-in（填入），并可选性的在末尾附加一个Click（点击）\n"
-        "附加点击时，type_in_cotent_list  的长度应该比  elem_mark_list  多一；否则，两者长度应当相等（不附加点击，仅填入）。"
+        "附加点击时，type_in_content_list  的长度应该比  elem_mark_list  多一；否则，两者长度应当相等（不附加点击，仅填入）。"
     ),
     "tool_07_searchable_dropdown": (
         "用于跟<Search-dropdown elem>（可搜索下拉元素）进行交互，\n"
@@ -439,8 +439,8 @@ def _apply_tool_wording(
                 elem_key = "elem_mark_list" if name == "tool_06_interact_sequence" else "elem_mark"
                 if elem_key in tool.args:
                     tool.args[elem_key]["description"] = _EN_ELEM_DESC[name]
-                if name == "tool_06_interact_sequence" and "type_in_cotent_list" in tool.args:
-                    tool.args["type_in_cotent_list"]["description"] = _TYPE_IN_LIST_DESC_EN
+                if name == "tool_06_interact_sequence" and "type_in_content_list" in tool.args:
+                    tool.args["type_in_content_list"]["description"] = _TYPE_IN_LIST_DESC_EN
             if merge:
                 # 可滚动元素不参与整合，参数说明保持成对写法。
                 elem_key = "elem_mark_list" if name == "tool_06_interact_sequence" else "elem_mark"
@@ -448,11 +448,11 @@ def _apply_tool_wording(
                     tool.args[elem_key]["description"] = _merged_elem_desc(
                         category, sep, english
                     )
-                if name == "tool_06_interact_sequence" and "type_in_cotent_list" in tool.args:
+                if name == "tool_06_interact_sequence" and "type_in_content_list" in tool.args:
                     tag = _TAG_EN["input"] if english else _TAG_CN["input"]
                     ref = "N" if english else "eN"
                     content = "content" if english else "内容"
-                    tool.args["type_in_cotent_list"]["description"] = (
+                    tool.args["type_in_content_list"]["description"] = (
                         f"对应每个<{tag} {ref} {sep} {content}>的位置，相应的要输入的内容"
                     )
 
