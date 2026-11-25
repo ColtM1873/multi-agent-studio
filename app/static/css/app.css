@@ -381,8 +381,17 @@ html[data-style-danger="solid"] .card-btn-danger:hover { filter: brightness(.92)
   cursor: pointer; white-space: pre-wrap; font-size: 13px; line-height: 1.5;
   display: flex; align-items: flex-start; gap: 10px;
 }
-/* 会话弹窗每行：文本撑满（点它 = 选取），右侧「编辑」「删除」靠右且不换行 */
-.common-prompt-item .cp-item-text { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+/* 会话弹窗每行：文本撑满（点它 = 选取），右侧「编辑」「删除」靠右且不换行。
+   长 prompt 最多显示 N 行（N = 进阶设置「会话常用prompt显示行数」，默认 10），
+   超出的行裁掉、末行尾显示省略号；全文可点「编辑」在独立编辑窗查看。
+   裁切只放在这个「没有 padding 的内层」上：Chromium 的 overflow 裁切边界是 padding 盒，
+   若把 -webkit-line-clamp 放在带内边距的外层，会从底部漏出半行残字（ID87 §5）。 */
+.common-prompt-item .cp-item-text {
+  flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-box-orient: vertical;
+  -webkit-line-clamp: var(--cp-preview-lines, 10);
+  overflow: hidden;
+}
 .common-prompt-item .cp-item-actions { flex: 0 0 auto; display: flex; gap: 6px; }
 .common-prompt-item:hover { border-color: var(--primary); }
 .common-prompt-item.sel { border-color: var(--primary); background: var(--bg); box-shadow: inset 0 0 0 1px var(--primary); }

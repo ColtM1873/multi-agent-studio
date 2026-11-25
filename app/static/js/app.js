@@ -227,6 +227,9 @@ const I18N_EN = {
   "编辑全局常用prompt": "Edit global common prompts",
   "编辑会话常用prompt": "Edit session common prompt",
   "会话常用prompt": "Session common prompt",
+  "会话常用prompt显示行数": "Lines shown for session common prompts",
+  "常用 prompt": "Common prompts",
+  "会话页「编辑会话常用prompt」弹窗里，每条常用 prompt 最多显示的行数（1~50，默认 10）。超出的行会被裁掉，并在最后一行末尾显示省略号；想看全文可点该条右侧的「编辑」，在独立编辑窗口里查看。": "How many lines each common prompt may show in the session \"Edit session common prompt\" dialog (1-50, default 10). Extra lines are clipped and end with an ellipsis; click Edit on the entry to see the full text in the separate editor window.",
   "点击开启：发送时把当前会话的常用 prompt 拼接到消息中（日期行下方、你输入的内容上方）": "Click to enable: this session's common prompt is inserted into your message when sending (below the date line, above your own input).",
   "已开启：发送时会把当前会话的常用 prompt 拼接到消息中（日期行下方、你输入的内容上方；发送后自动关闭）": "On: this session's common prompt will be inserted into your message when sending (below the date line, above your own input; turns off automatically after sending).",
   "当前会话还没有设置常用 prompt，请先点「编辑会话常用prompt」设置。": "This session has no common prompt yet. Click \"Edit session common prompt\" to set one first.",
@@ -4202,6 +4205,14 @@ async function openSessionPromptModal(currentRef, onSaved) {
   document.body.appendChild(mask);
 
   const listEl = mask.querySelector("#cpList");
+  // 每条常用 prompt 最多显示多少行（超出以省略号结尾）：取自进阶设置，纯展示用。
+  // 通过 CSS 变量传给 .cp-item-text 的 -webkit-line-clamp，见 app.css。
+  const rawPreviewLines = parseInt(s.common_prompt_preview_lines, 10);
+  const previewLines = Number.isFinite(rawPreviewLines)
+    ? Math.min(50, Math.max(1, rawPreviewLines))
+    : 10;
+  mask.querySelector(".modal.common-prompt-modal")
+    .style.setProperty("--cp-preview-lines", String(previewLines));
 
   function paintList() {
     listEl.innerHTML = "";
@@ -4423,6 +4434,11 @@ async function openAdvancedSettings() {
         <span class="sw-label">🎨 ${t("退出编辑模式按钮颜色")} <i class="info-icon">!<span class="tip">${t("进入编辑模式后，顶栏「退出编辑模式」按钮的边框与文字颜色（底色固定为白色）。点击色块可自定义，默认与编辑模式徽标一致的绿色。")}</span></i></span>
         <span class="sw-inline"><input type="color" id="adv_exit_edit_color" value="${esc(s.exit_edit_color || "#16a34a")}"></span>
       </div>
+      <div class="muted" style="margin:10px 0 2px;">${t("常用 prompt")}</div>
+      <div class="switch-row">
+        <span class="sw-label">📝 ${t("会话常用prompt显示行数")} <i class="info-icon">!<span class="tip">${t("会话页「编辑会话常用prompt」弹窗里，每条常用 prompt 最多显示的行数（1~50，默认 10）。超出的行会被裁掉，并在最后一行末尾显示省略号；想看全文可点该条右侧的「编辑」，在独立编辑窗口里查看。")}</span></i></span>
+        <span class="sw-inline"><input type="number" id="adv_common_prompt_lines" min="1" max="50" step="1" value="${Math.min(50, Math.max(1, parseInt(s.common_prompt_preview_lines, 10) || 10))}"></span>
+      </div>
       <div class="muted" style="margin:10px 0 2px;">${t("其他")}</div>
       <div class="modal-actions" style="justify-content:flex-start; flex-wrap:wrap;">
         <button class="btn small" id="advBrowserDelay">${t("浏览器交互延迟设置")}</button>
@@ -4440,6 +4456,10 @@ async function openAdvancedSettings() {
   mask.querySelector("#advSave").onclick = async () => {
     try {
       const clamp01 = (v, def) => { const n = parseFloat(v); return Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : def; };
+      const clampInt = (v, lo, hi, def) => {
+        const n = parseInt(v, 10);
+        return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : def;
+      };
       await saveSettings({
         ...s,
         reasoning_expanded: mask.querySelector("#adv_reasoning").checked,
@@ -4459,6 +4479,7 @@ async function openAdvancedSettings() {
         attach_memory_threshold: clamp01(mask.querySelector("#adv_attach_threshold").value, 0.7),
         msg_drawer_resizable: mask.querySelector("#adv_msg_drawer_resize").checked,
         exit_edit_color: normalizeHexColor(mask.querySelector("#adv_exit_edit_color").value),
+        common_prompt_preview_lines: clampInt(mask.querySelector("#adv_common_prompt_lines").value, 1, 50, 10),
       });
       mask.remove();
       toast(t("设置已保存"));

@@ -133,6 +133,10 @@ class Settings(BaseModel):
     # 「指向某条 id 的指针」——在这里改了内容，指向它的会话会一起变。
     # 兼容老数据：旧版是 list[str]（只有文本），加载时会自动补上确定性 id。
     common_prompts: list[CommonPrompt] = Field(default_factory=list)
+    # 会话页「编辑会话常用prompt」弹窗里，每条常用 prompt 最多显示多少行；
+    # 超出的行裁掉并在末行尾显示省略号，完整内容点「编辑」在独立编辑窗查看。
+    # 纯前端展示设置，不参与图编译，无需 invalidate_all。取值范围 1~50，默认 10 行。
+    common_prompt_preview_lines: int = 10
     # 裸公式识别：无分隔符公式的启发式渲染，默认关闭以避开日常场景误判
     bare_math_detect: bool = False
     # 激进公式渲染：在裸公式识别基础上支持单字符上下标/希腊字母/数学符号，
@@ -371,6 +375,16 @@ class Settings(BaseModel):
             taken.add(pid)
             out.append({"id": pid, "text": text})
         return out
+
+    @field_validator("common_prompt_preview_lines", mode="before")
+    @classmethod
+    def _coerce_preview_lines(cls, value):
+        """会话常用 prompt 预览行数：非法值兜底 10，取值范围钳制到 1~50。"""
+        try:
+            n = int(value)
+        except (TypeError, ValueError):
+            return 10
+        return max(1, min(50, n))
 
 
 def settings_path(config_dir: Path | str) -> Path:
