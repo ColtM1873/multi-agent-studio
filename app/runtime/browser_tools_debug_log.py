@@ -80,6 +80,10 @@ def _write_debug_log(tool_name: str, llm_input: dict, content: str, capture) -> 
         processed_dom = capture.processed_dom if capture is not None else ""
         url = capture.url if capture is not None else ""
         title = capture.title if capture is not None else ""
+        # BID111：双层结构的排障信息 —— 本页识别到的编辑器组件库 + vendor 层
+        # 否决过哪些通用剪枝。只是提示，不参与任何判定。
+        vendor_summary = getattr(capture, "vendors", "") if capture is not None else ""  # BID111
+        judge_notes = list(getattr(capture, "notes", []) or []) if capture is not None else []  # BID111
 
         # debug 日志会被用户对外提交，故**无条件脱敏**（不依赖「隐私遮蔽模式」开关）：
         # 两段 DOM、返回 content 以及页头 URL/标题都按敏感信息表单把真实值反向替换回 <名称>。
@@ -89,6 +93,8 @@ def _write_debug_log(tool_name: str, llm_input: dict, content: str, capture) -> 
             processed_dom = mask(processed_dom)
             url = mask(url)
             title = mask(title)
+            vendor_summary = mask(vendor_summary)  # BID111
+            judge_notes = [mask(note) for note in judge_notes]  # BID111
             if isinstance(content, str):
                 content = mask(content)
         try:
@@ -105,6 +111,9 @@ def _write_debug_log(tool_name: str, llm_input: dict, content: str, capture) -> 
             f"时间：{now:%Y-%m-%d %H:%M:%S}",
             f"URL：{url}",
             f"标题：{title}",
+            # BID111：双层结构留痕（vendor 层识别 + 被 override 的通用判据）。
+            f"组件库：{vendor_summary or '（未识别到已知编辑器组件库）'}",
+            *[f"判据备注：{note}" for note in judge_notes],
             sep,
             "",
             thin,

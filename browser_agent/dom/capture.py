@@ -75,7 +75,30 @@ def capture_raw(client: CDPClient, session_id: str) -> dict[str, Any]:
                 # order) so ``build`` can restore them onto the textarea nodes.
                 "tas: (() => {try {return Array.from("
                 "document.querySelectorAll('textarea')).map(t => t.value);}"
-                "catch (e) {return [];}})()};})()",
+                "catch (e) {return [];}})(), "
+                # BID111：``contenteditable`` 的 live 文本同样不在 ``DOMSnapshot``
+                # 里（它只给 input/textarea 提供 ``inputValue``），``outerHTML`` 也
+                # 只保留初始标记。富文本编辑器（tiptap/ProseMirror、Quill…）填完后
+                # 若读不到值，序列化标签永远显示「（空）」——模型会以为没填上而反复
+                # 重填，甚至据此谎报失败。这里按**主文档顺序**取每个可编辑区域的
+                # ``innerText``（用户看到的内容，段落间保留换行），由 ``build`` 回填
+                # 到对应节点的 ``input_value``。过滤条件必须与 build 侧（以及
+                # ``classify.is_input``）的「可编辑区域」口径逐字一致，否则数量对不
+                # 齐就整体跳过（宁可不回填，也不能把值配到别的编辑器上）。
+                "ces: (() => {try {return Array.from("
+                "document.querySelectorAll('[contenteditable]'))"
+                ".filter(el => {try {"
+                # 文档根上的 contenteditable 是「整页设计模式」，不是可填写控件
+                # （见 ``classify.is_input`` 的 BID111 护栏）；采集侧同样排除，
+                # 保证「采集个数」与「树里的可编辑节点个数」口径一致。
+                "if (el === document.body || el === document.documentElement)"
+                "{ return false; }"
+                "const v = el.getAttribute('contenteditable');"
+                # 口径必须与 ``build.CONTENTEDITABLE_VALUES`` 逐字一致（含空属性）。
+                "return v === '' || v === 'true' || v === 'plaintext-only';}"
+                "catch (e) {return false;}})"
+                ".map(el => {try {return el.innerText || '';} "
+                "catch (e) {return '';}});} catch (e) {return [];}})()};})()",
                 "returnByValue": True,
             },
             session_id=session_id,
@@ -92,6 +115,9 @@ def capture_raw(client: CDPClient, session_id: str) -> dict[str, Any]:
         tas = value.get("tas")
         if isinstance(tas, list):
             page["textarea_values"] = [v if isinstance(v, str) else "" for v in tas]
+        ces = value.get("ces")  # BID111
+        if isinstance(ces, list):  # BID111
+            page["editable_values"] = [v if isinstance(v, str) else "" for v in ces]  # BID111
     except Exception:
         pass
 

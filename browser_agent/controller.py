@@ -49,6 +49,7 @@ from .dom import (
     is_range_picker_end,
     is_range_picker_entry,
     may_navigate,
+    page_vendors,  # BID111
     picker_range_position,
     prune_image_lines,  # BID080
     read_outer_html,
@@ -1036,7 +1037,15 @@ class BrowserController:
         if record_debug and debug.current_capture() is not None:  # BID078
             raw_html = read_outer_html(self.client, session)
             processed = self.serialize_tree(tree, target_id)
-            debug.record_dom(raw_html, processed, tree.url, tree.title)
+            # BID111：把「本页识别到哪些编辑器组件库」写进 debug 日志（双层结构中的
+            # vendor 层留痕）。排障时能一眼看出该查通用判据，还是某个组件库适配层。
+            debug.record_dom(  # BID111
+                raw_html,  # BID111
+                processed,  # BID111
+                tree.url,  # BID111
+                tree.title,  # BID111
+                vendors=", ".join(page_vendors(tree)),  # BID111
+            )  # BID111
         bid065_trace.mark_elapsed("controller.capture_tree TOTAL", _bid065_t0)  # BID065
         return tree
 

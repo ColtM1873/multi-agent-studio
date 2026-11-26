@@ -29,6 +29,7 @@ from .diff import changed_lines, compute_diff, compute_lost, format_lines, forma
 from .prune import prune_image_lines  # BID080
 from .registry import NameCounter, NameRegistry
 from .serialize import DOMSerializer, OutLine, full_view_lines  # BID079
+from .vendors import page_vendors  # BID111
 
 __all__ = [
     "PAGE_SCROLL_TAG",
@@ -65,4 +66,5 @@ __all__ = [
     "OutLine",
     "full_view_lines",  # BID079
     "prune_image_lines",  # BID080
+    "page_vendors",  # BID111
 ]

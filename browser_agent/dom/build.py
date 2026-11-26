@@ -112,6 +112,28 @@ def _class_marks_leaving(node: "EnhancedNode") -> bool:
     return False
 
 
+# BID111：``contenteditable`` 的「可编辑」取值（HTML 标准语义）。
+# 这是一个**通用层**判据：``classify.is_input`` / ``build._apply_editable_values``
+# / ``capture`` 的页面取值三处必须逐字使用同一口径——否则「采集到的可编辑元素
+# 个数」与「树里的可编辑节点个数」对不上，回填会（保守地）整体跳过。
+CONTENTEDITABLE_VALUES = ("", "true", "plaintext-only")
+
+
+# 本函数于BID111引入
+def is_contenteditable(node: "EnhancedNode") -> bool:
+    """True 若节点**自身**声明为可编辑区域（``contenteditable`` 标准取值之一）。
+
+    刻意**不沿祖先链继承**：``contenteditable`` 会从祖先继承给后代，但后代元素
+    本身没有这个属性。把继承也算进来会让整棵子树都被当成「可编辑控件」——父容器
+    先被判 input 后整块只输出一行（与 BID111 的文档根护栏同理）。真正要被填写
+    的是显式声明可编辑的那个根节点。
+    """
+    if not getattr(node, "is_element", False):
+        return False
+    # 注意 ``None``（属性不存在）与 ``""``（空属性＝true）必须区分，不能用 ``or ""``。
+    return node.attributes.get("contenteditable") in CONTENTEDITABLE_VALUES
+
+
 @dataclass
 class EnhancedNode:
     node_id: int
@@ -174,6 +196,12 @@ class EnhancedNode:
     # ``DOMSerializer._option_column_kind``；BID077 起该判据也从 ``_is_separate_control``
     # 的递归路径被调用（判断候选列是否独立），故同样按节点缓存，避免重复扫子树。 # BID077
     cache_option_column: Optional[str] = None
+    # 「子树里有没有表单输入控件 / 可编辑区域」。见 ``DOMSerializer._has_editable_descendant``；
+    # 该判据在「测宽镜像」剪枝里被调用（BID111），同样是扫子树，按节点缓存（BID054 纪律）。
+    cache_has_editable_desc: Optional[bool] = None  # BID111
+    # 「自己在不在 iframe 子文档里」。祖先链扫描，见 ``DOMSerializer._in_iframe``；
+    # BID111 起用于「iframe 内的可编辑区域不给输入入口」，按节点缓存。
+    cache_in_iframe: Optional[bool] = None  # BID111
 
     @property
     def key(self) -> tuple[str, str, int]:
@@ -367,6 +395,7 @@ def build_enhanced_tree(raw: dict) -> EnhancedTree:
     for node in nodes:
         node.doc_token = doc_token
     _apply_textarea_values(nodes, page.get("textarea_values"))
+    _apply_editable_values(nodes, page.get("editable_values"))  # BID111
 
     if float(page.get("scroll_height") or 0) > float(page.get("client_height") or 0) + 4:
         page_node = EnhancedNode(
@@ -424,6 +453,58 @@ def _apply_textarea_values(nodes: list[EnhancedNode], values: object) -> None:
     for node, value in zip(textareas, values):
         if isinstance(value, str):
             node.input_value = value
+
+
+# 本函数于BID111引入
+def _apply_editable_values(nodes: list[EnhancedNode], values: object) -> None:
+    """Restore live ``contenteditable`` text captured via the page ``Runtime.evaluate``.
+
+    ``DOMSnapshot`` 只为 ``<input>`` / ``<textarea>`` 提供 ``inputValue``，对
+    ``contenteditable`` 什么都不给；``outerHTML`` 也只有初始标记。于是富文本编辑器
+    （tiptap/ProseMirror、Quill、wangEditor…）填完之后，序列化标签会永远显示
+    「（空）」——模型据此认为「没填上」，反复重填甚至谎报失败（BID031 的 textarea
+    同源问题，BID111 扩到 contenteditable）。
+
+    capture 按**主文档顺序**返回每个可编辑区域的 ``innerText``；本函数用同一口径
+    （``is_contenteditable`` + 排除文档根）收集树里的可编辑节点，数量一致时按文档
+    序 1:1 回填 ``node.input_value``。数量不一致（iframe / shadow DOM 里的可编辑
+    区域，文档级查询看不到）时整体跳过——宁可不回填，也不能把 A 编辑器的文本配到
+    B 编辑器上。
+    """
+    if not isinstance(values, list) or not values:
+        return
+    editables: list[EnhancedNode] = []
+    for node in nodes:
+        if node.tag in ("html", "body"):  # 文档根是「整页设计模式」，不是可填控件
+            continue
+        if not is_contenteditable(node):
+            continue
+        ancestor = node.parent
+        nested = False
+        while ancestor is not None:
+            if ancestor.is_shadow or ancestor.is_iframe_root:
+                nested = True
+                break
+            ancestor = ancestor.parent
+        if not nested:
+            editables.append(node)
+    if len(editables) != len(values):
+        return
+    for node, value in zip(editables, values):
+        if isinstance(value, str):
+            node.input_value = _collapse_editable_text(value)
+
+
+# 本函数于BID111引入
+def _collapse_editable_text(value: str) -> str:
+    """把可编辑区域的 live 文本折叠成单行（空编辑器 → ``""``）。
+
+    **空** ProseMirror 的 ``innerText`` 是 ``"\\n"``（内部 ``<p><br></p>`` 的换行），
+    不折叠就会被当作「有值」：序列化标签显示成「值：」、复核把空编辑器读成非空、
+    清空永远验不过。折叠同时满足「一行一个控件」的输出结构（值里的段落换行本来
+    也不能直接拼进标签）。
+    """
+    return " ".join((value or "").split())
 
 
 def _walk(

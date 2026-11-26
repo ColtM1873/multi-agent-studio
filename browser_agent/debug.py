@@ -16,7 +16,7 @@
 from __future__ import annotations
 
 import contextvars
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -27,6 +27,16 @@ class DebugCapture:
     processed_dom: str = ""
     url: str = ""
     title: str = ""
+    # BID111：解析/交互判据的「双层结构」留痕。
+    # ``vendors`` 记这一页识别到的编辑器组件库（通用层之外的那一层）；
+    # ``notes`` 记 vendor 层**否决**过哪些通用剪枝/降级。排障时能直接看出这条
+    # 输出是被通用层判的，还是被某个组件库适配层 override 过。
+    vendors: str = ""  # BID111
+    notes: list[str] = field(default_factory=list)  # BID111
+
+
+# BID111：备注去重与上限（一次调用里同一类否决可能命中几十个节点）。
+_MAX_NOTES = 20  # BID111
 
 
 _current: contextvars.ContextVar[DebugCapture | None] = contextvars.ContextVar(
@@ -56,6 +66,7 @@ def record_dom(
     processed_dom: str = "",
     url: str = "",
     title: str = "",
+    vendors: str = "",  # BID111
 ) -> None:
     """把一次抓取的 DOM 写入当前采集器（未开启 debug 时静默跳过）。"""
     capture = _current.get()
@@ -69,3 +80,24 @@ def record_dom(
         capture.url = url
     if title:
         capture.title = title
+    if vendors:  # BID111
+        capture.vendors = vendors  # BID111
+
+
+# 本函数于BID111引入
+def note(text: str) -> None:
+    """记录一条「判据留痕」（未开启 debug 时零开销）。
+
+    供解析/交互判据在**双层结构**里说明「这一条是通用层判的，还是 vendor 层
+    override 的」。只记事实、不参与任何判定；去重并限量，避免大页面把日志撑爆。
+    """
+    capture = _current.get()
+    if capture is None or not text:
+        return
+    text = " ".join(str(text).split())  # 单行：备注不能破坏日志的段落结构
+    if not text or text in capture.notes:
+        return
+    if len(capture.notes) >= _MAX_NOTES:
+        return
+    capture.notes.append(text)
+

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from .build import PAGE_SCROLL_TAG, EnhancedNode, _OVERLAY_ROLES
+from .build import PAGE_SCROLL_TAG, EnhancedNode, _OVERLAY_ROLES, is_contenteditable
 
 CLICKABLE_TAGS = {"a", "button", "summary", "option"}
 CLICKABLE_INPUT_TYPES = {
@@ -210,11 +210,17 @@ def _input_type(node: EnhancedNode) -> str:
 
 
 def is_input(node: EnhancedNode) -> bool:
-    if not node.is_element or _is_disabled(node):
+    # BID111（通用层）：文档根上的 ``contenteditable``（整页「设计模式」）不是
+    # 一个可填写控件。把它判成 input 会让 ``_render_child`` 把整篇文档当成一个
+    # 输入叶子、只输出一行 ``<可输入元素>``，整页内容凭空消失；真正的可编辑区域
+    # 都在文档根之下。判据只认 Web 标准语义（tag），不认任何组件库类名。
+    if not node.is_element or node.tag in ("html", "body"):  # BID111
+        return False  # BID111
+    if _is_disabled(node):
         return False
     if node.tag == "textarea":
         return True
-    if node.attributes.get("contenteditable") in ("", "true", "plaintext-only"):
+    if is_contenteditable(node):  # BID111 —— 可编辑区域判据的单一事实源
         return True
     if node.tag == "input" and _input_type(node) in INPUT_TYPES:
         return True

@@ -1222,6 +1222,16 @@ class ActionExecutor:
                 "function(){try{this.focus({preventScroll:true});"
                 "if(typeof this.setSelectionRange==='function'){"
                 "try{this.setSelectionRange(this.value.length,this.value.length);}catch(e){}}"
+                # BID111：可编辑区域（富文本编辑器）的光标用标准 Selection API 收到
+                # 内容末尾，保证随后的 ``Input.insertText`` 不会插进正文中间（点击
+                # 落点由坐标决定，不可控；先聚焦再显式收敛光标位置）。
+                "else if(this.isContentEditable){try{"
+                "const doc=this.ownerDocument;"
+                "const sel=doc.getSelection();"
+                "const rng=doc.createRange();"
+                "rng.selectNodeContents(this);rng.collapse(false);"
+                "sel.removeAllRanges();sel.addRange(rng);"
+                "}catch(e){}}"
                 "}catch(e){}}",
             )
         except Exception:
@@ -1893,7 +1903,16 @@ class ActionExecutor:
         try:
             return self._call_on_node(
                 object_id,
+                # BID111：富文本编辑器（contenteditable）没有 ``value``，其可见文本
+                # 要用 ``innerText`` 读——与 capture 采集 live 值的口径一致（也是
+                # 用户真正看到的内容）。``textContent`` 会把隐藏装饰/零宽节点也算
+                # 进来，导致「采集显示 A、复核读到 B」的假不一致。
+                # 空白折叠是必须的：**空** ProseMirror 的 ``innerText`` 是 "\n"
+                # （内部 ``<p><br></p>``），不折叠就会把空编辑器读成「非空」——
+                # 清空永远验不过、复核永远对不上。
                 "function(){if('value' in this) return this.value;"
+                "try{ if(this.isContentEditable){"
+                "return String(this.innerText||'').replace(/\\s+/g,' ').trim(); } }catch(e){}"
                 "return this.textContent;}",
             )
         except Exception:
@@ -1907,6 +1926,28 @@ class ActionExecutor:
             self._call_on_node(
                 object_id,
                 "function(value){"
+                # BID111：可编辑区域（富文本编辑器）没有原生 ``value`` setter，
+                # ``HTMLInputElement`` 的 setter 在 div 上调用会直接抛错（旧实现
+                # 对编辑器等于什么都没做）。这里走浏览器自己的编辑命令
+                # ``execCommand('insertText')``：它派发真实的 beforeinput/input，
+                # 受控编辑器（ProseMirror/Quill/slate…）按用户输入处理；全选后插入
+                # 等价于「覆盖式写入」。命令不可用时退化为设置 textContent，至少让
+                # 内容落在 DOM 上（调用方随后会复核并如实报告）。
+                "if(this.isContentEditable){"
+                "try{"
+                "this.focus({preventScroll:true});"
+                "const doc=this.ownerDocument;"
+                "const sel=doc.getSelection();"
+                "const rng=doc.createRange();"
+                "rng.selectNodeContents(this);"
+                "sel.removeAllRanges();sel.addRange(rng);"
+                "const ok=doc.execCommand('insertText',false,value);"
+                "if(!ok){this.textContent=value;}"
+                "}catch(e){try{this.textContent=value;}catch(e2){}}"
+                "this.dispatchEvent(new Event('input',{bubbles:true}));"
+                "this.dispatchEvent(new Event('change',{bubbles:true}));"
+                "return;"
+                "}"
                 "const proto = this instanceof HTMLTextAreaElement"
                 " ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;"
                 "const setter = Object.getOwnPropertyDescriptor(proto,'value')"

@@ -30,6 +30,7 @@ from .build import (
     EnhancedNode,
     EnhancedTree,
     in_collapsed_overlay_portal,
+    is_contenteditable,  # BID111
 )
 from .classify import (
     CLICKABLE_INPUT_TYPES,
@@ -43,6 +44,7 @@ from .classify import (
     is_cursor_pointer_only,
     is_custom_select_input,
     is_date_picker_input,
+    is_input,  # BID111
     is_picker_shell_trigger,
     is_range_picker_shell,
     is_searchable_typeahead,
@@ -53,9 +55,11 @@ from .classify import (
     _is_named_picker_shell,
     _marks_select_control,
 )
+from . import vendors  # BID111 —— 组件库适配层（双层结构中的「库特征层」）
 from .registry import NameRegistry
 from .compress import compress_lines  # BID079
 from .. import prefs  # BID088
+from .. import debug as ba_debug  # BID111 —— 双层判据留痕（未开 debug 时零开销）
 
 SKIP_TAGS = {
     "script",
@@ -957,6 +961,19 @@ class DOMSerializer:
             return
 
         category = classify(child)
+        if category and is_contenteditable(child) and self._in_iframe(child):  # BID111
+            # BID111：**iframe 子文档里的可编辑区域不提供输入入口**。
+            # ① ``DOMSnapshot`` 给它的 bbox 是**子文档坐标系**（实测 (0,0,600,150)），
+            #    点击会落到外层页左上角的无关位置——有误触其它控件的风险；
+            # ② capture 的 live 值采集只覆盖主文档，填完读不回来，标签永远「（空）」，
+            #    等于谎报「可填却填不上」。
+            # 因此只保留它的内容（递归渲染文本 / 结构），不给可操作标签。这是
+            # 「宁可不给入口，也不给一个会误点的入口」的安全方向；真正的跨 frame
+            # 支持（坐标换算 + 子文档值采集）需要独立设计，不在本轮范围。
+            self._flush(depth)  # BID111
+            for grand in child.children:  # BID111
+                self._render_child(grand, depth, clip)  # BID111
+            return  # BID111
         if category == "scroll":
             self._flush(depth)
             option_kind = self._option_column_kind(child)
@@ -3441,19 +3458,84 @@ class DOMSerializer:
         ``.atsx-select-search__field__mirror``) whose text duplicates the input's
         own value. It is pure layout scaffolding — never user content — but it
         leaked a second bare text line and looked like a separate suggestion.
-        Matched by the ``mirror`` class token only on a non-interactive element,
-        so a real control whose class happens to contain the word is untouched.
+
+        BID111 —— 判据按**双层结构**组织（见 ``dom/vendors.py`` 的模块 docstring）：
+
+        * **通用层（Web 标准语义，任何页面成立）**：可编辑区域本身、或子树里含
+          可编辑区域的节点，**永远不是**测宽镜像。这条否决不依赖任何组件库。
+        * **组件库层（``vendors``）**：编辑器库的类名恰好以 ``Mirror`` 结尾——
+          tiptap 的 ``ProseMirror``、CodeMirror 的 ``CodeMirror``——旧判据
+          ``token.lower().endswith("mirror")`` 把整个富文本编辑器当成测量脚手架
+          整块 ``return`` 掉，页面上所有 ``contenteditable``（项目职责 / 项目成果 /
+          自我评价 / 职责和业绩）在序列化里完全消失，LLM 只能看到工具栏按钮，判定
+          「工具抓不到可输入元素」并中止填表（2026-11-26 国聘简历页）。识别出
+          编辑器组件库后，这类剪枝一律让路。
         """
         if not node.is_element:
             return False
-        classes = node.attributes.get("class", "")
-        if not classes or "mirror" not in classes.lower():
+        if not vendors.is_measure_mirror_class(node):  # BID111
             return False
-        for token in classes.split():
-            low = token.lower()
-            if low.endswith("mirror") or "-mirror" in low or "_mirror" in low:
-                return not self._has_interactive_descendant(node)
-        return False
+        if is_input(node):  # BID111 —— 通用层否决：可编辑控件不是测量镜
+            return False
+        if self._has_editable_descendant(node):  # BID111 —— 通用层否决：含可编辑子树
+            return False
+        if vendors.is_editor_vendor_node(node):  # BID111 —— vendor 层否决：已知编辑器
+            ba_debug.note(vendors.describe_prune_override(node))  # BID111
+            return False
+        return not self._has_interactive_descendant(node)
+
+    # 本函数于BID111引入
+    @staticmethod
+    def _in_iframe(node: EnhancedNode, max_hops: int = 40) -> bool:
+        """True 若 ``node`` 位于某个 iframe 的**子文档**里。
+
+        沿祖先链找 ``is_iframe_root`` 标记（``build._walk`` 对 ``contentDocument``
+        的根节点设置它）。结果按节点缓存（BID054 纪律）：祖先链扫描会被序列化对
+        每个节点调用。
+        """
+        cached = node.cache_in_iframe  # BID111
+        if cached is not None:  # BID111
+            return cached  # BID111
+        result = False  # BID111
+        current: Optional[EnhancedNode] = node  # BID111
+        hops = 0  # BID111
+        while current is not None and hops <= max_hops:  # BID111
+            if getattr(current, "is_iframe_root", False):  # BID111
+                result = True  # BID111
+                break  # BID111
+            current = current.parent  # BID111
+            hops += 1  # BID111
+        node.cache_in_iframe = result  # BID111
+        return result  # BID111
+
+    # 本函数于BID111引入
+    def _has_editable_descendant(self, node: EnhancedNode) -> bool:
+        """True 若 ``node`` 的子树里含表单输入控件或可编辑区域（通用层结构判据）。
+
+        用于给「文本测量镜像」判据加结构护栏（见 ``_is_widget_mirror``）：真实
+        mirror 是纯文本叶子，而编辑器包装层（CodeMirror / ProseMirror 的外壳）子树
+        里一定有 ``contenteditable`` / ``textarea`` / ``input``。命中即说明这个
+        节点承载的是**可编辑内容**，剪掉它等于让用户 / 模型失去整块输入能力。
+        判据只认 Web 标准语义（tag 与 ``contenteditable``），不认任何组件库类名。
+        """
+        cached = node.cache_has_editable_desc  # BID111
+        if cached is not None:  # BID111
+            return cached  # BID111
+        result = False  # BID111
+        for child in node.children:
+            if child.is_text or not child.is_element:
+                continue
+            if child.tag in ("input", "textarea", "select"):
+                result = True
+                break
+            if is_contenteditable(child):  # BID111
+                result = True
+                break
+            if self._has_editable_descendant(child):
+                result = True
+                break
+        node.cache_has_editable_desc = result  # BID111
+        return result
 
     def _has_field_input_descendant(self, node: EnhancedNode) -> bool:
         """True if ``node`` wraps a form field (input / textarea / select)."""
@@ -3462,7 +3544,7 @@ class DOMSerializer:
                 continue
             if child.tag in ("input", "textarea", "select"):
                 return True
-            if child.attributes.get("contenteditable") in ("", "true", "plaintext-only"):
+            if is_contenteditable(child):  # BID111 —— 与 is_input 同一口径
                 return True
             if self._has_field_input_descendant(child):
                 return True
@@ -4097,6 +4179,11 @@ class DOMSerializer:
         if node.attributes.get("type", "").lower() == "password":
             return ""
         value = node.input_value or node.attributes.get("value", "")
+        # BID111：值里的换行 / 连续空白会破坏「一行一个控件」的输出结构——富文本
+        # 编辑器（contenteditable 的 innerText）与多行 textarea 的 live 值天然含
+        # 换行（段落分隔），直接拼进标签会让一个控件撑成多行，层级与 diff 都会错位。
+        # 先折叠成单行，再按既有上限截断（BID031 的 120 字）。
+        value = " ".join((value or "").split())
         # A ``<textarea>`` can hold a long document; keep the inline label short
         # while still proving the fill landed.
         return self._truncate(value, 120) if value else ""
@@ -4110,9 +4197,36 @@ class DOMSerializer:
         only as a clearly-labelled hint.
         """
         placeholder = " ".join((node.attributes.get("placeholder") or "").split())
+        if not placeholder:  # BID111
+            placeholder = self._editable_placeholder(node)  # BID111
         if placeholder:
             return f"（空，占位提示：{self._truncate(placeholder, 40)}）"
         return "（空）"
+
+    # 本函数于BID111引入
+    def _editable_placeholder(self, node: EnhancedNode, max_depth: int = 2) -> str:
+        """空的可编辑区域（富文本编辑器）的占位提示文本。
+
+        tiptap/ProseMirror 之类的 placeholder 不是 ``<input placeholder>`` 属性，
+        而是挂在可编辑根或首个空段落上的 ``data-placeholder`` / ``aria-placeholder``
+        （由 CSS ``::before`` 绘制，不进 DOM 文本）；再兜底 ``aria-label``。读出来
+        只是让「（空）」多一点上下文（模型能确认这是哪一个输入区），**绝不**把它
+        当成已有值。判据只认标准 HTML/ARIA 属性，不认任何组件库类名。
+        """
+        queue: list[tuple[EnhancedNode, int]] = [(node, 0)]
+        while queue:
+            current, depth = queue.pop(0)
+            for attr in ("data-placeholder", "aria-placeholder", "aria-label"):  # BID111
+                raw = (current.attributes or {}).get(attr)
+                if raw:
+                    text = " ".join(raw.split())
+                    if text:
+                        return text
+            if depth < max_depth:
+                for child in current.children:
+                    if child.is_element:
+                        queue.append((child, depth + 1))
+        return ""
 
     def _label(self, node: EnhancedNode) -> str:
         # A native ``<select>`` shows its *selected option*, not its internal id.
