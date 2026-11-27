@@ -962,6 +962,24 @@ const I18N_EN = {
   "有 {n} 个会话导入失败": "{n} conversation(s) failed to import",
   "会话「{a}」已重命名为「{b}」（本机已有同名会话）": "“{a}” was renamed to “{b}” because a conversation with that name already exists",
   "请选择要导入到哪个本机配置": "Please choose which local config to import into",
+  "附着参考会话": "Attach reference conversation",
+  "取消参考会话附着": "Detach reference conversation",
+  "取消右侧参考会话，回到单会话界面（不会删除任何消息）": "Detach the reference conversation on the right and return to the single-conversation view (no messages will be deleted).",
+  "选择一个 multi-agent 里的会话，在当前页面右侧附着为参考（不可发送消息，只用于参照）": "Choose a conversation from a multi-agent and attach it on the right as a reference (read-only; you cannot send messages there).",
+  "选择会话": "Choose a conversation",
+  "当前会话": "Current conversation",
+  "显示隐藏的 multi-agent": "Show hidden multi-agents",
+  "显示隐藏的会话": "Show hidden conversations",
+  "没有可选的 multi-agent": "No multi-agent available",
+  "选择要附着到右侧的参考会话：": "Choose the reference conversation to attach on the right:",
+  "点击一个 multi-agent，再选择它的一个会话。附着后右侧会显示该会话的历史与流式输出（只读参照，不参与发送）；也允许附着当前会话本身。": "Click a multi-agent, then choose one of its conversations. The right column will show that conversation's history and streaming output (read-only reference; it does not send messages). Attaching the current conversation itself is also allowed.",
+  "参考会话所属的 multi-agent 已不存在，已取消附着": "The multi-agent that owned the reference conversation no longer exists; the attachment was removed.",
+  "拖动调整左右宽度（2:8 ~ 8:2）": "Drag to resize the left/right split (2:8 to 8:2)",
+  "是否提交对历史消息的更改（左右两列的改动会一起提交）": "Submit the edits to the history messages? Edits from both columns will be submitted together.",
+  "两个会话都在流式输出中，暂不能进入编辑模式": "Both conversations are streaming; edit mode is unavailable right now.",
+  "当前处于编辑模式，请先退出编辑模式后再切换参考会话。是否退出编辑模式？": "You are in edit mode. Exit edit mode before switching the reference conversation?",
+  "请先退出编辑模式后再操作": "Exit edit mode before using this action.",
+  "参考会话加载中，请稍候…": "The reference conversation is still loading. Please wait…",
 };
 const t = (s) => (lang === "zh" || !I18N_EN[s]) ? s : I18N_EN[s];
 function setLang(l) {
@@ -1032,12 +1050,23 @@ const _floatingPanels = [];
 function enableFloatingResize(el, key, opts) {
   if (!el || el.dataset.floatingResize === "1") return;
   el.dataset.floatingResize = "1";
+  key = modalGeomKey(key);
   opts = opts || {};
   const minW = opts.minW || MODAL_MIN_W;
   const minH = opts.minH || MODAL_MIN_H;
   const margin = MODAL_MARGIN;
   const vw = () => document.documentElement.clientWidth;
   const vh = () => document.documentElement.clientHeight;
+  // 可选：把浮层限制在某个列容器内（分屏时由分裂按钮栏打开的浮层不允许跨过中间分隔线）
+  const boundsEl = opts.boundsEl || null;
+  const boundsRect = () => boundsEl
+    ? boundsEl.getBoundingClientRect()
+    : { left: 0, top: 0, width: vw(), height: vh() };
+  // 列内浮层：列极窄（分屏 2:8）时允许缩到比全局下限更小，否则 min-width 会盖过
+  // max-width，弹窗仍会越过竖直中线。非列内浮层保持原来的 220×120 下限。
+  const minSize = (B) => boundsEl
+    ? { w: Math.max(120, Math.min(minW, B.width - 2 * margin)), h: Math.max(80, Math.min(minH, B.height - 2 * margin)) }
+    : { w: minW, h: minH };
 
   const stored = loadModalGeomMap()[key];
   let geom = (stored && typeof stored === "object") ? Object.assign({}, stored) : null;
@@ -1081,27 +1110,45 @@ function enableFloatingResize(el, key, opts) {
   };
 
   const layoutFromGeom = () => {
-    const VW = vw(), VH = vh();
-    const maxW = Math.max(minW, VW - 2 * margin);
-    const maxH = Math.max(minH, VH - 2 * margin);
-    curW = Math.max(minW, Math.min(geom.w || maxW, maxW));
-    curH = Math.max(minH, Math.min(geom.h || maxH, maxH));
-    const freeX = Math.max(0, VW - curW);
-    const freeY = Math.max(0, VH - curH);
+    const B = boundsRect();
+    const mn = minSize(B);
+    const maxW = Math.max(mn.w, B.width - 2 * margin);
+    const maxH = Math.max(mn.h, B.height - 2 * margin);
+    curW = Math.max(mn.w, Math.min(geom.w || maxW, maxW));
+    curH = Math.max(mn.h, Math.min(geom.h || maxH, maxH));
     const fx = typeof geom.fx === "number" ? geom.fx : 0.5;
     const fy = typeof geom.fy === "number" ? geom.fy : 0.5;
-    curLeft = fx * freeX;
-    curTop = fy * freeY;
-    curLeft = Math.max(margin, Math.min(curLeft, Math.max(margin, VW - curW - margin)));
-    curTop = Math.max(margin, Math.min(curTop, Math.max(margin, VH - curH - margin)));
+    if (boundsEl) {
+      const freeX = Math.max(0, B.width - 2 * margin - curW);
+      const freeY = Math.max(0, B.height - 2 * margin - curH);
+      curLeft = B.left + margin + fx * freeX;
+      curTop = B.top + margin + fy * freeY;
+    } else {
+      const freeX = Math.max(0, B.width - curW);
+      const freeY = Math.max(0, B.height - curH);
+      curLeft = fx * freeX;
+      curTop = fy * freeY;
+      curLeft = Math.max(margin, Math.min(curLeft, Math.max(margin, vw() - curW - margin)));
+      curTop = Math.max(margin, Math.min(curTop, Math.max(margin, vh() - curH - margin)));
+    }
     materialized = true;
     apply();
   };
 
   const capture = () => {
-    const VW = vw(), VH = vh();
-    const freeX = Math.max(0, VW - curW);
-    const freeY = Math.max(0, VH - curH);
+    const B = boundsRect();
+    const freeX = Math.max(0, B.width - curW);
+    const freeY = Math.max(0, B.height - curH);
+    if (boundsEl) {
+      const innerX = Math.max(0, B.width - 2 * margin - curW);
+      const innerY = Math.max(0, B.height - 2 * margin - curH);
+      geom = {
+        w: Math.round(curW), h: Math.round(curH),
+        fx: innerX ? Math.min(Math.max(0, (curLeft - B.left - margin) / innerX), 1) : 0,
+        fy: innerY ? Math.min(Math.max(0, (curTop - B.top - margin) / innerY), 1) : 0,
+      };
+      return;
+    }
     geom = {
       w: Math.round(curW), h: Math.round(curH),
       fx: freeX ? Math.min(Math.max(0, curLeft / freeX), 1) : 0,
@@ -1112,11 +1159,19 @@ function enableFloatingResize(el, key, opts) {
   const materialize = () => {
     if (materialized) return;
     const r = el.getBoundingClientRect();
-    const VW = vw(), VH = vh();
-    curW = Math.max(minW, Math.min(r.width || minW, VW - 2 * margin));
-    curH = Math.max(minH, Math.min(r.height || minH, VH - 2 * margin));
-    curLeft = Math.min(Math.max(margin, r.left), Math.max(margin, VW - curW - margin));
-    curTop = Math.min(Math.max(margin, r.top), Math.max(margin, VH - curH - margin));
+    const B = boundsRect();
+    const mn = minSize(B);
+    const maxW = Math.max(mn.w, (boundsEl ? B.width : vw()) - 2 * margin);
+    const maxH = Math.max(mn.h, (boundsEl ? B.height : vh()) - 2 * margin);
+    curW = Math.max(mn.w, Math.min(r.width || mn.w, maxW));
+    curH = Math.max(mn.h, Math.min(r.height || mn.h, maxH));
+    if (boundsEl) {
+      curLeft = Math.min(Math.max(B.left + margin, r.left), Math.max(B.left + margin, B.left + B.width - curW - margin));
+      curTop = Math.min(Math.max(B.top + margin, r.top), Math.max(B.top + margin, B.top + B.height - curH - margin));
+    } else {
+      curLeft = Math.min(Math.max(margin, r.left), Math.max(margin, vw() - curW - margin));
+      curTop = Math.min(Math.max(margin, r.top), Math.max(margin, vh() - curH - margin));
+    }
     capture();
     materialized = true;
     apply();
@@ -1131,21 +1186,22 @@ function enableFloatingResize(el, key, opts) {
     const s = { left: curLeft, top: curTop, w: curW, h: curH };
     const onMove = (ev) => {
       const dx = ev.clientX - sx, dy = ev.clientY - sy;
-      const VW = vw(), VH = vh();
+      const B = boundsRect();
+      const mn = minSize(B);
       if (mode === "move") {
         curW = s.w; curH = s.h;
-        curLeft = Math.min(Math.max(margin, s.left + dx), Math.max(margin, VW - s.w - margin));
-        curTop = Math.min(Math.max(margin, s.top + dy), Math.max(margin, VH - s.h - margin));
+        curLeft = Math.min(Math.max(B.left + margin, s.left + dx), Math.max(B.left + margin, B.left + B.width - s.w - margin));
+        curTop = Math.min(Math.max(B.top + margin, s.top + dy), Math.max(B.top + margin, B.top + B.height - s.h - margin));
       } else if (mode === "tl") {
         const right = s.left + s.w, bottom = s.top + s.h;
-        curLeft = Math.min(Math.max(margin, s.left + dx), Math.max(margin, right - minW));
-        curTop = Math.min(Math.max(margin, s.top + dy), Math.max(margin, bottom - minH));
+        curLeft = Math.min(Math.max(B.left + margin, s.left + dx), Math.max(B.left + margin, right - mn.w));
+        curTop = Math.min(Math.max(B.top + margin, s.top + dy), Math.max(B.top + margin, bottom - mn.h));
         curW = right - curLeft;
         curH = bottom - curTop;
       } else { // br
         curLeft = s.left; curTop = s.top;
-        curW = Math.min(Math.max(minW, s.w + dx), Math.max(minW, VW - margin - s.left));
-        curH = Math.min(Math.max(minH, s.h + dy), Math.max(minH, VH - margin - s.top));
+        curW = Math.min(Math.max(mn.w, s.w + dx), Math.max(mn.w, B.left + B.width - margin - s.left));
+        curH = Math.min(Math.max(mn.h, s.h + dy), Math.max(mn.h, B.top + B.height - margin - s.top));
       }
       apply();
     };
@@ -1200,13 +1256,28 @@ function enableFloatingResize(el, key, opts) {
   }
 }
 
-window.addEventListener("resize", () => {
+function repositionFloatingPanels() {
   for (let i = _floatingPanels.length - 1; i >= 0; i--) {
     const p = _floatingPanels[i];
     if (!p.el.isConnected) { _floatingPanels.splice(i, 1); continue; }
-    p.onWindowResize();
+    try { p.onWindowResize(); } catch (e) { /* ignore */ }
   }
-});
+}
+window.addEventListener("resize", repositionFloatingPanels);
+
+/* 把浮层挂进某一列（分屏时由分裂按钮栏打开的浮层）：
+   · mask 走列内绝对定位，弹窗在该列内居中；
+   · 几何用 split:<side>:<name> 单独落盘，并始终夹在本列范围内。 */
+function mountScopedModal(mask, scopeEl, side, name) {
+  if (!scopeEl) { document.body.appendChild(mask); return; }
+  mask.classList.add("modal-mask-scoped");
+  scopeEl.appendChild(mask);
+  const modal = mask.querySelector(".modal");
+  if (modal) {
+    modal.style.width = "min(760px, calc(100% - 24px))";
+    enableFloatingResize(modal, `split:${side || "x"}:${name}`, { boundsEl: scopeEl });
+  }
+}
 
 /* 自动为任何插入到 body 的 .modal-mask > .modal 启用上述能力（无需在每个弹窗里手动接线）。
    每个弹窗用 .modal 上的 data-modal-key 区分，以便分别记忆尺寸与位置。 */
@@ -1257,10 +1328,15 @@ function fmtMemoryTime(iso) {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
-async function openMemoryStoreModal() {
-  if (!S.agentId) return;
+async function openMemoryStoreModal(opts = {}) {
+  const agentId = opts.agentId || S.agentId;
+  if (!agentId) return;
+  // 分屏时由某一列的「查看/编辑记忆库」打开：浮层挂在该列内部，只覆盖这一列，
+  // 尺寸/位置单独落盘（split:<side>:memoryStore），不与非分屏参数混淆。
+  const scopeEl = opts.scopeEl || null;
+  const side = opts.side || null;
   const mask = document.createElement("div");
-  mask.className = "modal-mask";
+  mask.className = "modal-mask" + (scopeEl ? " modal-mask-scoped" : "");
   mask.innerHTML = `<div class="modal memory-modal" data-modal-key="memoryStore">
     <h3>🧠 ${t("查看/编辑记忆库")}</h3>
     <div class="modal-body memory-list" id="memoryList"><div class="muted">${t("加载中…")}</div></div>
@@ -1268,7 +1344,16 @@ async function openMemoryStoreModal() {
       <button class="btn primary" data-close>${t("关闭")}</button>
     </div>
   </div>`;
-  document.body.appendChild(mask);
+  if (scopeEl) {
+    scopeEl.appendChild(mask);
+    const modal = mask.querySelector(".modal");
+    if (modal) {
+      modal.style.width = "min(760px, calc(100% - 24px))";
+      enableFloatingResize(modal, `split:${side || "x"}:memoryStore`, { boundsEl: scopeEl });
+    }
+  } else {
+    document.body.appendChild(mask);
+  }
   const close = () => mask.remove();
   mask.querySelector("[data-close]").onclick = close;
   mask.addEventListener("click", (e) => { if (e.target === mask) close(); });
@@ -1277,8 +1362,8 @@ async function openMemoryStoreModal() {
   const load = async () => {
     listEl.innerHTML = `<div class="muted">${t("加载中…")}</div>`;
     try {
-      const items = await api(`/api/agents/${encodeURIComponent(S.agentId)}/memories`);
-      renderMemoryList(items, listEl, load);
+      const items = await api(`/api/agents/${encodeURIComponent(agentId)}/memories`);
+      renderMemoryList(items, listEl, load, { agentId, scopeEl, side });
     } catch (e) {
       listEl.innerHTML = `<div class="muted">${brk(e.message)}</div>`;
     }
@@ -1286,7 +1371,8 @@ async function openMemoryStoreModal() {
   await load();
 }
 
-function renderMemoryList(items, root, reload) {
+function renderMemoryList(items, root, reload, opts = {}) {
+  const agentId = opts.agentId || S.agentId;
   root.innerHTML = "";
   if (!items || !items.length) {
     root.innerHTML = `<div class="muted">${t("暂无记忆")}</div>`;
@@ -1311,10 +1397,14 @@ function renderMemoryList(items, root, reload) {
         <button class="btn small danger" data-act="del">${t("删除")}</button>
       </div>`;
     row.querySelector('[data-act="del"]').onclick = async () => {
-      const ans = await askConfirm(t("确定删除该条记忆？此操作不可撤销。"));
+      // 列内记忆库打开时，删除确认也留在同一列内，不越过中间分隔线。
+      const ans = await askConfirm(t("确定删除该条记忆？此操作不可撤销。"), {
+        scopeEl: opts.scopeEl || null,
+        side: opts.side || "",
+      });
       if (ans !== "yes") return;
       try {
-        await api(`/api/agents/${encodeURIComponent(S.agentId)}/memories/${encodeURIComponent(it.key)}`, { method: "DELETE" });
+        await api(`/api/agents/${encodeURIComponent(agentId)}/memories/${encodeURIComponent(it.key)}`, { method: "DELETE" });
         toast(t("已删除"));
         await reload();
       } catch (e) { toast(e.message, true); }
@@ -1322,23 +1412,25 @@ function renderMemoryList(items, root, reload) {
     row.querySelector('[data-act="edit"]').onclick = () => {
       openMemoryEditModal(subject, content, async (newSubject, newContent) => {
         try {
-          await api(`/api/agents/${encodeURIComponent(S.agentId)}/memories/${encodeURIComponent(it.key)}`, {
+          await api(`/api/agents/${encodeURIComponent(agentId)}/memories/${encodeURIComponent(it.key)}`, {
             method: "PUT",
             body: JSON.stringify({ value: { [newSubject]: newContent } }),
           });
           toast(t("已保存"));
           await reload();
         } catch (e) { toast(e.message, true); }
-      });
+      }, { scopeEl: opts.scopeEl || null, side: opts.side || null });
     };
     list.appendChild(row);
   });
   root.appendChild(list);
 }
 
-function openMemoryEditModal(subject, content, onSave) {
+function openMemoryEditModal(subject, content, onSave, opts = {}) {
+  const scopeEl = opts.scopeEl || null;
+  const side = opts.side || null;
   const mask = document.createElement("div");
-  mask.className = "modal-mask";
+  mask.className = "modal-mask" + (scopeEl ? " modal-mask-scoped" : "");
   mask.innerHTML = `<div class="modal memory-edit-modal" data-modal-key="memoryEdit">
     <h3>${t("编辑记忆")}</h3>
     <label class="memory-field-label">${t("主题")}</label>
@@ -1350,7 +1442,16 @@ function openMemoryEditModal(subject, content, onSave) {
       <button class="btn primary" data-save>${t("保存")}</button>
     </div>
   </div>`;
-  document.body.appendChild(mask);
+  if (scopeEl) {
+    scopeEl.appendChild(mask);
+    const modal = mask.querySelector(".modal");
+    if (modal) {
+      modal.style.width = "min(560px, calc(100% - 24px))";
+      enableFloatingResize(modal, `split:${side || "x"}:memoryEdit`, { boundsEl: scopeEl });
+    }
+  } else {
+    document.body.appendChild(mask);
+  }
   let closed = false;
   const close = () => { if (!closed) { closed = true; mask.remove(); } };
   mask.querySelector("[data-cancel]").onclick = close;
@@ -1461,6 +1562,9 @@ function isLocalPrefix(prefix) {
 function askConfirm(prompt, opts) {
   return new Promise(resolve => {
     const pink = opts && opts.pink;
+    // 可选：把确认框限制在某一列内部（分屏时由分裂按钮栏打开的破坏性操作确认）。
+    const scopeEl = (opts && opts.scopeEl) || null;
+    const side = (opts && opts.side) || "";
     const buttons = (opts && opts.buttons) || [
       { v: "no", label: t("否") },
       { v: "yes", label: t("是"), primary: true },
@@ -1478,15 +1582,17 @@ function askConfirm(prompt, opts) {
           ${btnHtml}
         </div>
       </div>`;
-    document.body.appendChild(mask);
+    mountScopedModal(mask, scopeEl, side, "confirm");
     mask.querySelectorAll("[data-v]").forEach(b => b.onclick = () => { resolve(b.dataset.v); mask.remove(); });
   });
 }
 
 /* 主动总结：百分比设置弹窗（输入框 + 滑条 + 压缩前后 token 预览）
    返回用户选定的百分比；取消返回 null。 */
-function askSummaryPercent(defaultPercent, totalTokens) {
+function askSummaryPercent(defaultPercent, totalTokens, opts) {
   return new Promise(resolve => {
+    const scopeEl = (opts && opts.scopeEl) || null;
+    const side = (opts && opts.side) || "";
     const min = 1, max = 100;
     const clamp = v => Math.min(max, Math.max(min, Math.round(+v || 0)));
     let pct = clamp(defaultPercent || 20);
@@ -1508,7 +1614,7 @@ function askSummaryPercent(defaultPercent, totalTokens) {
           <button class="btn primary" id="sumPctStart">${t("开始总结")}</button>
         </div>
       </div>`;
-    document.body.appendChild(mask);
+    mountScopedModal(mask, scopeEl, side, "summaryPercent");
     const input = mask.querySelector("#sumPctInput");
     const range = mask.querySelector("#sumPctRange");
     const preview = mask.querySelector("#sumTokenPreview");
@@ -2779,6 +2885,269 @@ let settingsCache = null;
 let pgConnMode = "split";
 let pinned = localStorage.getItem("pin-follow") === "1";
 
+/* ================= 分屏 / 附着参考会话（本机偏好 + 视图状态） =================
+   设计要点：
+   · 附着关系按「主会话」落盘（localStorage → ui_prefs_bridge 镜像到后端），
+     所以返回会话、关闭窗口、退出托盘后再打开同一个会话，参考会话仍在；
+   · 分屏比例、分屏下的图钉位置/跟随状态、消息目录尺寸、编辑框尺寸都单独落盘，
+     不与单会话参数共享；
+   · 两个会话都可以正在流式输出（多实例会话本来就支持），参考列的 SessionStream
+     与主会话一样常驻、可回放；只是输入/发送仍然只属于主会话。 */
+const CHAT_ATTACH_KEY = "chat-ref-attach";
+const CHAT_SPLIT_RATIO_KEY = "split-ratio";
+const SPLIT_PIN_POS_KEY = "split-pin-pos";
+const SPLIT_PIN_FOLLOW_KEY = "split-pin-follow";
+const SPLIT_MSG_DRAWER_KEY = "split-msg-drawer-geom";
+const SPLIT_EDIT_POPUP_KEY = "split-edit-popup-size";
+const CHAT_SCROLL_KEY = "chat-scroll-anchors";
+const ATTACH_PICKER_HIDDEN_AGENTS_KEY = "attach-picker-show-hidden-agents";
+const ATTACH_PICKER_HIDDEN_THREADS_KEY = "attach-picker-show-hidden-threads";
+const SPLIT_MIN_RATIO = 0.2;
+const SPLIT_MAX_RATIO = 0.8;
+
+let chatViewSeq = 0;
+let activeChatStreams = [];
+let chatScrollFlushHandlers = [];
+let chatHoverSide = "main";
+// 分屏视图里新开的浮层使用独立的 modal-geom 命名空间（"split:<原key>"），
+// 与非分屏模式的位置/尺寸互不影响；列内 scoped 浮层自己带 split: 前缀，不再二次加。
+let modalGeomScope = "";
+function modalGeomKey(key) {
+  if (!modalGeomScope || !key) return key;
+  const text = String(key);
+  if (text.startsWith("split:")) return text;
+  return `${modalGeomScope}:${text}`;
+}
+// 分屏时由 renderChatView 写入：{ main: { rootEl, paneEl, historyEl }, ref: {...} }
+// Ctrl+F 用它把查找范围限制在「鼠标所在的那一列」，查找栏也挂在该列内部。
+let chatSplitScopes = null;
+
+function loadJsonPref(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw == null) return fallback;
+    const v = JSON.parse(raw);
+    return v == null ? fallback : v;
+  } catch (e) { return fallback; }
+}
+function saveJsonPref(key, value) {
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) { /* ignore */ }
+}
+// 关键状态（附着关系 / 分栏比例）立即写一次后端，不依赖 ui_prefs_bridge 的 250ms
+// 防抖：用户选完参考会话马上关窗口/退出托盘时也要能落盘。
+function syncUiPrefNow(key) {
+  try {
+    const value = localStorage.getItem(key);
+    fetch("/api/ui-prefs", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ updates: { [key]: value } }),
+      keepalive: true,
+    }).catch(() => { /* 离线时 localStorage 仍有值 */ });
+  } catch (e) { /* ignore */ }
+}
+function attachMap() {
+  const v = loadJsonPref(CHAT_ATTACH_KEY, {});
+  return (v && typeof v === "object") ? v : {};
+}
+function getAttachFor(agentId, threadId) {
+  const v = attachMap()[sessionKeyOf(agentId, threadId)];
+  return (v && v.agentId && v.threadId)
+    ? { agentId: String(v.agentId), threadId: String(v.threadId), agentName: String(v.agentName || "") }
+    : null;
+}
+function setAttachFor(agentId, threadId, target) {
+  const map = attachMap();
+  map[sessionKeyOf(agentId, threadId)] = {
+    agentId: String(target.agentId),
+    threadId: String(target.threadId),
+    agentName: String(target.agentName || ""),
+  };
+  saveJsonPref(CHAT_ATTACH_KEY, map);
+  syncUiPrefNow(CHAT_ATTACH_KEY);
+}
+function clearAttachFor(agentId, threadId) {
+  const map = attachMap();
+  const key = sessionKeyOf(agentId, threadId);
+  if (!(key in map)) return;
+  delete map[key];
+  saveJsonPref(CHAT_ATTACH_KEY, map);
+  syncUiPrefNow(CHAT_ATTACH_KEY);
+}
+function splitRatio() {
+  const v = parseFloat(localStorage.getItem(CHAT_SPLIT_RATIO_KEY));
+  if (!isFinite(v)) return 0.5;
+  return Math.min(SPLIT_MAX_RATIO, Math.max(SPLIT_MIN_RATIO, v));
+}
+function saveSplitRatio(v) {
+  try { localStorage.setItem(CHAT_SPLIT_RATIO_KEY, String(v)); } catch (e) { /* ignore */ }
+  syncUiPrefNow(CHAT_SPLIT_RATIO_KEY);
+}
+function readSplitPinPos(side) {
+  const m = loadJsonPref(SPLIT_PIN_POS_KEY, {});
+  return (m && typeof m === "object" && m[side] && typeof m[side] === "object") ? m[side] : null;
+}
+function saveSplitPinPos(side, pos) {
+  const m = loadJsonPref(SPLIT_PIN_POS_KEY, {});
+  m[side] = pos;
+  saveJsonPref(SPLIT_PIN_POS_KEY, m);
+}
+function readSplitPinFollow(side) {
+  const m = loadJsonPref(SPLIT_PIN_FOLLOW_KEY, {});
+  return !!(m && typeof m === "object" && m[side]);
+}
+function saveSplitPinFollow(side, on) {
+  const m = loadJsonPref(SPLIT_PIN_FOLLOW_KEY, {});
+  m[side] = !!on;
+  saveJsonPref(SPLIT_PIN_FOLLOW_KEY, m);
+}
+function readChatScrollAnchor(agentId, threadId) {
+  const m = loadJsonPref(CHAT_SCROLL_KEY, {});
+  const a = m && m[sessionKeyOf(agentId, threadId)];
+  return (a && typeof a === "object") ? a : null;
+}
+function writeChatScrollAnchor(agentId, threadId, pane) {
+  if (!pane || !pane.isConnected) return;
+  let anchor;
+  try { anchor = capturePaneAnchor(pane); } catch (e) { return; }
+  const map = loadJsonPref(CHAT_SCROLL_KEY, {});
+  const key = sessionKeyOf(agentId, threadId);
+  map[key] = Object.assign({}, anchor, { ts: Date.now() });
+  // 限制条目数量，避免长期使用后 localStorage/后端偏好文件无限膨胀
+  const keys = Object.keys(map);
+  if (keys.length > 300) {
+    keys.sort((a, b) => (map[a].ts || 0) - (map[b].ts || 0));
+    keys.slice(0, keys.length - 300).forEach((k) => { delete map[k]; });
+  }
+  saveJsonPref(CHAT_SCROLL_KEY, map);
+}
+function bindChatScrollPersistence(pane, agentId, threadId) {
+  if (!pane) return () => {};
+  let timer = null;
+  const flush = () => {
+    if (timer) { clearTimeout(timer); timer = null; }
+    writeChatScrollAnchor(agentId, threadId, pane);
+  };
+  pane.addEventListener("scroll", () => {
+    if (timer) return;
+    timer = setTimeout(() => { timer = null; writeChatScrollAnchor(agentId, threadId, pane); }, 250);
+  }, { passive: true });
+  chatScrollFlushHandlers.push(flush);
+  return flush;
+}
+function flushChatScrollAnchors() {
+  chatScrollFlushHandlers.forEach((fn) => { try { fn(); } catch (e) { /* ignore */ } });
+  chatScrollFlushHandlers = [];
+}
+
+/* 图钉（跟随最新输出）：单会话 / 分屏左右列各绑一个实例。
+   · 位置按「占所在列可移动范围的比例」落盘，拖动分隔线/窗口缩放后仍在同一相对位置；
+   · 分屏模式下左右列各自一份（split-pin-pos / split-pin-follow），不动单会话的 pin-pos。 */
+function bindChatPin(opts) {
+  const pinBtn = opts.pinBtn;
+  const boundsEl = opts.boundsEl;
+  const side = opts.side || null;
+  const paneEl = opts.paneEl || (() => boundsEl.querySelector(".history-pane"));
+  if (!pinBtn || !boundsEl) return { reposition: () => {}, isPinned: () => false };
+  const DEFAULT_W = 34, DEFAULT_H = 34;
+  const readPos = () => side ? readSplitPinPos(side) : loadJsonPref("pin-pos", null);
+  const storePos = (ratio) => {
+    if (side) saveSplitPinPos(side, ratio);
+    else saveJsonPref("pin-pos", ratio);
+  };
+  let pinnedState = !!opts.initialPinned;
+  let customPos = null;
+  let dragged = false;
+
+  const maxLeft = () => Math.max(0, boundsEl.clientWidth - (pinBtn.offsetWidth || DEFAULT_W));
+  const maxTop = () => Math.max(0, boundsEl.clientHeight - (pinBtn.offsetHeight || DEFAULT_H));
+  const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), Math.max(lo, hi));
+  const posFromRatio = (r) => ({
+    left: Math.round(clamp(+r.rx || 0, 0, 1) * maxLeft()),
+    top: Math.round(clamp(+r.ry || 0, 0, 1) * maxTop()),
+  });
+  const ratioFromPos = (pos) => ({
+    rx: maxLeft() ? clamp(pos.left / maxLeft(), 0, 1) : 0,
+    ry: maxTop() ? clamp(pos.top / maxTop(), 0, 1) : 0,
+  });
+  const defaultPos = () => {
+    const bw = pinBtn.offsetWidth || DEFAULT_W, bh = pinBtn.offsetHeight || DEFAULT_H;
+    const inset = (typeof opts.bottomInset === "function") ? (opts.bottomInset() || 0) : 0;
+    return { left: Math.max(0, boundsEl.clientWidth - bw - 28), top: Math.max(0, boundsEl.clientHeight - inset - bh - 24) };
+  };
+  const apply = (pos) => {
+    pinBtn.style.left = Math.round(pos.left) + "px";
+    pinBtn.style.top = Math.round(pos.top) + "px";
+    pinBtn.style.right = "auto";
+    pinBtn.style.bottom = "auto";
+  };
+  const clampPos = (pos) => ({
+    left: clamp(pos.left, 0, maxLeft()),
+    top: clamp(pos.top, 0, maxTop()),
+  });
+  const updateActive = () => { pinBtn.classList.toggle("active", pinnedState); };
+  const reposition = () => {
+    if (!pinBtn.isConnected) return;
+    if (customPos) apply(posFromRatio(customPos));
+    else apply(clampPos(defaultPos()));
+  };
+  const stored = readPos();
+  if (stored && typeof stored.rx === "number") {
+    customPos = stored;
+    apply(posFromRatio(stored));
+  } else if (stored && typeof stored.left === "number") {
+    // 兼容旧格式（绝对像素）：换算成比例后按当前列尺寸放置
+    customPos = ratioFromPos(stored);
+    apply(posFromRatio(customPos));
+  } else {
+    apply(clampPos(defaultPos()));
+  }
+  updateActive();
+
+  pinBtn.onclick = () => {
+    if (dragged) { dragged = false; return; }
+    pinnedState = !pinnedState;
+    if (side) saveSplitPinFollow(side, pinnedState);
+    else { try { localStorage.setItem("pin-follow", pinnedState ? "1" : "0"); } catch (e) {} }
+    updateActive();
+    if (opts.onToggle) opts.onToggle(pinnedState);
+    if (pinnedState) {
+      const pane = typeof paneEl === "function" ? paneEl() : paneEl;
+      if (pane) pane.scrollTop = pane.scrollHeight;
+    }
+  };
+
+  let dragState = null;
+  pinBtn.addEventListener("mousedown", (e) => {
+    if (e.button != null && e.button !== 0) return;
+    dragState = { x: e.clientX, y: e.clientY, left: pinBtn.offsetLeft, top: pinBtn.offsetTop };
+    dragged = false;
+    e.preventDefault();
+  });
+  window.addEventListener("mousemove", (e) => {
+    if (!dragState) return;
+    const dx = e.clientX - dragState.x, dy = e.clientY - dragState.y;
+    if (!dragged && (Math.abs(dx) > 3 || Math.abs(dy) > 3)) dragged = true;
+    if (!dragged) return;
+    pinBtn.style.left = clamp(dragState.left + dx, 0, maxLeft()) + "px";
+    pinBtn.style.top = clamp(dragState.top + dy, 0, maxTop()) + "px";
+  });
+  window.addEventListener("mouseup", () => {
+    if (!dragState) return;
+    if (dragged) {
+      customPos = ratioFromPos({ left: pinBtn.offsetLeft, top: pinBtn.offsetTop });
+      storePos(customPos);
+    }
+    dragState = null;
+  });
+  window.addEventListener("resize", () => { if (pinBtn.isConnected) reposition(); });
+  return {
+    reposition,
+    isPinned: () => pinnedState,
+    setPinned: (v) => { pinnedState = !!v; updateActive(); },
+  };
+}
+
 /* ================= 多实例会话（ID91） ================= */
 // 每个 (agent_id, thread_id) 一个 SessionStream；切视图只解绑 DOM，不丢 WebSocket/
 // 缓冲；页面刷新后靠后端 run_id+seq 回放重建。
@@ -3101,16 +3470,29 @@ function bindBack(cb) { const b = $("#backBtn"); if (b) b.onclick = cb; }
 function render() {
   flushCurrentDraft();
   if (findState.open) findClose();
+  // 让尚未完成的 renderChatView（尤其是分屏双配置/历史请求）失效
+  chatViewSeq++;
+  flushChatScrollAnchors();
   // 切视图只解绑当前会话的 DOM；后台 SessionStream / 浏览器运行继续。
-  if (activeSessionStream) {
-    activeSessionStream.detachView();
-    activeSessionStream = null;
-  }
+  // 分屏时一条视图里可能同时挂着主会话 + 参考会话两条流，逐条解绑。
+  const streams = new Set(activeChatStreams);
+  if (activeSessionStream) streams.add(activeSessionStream);
+  streams.forEach((s) => {
+    try { s.detachView(); } catch (e) { /* ignore */ }
+    if (s._ownedByView) { try { s.dispose(); } catch (e) { /* ignore */ } }
+  });
+  activeChatStreams = [];
+  activeSessionStream = null;
+  chatSplitScopes = null;
+  chatHoverSide = "main";
+  modalGeomScope = "";
   if (S.view !== "chat") reportActiveView(null, null);
   app.innerHTML = "";
   // 消息目录在开启「消息列表可缩放」后挂在 body 上（fixed），切视图时要一并清理，
   // 否则会残留到其它页面（grips 也由 dispose 一并移除）。
   $$(".msg-drawer-panel").forEach((p) => closeMsgDrawer(p));
+  // 附着参考会话选择器是挂 body 的独立浮层：切视图时一并关掉，避免残留在别的页面
+  $$(".attach-picker-modal").forEach((m) => { const mask = m.closest(".modal-mask"); if (mask) mask.remove(); });
   $$(".edit-popup").forEach(p => p.remove());
   const errWrap = $(".edit-error-wrap");
   if (errWrap) {
@@ -7336,9 +7718,7 @@ const PHASE_TEMPLATES = {
   tool_wait: "{actor} 等待工具执行完毕",
 };
 
-function setStatusIndicator(mode, actor) {
-  statusMode = mode;
-  const ind = $("#statusInd");
+function setStatusIndicatorEl(ind, mode, actor) {
   if (!ind) return;
   if (PHASE_TEMPLATES[mode]) {
     ind.className = "status-indicator " + mode;
@@ -7348,6 +7728,12 @@ function setStatusIndicator(mode, actor) {
   else if (mode === "loading") { ind.className = "status-indicator loading"; ind.innerHTML = `<span class="status-dot loading"></span>${t("加载Embedding模型中")}`; }
   else if (mode === "waiting") { ind.className = "status-indicator waiting"; ind.innerHTML = `<span class="status-dot waiting"></span>${t("等待确认…")}`; }
   else { ind.className = "status-indicator"; ind.innerHTML = ""; }
+}
+function setStatusIndicator(mode, actor) {
+  statusMode = mode;
+  const ind = $("#statusInd");
+  if (!ind) return;
+  setStatusIndicatorEl(ind, mode, actor);
 }
 
 /* ================= 消息目录（可缩放抽屉） =================
@@ -7365,14 +7751,18 @@ const MSG_DRAWER_GAP = 8;          // 面板与按钮的垂直间距
 const MSG_DRAWER_MARGIN = 8;       // 与视口边缘的最小距离
 const MSG_DRAWER_MIN_ROWS = 3;     // 高度下限：至少完整显示三行
 
-function loadMsgDrawerGeom() {
-  try {
-    const v = JSON.parse(localStorage.getItem(MSG_DRAWER_GEOM_KEY) || "null");
-    return (v && typeof v === "object") ? v : null;
-  } catch (e) { return null; }
+function loadMsgDrawerGeom(key, side) {
+  const raw = loadJsonPref(key || MSG_DRAWER_GEOM_KEY, null);
+  if (!raw || typeof raw !== "object") return null;
+  if (!side) return (typeof raw.rw === "number" || typeof raw.rh === "number") ? raw : null;
+  const v = raw[side];
+  return (v && typeof v === "object") ? v : null;
 }
-function saveMsgDrawerGeom(geom) {
-  try { localStorage.setItem(MSG_DRAWER_GEOM_KEY, JSON.stringify(geom)); } catch (e) { /* ignore */ }
+function saveMsgDrawerGeom(geom, key, side) {
+  if (!side) { saveJsonPref(key || MSG_DRAWER_GEOM_KEY, geom); return; }
+  const map = loadJsonPref(key || MSG_DRAWER_GEOM_KEY, {});
+  map[side] = geom;
+  saveJsonPref(key || MSG_DRAWER_GEOM_KEY, map);
 }
 function msgDrawerResizableEnabled() {
   return !(settingsCache && settingsCache.msg_drawer_resizable === false);
@@ -7398,11 +7788,17 @@ function syncMsgDrawerLabelAlign(panel) {
     el.classList.toggle("msg-drawer-sub-item-center", el.scrollWidth <= el.clientWidth + 1);
   });
 }
-function setupMsgDrawerResize(panel, btn) {
+function setupMsgDrawerResize(panel, btn, opts = {}) {
   const vw = () => document.documentElement.clientWidth;
   const vh = () => document.documentElement.clientHeight;
   const M = MSG_DRAWER_MARGIN;
   const clamp = (v, lo, hi) => Math.min(Math.max(v, lo), Math.max(lo, hi));
+  // 分屏时：面板属于某一列，宽度按「占该列宽度比例」落盘，且左右都不许越出该列。
+  const boundsEl = opts.boundsEl || null;
+  const geomKey = opts.geomKey || MSG_DRAWER_GEOM_KEY;
+  const sideName = opts.side || null;
+  const boundsLeft = () => boundsEl ? boundsEl.getBoundingClientRect().left : 0;
+  const baseW = () => boundsEl ? Math.max(1, boundsEl.clientWidth || 1) : vw();
   // 三行下限按真实条目高度计算（含条目内边距），再加上面板内边距与边框
   const itemH = (() => {
     const it = panel.querySelector(".msg-drawer-item");
@@ -7413,7 +7809,8 @@ function setupMsgDrawerResize(panel, btn) {
   // 右边缘始终对齐「消息目录」按钮右缘（窗口缩放时重新计算），只允许拖左边缘改宽度
   const anchorRight = () => {
     const br = btn.getBoundingClientRect();
-    return clamp(Math.round(br.right), M + 1, vw() - M);
+    const lo = boundsLeft() + M + 1;
+    return clamp(Math.round(br.right), lo, vw() - M);
   };
   const anchorTop = () => {
     const br = btn.getBoundingClientRect();
@@ -7422,14 +7819,14 @@ function setupMsgDrawerResize(panel, btn) {
 
   let cur = null;          // { left, top, w, logicalH }；logicalH 是拖动/落盘高度，可大于实际内容
   let naturalH = 1;        // 内容实际自然高度（含内边距/边框），视觉高度不超过它
-  let baseVW = vw(), baseVH = vh();
-  const stored = loadMsgDrawerGeom();
+  let baseVW = baseW(), baseVH = vh();
+  const stored = loadMsgDrawerGeom(geomKey, sideName);
   // 只有消息条数超过三条（四条及以上）才启用下边缘拖拽与蓝线提示；
   // 三条及以下时高度就是内容高度，拖拽不会产生任何视觉变化，因此不显示相关提示。
   const itemCount = panel.querySelectorAll(".msg-drawer-item").length;
   const canResizeHeight = itemCount > MSG_DRAWER_MIN_ROWS;
 
-  const maxWAtRight = (right) => Math.max(1, right - M);
+  const maxWAtRight = (right) => Math.max(1, right - boundsLeft() - M);
   const minWAtRight = (right) => Math.min(MSG_DRAWER_W, maxWAtRight(right));
   const maxHAt = (top) => Math.max(1, vh() - top - M);
 
@@ -7514,7 +7911,7 @@ function setupMsgDrawerResize(panel, btn) {
     const onMove = (e2) => {
       if (side === "left") {
         const right = start.left + start.w;
-        const left = clamp(start.left + (e2.clientX - sx), M, right - minWAtRight(right));
+        const left = clamp(start.left + (e2.clientX - sx), boundsLeft() + M, right - minWAtRight(right));
         cur.left = left;
         cur.w = right - left;
       } else {
@@ -7537,9 +7934,9 @@ function setupMsgDrawerResize(panel, btn) {
       hideDragline();
       syncGrips();
       saveMsgDrawerGeom({
-        rw: cur.w / vw(),
+        rw: cur.w / baseW(),
         rh: cur.logicalH / vh(),
-      });
+      }, geomKey, sideName);
     };
     document.addEventListener("pointermove", onMove);
     document.addEventListener("pointerup", onUp);
@@ -7563,7 +7960,7 @@ function setupMsgDrawerResize(panel, btn) {
   const width0 = (() => {
     const maxW = maxWAtRight(right0);
     if (stored && typeof stored.rw === "number" && stored.rw > 0) {
-      return clamp(Math.round(stored.rw * vw()), minWAtRight(right0), maxW);
+      return clamp(Math.round(stored.rw * baseW()), minWAtRight(right0), maxW);
     }
     return Math.min(MSG_DRAWER_W, maxW);
   })();
@@ -7592,7 +7989,7 @@ function setupMsgDrawerResize(panel, btn) {
 
   const onResize = () => {
     if (!panel.isConnected) return;
-    const nvw = vw(), nvh = vh();
+    const nvw = baseW(), nvh = vh();
     const rw = cur.w / baseVW;
     const rh = cur.logicalH / baseVH;
     cur.top = anchorTop();
@@ -7623,14 +8020,25 @@ function setupMsgDrawerResize(panel, btn) {
   };
 }
 
-function toggleMsgDrawer(e) {
-  const existing = $(".msg-drawer-panel");
-  if (existing) { closeMsgDrawer(existing); return; }
+function toggleMsgDrawer(e, opts = {}) {
+  // 分屏下左右两列各有一个「消息目录」按钮，面板也按列区分：
+  // 点本列的按钮只切换本列的面板，不能把另一列的面板当成自己的开关。
+  const side = opts.side || "";
+  const panels = $$(".msg-drawer-panel");
+  const mine = panels.find((p) => (p.dataset.side || "") === side);
+  if (mine) { closeMsgDrawer(mine); return; }
+  // 同一时刻只保留一个消息目录面板（单会话原有行为），另一列已打开的先收起。
+  panels.forEach((p) => closeMsgDrawer(p));
   const btn = e.currentTarget;
+  // 分屏时：只读本列的历史 DOM / 只在本列范围内弹层；单会话保持原来的全局行为。
+  const rootEl = opts.rootEl || document;
+  const historyEl = opts.historyEl || $("#historyMd");
+  const boundsEl = opts.boundsEl || null;
   const panel = document.createElement("div");
   panel.className = "msg-drawer-panel";
-  const blocks = $$("#historyMd .user-msg-block");
-  const aiBlocks = $$("#historyMd .ai-msg-block");
+  panel.dataset.side = side;
+  const blocks = historyEl ? $$(".user-msg-block", historyEl) : [];
+  const aiBlocks = historyEl ? $$(".ai-msg-block", historyEl) : [];
   if (!blocks.length) {
     panel.innerHTML = `<div class="muted" style="padding:8px;">${t("暂无用户消息")}</div>`;
   } else {
@@ -7725,8 +8133,26 @@ function toggleMsgDrawer(e) {
   // 开关关闭：保持原行为（绝对定位挂在按钮内、固定 300px、内容自适应）。
   // 开关开启：改为 fixed 挂到 body，由专用几何逻辑支持左/下两边拖拽与记忆。
   if (!msgDrawerResizableEnabled()) {
-    btn.appendChild(panel);
     const margin = 8;
+    // 分屏：分裂栏有 overflow:hidden，挂在按钮内部会被裁掉；改挂到本列容器上，
+    // 用绝对定位贴在该按钮下方，并保证整块面板都夹在本列宽度/高度之内。
+    if (boundsEl) {
+      boundsEl.appendChild(panel);
+      const col = boundsEl.getBoundingClientRect();
+      const br = btn.getBoundingClientRect();
+      const topInCol = Math.round(br.bottom + 4 - col.top);
+      panel.style.position = "absolute";
+      panel.style.left = "auto";
+      panel.style.right = Math.round(col.right - br.right) + "px";
+      panel.style.top = Math.max(0, topInCol) + "px";
+      panel.style.maxWidth = Math.max(120, Math.round(col.width - margin * 2)) + "px";
+      panel.style.maxHeight = Math.max(120, Math.round(col.height - Math.max(0, topInCol) - margin)) + "px";
+      syncMsgDrawerLabelAlign(panel);
+      return;
+    }
+    btn.appendChild(panel);
+    const maxW = Math.max(120, Math.round(window.innerWidth - margin * 2));
+    panel.style.maxWidth = Math.min(300, maxW) + "px";
     const br = btn.getBoundingClientRect();
     const pr = panel.getBoundingClientRect();
     if (pr.left < margin) {
@@ -7740,8 +8166,13 @@ function toggleMsgDrawer(e) {
     return;
   }
   panel.classList.add("msg-drawer-floating");
+  if (boundsEl) panel.style.maxWidth = Math.max(120, Math.round(boundsEl.clientWidth - MSG_DRAWER_MARGIN * 2)) + "px";
   document.body.appendChild(panel);
-  setupMsgDrawerResize(panel, btn);
+  setupMsgDrawerResize(panel, btn, {
+    geomKey: opts.geomKey || MSG_DRAWER_GEOM_KEY,
+    side: opts.side || null,
+    boundsEl,
+  });
   syncMsgDrawerLabelAlign(panel);
 }
 
@@ -7782,9 +8213,13 @@ function saveDraftKeepalive(agentId, text) {
 function flushCurrentDraft() {
   try { if (draftFlushFn) draftFlushFn(); } catch (e) {}
 }
-window.addEventListener("beforeunload", flushCurrentDraft);
-window.addEventListener("pagehide", flushCurrentDraft);
-window.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flushCurrentDraft(); });
+function flushAllViewState() {
+  flushCurrentDraft();
+  flushChatScrollAnchors();
+}
+window.addEventListener("beforeunload", flushAllViewState);
+window.addEventListener("pagehide", flushAllViewState);
+window.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flushAllViewState(); });
 
 /* ---------- 失败/中断「回填原发送信息」气泡的挂起项 ----------
    ID91 起一次运行会活过当前视图：`send()` 里 `await openChatWs()` 的续体可能在
@@ -8023,7 +8458,7 @@ function buildSubstituteMessage(original, itemEdits) {
 
 function applyLineEdit(line, newText, edits) {
   const oldRaw = b64ToUtf8(line.dataset.rawB64 || "");
-  if (newText === oldRaw) return;
+  if (newText === oldRaw) return null;
   line.innerHTML = newText ? renderMd(newText) : "&nbsp;";
   line.dataset.rawB64 = utf8ToB64(newText);
   const msgIndice = +line.dataset.msg;
@@ -8037,6 +8472,25 @@ function applyLineEdit(line, newText, edits) {
     e.paraIndex === paraIndex);
   if (existing) existing.newText = newText;
   else edits.push({ msgIndice, field, blockIndex, toolCallIndex, paraIndex, newText });
+  // 返回本次改动的定位信息：自附着（A 附着 A）时左右两列共用同一套编辑缓存，
+  // 调用方据此把同一条改动同步渲染到另一列。
+  return { msgIndice, field, blockIndex, toolCallIndex, paraIndex, newText };
+}
+
+/* 把一条编辑缓存按定位信息渲染到某个历史根节点里的对应 .edit-line。
+   用于自附着时「一边改了、另一边也立刻显示改后的样子」；只改该行内容，
+   不整段重渲染，避免另一列滚动位置/折叠状态被打断。 */
+function applyEditDescToDom(root, desc) {
+  if (!root || !desc) return;
+  const q = `.edit-line[data-msg="${desc.msgIndice}"]` +
+    `[data-field="${desc.field}"]` +
+    `[data-block="${desc.blockIndex == null ? "" : desc.blockIndex}"]` +
+    `[data-toolcall="${desc.toolCallIndex == null ? "" : desc.toolCallIndex}"]` +
+    `[data-para="${desc.paraIndex}"]`;
+  const line = root.querySelector(q);
+  if (!line) return;
+  line.innerHTML = desc.newText ? renderMd(desc.newText) : "&nbsp;";
+  line.dataset.rawB64 = utf8ToB64(desc.newText);
 }
 
 /* ---- 编辑模式滚动锚点：结构化文本锚点（message + 模块 + 标题 + 顶部行文本） ----
@@ -8199,8 +8653,8 @@ function collectLineText(pane, startNode, startRect) {
 }
 
 // 捕获锚点：顶部行文本 + message + 模块 + 标题（+ 视口纵向位置）。
-function captureMsgAnchor() {
-  const pane = $("#historyPane");
+function captureMsgAnchor(pane) {
+  pane = pane || $("#historyPane");
   if (!pane) return null;
   const pr = pane.getBoundingClientRect();
   if (pr.height < 8) return null;
@@ -8356,9 +8810,9 @@ function pushLinesAbove(pane, anchorTopViewport) {
 }
 
 // 回滚锚点：在同一 message / 模块 / 标题作用域内找到该行文本，拉回原视口位置。
-function restoreMsgAnchor(anchor) {
+function restoreMsgAnchor(anchor, pane) {
   if (!anchor) return;
-  const pane = $("#historyPane");
+  pane = pane || $("#historyPane");
   if (!pane) return;
   if (anchor.msgIndice == null) {
     if (anchor.scrollTop != null) pane.scrollTop = anchor.scrollTop;
@@ -8398,32 +8852,43 @@ function restoreMsgAnchor(anchor) {
 
 /* ---- 编辑弹窗 / 成功气泡 ---- */
 
-function closeEditPopup() {
-  $$(".edit-popup").forEach(p => {
-    rememberEditPopupSize(p.offsetWidth, p.offsetHeight);
+function closeEditPopup(root) {
+  const scope = root || document;
+  $$(".edit-popup", scope).forEach(p => {
+    rememberEditPopupSize(p.offsetWidth, p.offsetHeight, p._sizeKey, p._sizeSide, p._sizeRatio, p._paneEl ? p._paneEl.clientWidth : 1);
     p.remove();
   });
 }
 
-// 编辑框尺寸全局记忆（本机偏好，localStorage 会被 ui_prefs_bridge 落盘到后端，
+// 编辑框尺寸记忆（本机偏好，localStorage 会被 ui_prefs_bridge 落盘到后端，
 // 换渲染外壳 / 清缓存都不丢）。只存宽高，位置每次按被点行重新定位。
+// 分屏模式下左右列各存一份（split-edit-popup-size），且宽度按「占该列宽度比例」存，
+// 拖动分隔线改变列宽后仍保持相同观感，不与单会话的 edit-popup-size 冲突。
 const EDIT_POPUP_SIZE_KEY = "edit-popup-size";
-function readEditPopupSize() {
-  try {
-    const v = JSON.parse(localStorage.getItem(EDIT_POPUP_SIZE_KEY) || "null");
-    if (v && v.w > 0 && v.h > 0) return v;
-  } catch (e) { /* ignore */ }
-  return null;
+function readEditPopupSize(key, side) {
+  const raw = loadJsonPref(key || EDIT_POPUP_SIZE_KEY, null);
+  if (!raw || typeof raw !== "object") return null;
+  if (!side) return (raw.w > 0 && raw.h > 0) ? raw : null;
+  const v = raw[side];
+  return (v && typeof v === "object" && (v.rw > 0 || v.w > 0) && v.h > 0) ? v : null;
 }
-function rememberEditPopupSize(w, h) {
+function rememberEditPopupSize(w, h, key, side, ratio, paneWidth) {
   if (!(w > 0 && h > 0)) return;
-  try { localStorage.setItem(EDIT_POPUP_SIZE_KEY, JSON.stringify({ w: Math.round(w), h: Math.round(h) })); } catch (e) { /* ignore */ }
+  if (side) {
+    const map = loadJsonPref(key || SPLIT_EDIT_POPUP_KEY, {});
+    map[side] = ratio
+      ? { rw: Math.min(1, Math.max(0.05, w / Math.max(1, paneWidth || w))), h: Math.round(h) }
+      : { w: Math.round(w), h: Math.round(h) };
+    saveJsonPref(key || SPLIT_EDIT_POPUP_KEY, map);
+    return;
+  }
+  saveJsonPref(key || EDIT_POPUP_SIZE_KEY, { w: Math.round(w), h: Math.round(h) });
 }
 
-// 编辑框挂在 #historyPane（滚动容器）内的滚动内容坐标系里，紧贴被编辑行、随内容滚动。
-// rect 是行的视口坐标；换算成「相对滚动内容」的坐标（加上 scrollLeft/scrollTop）。
-function positionEditPopup(popup, rect) {
-  const pane = $("#historyPane");
+// 编辑框挂在某一列的滚动容器（.history-pane）内的滚动内容坐标系里，紧贴被编辑行、
+// 随内容滚动。rect 是行的视口坐标；换算成「相对滚动内容」的坐标（加上 scrollLeft/scrollTop）。
+function positionEditPopup(popup, rect, pane) {
+  pane = pane || $("#historyPane");
   if (!pane) return;
   const pr = pane.getBoundingClientRect();
   const pad = 6;
@@ -8443,8 +8908,10 @@ function positionEditPopup(popup, rect) {
   popup.style.top = Math.round(top) + "px";
 }
 
-function openEditPopup(line, historyEl, applyEdit) {
-  closeEditPopup();
+function openEditPopup(line, historyEl, applyEdit, opts) {
+  opts = opts || {};
+  const pane = opts.paneEl || $("#historyPane") || document.body;
+  closeEditPopup(pane);
   const raw = b64ToUtf8(line.dataset.rawB64 || "");
   const rect = line.getBoundingClientRect();
   const popup = document.createElement("div");
@@ -8457,30 +8924,47 @@ function openEditPopup(line, historyEl, applyEdit) {
     <textarea></textarea>`;
   const ta = popup.querySelector("textarea");
   ta.value = raw;
-  const pane = $("#historyPane") || document.body;
+  popup._sizeKey = opts.sizeKey || EDIT_POPUP_SIZE_KEY;
+  popup._sizeSide = opts.sizeSide || null;
+  popup._sizeRatio = !!opts.sizeRatio;
+  popup._paneEl = pane;
   pane.appendChild(popup);
-  const stored = readEditPopupSize();
+  const stored = readEditPopupSize(popup._sizeKey, popup._sizeSide);
+  const availW = (pane.clientWidth || window.innerWidth) - 16;
+  const maxAllowed = Math.max(120, availW);
   if (stored) {
-    // 记忆尺寸：宽度按聊天区宽度夹取（避免撑出横向滚动条），高度按视口夹取
-    const availW = (pane.clientWidth || window.innerWidth) - 16;
-    popup.style.width = Math.min(stored.w, Math.max(240, availW)) + "px";
+    // 记忆尺寸：宽度按当前列宽度夹取（避免撑出横向滚动条），高度按视口夹取
+    const wantW = popup._sizeRatio ? (stored.rw * (pane.clientWidth || window.innerWidth)) : stored.w;
+    popup.style.width = Math.min(wantW, maxAllowed) + "px";
     popup.style.height = Math.min(stored.h, window.innerHeight - 16) + "px";
   } else {
-    // 首次：动态宽度 = 一行文本（正文渲染区）宽度的 0.75 倍
+    // 首次：动态宽度 = 一行文本（正文渲染区）宽度的 0.75 倍（窄列时收紧到列宽内）
     const lineWidth = (historyEl && historyEl.clientWidth) || (window.innerWidth - 44);
-    popup.style.width = Math.max(280, Math.round(lineWidth * 0.75)) + "px";
+    popup.style.width = Math.max(120, Math.min(Math.round(lineWidth * 0.75), maxAllowed)) + "px";
   }
-  positionEditPopup(popup, rect);
-  popup.querySelector('[data-act="apply"]').onclick = () => { applyEdit(line, ta.value); closeEditPopup(); };
-  popup.querySelector('[data-act="cancel"]').onclick = () => closeEditPopup();
+  popup.style.maxWidth = maxAllowed + "px";
+  // CSS 默认 min-width:240px；窄列（分屏 2:8）下必须一起压低，否则 min-width 会
+  // 盖过 max-width，编辑框仍会跨过竖直分隔线。
+  popup.style.minWidth = Math.min(240, maxAllowed) + "px";
+  positionEditPopup(popup, rect, pane);
+  popup.querySelector('[data-act="apply"]').onclick = () => { applyEdit(line, ta.value); closeEditPopup(pane); };
+  popup.querySelector('[data-act="cancel"]').onclick = () => closeEditPopup(pane);
   ta.focus();
 }
 
-function showAppliedBubble() {
+// centerEl 为空 → 屏幕正中；传入某一列根节点 → 显示在该列正中（分屏下只让主/参考
+// 其中一边的改动生效时用，需求：只生效一边时只显示在那一边的中间）。
+function showAppliedBubble(centerEl) {
   const el = document.createElement("div");
   el.className = "edit-applied-bubble";
   el.textContent = t("更改已生效");
   document.body.appendChild(el);
+  if (centerEl && centerEl.isConnected) {
+    const r = centerEl.getBoundingClientRect();
+    el.style.left = Math.round(r.left + r.width / 2) + "px";
+    el.style.top = Math.round(r.top + r.height / 2) + "px";
+    el.style.transform = "translate(-50%, -50%)";
+  }
   setTimeout(() => particleDissolve(el, () => el.remove()), 1300);
 }
 
@@ -8561,33 +9045,45 @@ function createHistoryEditor(opts) {
   const badgeEl = opts.badgeEl || null;
   const getSettings = opts.getSettings || (() => settingsCache || {});
   const scopeKey = opts.scopeKey || (() => "");
+  // 可选：编辑弹窗挂在哪一列、尺寸记忆用哪个键（分屏左右各一份）
+  const paneEl = opts.paneEl || null;
+  const popupOpts = opts.popupOpts || {};
+  const onModeChange = opts.onModeChange || null;
+  // 自附着（A 附着 A）时主列/参考列是同一份会话：两列共用同一个 edits 缓存，
+  // 任何一列应用改动后都通过 syncRoots 同步渲染到另一列（见 applyEditDescToDom）。
+  const shared = opts.shared || null;
+  function paneNow() { return (typeof paneEl === "function" ? paneEl() : paneEl) || $("#historyPane"); }
   let on = false;
+  let mode = "off";
   let raw = [];
   let subName = null;
-  let edits = [];
+  let edits = shared ? shared.edits : [];
 
-  function setBadge(mode) {
+  function setBadge(nextMode) {
+    mode = nextMode;
     if (editBtn) {
       editBtn.textContent = (mode === "off") ? `✏️ ${t("进入编辑模式")}` : `✏️ ${t("退出编辑模式")}`;
       // 「退出编辑模式」是该模式唯一出口：改用主题蓝底白字提示（字号/字体/尺寸不变）
       editBtn.classList.toggle("btn-exit-edit", mode !== "off");
     }
-    if (!badgeEl) return;
-    if (mode === "off") {
-      badgeEl.style.display = "none";
-    } else {
-      badgeEl.style.display = "";
-      if (mode === "loading") {
-        badgeEl.textContent = `⏳ ${t("加载模型中")}`;
-        badgeEl.className = "edit-mode-badge loading";
-      } else if (mode === "writing") {
-        badgeEl.textContent = `✏️ ${t("写入中")}`;
-        badgeEl.className = "edit-mode-badge writing";
+    if (badgeEl) {
+      if (mode === "off") {
+        badgeEl.style.display = "none";
       } else {
-        badgeEl.textContent = `✏️ ${t("编辑模式")}`;
-        badgeEl.className = "edit-mode-badge";
+        badgeEl.style.display = "";
+        if (mode === "loading") {
+          badgeEl.textContent = `⏳ ${t("加载模型中")}`;
+          badgeEl.className = "edit-mode-badge loading";
+        } else if (mode === "writing") {
+          badgeEl.textContent = `✏️ ${t("写入中")}`;
+          badgeEl.className = "edit-mode-badge writing";
+        } else {
+          badgeEl.textContent = `✏️ ${t("编辑模式")}`;
+          badgeEl.className = "edit-mode-badge";
+        }
       }
     }
+    if (onModeChange) { try { onModeChange(mode); } catch (e) { /* ignore */ } }
   }
 
   /* 持久化报错：右上角常驻，用户点叉号才消失（区别于 4 秒自动消失的 toast）
@@ -8623,7 +9119,7 @@ function createHistoryEditor(opts) {
 
   function renderEditMode() {
     if (!historyEl) return;
-    const anchor = captureMsgAnchor();
+    const anchor = captureMsgAnchor(paneNow());
     const settings = getSettings();
     const editable = computeEditableMessages(raw, settings);
     raw.forEach((m, i) => {
@@ -8631,7 +9127,7 @@ function createHistoryEditor(opts) {
       const el = historyEl.querySelector(`[data-msg-indice="${i}"]`);
       if (el) el.outerHTML = renderEditableMessage(m, settings);
     });
-    restoreMsgAnchor(anchor);
+    restoreMsgAnchor(anchor, paneNow());
   }
 
   function bind() {
@@ -8654,7 +9150,20 @@ function createHistoryEditor(opts) {
       if (!line) return;
       if (line.closest("details:not([open])")) return;
       e.preventDefault();
-      openEditPopup(line, historyEl, (lineEl, text) => applyLineEdit(lineEl, text, edits));
+      openEditPopup(line, historyEl, (lineEl, text) => {
+        const desc = applyLineEdit(lineEl, text, edits);
+        if (desc && shared) {
+          shared.syncRoots.forEach((fn) => { try { fn(desc); } catch (err) { /* ignore */ } });
+        }
+      }, Object.assign({ paneEl: paneNow() }, popupOpts));
+    });
+  }
+
+  // 注册本列的同步渲染函数：另一列应用改动时，本列立刻显示改后的样子。
+  if (shared) {
+    shared.syncRoots.push((desc) => {
+      if (!on) return;
+      applyEditDescToDom(historyEl, desc);
     });
   }
 
@@ -8684,9 +9193,10 @@ function createHistoryEditor(opts) {
   }
 
   function leave() {
-    closeEditPopup();
+    closeEditPopup(paneEl ? paneNow() : null);
     on = false;
-    edits = [];
+    if (shared) shared.edits.length = 0;
+    else edits = [];
     raw = [];
     subName = null;
     setBadge("off");
@@ -8694,7 +9204,7 @@ function createHistoryEditor(opts) {
 
   async function enter() {
     on = true;
-    edits = [];
+    edits = shared ? shared.edits : [];
     setBadge("edit");
     try {
       const res = await opts.fetchMessages();
@@ -8707,19 +9217,34 @@ function createHistoryEditor(opts) {
     }
   }
 
+  /* 退出编辑模式（不做「是否提交」二次确认，由调用方决定）：
+     · submit=true 且确实有改动 → 提交；失败时沿用常驻报错条；
+     · 无论成功失败都退出编辑态并重拉历史（与单会话行为一致）；
+     · 返回 { ok, hadEdits }，分屏控制器据此决定绿色粒子提示显示在哪。 */
+  async function exitWith(submit) {
+    const hadEdits = edits.length > 0;
+    let ok = true;
+    if (submit && hadEdits) {
+      const res = await submitEdits();
+      ok = !!res.ok;
+      if (!ok) showError(res.reason);
+    }
+    leave();
+    await opts.reload();
+    return { ok, hadEdits };
+  }
+
   async function exit() {
     let shouldSubmit = false;
     if (edits.length) {
       const ans = await askConfirm(t("是否提交对历史消息的更改"));
       if (ans === "yes") shouldSubmit = true;
     }
-    if (shouldSubmit) {
-      const res = await submitEdits();
-      if (res.ok) showAppliedBubble();
-      else showError(res.reason);
+    const res = await exitWith(shouldSubmit);
+    if (shouldSubmit && res.hadEdits && res.ok) {
+      if (opts.onApplied) opts.onApplied();
+      else showAppliedBubble();
     }
-    leave();
-    await opts.reload();
   }
 
   async function refreshData() {
@@ -8735,24 +9260,257 @@ function createHistoryEditor(opts) {
     bind,
     enter,
     exit,
+    exitWith,
     leave,
     refreshData,
     isOn: () => on,
+    mode: () => mode,
     hasEdits: () => edits.length > 0,
-    clearEdits: () => { edits = []; },
+    clearEdits: () => { if (shared) shared.edits.length = 0; else edits = []; },
     toggle: () => (on ? exit() : enter()),
-    closePopups: () => closeEditPopup(),
+    closePopups: () => closeEditPopup(paneEl ? paneNow() : null),
     showError,
     captureAnchor: captureMsgAnchor,
     restoreAnchor: restoreMsgAnchor,
   };
 }
 
+/* ================= 附着参考会话：两级选择器（multi-agent 卡片 → 会话列表） =================
+   界面与主界面保持一致（同一套 .agent-card / .thread-row 样式）。两级各有一个
+   「显示隐藏」开关，状态单独落盘（不与主界面的 show_hidden_* 冲突）。 */
+function openAttachPicker() {
+  if (S.view !== "chat") return;
+  const mask = document.createElement("div");
+  mask.className = "modal-mask";
+  mask.innerHTML = `<div class="modal attach-picker-modal" data-modal-key="attachRefPicker">
+    <div class="attach-picker-head">
+      <button class="btn small" id="attachPickerBack" style="display:none;">← ${t("返回")}</button>
+      <div class="attach-picker-title" id="attachPickerTitle">${t("附着参考会话")}</div>
+      <div class="attach-picker-toggles">
+        <label class="attach-picker-toggle">${t("显示隐藏的 multi-agent")}<span class="toggle"><input type="checkbox" id="attachShowHiddenAgents"><span class="track"></span></span></label>
+        <label class="attach-picker-toggle">${t("显示隐藏的会话")}<span class="toggle"><input type="checkbox" id="attachShowHiddenThreads"><span class="track"></span></span></label>
+      </div>
+      <button class="btn small" id="attachPickerClose" title="${t("关闭")}">×</button>
+    </div>
+    <div class="attach-picker-body" id="attachPickerBody"><div class="muted">${t("加载中…")}</div></div>
+  </div>`;
+  document.body.appendChild(mask);
+
+  const bodyEl = mask.querySelector("#attachPickerBody");
+  const titleEl = mask.querySelector("#attachPickerTitle");
+  const backBtn = mask.querySelector("#attachPickerBack");
+  const agentsChk = mask.querySelector("#attachShowHiddenAgents");
+  const threadsChk = mask.querySelector("#attachShowHiddenThreads");
+  const close = () => mask.remove();
+  mask.querySelector("#attachPickerClose").onclick = close;
+  mask.addEventListener("click", (e) => { if (e.target === mask) close(); });
+  backBtn.onclick = () => { currentAgent = null; drawAgents(); };
+
+  let agents = [];
+  let currentAgent = null;
+  const showHiddenAgents = () => localStorage.getItem(ATTACH_PICKER_HIDDEN_AGENTS_KEY) === "1";
+  const showHiddenThreads = () => localStorage.getItem(ATTACH_PICKER_HIDDEN_THREADS_KEY) === "1";
+  const hiddenAgents = () => {
+    try { return new Set(JSON.parse(localStorage.getItem("hidden_agents") || "[]")); } catch (e) { return new Set(); }
+  };
+  const hiddenThreads = (agentId) => {
+    try { return new Set(JSON.parse(localStorage.getItem("hidden_threads_" + agentId) || "[]")); } catch (e) { return new Set(); }
+  };
+  agentsChk.checked = showHiddenAgents();
+  threadsChk.checked = showHiddenThreads();
+  agentsChk.onchange = () => {
+    localStorage.setItem(ATTACH_PICKER_HIDDEN_AGENTS_KEY, agentsChk.checked ? "1" : "0");
+    if (currentAgent) drawThreads(currentAgent); else drawAgents();
+  };
+  threadsChk.onchange = () => {
+    localStorage.setItem(ATTACH_PICKER_HIDDEN_THREADS_KEY, threadsChk.checked ? "1" : "0");
+    if (currentAgent) drawThreads(currentAgent);
+  };
+
+  function updateHead() {
+    const onAgents = !currentAgent;
+    backBtn.style.display = onAgents ? "none" : "";
+    titleEl.textContent = onAgents
+      ? t("附着参考会话")
+      : `${t("选择会话")} — ${currentAgent.name}`;
+    agentsChk.parentElement.style.display = onAgents ? "" : "none";
+    threadsChk.parentElement.style.display = onAgents ? "none" : "";
+  }
+
+  async function drawAgents() {
+    currentAgent = null;
+    updateHead();
+    if (!agents.length) {
+      bodyEl.innerHTML = `<div class="muted">${t("加载中…")}</div>`;
+      try {
+        agents = await api("/api/agents");
+      } catch (e) {
+        bodyEl.innerHTML = `<div class="empty"><div class="big">⚠️</div>${esc(e.message)}</div>`;
+        return;
+      }
+    }
+    if (!mask.isConnected) return;
+    const hidden = hiddenAgents();
+    const vis = agents.filter((a) => showHiddenAgents() || !hidden.has(a.agent_id));
+    if (!vis.length) {
+      bodyEl.innerHTML = `<div class="empty"><div class="big">📦</div>${t("没有可选的 multi-agent")}</div>`;
+      return;
+    }
+    bodyEl.innerHTML = `<div class="attach-picker-hint">${esc(t("点击一个 multi-agent，再选择它的一个会话。附着后右侧会显示该会话的历史与流式输出（只读参照，不参与发送）；也允许附着当前会话本身。"))}</div>
+      <div class="card-grid">${vis.map((a) => {
+        const isHidden = hidden.has(a.agent_id);
+        const subs = (a.sub_agents || []).length;
+        const ns = ((a.postgres && a.postgres.store_namespace) || []).join(",");
+        return `<div class="agent-card ${isHidden ? "agent-hidden" : ""}" data-id="${esc(a.agent_id)}">
+          ${agentRibbonsHTML()}
+          <h3>${esc(a.name)}${isHidden ? ` <span class="hidden-tag">${t("已隐藏")}</span>` : ""}</h3>
+          <div class="meta">${t("namespace")}：<code>${esc(ns || "—")}</code><br/>${t("子 agent")}：${subs} ${t("个")}</div>
+        </div>`;
+      }).join("")}</div>`;
+    $$(".agent-card", bodyEl).forEach((card) => {
+      card.onclick = () => {
+        const a = agents.find((x) => x.agent_id === card.dataset.id);
+        if (a) drawThreads(a);
+      };
+    });
+  }
+
+  async function drawThreads(agent) {
+    currentAgent = agent;
+    updateHead();
+    threadsChk.checked = showHiddenThreads();
+    bodyEl.innerHTML = `<div class="muted">${t("加载中…")}</div>`;
+    let threads;
+    try {
+      threads = await api(`/api/agents/${encodeURIComponent(agent.agent_id)}/threads`);
+    } catch (e) {
+      bodyEl.innerHTML = `<div class="empty"><div class="big">⚠️</div>${esc(e.message)}</div>`;
+      return;
+    }
+    if (!mask.isConnected || currentAgent !== agent) return;
+    const hidden = hiddenThreads(agent.agent_id);
+    const vis = threads.filter((th) => showHiddenThreads() || !hidden.has(th.thread_id));
+    if (!vis.length) {
+      bodyEl.innerHTML = `<div class="empty"><div class="big">🧵</div>${t("暂无会话")}</div>`;
+      return;
+    }
+    bodyEl.innerHTML = `<div class="attach-picker-hint">${esc(t("选择要附着到右侧的参考会话："))}</div>
+      <div class="attach-picker-thread-wrap">${vis.map((th) => {
+        const isHidden = hidden.has(th.thread_id);
+        const info = (sessionSnapshot.sessions || []).find((s) => s.agent_id === agent.agent_id && s.thread_id === th.thread_id);
+        const stateHtml = info ? runStateTagHtml(info.status === "completed" ? "done" : "running") : "";
+        const isCurrent = agent.agent_id === S.agentId && th.thread_id === S.threadId;
+        const cpText = th.checkpoints ? `${th.checkpoints} checkpoints` : t("未发送消息");
+        return `<div class="thread-row ${isHidden ? "thread-hidden" : ""}" data-tid="${esc(th.thread_id)}">
+          <span class="tid">${esc(th.thread_id)}</span>
+          ${isCurrent ? `<span class="hidden-tag">${t("当前会话")}</span>` : ""}
+          ${stateHtml}
+          <span class="meta"><small>${esc(cpText)}</small><small>${esc(th.last_updated || "")}</small>${isHidden ? `<small class="hidden-tag">${t("已隐藏")}</small>` : ""}</span>
+        </div>`;
+      }).join("")}</div>`;
+    $$(".thread-row", bodyEl).forEach((row) => {
+      row.onclick = () => {
+        const threadId = row.dataset.tid;
+        setAttachFor(S.agentId, S.threadId, {
+          agentId: agent.agent_id,
+          threadId,
+          agentName: agent.name,
+        });
+        close();
+        flushChatScrollAnchors();
+        render();
+      };
+    });
+  }
+
+  drawAgents();
+}
+
 async function renderChatView() {
   // 编辑模式控制器在本视图加载完成后创建；返回按钮可能在这些 await 期间被点到，
   // 所以先声明为 null，所有使用处都做 editor && 判空（避免 TDZ）。
   let editor = null;
+  let refEditor = null;
+  let refStream = null;
+  let refColumnReady = false;
+  const viewToken = ++chatViewSeq;
+  // 直接重渲染（如切换子会话）也要先清掉列内查找栏/高亮，否则会残留在旧 DOM 的引用上。
+  if (findState.open) findClose();
+  modalGeomScope = "";
+
+  // 直接重渲染（如切换子会话）也要先解绑旧视图，避免 SessionStream 仍指向已被替换的 DOM。
+  flushChatScrollAnchors();
+  if (activeSessionStream) { try { activeSessionStream.detachView(); } catch (e) { /* ignore */ } }
+  activeChatStreams.forEach((s) => {
+    try { s.detachView(); } catch (e) { /* ignore */ }
+    if (s._ownedByView) { try { s.dispose(); } catch (e) { /* ignore */ } }
+  });
+  activeChatStreams = [];
+
+  // ── 附着参考会话：先读附着关系（localStorage 同步），再取两边配置 ──
+  // 需要配置里的「子 agent 列表」（决定主会话下拉是否显示）和「记忆命名空间」
+  // （决定记忆库按钮是合并还是分裂到两列）。
+  let attachEntry = getAttachFor(S.agentId, S.threadId);
+  let mainCfg = null, refCfg = null;
+  try { mainCfg = await api(`/api/agents/${encodeURIComponent(S.agentId)}`); } catch (e) { mainCfg = null; }
+  if (attachEntry) {
+    try { refCfg = await api(`/api/agents/${encodeURIComponent(attachEntry.agentId)}`); }
+    catch (e) { refCfg = (e && e.status === 404) ? null : undefined; }
+    if (refCfg === null) {
+      clearAttachFor(S.agentId, S.threadId);
+      attachEntry = null;
+      toast(t("参考会话所属的 multi-agent 已不存在，已取消附着"), true);
+    } else if (refCfg && refCfg.name) {
+      attachEntry.agentName = attachEntry.agentName || refCfg.name;
+    }
+  }
+  if (viewToken !== chatViewSeq || S.view !== "chat") return;
+  const splitMode = !!attachEntry;
+  const nsOf = (cfg) => {
+    const ns = cfg && cfg.postgres && cfg.postgres.store_namespace;
+    return Array.isArray(ns) ? ns.join("\u0000") : "";
+  };
+  // 命名空间相同 → 记忆是同一份，记忆库按钮保持合并；不同（或参考配置暂时取不到，
+  // 无法确认相同）→ 各自一列一个，避免把参考会话的记忆库入口错指到主会话。
+  const sameStoreNs = !splitMode || (!!refCfg && nsOf(mainCfg) === nsOf(refCfg));
+  const mainHasSubs = !!((mainCfg && mainCfg.sub_agents) || []).length;
+  const refHasSubs = !!((refCfg && refCfg.sub_agents) || []).length;
+  // 自附着：参考列与主列是同一个 (agent_id, thread_id)。此时两列共用同一份编辑缓存，
+  // 一边应用改动另一边立刻显示同样内容；退出时只提交一次，避免后提交覆盖先提交。
+  const selfAttachMode = !!attachEntry &&
+    attachEntry.agentId === S.agentId && attachEntry.threadId === S.threadId;
+  const sharedEdit = (splitMode && selfAttachMode) ? { edits: [], syncRoots: [] } : null;
+
   app.innerHTML = topbar(t("返回会话"), () => leaveChatView());
+  // 「返回会话」按钮左边：附着 / 取消附着参考会话（顶栏是合并的，不随分屏分列）
+  const backBtnEl = $("#backBtn");
+  if (backBtnEl && backBtnEl.parentElement) {
+    const attachBtn = document.createElement("button");
+    attachBtn.className = "btn small";
+    attachBtn.id = splitMode ? "detachRefBtn" : "attachRefBtn";
+    attachBtn.textContent = splitMode ? `🔗 ${t("取消参考会话附着")}` : `🔗 ${t("附着参考会话")}`;
+    attachBtn.title = splitMode
+      ? t("取消右侧参考会话，回到单会话界面（不会删除任何消息）")
+      : t("选择一个 multi-agent 里的会话，在当前页面右侧附着为参考（不可发送消息，只用于参照）");
+    attachBtn.onclick = async () => {
+      // 编辑模式下的本地改动不应被一次「附着/取消附着」静默丢弃：先走统一的退出流程。
+      const inEdit = (editor && editor.isOn()) || (refEditor && refEditor.isOn());
+      if (inEdit) {
+        const ans = await askConfirm(t("当前处于编辑模式，请先退出编辑模式后再切换参考会话。是否退出编辑模式？"));
+        if (ans !== "yes") return;
+        if (splitMode) await exitEditMode();
+        else if (editor) await editor.exit();
+      }
+      if (splitMode) {
+        flushChatScrollAnchors();
+        clearAttachFor(S.agentId, S.threadId);
+        render();
+      } else {
+        openAttachPicker();
+      }
+    };
+    backBtnEl.parentElement.insertBefore(attachBtn, backBtnEl);
+  }
   const view = document.createElement("div");
   view.className = "chat-view";
   app.appendChild(view);
@@ -8787,7 +9545,7 @@ async function renderChatView() {
         <span class="zoom-pct" id="zoomPct"></span>
       </div>
       <button class="btn small" id="msgDirBtn" style="position:relative;">☰ ${t("消息目录")}</button>
-      <select id="subgraphSel" class="btn small" style="max-width:220px;"><option value="">${t("主会话")}</option></select>
+      <select id="subgraphSel" class="btn small" style="max-width:220px;${mainHasSubs ? "" : "display:none;"}"><option value="">${t("主会话")}</option></select>
       </div>
     </div>
     <div class="chat-body" id="chatBody">
@@ -8837,68 +9595,234 @@ async function renderChatView() {
 
   const chatBody = $("#chatBody");
   const pinBtn = $("#pinBtn");
+  const chatHeadLeftEl = $(".chat-head-left", view);
 
-  const defaultPinPos = () => {
-    const inputPane = $("#inputPane");
-    if (!chatBody || !pinBtn) return { left: 0, top: 0 };
-    const bw = pinBtn.offsetWidth || 34, bh = pinBtn.offsetHeight || 34;
-    const inp = inputPane ? inputPane.offsetHeight : 0;
-    return { left: chatBody.clientWidth - bw - 28, top: chatBody.clientHeight - inp - bh - 24 };
-  };
-  const applyPinPos = (pos) => {
-    pinBtn.style.left = pos.left + "px";
-    pinBtn.style.top = pos.top + "px";
-    pinBtn.style.right = "auto";
-    pinBtn.style.bottom = "auto";
-  };
-  // 把坐标钳制在 chatBody 可视区内，避免窗口变小后按钮被 overflow:hidden 裁掉
-  const clampPinPos = (pos) => {
-    const bw = pinBtn.offsetWidth || 34, bh = pinBtn.offsetHeight || 34;
-    return {
-      left: Math.min(Math.max(0, pos.left), Math.max(0, chatBody.clientWidth - bw)),
-      top: Math.min(Math.max(0, pos.top), Math.max(0, chatBody.clientHeight - bh)),
-    };
-  };
-  // 位置以「占 chatBody 可移动范围的比例」存储，窗口缩放前后保持相对位置不变
-  const maxPinLeft = () => Math.max(0, chatBody.clientWidth - (pinBtn.offsetWidth || 34));
-  const maxPinTop = () => Math.max(0, chatBody.clientHeight - (pinBtn.offsetHeight || 34));
-  const posFromRatio = (r) => ({
-    left: Math.round(Math.min(Math.max(0, r.rx), 1) * maxPinLeft()),
-    top: Math.round(Math.min(Math.max(0, r.ry), 1) * maxPinTop()),
-  });
-  const ratioFromPos = (pos) => {
-    const ml = maxPinLeft(), mt = maxPinTop();
-    return {
-      rx: ml ? Math.min(Math.max(0, pos.left / ml), 1) : 0,
-      ry: mt ? Math.min(Math.max(0, pos.top / mt), 1) : 0,
-    };
-  };
+  // 分屏相关（单会话时保持 null，不改变原有行为）
+  let splitEl = null;
+  let mainPaneWrap = null;
+  let refPaneWrap = null;
+  let refPaneEl = null;
+  let refHistoryEl = null;
+  let refSubgraphSel = null;
+  let refPinCtl = null;
+  let repositionPins = () => {};
+  let updateSplitEditBar = () => {};
 
-  let customPos = null;
-  try { customPos = JSON.parse(localStorage.getItem("pin-pos") || "null"); } catch (e) {}
-  if (customPos && typeof customPos.rx === "number") {
-    applyPinPos(posFromRatio(customPos));
-  } else if (customPos && typeof customPos.left === "number") {
-    // 兼容旧格式（绝对像素）：按当前尺寸换算成比例
-    customPos = ratioFromPos(customPos);
-    applyPinPos(posFromRatio(customPos));
+  if (splitMode && chatBody) {
+    // 分屏模式下所有浮层的几何单独存一份，不与非分屏模式互相影响。
+    modalGeomScope = "split";
+    /* ── 分屏结构 ───────────────────────────────────────────────
+       顶栏（logo / 返回 / 附着按钮）与合并按钮栏保持不动；这里只重排 chat-body：
+         #chatSplit (grid)
+           row1: 主会话分裂按钮栏 | 分隔线 | 参考会话分裂按钮栏
+           row2: 主会话历史消息   | 分隔线 | 参考会话历史消息
+       输入栏仍在 grid 外（只属于主会话）。 */
+    splitEl = document.createElement("div");
+    splitEl.className = "chat-split split";
+    splitEl.id = "chatSplit";
+    const initialRatio = splitRatio();
+    splitEl.style.gridTemplateColumns = `${initialRatio}fr 8px ${(1 - initialRatio)}fr`;
+    chatBody.insertBefore(splitEl, $("#historyPane"));
+
+    // 主列：把原来的历史区与图钉整体搬进主列包装（DOM 搬移保留所有已绑定的事件）
+    mainPaneWrap = document.createElement("div");
+    mainPaneWrap.className = "split-pane-wrap";
+    mainPaneWrap.dataset.side = "main";
+    mainPaneWrap.appendChild($("#historyPane"));
+    mainPaneWrap.appendChild(pinBtn);
+    mainPaneWrap.addEventListener("mouseover", () => { chatHoverSide = "main"; });
+    mainPaneWrap.addEventListener("pointerdown", () => { chatHoverSide = "main"; }, true);
+    splitEl.appendChild(mainPaneWrap);
+
+    const divider = document.createElement("div");
+    divider.className = "split-divider";
+    divider.title = t("拖动调整左右宽度（2:8 ~ 8:2）");
+    splitEl.appendChild(divider);
+
+    // 参考列
+    refPaneWrap = document.createElement("div");
+    refPaneWrap.className = "split-pane-wrap";
+    refPaneWrap.dataset.side = "ref";
+    refPaneWrap.innerHTML = `<div class="history-pane" id="refHistoryPane"><div class="md-body markdown-body" id="refHistoryMd"><div class="muted">${t("加载历史中…")}</div></div></div>`;
+    refPaneWrap.addEventListener("mouseover", () => { chatHoverSide = "ref"; });
+    refPaneWrap.addEventListener("pointerdown", () => { chatHoverSide = "ref"; }, true);
+    splitEl.appendChild(refPaneWrap);
+    refPaneEl = $("#refHistoryPane");
+    refHistoryEl = $("#refHistoryMd");
+
+    // 主会话分裂按钮栏（会话名 + 只属于主会话的按钮）
+    const mainHead = document.createElement("div");
+    mainHead.className = "split-head";
+    mainHead.dataset.side = "main";
+    const mainHeadLeft = document.createElement("div");
+    mainHeadLeft.className = "split-head-left";
+    if (chatHeadLeftEl) mainHeadLeft.appendChild(chatHeadLeftEl);
+    // 鼠标停在本列表头（含按钮/会话名）时也算「光标在这一列」：Ctrl+F 的查找范围
+    // 与列内浮层都以此为准，避免鼠标明明在右列表头却被当成左列。
+    mainHead.addEventListener("mouseover", () => { chatHoverSide = "main"; });
+    mainHead.addEventListener("pointerdown", () => { chatHoverSide = "main"; }, true);
+    const mainHeadRight = document.createElement("div");
+    mainHeadRight.className = "split-head-right";
+    ["msgDirBtn", "subgraphSel"].forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) mainHeadRight.appendChild(el);
+    });
+    // 记忆命名空间相同：记忆库按钮保持合并（留在顶栏）；不同：各列一个。
+    if (!sameStoreNs) {
+      const memBtn = $("#memoryStoreBtn");
+      if (memBtn) mainHeadRight.appendChild(memBtn);
+    }
+    ["delAllMsgBtn", "proactiveSummaryBtn"].forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) mainHeadRight.appendChild(el);
+    });
+    mainHead.appendChild(mainHeadLeft);
+    mainHead.appendChild(mainHeadRight);
+    splitEl.appendChild(mainHead);
+
+    // 参考会话分裂按钮栏
+    const refHead = document.createElement("div");
+    refHead.className = "split-head";
+    refHead.dataset.side = "ref";
+    const refAgentLabel = (refCfg && refCfg.name) || attachEntry.agentName || attachEntry.agentId;
+    refHead.innerHTML = `
+      <div class="split-head-left">
+        <span class="thread-name">🧵 ${esc(attachEntry.threadId)}</span>
+        <span class="muted">（${esc(refAgentLabel)}）</span>
+      </div>
+      <div class="split-head-right">
+        <span class="status-indicator" id="refStatusInd"></span>
+        <span class="edit-mode-badge" id="refEditModeBadge" style="display:none;">✏️ ${t("编辑模式")}</span>
+        <button class="btn small" id="refMsgDirBtn" style="position:relative;">☰ ${t("消息目录")}</button>
+        <select id="refSubgraphSel" class="btn small" style="max-width:220px;${refHasSubs ? "" : "display:none;"}"><option value="">${t("主会话")}</option></select>
+        ${!sameStoreNs ? `<button class="btn small" id="refMemoryStoreBtn" title="${t("查看/编辑记忆库")}">🧠 ${t("查看/编辑记忆库")}</button>` : ""}
+      </div>`;
+    refHead.addEventListener("mouseover", () => { chatHoverSide = "ref"; });
+    refHead.addEventListener("pointerdown", () => { chatHoverSide = "ref"; }, true);
+    splitEl.appendChild(refHead);
+    refSubgraphSel = $("#refSubgraphSel");
+
+    // 极窄列（2:8）下按钮组会横向溢出到会话名上：按实际列宽切换「上下两行」布局。
+    const syncHeadNarrow = () => {
+      if (!splitEl || !splitEl.isConnected) return;
+      [mainHead, refHead].forEach((h) => {
+        if (h) h.classList.toggle("narrow", h.clientWidth < 480);
+      });
+    };
+    syncHeadNarrow();
+    window.addEventListener("resize", syncHeadNarrow);
+
+    // 参考列图钉（位置/跟随状态独立落盘）
+    const refPin = document.createElement("button");
+    refPin.id = "refPinBtn";
+    refPin.className = "pin-btn";
+    refPin.textContent = "📌";
+    refPin.title = t("跟随最新输出 · 按住可拖动");
+    refPaneWrap.appendChild(refPin);
+
+    // 图钉绑定：分屏左右两份，位置按「所在列可移动范围的比例」落盘
+    pinned = readSplitPinFollow("main");
+    const mainPin = bindChatPin({
+      pinBtn,
+      boundsEl: mainPaneWrap,
+      side: "main",
+      initialPinned: readSplitPinFollow("main"),
+      paneEl: () => $("#historyPane"),
+      onToggle: (v) => { pinned = v; },
+    });
+    refPinCtl = bindChatPin({
+      pinBtn: refPin,
+      boundsEl: refPaneWrap,
+      side: "ref",
+      initialPinned: readSplitPinFollow("ref"),
+      paneEl: () => refPaneEl,
+      onToggle: () => { /* 参考列图钉状态由 refStream 的 view.isPinned 读取 */ },
+    });
+    repositionPins = () => { mainPin.reposition(); refPinCtl.reposition(); };
+
+    // 分隔线拖动：左右比例落盘（2:8 ~ 8:2），两列按钮栏/消息区一起动
+    chatSplitScopes = {
+      main: { rootEl: mainPaneWrap, paneEl: $("#historyPane"), historyEl: $("#historyMd") },
+      ref: { rootEl: refPaneWrap, paneEl: refPaneEl, historyEl: refHistoryEl },
+    };
+    let ratio = initialRatio;
+    const clampRatio = (v) => Math.min(SPLIT_MAX_RATIO, Math.max(SPLIT_MIN_RATIO, v));
+    const applyRatio = (v) => {
+      ratio = clampRatio(v);
+      splitEl.style.gridTemplateColumns = `${ratio}fr 8px ${(1 - ratio)}fr`;
+      repositionPins();
+    };
+    const clampEditPopupsToPanes = () => {
+      $$(".edit-popup").forEach((p) => {
+        const pane = p.closest(".history-pane");
+        if (!pane) return;
+        const maxW = Math.max(120, pane.clientWidth - 16);
+        p.style.maxWidth = maxW + "px";
+        p.style.minWidth = Math.min(240, maxW) + "px";
+        if (p.offsetWidth > maxW) p.style.width = maxW + "px";
+        const maxLeft = pane.scrollLeft + pane.clientWidth - Math.min(p.offsetWidth, maxW) - 8;
+        if (parseFloat(p.style.left || "0") > maxLeft) p.style.left = Math.max(pane.scrollLeft + 8, maxLeft) + "px";
+      });
+    };
+    divider.addEventListener("pointerdown", (ev) => {
+      if (ev.button != null && ev.button !== 0) return;
+      ev.preventDefault();
+      // 消息目录是挂在 body 上的 fixed 浮层：拖分隔线时先收起，避免它跨过中线。
+      $$(".msg-drawer-panel").forEach((p) => closeMsgDrawer(p));
+      const rect = splitEl.getBoundingClientRect();
+      const gutter = 8;
+      divider.classList.add("dragging");
+      document.body.classList.add("split-resizing");
+      const move = (e2) => {
+        const usable = Math.max(1, rect.width - gutter);
+        const local = Math.min(Math.max(0, e2.clientX - rect.left), usable);
+        applyRatio(local / usable);
+        syncHeadNarrow();
+        repositionFloatingPanels();
+        clampEditPopupsToPanes();
+      };
+      const up = () => {
+        document.removeEventListener("pointermove", move);
+        document.removeEventListener("pointerup", up);
+        document.removeEventListener("pointercancel", up);
+        divider.classList.remove("dragging");
+        document.body.classList.remove("split-resizing");
+        saveSplitRatio(ratio);
+        repositionPins();
+        repositionFloatingPanels();
+      };
+      document.addEventListener("pointermove", move);
+      document.addEventListener("pointerup", up);
+      document.addEventListener("pointercancel", up);
+      move(ev);
+    });
   } else {
-    customPos = null;
-    applyPinPos(clampPinPos(defaultPinPos()));
+    chatSplitScopes = null;
+    pinned = localStorage.getItem("pin-follow") === "1";
   }
 
-  // 窗口尺寸变化时按比例重算图钉位置（缩放前后相对位置不变）
-  window.addEventListener("resize", () => {
-    if (!pinBtn.isConnected) return;
-    if (customPos) applyPinPos(posFromRatio(customPos));
-    else applyPinPos(clampPinPos(defaultPinPos()));
-  });
+  // 单会话图钉：沿用原 chatBody 边界与 pin-pos；分屏已在上面绑好两份。
+  let mainPinCtl = null;
+  if (!splitMode) {
+    mainPinCtl = bindChatPin({
+      pinBtn,
+      boundsEl: chatBody,
+      side: null,
+      initialPinned: pinned,
+      paneEl: () => $("#historyPane"),
+      bottomInset: () => { const ip = $("#inputPane"); return ip ? ip.offsetHeight : 0; },
+      onToggle: (v) => { pinned = v; },
+    });
+    repositionPins = () => mainPinCtl.reposition();
+  }
 
   if (window.Split) {
-    Split(["#historyPane", "#inputPane"], {
+    Split([splitMode ? "#chatSplit" : "#historyPane", "#inputPane"], {
       direction: "vertical", sizes: [72, 28], minSize: [100, 80], gutterSize: 8, cursor: "row-resize",
-      onDragEnd: () => { if (!customPos) applyPinPos(clampPinPos(defaultPinPos())); },
+      onDragEnd: () => { repositionPins(); },
     });
+    // Split 初始化会改写高度：等布局落定后按最终列高重新摆放图钉（否则初始位置会略偏下）。
+    requestAnimationFrame(() => { try { repositionPins(); } catch (e) { /* ignore */ } });
   }
 
   applyZoom();
@@ -9413,7 +10337,9 @@ async function renderChatView() {
   updateReasoningZoomLabel();
   $("#rZoomOut").onclick = () => { changeReasoningZoom(-10); updateReasoningZoomLabel(); };
   $("#rZoomIn").onclick = () => { changeReasoningZoom(10); updateReasoningZoomLabel(); };
-  $("#msgDirBtn").onclick = (e) => toggleMsgDrawer(e);
+  $("#msgDirBtn").onclick = (e) => toggleMsgDrawer(e, splitMode
+    ? { rootEl: mainPaneWrap, historyEl: $("#historyMd"), geomKey: SPLIT_MSG_DRAWER_KEY, side: "main", boundsEl: mainPaneWrap }
+    : {});
   $("#proactiveSummaryBtn").onclick = () => openProactiveSummary();
 
   /* ================= 编辑模式（共享控制器接线） ================= */
@@ -9433,10 +10359,12 @@ async function renderChatView() {
     return { messages: r.messages || [], subName: isSub ? sel.value : null };
   }
 
-  function submitEditRequest(req, onStage) {
+  function submitEditRequest(req, onStage, scope) {
+    const scopeAgentId = (scope && scope.agentId) || S.agentId;
+    const scopeThreadId = (scope && scope.threadId) || S.threadId;
     return new Promise((resolve) => {
       const proto = location.protocol === "https:" ? "wss" : "ws";
-      const s = new WebSocket(`${proto}://${location.host}/api/agents/${encodeURIComponent(S.agentId)}/threads/${encodeURIComponent(S.threadId)}/chat`);
+      const s = new WebSocket(`${proto}://${location.host}/api/agents/${encodeURIComponent(scopeAgentId)}/threads/${encodeURIComponent(scopeThreadId)}/chat`);
       let settled = false;
       let writeTimer = null;
       let editSent = false;
@@ -9492,7 +10420,8 @@ async function renderChatView() {
   }
 
   async function refreshHistory() {
-    const anchor = captureMsgAnchor();
+    const pane = $("#historyPane");
+    const anchor = captureMsgAnchor(pane);
     try {
       const base = `/api/agents/${encodeURIComponent(S.agentId)}/threads/${encodeURIComponent(S.threadId)}`;
       const h = sel.value
@@ -9500,65 +10429,30 @@ async function renderChatView() {
         : await api(`${base}/history`);
       historyEl.innerHTML = renderMd(h.markdown);
       injectExportButtons(historyEl);
-      restoreMsgAnchor(anchor);
+      restoreMsgAnchor(anchor, pane);
     } catch (e) {
       historyEl.innerHTML = `<div class="muted">${t("（无历史）")}</div>`;
     }
   }
 
   async function leaveChatView() {
-    if (editor && editor.isOn()) {
+    if ((editor && editor.isOn()) || (refEditor && refEditor.isOn())) {
       const ans = await askConfirm(t("当前处于编辑模式，请先退出编辑模式后再离开。是否退出编辑模式？"));
       if (ans !== "yes") return;
-      await editor.exit();
+      if (splitMode) await exitEditMode();
+      else if (editor) await editor.exit();
     }
     flushCurrentDraft();
+    flushChatScrollAnchors();
     draftFlushFn = null;
     goThreads(S.agentId, S.agentName);
   }
-
-  const updatePinBtn = () => { pinBtn.classList.toggle("active", pinned); };
-  updatePinBtn();
-
-  let dragState = null, dragged = false;
-
-  pinBtn.onclick = () => {
-    if (dragged) { dragged = false; return; }
-    pinned = !pinned;
-    localStorage.setItem("pin-follow", pinned ? "1" : "0");
-    updatePinBtn();
-    if (pinned) { const pane = $("#historyPane"); if (pane) pane.scrollTop = pane.scrollHeight; }
-  };
-
-  // 按住拖动移动按钮
-  pinBtn.addEventListener("mousedown", (e) => {
-    dragState = { x: e.clientX, y: e.clientY, left: pinBtn.offsetLeft, top: pinBtn.offsetTop };
-    dragged = false;
-    e.preventDefault();
-  });
-  window.addEventListener("mousemove", (e) => {
-    if (!dragState) return;
-    const dx = e.clientX - dragState.x, dy = e.clientY - dragState.y;
-    if (!dragged && (Math.abs(dx) > 3 || Math.abs(dy) > 3)) dragged = true;
-    if (!dragged) return;
-    const bw = pinBtn.offsetWidth, bh = pinBtn.offsetHeight;
-    pinBtn.style.left = Math.min(Math.max(0, dragState.left + dx), chatBody.clientWidth - bw) + "px";
-    pinBtn.style.top = Math.min(Math.max(0, dragState.top + dy), chatBody.clientHeight - bh) + "px";
-  });
-  window.addEventListener("mouseup", () => {
-    if (dragState) {
-      if (dragged) {
-        customPos = ratioFromPos({ left: pinBtn.offsetLeft, top: pinBtn.offsetTop });
-        localStorage.setItem("pin-pos", JSON.stringify(customPos));
-      }
-      dragState = null;
-    }
-  });
 
   const historyEl = $("#historyMd");
   // 本会话的持久流：切出视图时不销毁，回来时复用同一份 DOM / 缓冲。
   const stream = getSessionStream(S.agentId, S.agentName, S.threadId);
   activeSessionStream = stream;
+  activeChatStreams.push(stream);
   const scrollToLastUserMsg = () => {
     const blocks = historyEl.querySelectorAll(".user-msg-block");
     if (blocks.length) {
@@ -9584,14 +10478,21 @@ async function renderChatView() {
       const h = await api(`/api/agents/${encodeURIComponent(S.agentId)}/threads/${encodeURIComponent(S.threadId)}/history`);
       historyEl.innerHTML = renderMd(h.markdown);
       injectExportButtons(historyEl);
-      scrollToLastUserMsg();
+      const pane = $("#historyPane");
+      const saved = readChatScrollAnchor(S.agentId, S.threadId);
+      if (saved && pane) restorePaneAnchor(pane, saved);
+      else scrollToLastUserMsg();
     }
   } catch (e) { historyEl.innerHTML = `<div class="muted">${t("（无历史）")}</div>`; }
+  // 视口位置持久化：离开会话 / 关闭窗口 / 退出托盘后再打开仍回到上次那一行。
+  bindChatScrollPersistence($("#historyPane"), S.agentId, S.threadId);
 
   const sel = $("#subgraphSel");
   try {
     const subs = await api(`/api/agents/${encodeURIComponent(S.agentId)}/threads/${encodeURIComponent(S.threadId)}/subgraphs`);
     subs.forEach(s => { const o = document.createElement("option"); o.value = s.node_name; o.textContent = s.node_name; sel.appendChild(o); });
+    // 配置读取失败时兜底：确实有子图数据就把下拉显示出来
+    if (!mainHasSubs && subs.length && sel) sel.style.display = "";
   } catch (e) { /* 无子图 */ }
 
   const input = $("#msgInput"), sendBtn = $("#sendBtn"), stopBtn = $("#stopBtn");
@@ -9600,18 +10501,29 @@ async function renderChatView() {
   editModeBadge = $("#editModeBadge");
   editor = createHistoryEditor({
     historyEl,
-    editBtn: editModeBtn,
-    badgeEl: editModeBadge,
+    editBtn: splitMode ? null : editModeBtn,
+    badgeEl: splitMode ? null : editModeBadge,
     scopeKey: () => `chat:${S.threadId}`,
     getSettings: () => settingsCache || {},
     fetchMessages: fetchRawMessagesForEdit,
     submitEdit: submitEditRequest,
     reload: refreshHistory,
+    paneEl: () => $("#historyPane"),
+    shared: sharedEdit,
+    popupOpts: splitMode
+      ? { sizeKey: SPLIT_EDIT_POPUP_KEY, sizeSide: "main", sizeRatio: true }
+      : null,
+    onModeChange: splitMode ? () => updateSplitEditBar() : null,
   });
-  if (editModeBtn) editModeBtn.onclick = () => editor.toggle();
   editor.bind();
   const memoryBtn = $("#memoryStoreBtn");
-  if (memoryBtn) memoryBtn.onclick = () => openMemoryStoreModal();
+  if (memoryBtn) {
+    // 命名空间不同时按钮被搬进主列分裂栏，浮层也只盖主列；相同时保持合并，
+    // 用全局居中弹窗（分屏模式下几何仍单独落盘，见 modalGeomScope）。
+    memoryBtn.onclick = (!sameStoreNs && splitMode)
+      ? () => openMemoryStoreModal({ agentId: S.agentId, side: "main", scopeEl: mainPaneWrap })
+      : () => openMemoryStoreModal();
+  }
   const sessionPromptBtn = $("#editSessionPromptBtn");
   if (sessionPromptBtn) {
     sessionPromptBtn.onclick = () => openSessionPromptModal(commonPromptRef, (ref, text) => {
@@ -9630,6 +10542,266 @@ async function renderChatView() {
   const delAllMsgBtn = $("#delAllMsgBtn");
   if (delAllMsgBtn) delAllMsgBtn.onclick = () => triggerCleanAll();
 
+  /* ================= 参考会话列（分屏；只读参照，不承载发送） ================= */
+  if (splitMode && refPaneWrap) {
+    const refAgentId = attachEntry.agentId;
+    const refThreadId = attachEntry.threadId;
+    const refAgentName = (refCfg && refCfg.name) || attachEntry.agentName || refAgentId;
+    const refPane = refPaneEl;
+    // 自附着（A 附着 A）时主列已占用全局 SessionStream，参考列另建一条独立流：
+    // 两条 WebSocket 都 attach 到同一会话中枢，各自渲染，互不抢 DOM。
+    refStream = selfAttachMode
+      ? new SessionStream(S.agentId, S.agentName, S.threadId)
+      : getSessionStream(refAgentId, refAgentName, refThreadId);
+    if (selfAttachMode) refStream._ownedByView = true;
+    activeChatStreams.push(refStream);
+    let refStatusMode = "idle";
+
+    async function refreshRefHistory() {
+      const anchor = captureMsgAnchor(refPane);
+      try {
+        const base = `/api/agents/${encodeURIComponent(refAgentId)}/threads/${encodeURIComponent(refThreadId)}`;
+        const sub = refSubgraphSel ? refSubgraphSel.value : "";
+        const h = sub
+          ? await api(`${base}/subgraphs/${encodeURIComponent(sub)}/history`)
+          : await api(`${base}/history`);
+        refHistoryEl.innerHTML = renderMd(h.markdown);
+        injectExportButtons(refHistoryEl);
+        restoreMsgAnchor(anchor, refPane);
+      } catch (e) {
+        refHistoryEl.innerHTML = `<div class="muted">${t("（无历史）")}</div>`;
+      }
+    }
+
+    async function fetchRefRawMessagesForEdit() {
+      const base = `/api/agents/${encodeURIComponent(refAgentId)}/threads/${encodeURIComponent(refThreadId)}`;
+      const sub = refSubgraphSel ? refSubgraphSel.value : "";
+      const url = sub
+        ? `${base}/subgraphs/${encodeURIComponent(sub)}/messages`
+        : `${base}/messages`;
+      const r = await api(url);
+      return { messages: r.messages || [], subName: sub || null };
+    }
+
+    refEditor = createHistoryEditor({
+      historyEl: refHistoryEl,
+      editBtn: null,
+      badgeEl: $("#refEditModeBadge"),
+      scopeKey: () => `chat:${refThreadId}`,
+      getSettings: () => settingsCache || {},
+      fetchMessages: fetchRefRawMessagesForEdit,
+      submitEdit: (req, onStage) => submitEditRequest(req, onStage, { agentId: refAgentId, threadId: refThreadId }),
+      reload: refreshRefHistory,
+      paneEl: () => refPane,
+      shared: sharedEdit,
+      popupOpts: { sizeKey: SPLIT_EDIT_POPUP_KEY, sizeSide: "ref", sizeRatio: true },
+      onModeChange: () => updateSplitEditBar(),
+    });
+    refEditor.bind();
+
+    // 参考列的消息目录（只读本列历史，浮层限制在本列）
+    const refMsgDirBtn = $("#refMsgDirBtn");
+    if (refMsgDirBtn) {
+      refMsgDirBtn.onclick = (e) => toggleMsgDrawer(e, {
+        rootEl: refPaneWrap,
+        historyEl: refHistoryEl,
+        geomKey: SPLIT_MSG_DRAWER_KEY,
+        side: "ref",
+        boundsEl: refPaneWrap,
+      });
+    }
+    // 记忆命名空间不同 → 参考列自己的记忆库入口（浮层限制在本列）
+    const refMemBtn = $("#refMemoryStoreBtn");
+    if (refMemBtn) {
+      refMemBtn.onclick = () => openMemoryStoreModal({ agentId: refAgentId, side: "ref", scopeEl: refPaneWrap });
+    }
+
+    const setRefStatus = (mode, actor) => {
+      refStatusMode = mode || "idle";
+      setStatusIndicatorEl($("#refStatusInd"), mode, actor);
+    };
+
+    // 参考列的历史/子会话/常驻流都放在后台异步加载：即使参考会话的数据库很慢，
+    // 也不会阻塞主会话的发送按钮、编辑按钮与其它交互绑定。
+    (async () => {
+      const initAlive = () => viewToken === chatViewSeq && S.view === "chat" && !!refPaneWrap && refPaneWrap.isConnected;
+      // 初始历史：与主列同款（有常驻流基线就复用它，否则拉 /history）；
+      // 有落盘的视口锚点就恢复，否则默认停在最新一条（参考用，通常关心末尾）。
+      try {
+        if (refStream.baseHtml != null) {
+          refHistoryEl.innerHTML = refStream.baseHtml;
+          injectExportButtons(refHistoryEl);
+          if (refStream.replyEl) refHistoryEl.appendChild(refStream.replyEl);
+          refStream.renderStream();
+        } else {
+          const h = await api(`/api/agents/${encodeURIComponent(refAgentId)}/threads/${encodeURIComponent(refThreadId)}/history`);
+          if (!initAlive()) return;
+          refHistoryEl.innerHTML = renderMd(h.markdown);
+          injectExportButtons(refHistoryEl);
+          const saved = readChatScrollAnchor(refAgentId, refThreadId);
+          if (saved) restorePaneAnchor(refPane, saved);
+          else refPane.scrollTop = refPane.scrollHeight;
+        }
+      } catch (e) {
+        if (!initAlive()) return;
+        // /history 在没有 checkpoint 的空会话上也会 404（并不代表会话不存在），
+        // 因此这里只显示「无历史」，不据此取消附着。
+        refHistoryEl.innerHTML = `<div class="muted">${t("（无历史）")}</div>`;
+      }
+      if (!initAlive()) return;
+      bindChatScrollPersistence(refPane, refAgentId, refThreadId);
+
+      // 参考列的子会话下拉（是否显示由该 multi-agent 是否配置了子 agent 决定）
+      if (refSubgraphSel) {
+        try {
+          const subs = await api(`/api/agents/${encodeURIComponent(refAgentId)}/threads/${encodeURIComponent(refThreadId)}/subgraphs`);
+          if (!initAlive()) return;
+          subs.forEach((s) => {
+            const o = document.createElement("option");
+            o.value = s.node_name;
+            o.textContent = s.node_name;
+            refSubgraphSel.appendChild(o);
+          });
+          if (!refHasSubs && subs.length) refSubgraphSel.style.display = "";
+        } catch (e) { /* 无子图 */ }
+        refSubgraphSel.onchange = async () => {
+          await refreshRefHistory();
+          if (refEditor && refEditor.isOn()) { refEditor.clearEdits(); await refEditor.refreshData(); }
+        };
+      }
+
+      // 参考列历史/子会话都就绪后，编辑模式才把参考列纳入（避免初始渲染与编辑态互相覆盖）。
+      if (!initAlive()) return;
+      refColumnReady = true;
+
+      // 把参考列的持久流挂到本列 DOM。运行事件/回放/重连全部沿用 SessionStream，
+      // 所以「附着时参考会话正在流式」「两边同时流式」都能正确显示。
+      refStream.attachView({
+        historyEl: refHistoryEl,
+        paneEl: refPane,
+        reportActive: false,
+        setRunning: (r, status, actor) => {
+          if (refSubgraphSel) refSubgraphSel.disabled = r;
+          if (r) setRefStatus(status || "thinking", actor);
+          else setRefStatus("idle");
+        },
+        markStopping: () => {},
+        updateSendState: () => {},
+        onDone: () => {},
+        setStatus: (mode, actor) => setRefStatus(mode, actor),
+        getStatusMode: () => refStatusMode,
+        isPinned: () => (refPinCtl ? refPinCtl.isPinned() : false),
+      }).catch(() => {});
+    })().catch(() => { /* 参考列加载失败不影响主列 */ });
+  }
+
+  /* ================= 分屏编辑模式：一个按钮控制两列 =================
+     · 正在流式输出的一列不允许进入编辑模式；两边都在跑则不进入；
+     · 退出时只提交一次确认（两列一起），各自把改动交给后端；
+     · 绿色粒子提示：两边都生效 → 屏幕正中；只有一边生效 → 该列正中。 */
+  updateSplitEditBar = function () {
+    if (!splitMode) return;
+    const mainOn = !!(editor && editor.isOn());
+    const refOn = !!(refEditor && refEditor.isOn());
+    const on = mainOn || refOn;
+    if (editModeBtn) {
+      editModeBtn.textContent = on ? `✏️ ${t("退出编辑模式")}` : `✏️ ${t("进入编辑模式")}`;
+      editModeBtn.classList.toggle("btn-exit-edit", on);
+    }
+    if (!editModeBadge) return;
+    if (!on) { editModeBadge.style.display = "none"; return; }
+    editModeBadge.style.display = "";
+    const modes = [editor ? editor.mode() : "off", refEditor ? refEditor.mode() : "off"];
+    if (modes.includes("loading")) {
+      editModeBadge.textContent = `⏳ ${t("加载模型中")}`;
+      editModeBadge.className = "edit-mode-badge loading";
+    } else if (modes.includes("writing")) {
+      editModeBadge.textContent = `✏️ ${t("写入中")}`;
+      editModeBadge.className = "edit-mode-badge writing";
+    } else {
+      editModeBadge.textContent = `✏️ ${t("编辑模式")}`;
+      editModeBadge.className = "edit-mode-badge";
+    }
+  };
+
+  async function exitEditMode() {
+    const mainOn = !!(editor && editor.isOn());
+    const refOn = !!(refEditor && refEditor.isOn());
+    if (!mainOn && !refOn) return;
+    const mainHadEdits = mainOn && editor.hasEdits();
+    const refHadEdits = refOn && refEditor.hasEdits();
+    let submit = false;
+    if (mainHadEdits || refHadEdits) {
+      const prompt = (mainOn && refOn)
+        ? t("是否提交对历史消息的更改（左右两列的改动会一起提交）")
+        : t("是否提交对历史消息的更改");
+      const ans = await askConfirm(prompt);
+      submit = ans === "yes";
+    }
+    let mainOk = true, refOk = true;
+    if (selfAttachMode && mainOn && refOn) {
+      // 自附着：两列是同一份会话、共用同一份编辑缓存，只提交一次（主列），
+      // 参考列只退出编辑态并重拉历史，避免同一批改动被提交两遍。
+      const r = await editor.exitWith(submit);
+      mainOk = !!r.ok;
+      const rr = await refEditor.exitWith(false);
+      refOk = !!rr.ok;
+    } else {
+      if (mainOn) { const r = await editor.exitWith(submit); mainOk = !!r.ok; }
+      if (refOn) { const r = await refEditor.exitWith(submit); refOk = !!r.ok; }
+    }
+    updateSplitEditBar();
+    if (submit) {
+      if (selfAttachMode) {
+        // 共用缓存：编辑模式进入过的那一列决定粒子位置；两列都进入过 → 屏幕正中。
+        const applied = mainOn ? mainOk : refOk;
+        if (applied) {
+          const centerEl = (mainOn && refOn) ? null : (mainOn ? mainPaneWrap : refPaneWrap);
+          showAppliedBubble(centerEl);
+        }
+      } else {
+        const mainApplied = mainHadEdits && mainOk;
+        const refApplied = refHadEdits && refOk;
+        if (mainApplied || refApplied) {
+          const bothApplied = mainOn && refOn && mainApplied && refApplied;
+          const centerEl = bothApplied ? null : (mainApplied ? mainPaneWrap : refPaneWrap);
+          showAppliedBubble(centerEl);
+        }
+      }
+    }
+  }
+
+  async function toggleSplitEditMode() {
+    const mainOn = !!(editor && editor.isOn());
+    const refOn = !!(refEditor && refEditor.isOn());
+    if (mainOn || refOn) { await exitEditMode(); return; }
+    if (!refColumnReady) {
+      toast(t("参考会话加载中，请稍候…"), true);
+      return;
+    }
+    // 正在流式输出的会话不允许进入编辑模式。用 stream.isBusy() 而不是 isRunning，
+    // 避免刚进视图、主列 attach 尚未完成时 isRunning 还是 false 的短窗口。
+    const canMain = !(stream && stream.isBusy());
+    const canRef = refColumnReady && !!refEditor && !(refStream && refStream.isBusy());
+    if (!canMain && !canRef) {
+      toast(t("两个会话都在流式输出中，暂不能进入编辑模式"), true);
+      return;
+    }
+    // 自附着时两列共用 edits：新一轮编辑开始前先清空，避免上一轮残留。
+    if (sharedEdit) sharedEdit.edits.length = 0;
+    if (canMain) await editor.enter();
+    if (canRef) await refEditor.enter();
+    updateSplitEditBar();
+  }
+
+  if (editModeBtn) {
+    editModeBtn.onclick = () => {
+      if (!splitMode) { editor.toggle(); return; }
+      toggleSplitEditMode();
+    };
+  }
+  if (splitMode) updateSplitEditBar();
+
   function updateSendState() {
     // 浏览器接管提示正在获取页面内容时，禁止发送（否则消息会缺少页面内容）。
     const takeoverFetching = takeoverHintOn && !takeoverPreviewText;
@@ -9638,7 +10810,13 @@ async function renderChatView() {
 
   sel.onchange = async () => {
     updateSendState();
-    if (!sel.value) { closeEditPopup(); renderChatView(); return; }
+    if (!sel.value) {
+      closeEditPopup();
+      if (!splitMode) { renderChatView(); return; }
+      await refreshHistory();
+      if (editor && editor.isOn()) { editor.clearEdits(); await editor.refreshData(); }
+      return;
+    }
     try {
       const h = await api(`/api/agents/${encodeURIComponent(S.agentId)}/threads/${encodeURIComponent(S.threadId)}/subgraphs/${encodeURIComponent(sel.value)}/history`);
       $("#historyMd").innerHTML = renderMd(h.markdown);
@@ -9757,6 +10935,10 @@ async function renderChatView() {
   }
 
   async function openProactiveSummary() {
+    if ((editor && editor.isOn()) || (refEditor && refEditor.isOn())) {
+      toast(t("请先退出编辑模式后再操作"), true);
+      return;
+    }
     const sub = sel.value;
     const custom = !!(settingsCache && settingsCache.proactive_summary_custom_percent);
     if (!custom) {
@@ -9770,7 +10952,11 @@ async function renderChatView() {
       const r = await api(`/api/agents/${encodeURIComponent(S.agentId)}/threads/${encodeURIComponent(S.threadId)}/token-usage${q}`);
       total = (r && r.total_tokens) || 0;
     } catch (e) { /* 取不到 token 数就按 0 估算，不阻断流程 */ }
-    const pct = await askSummaryPercent((settingsCache && settingsCache.summary_token_percent) || 20, total);
+    const pct = await askSummaryPercent((settingsCache && settingsCache.summary_token_percent) || 20, total, {
+      // 主动全量总结按钮在分屏时属于主列分裂栏：百分比设置框也限制在主列内。
+      scopeEl: splitMode ? mainPaneWrap : null,
+      side: "main",
+    });
     if (pct == null) return;
     if (sub) triggerSubAgentProactiveSummary(sub, pct);
     else triggerProactiveSummary(pct);
@@ -9828,10 +11014,17 @@ async function renderChatView() {
 
   async function triggerCleanAll() {
     if (isRunning) return;
+    if ((editor && editor.isOn()) || (refEditor && refEditor.isOn())) {
+      toast(t("请先退出编辑模式后再操作"), true);
+      return;
+    }
     // 三种选择（从左到右）：否 / 归档为快照后删除 / 直接删除。
     const ans = await askConfirm(
       t("删除全部历史消息后不可恢复。可先归档为快照再删除，或直接删除。"),
       {
+        // 该按钮在分屏时属于主列分裂栏：确认框也限制在主列内，不越过中间分隔线。
+        scopeEl: splitMode ? mainPaneWrap : null,
+        side: "main",
         buttons: [
           { v: "no", label: t("否") },
           { v: "archive", label: t("归档为快照后删除"), soft: true },
@@ -9938,6 +11131,7 @@ async function renderChatView() {
   // 若是页面刷新后的新流，会向后端 attach 并按 run_id+seq 回放。
   await stream.attachView({
     historyEl,
+    paneEl: $("#historyPane"),
     setRunning: (r, status, actor) => setRunning(r, status, actor),
     markStopping: () => {
       stopBtn.disabled = true;
@@ -9946,6 +11140,9 @@ async function renderChatView() {
     },
     updateSendState,
     onDone: (result) => { if (!result.stopped) showDoneBubble(); },
+    isPinned: () => pinned,
+    setStatus: (mode, actor) => setStatusIndicator(mode, actor),
+    getStatusMode: () => statusMode,
   });
   updateSendState();
 }
@@ -10398,6 +11595,28 @@ class SessionStream {
     return ["starting", "running", "stopping", "waiting"].includes(status);
   }
 
+  /* 分屏后一个视图里可能同时挂着两个 SessionStream；所有「当前滚动容器 / 图钉状态 /
+     状态指示器」都必须走各自 view，不能再全局查 #historyPane / #statusInd。 */
+  _paneEl() {
+    if (this.view && this.view.paneEl) return this.view.paneEl;
+    return $("#historyPane");
+  }
+
+  _isPinned() {
+    if (this.view && typeof this.view.isPinned === "function") return !!this.view.isPinned();
+    return pinned;
+  }
+
+  _setStatus(mode, actor) {
+    if (this.view && typeof this.view.setStatus === "function") this.view.setStatus(mode, actor);
+    else setStatusIndicator(mode, actor);
+  }
+
+  _statusMode() {
+    if (this.view && typeof this.view.getStatusMode === "function") return this.view.getStatusMode();
+    return statusMode;
+  }
+
   beginRun(historyEl) {
     if (this.view && this.view.historyEl) historyEl = this.view.historyEl;
     this.baseHtml = historyEl ? historyEl.innerHTML : this.baseHtml;
@@ -10464,10 +11683,8 @@ class SessionStream {
     const attach = this.connect();
     attach.finally(() => {
       this.syncView();
-      if (this.view && this.view.historyEl) {
-        const pane = $("#historyPane");
-        if (pane && this.viewState.scrollTop != null) pane.scrollTop = this.viewState.scrollTop;
-      }
+      const pane = this._paneEl();
+      if (pane && this.viewState.scrollTop != null) pane.scrollTop = this.viewState.scrollTop;
       if (this.pendingInterrupt) this._showInterrupt();
       if (this.status === "completed" && !this.accepted) this.maybeAccept();
     });
@@ -10476,7 +11693,7 @@ class SessionStream {
 
   detachView() {
     if (!this.view) return;
-    const pane = $("#historyPane");
+    const pane = this._paneEl();
     if (pane) {
       this.viewState.scrollTop = pane.scrollTop;
       this.viewState.pinned = pane.scrollHeight - pane.scrollTop - pane.clientHeight < 48;
@@ -10506,6 +11723,7 @@ class SessionStream {
   }
 
   reportActive() {
+    if (this.view && this.view.reportActive === false) return;
     if (S.view === "chat" && S.agentId === this.agentId && S.threadId === this.threadId) {
       reportActiveView(this.agentId, this.threadId);
     }
@@ -10614,7 +11832,7 @@ class SessionStream {
     // 重渲染前先记住「用户正在看哪一行」：本轮结束会把页面的流式 DOM 换成
     // /history 的权威渲染，两条链路的块高 / 结构不同，只按像素 scrollTop 复原
     // 会跳到别处（历史更短时还会被钳到最底部），所以这里用语义锚点。
-    const pane = $("#historyPane");
+    const pane = this._paneEl();
     const anchor = capturePaneAnchor(pane);
     try {
       const h = await api(`/api/agents/${encodeURIComponent(this.agentId)}/threads/${encodeURIComponent(this.threadId)}/history`);
@@ -10736,7 +11954,7 @@ class SessionStream {
           if (this.historyMarkdown) {
             this.replyEl = null;
             // 同样是「流式 DOM → 历史渲染」：保持用户当前的阅读位置
-            const pane = $("#historyPane");
+            const pane = this._paneEl();
             const anchor = capturePaneAnchor(pane);
             this.view.historyEl.innerHTML = renderMd(this.historyMarkdown);
             injectExportButtons(this.view.historyEl);
@@ -10824,7 +12042,7 @@ class SessionStream {
       }
       case "phase":
         this.phase = msg.phase || "";
-        if (this.view) setStatusIndicator(msg.phase, this._actorOf(msg.source));
+        if (this.view) this._setStatus(msg.phase, this._actorOf(msg.source));
         break;
       case "tool_call": {
         const isSub = typeof msg.source === "string" && msg.source.startsWith("sub:");
@@ -10852,7 +12070,7 @@ class SessionStream {
         if (this.view) this._showInterrupt();
         break;
       case "status":
-        if (msg.status === "loading" && this.view) setStatusIndicator("loading");
+        if (msg.status === "loading" && this.view) this._setStatus("loading");
         else if (msg.status === "ready") this._leaveLoading("thinking", "main");
         break;
       case "snapshot_saved":
@@ -10905,7 +12123,7 @@ class SessionStream {
   }
 
   _leaveLoading(next, source) {
-    if (this.view && statusMode === "loading") setStatusIndicator(next, this._actorOf(source));
+    if (this.view && this._statusMode() === "loading") this._setStatus(next, this._actorOf(source));
   }
 
   _lastSeg() { return this.buffers.segments[this.buffers.segments.length - 1]; }
@@ -10997,7 +12215,7 @@ class SessionStream {
   renderStream() {
     if (!this.view || !this.replyEl) return;
     const replyEl = this.replyEl;
-    const pane = $("#historyPane");
+    const pane = this._paneEl();
     const atBottom = pane && (pane.scrollHeight - pane.scrollTop - pane.clientHeight < 48);
     if (this.buffers._domOwner !== replyEl) {
       this.buffers._domOwner = replyEl;
@@ -11045,7 +12263,7 @@ class SessionStream {
         seg._contentEl.innerHTML = tag + this._renderBlocks(seg.order.flatMap((n) => seg.subs[n] || []));
       }
     }
-    if (pane && (pinned || atBottom)) pane.scrollTop = pane.scrollHeight;
+    if (pane && (this._isPinned() || atBottom)) pane.scrollTop = pane.scrollHeight;
   }
 
   /* 外部强制补画一次（窗口重新可见 / 重新聚焦）。
@@ -11065,7 +12283,7 @@ class SessionStream {
     this.pendingInterrupt = null;
     const ans = await askConfirm(prompt || t("请确认"), null);
     this._interrupting = false;
-    if (ans === "yes" && this.view) setStatusIndicator("thinking", t("主 agent"));
+    if (ans === "yes" && this.view) this._setStatus("thinking", t("主 agent"));
     await this.sendRaw({ type: "resume", value: ans });
     this.pendingInterrupt = null;
   }
@@ -11168,13 +12386,20 @@ document.addEventListener("click", (e) => {
 /* ================= Ctrl+F 页内查找（WebView2 无原生查找栏，自建） =================
    套进 WebView2 后浏览器自带的 Ctrl+F 查找栏没有了，这里用 CSS Custom Highlight
    API 实现页内查找：不修改 DOM（对 SPA/流式内容安全），只加高亮层。 */
-const findState = { open: false, matches: [], idx: -1, input: null, count: null };
+const findState = { open: false, matches: [], idx: -1, input: null, count: null, bar: null, scopeEl: null };
 
-function findEnsureBar() {
-  if (findState.input) return;
+function findEnsureBar(scopeEl) {
+  // 分屏时查找栏必须挂在某一列内部（不越过中间分隔线）；单会话仍挂 body。
+  if (findState.bar && findState.bar.parentElement === (scopeEl || document.body)) return;
+  if (findState.bar) {
+    try { findState.bar.remove(); } catch (e) { /* ignore */ }
+    findState.bar = null;
+    findState.input = null;
+    findState.count = null;
+  }
   const bar = document.createElement("div");
   bar.id = "findBar";
-  bar.className = "find-bar";
+  bar.className = "find-bar" + (scopeEl ? " find-bar-scoped" : "");
   bar.style.display = "none";
   bar.innerHTML = `
     <input id="findInput" class="find-input" type="text" placeholder="${esc(t("查找"))}" />
@@ -11182,8 +12407,10 @@ function findEnsureBar() {
     <button id="findPrev" class="find-btn" title="${esc(t("上一个"))}" aria-label="${esc(t("上一个"))}">↑</button>
     <button id="findNext" class="find-btn" title="${esc(t("下一个"))}" aria-label="${esc(t("下一个"))}">↓</button>
     <button id="findClose" class="find-btn" title="${esc(t("关闭"))}" aria-label="${esc(t("关闭"))}">×</button>`;
-  document.body.appendChild(bar);
+  (scopeEl || document.body).appendChild(bar);
   const input = bar.querySelector("#findInput");
+  findState.bar = bar;
+  findState.scopeEl = scopeEl || null;
   findState.input = input;
   findState.count = bar.querySelector("#findCount");
   bar.querySelector("#findPrev").onclick = () => findMove(-1);
@@ -11196,11 +12423,12 @@ function findEnsureBar() {
   };
 }
 
-function findCollect(query) {
+function findCollect(query, root) {
   const ranges = [];
   if (!query) return ranges;
   const q = query.toLowerCase();
-  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+  const scope = root || document.body;
+  const walker = document.createTreeWalker(scope, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
       const text = node.nodeValue;
       if (!text || !text.trim()) return NodeFilter.FILTER_REJECT;
@@ -11299,7 +12527,7 @@ function findScrollToCurrent() {
 }
 
 function findSearchReset() {
-  findState.matches = findCollect(findState.input.value);
+  findState.matches = findCollect(findState.input.value, findState.scopeEl);
   findState.idx = findState.matches.length ? 0 : -1;
   findPaint();
   if (findState.idx >= 0) findScrollToCurrent();
@@ -11307,7 +12535,7 @@ function findSearchReset() {
 }
 
 function findMove(step) {
-  findState.matches = findCollect(findState.input.value);
+  findState.matches = findCollect(findState.input.value, findState.scopeEl);
   if (!findState.matches.length) {
     findState.idx = -1;
     findPaint();
@@ -11325,8 +12553,16 @@ function findMove(step) {
 }
 
 function findOpen() {
-  findEnsureBar();
-  const bar = document.getElementById("findBar");
+  // 分屏时以「鼠标/光标当前停在哪一列」为查找范围（chatHoverSide 由列容器上的
+  // pointerdown/mouseover 维护）；单会话仍查找整个页面。
+  let scopeEl = null;
+  if (chatSplitScopes) {
+    const sc = chatSplitScopes[chatHoverSide] || chatSplitScopes.main;
+    scopeEl = (sc && sc.rootEl) || null;
+  }
+  findEnsureBar(scopeEl);
+  const bar = findState.bar;
+  if (!bar) return;
   bar.style.display = "flex";
   findState.open = true;
   const sel = window.getSelection ? (window.getSelection().toString() || "") : "";
@@ -11338,8 +12574,17 @@ function findOpen() {
 
 function findClose() {
   findState.open = false;
-  const bar = document.getElementById("findBar");
-  if (bar) bar.style.display = "none";
+  if (findState.bar) {
+    findState.bar.style.display = "none";
+    // 作用域查找栏挂在列里，切视图/关列后必须真正移除并清引用，否则下次会操作已脱离文档的输入框。
+    if (findState.scopeEl) {
+      try { findState.bar.remove(); } catch (e) { /* ignore */ }
+      findState.bar = null;
+      findState.input = null;
+      findState.count = null;
+    }
+  }
+  findState.scopeEl = null;
   findState.matches = [];
   findState.idx = -1;
   if (window.CSS && CSS.highlights) {
@@ -11372,17 +12617,21 @@ applyCardSettings();
 render();
 startSessionPolling();
 document.addEventListener("visibilitychange", () => {
-  if (S.view === "chat" && activeSessionStream) {
-    reportActiveView(S.agentId, S.threadId);
+  if (S.view === "chat") {
+    // 分屏时两列可能都在流式输出：窗口重新可见后两列都要补画一帧。
     if (document.visibilityState === "visible") {
-      // 页面在后台/被遮挡期间 rAF 可能一路不回调，回来时先把落后的流式内容补画一次。
-      activeSessionStream._forceRender();
-      activeSessionStream.maybeAccept();
+      activeChatStreams.forEach((s) => { try { s._forceRender(); } catch (e) { /* ignore */ } });
+    }
+    if (activeSessionStream) {
+      reportActiveView(S.agentId, S.threadId);
+      if (document.visibilityState === "visible") activeSessionStream.maybeAccept();
     }
   }
 });
 window.addEventListener("focus", () => {
-  if (S.view === "chat" && activeSessionStream) activeSessionStream._forceRender();
+  if (S.view === "chat") {
+    activeChatStreams.forEach((s) => { try { s._forceRender(); } catch (e) { /* ignore */ } });
+  }
 });
 // 旧版 store 数据库迁移提示（只弹一次；数据库服务可能还在启动，函数内部会重试）
 maybePromptStoreMigration();

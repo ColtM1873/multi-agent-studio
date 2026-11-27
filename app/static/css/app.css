@@ -1409,3 +1409,92 @@ body.msg-drawer-resizing-bottom { cursor: row-resize; }
 
 ::highlight(studio-find-match) { background-color: rgba(255, 214, 0, .45); color: inherit; }
 ::highlight(studio-find-current) { background-color: #ff9632; color: #000; }
+
+/* ── 分屏（主会话 + 附着参考会话） ─────────────────────────────────
+   布局：合并栏（chat-head）不动；下面这块是 grid：
+     row1 = 两列各自的分裂按钮栏（同一行高度，视觉天然对齐）
+     row2 = 两列各自的历史消息滚动区
+     col2 = 贯穿两行的竖直分隔线，可拖动改变左右比例
+   输入栏仍在 grid 外、作为会话整体的底部（只属于主会话）。 */
+.chat-split {
+  flex: 1 1 0; min-height: 0; display: grid;
+  grid-template-columns: 1fr; grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden; position: relative;
+}
+.chat-split.split {
+  grid-template-columns: var(--split-left, 1fr) 8px var(--split-right, 1fr);
+}
+.split-head {
+  display: flex; align-items: center; gap: 6px 10px; padding: 5px 12px;
+  background: var(--surface); border-bottom: 1px solid var(--border);
+  min-width: 0; overflow: hidden;
+}
+.split-head[data-side="main"] { grid-column: 1; grid-row: 1; }
+.split-head[data-side="ref"] { grid-column: 3; grid-row: 1; }
+.split-head-left { display: flex; align-items: center; gap: 10px; min-width: 0; flex: 0 1 auto; }
+.split-head-right {
+  display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end;
+  gap: 6px 10px; flex: 1 1 0; min-width: 0;
+}
+.split-head .thread-name {
+  font-weight: 700; font-size: 15px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; max-width: 100%;
+}
+.split-head .muted { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px; }
+/* 极窄列（分屏 2:8）下把「会话名」与按钮分成上下两行：
+   否则右侧按钮组的 flex-end 对齐会把超宽行向左溢到会话名上，产生重叠。 */
+.split-head.narrow { flex-wrap: wrap; align-items: flex-start; }
+.split-head.narrow .split-head-left { flex: 0 0 100%; }
+.split-head.narrow .split-head-right { flex: 1 1 100%; justify-content: flex-start; }
+.split-head .status-indicator { font-size: 12px; }
+.split-divider {
+  grid-column: 2; grid-row: 1 / 3; position: relative; z-index: 6;
+  cursor: col-resize; background: var(--bg); touch-action: none;
+}
+.split-divider::after {
+  content: ""; position: absolute; top: 0; bottom: 0; left: 3px; width: 2px;
+  border-radius: 2px; background: var(--border); transition: background .15s;
+}
+.split-divider:hover::after, .split-divider.dragging::after { background: var(--primary); }
+body.split-resizing { user-select: none; -webkit-user-select: none; cursor: col-resize; }
+.split-pane-wrap {
+  grid-row: 2; min-width: 0; min-height: 0; position: relative;
+  overflow: hidden; display: flex;
+}
+.split-pane-wrap[data-side="main"] { grid-column: 1; }
+.split-pane-wrap[data-side="ref"] { grid-column: 3; }
+.split-pane-wrap > .history-pane { flex: 1 1 auto; min-width: 0; }
+
+/* 分屏里的 Ctrl+F：查找栏挂在当前列内部，绝不跨过中间分隔线 */
+.find-bar.find-bar-scoped {
+  position: absolute; top: 8px; right: 8px; left: auto;
+  z-index: 80; max-width: calc(100% - 16px); flex-wrap: wrap; justify-content: flex-end;
+}
+.find-bar.find-bar-scoped .find-input { width: auto; flex: 1 1 120px; min-width: 60px; }
+.find-bar.find-bar-scoped .find-count { min-width: 36px; }
+
+/* 由分裂按钮栏打开的浮层：挂在所属列内部（而不是盖住整个窗口） */
+.modal-mask.modal-mask-scoped {
+  position: absolute; inset: 0; z-index: 120; border-radius: 10px;
+}
+.modal-mask-scoped .modal {
+  width: min(760px, calc(100% - 24px)); max-width: calc(100% - 24px);
+  max-height: calc(100% - 24px);
+}
+
+/* 「附着参考会话」选择器 */
+.modal.attach-picker-modal {
+  display: flex; flex-direction: column; width: min(980px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+}
+.attach-picker-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.attach-picker-title { font-size: 16px; font-weight: 700; margin-right: auto; }
+.attach-picker-toggles { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.attach-picker-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-muted); white-space: nowrap; }
+.attach-picker-body { flex: 1 1 auto; min-height: 180px; overflow: auto; }
+.attach-picker-body .card-grid { grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 14px; }
+.attach-picker-body .agent-card { padding: 14px 16px; }
+.attach-picker-body .agent-card h3 { font-size: 16px; }
+.attach-picker-thread-wrap { background: var(--surface); border-radius: var(--radius); overflow: hidden; box-shadow: var(--shadow); }
+.attach-picker-agent-name { font-weight: 700; }
+.attach-picker-hint { font-size: 12px; color: var(--text-muted); margin: 4px 0 10px; line-height: 1.6; }
