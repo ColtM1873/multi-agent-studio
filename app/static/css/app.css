@@ -137,6 +137,10 @@ html[data-card-ribbon="0"] .agent-ribbons { display: none; }
 .card-btn-default { --c: var(--card-btn-default, var(--primary)); }
 .card-btn-hide { --c: var(--card-btn-hide, var(--primary)); }
 .card-btn-danger { --c: var(--card-btn-danger, var(--danger)); }
+/* 会话「重命名」按钮：默认黑框黑字白底（颜色可在进阶设置里调，白底固定），
+   不参与上面的卡片按钮配色 / solid 风格开关。 */
+.card-btn-rename { color: var(--thread-rename-color, #111111); border-color: var(--thread-rename-color, #111111); background: var(--surface); }
+.card-btn-rename:hover { color: var(--thread-rename-color, #111111); border-color: var(--thread-rename-color, #111111); background: var(--surface); }
 html[data-style-edit="solid"] .card-btn-edit,
 html[data-style-default="solid"] .card-btn-default,
 html[data-style-hide="solid"] .card-btn-hide,

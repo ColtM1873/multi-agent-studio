@@ -200,7 +200,6 @@ const I18N_EN = {
   "主Agent工作目录": "Main agent working directory",
   "文件工具": "File tools",
   "PDF 表格提取": "PDF table extraction",
-  "新会话名称：": "New conversation name:",
   "新建 / 编辑 multi-agent 时，空输入框显示灰色示例文字，帮助快速上手。": "When creating/editing a multi-agent, empty inputs show gray example text to help you get started.",
   "新建 multi-agent": "New multi-agent",
   "新建会话": "New conversation",
@@ -825,6 +824,28 @@ const I18N_EN = {
   "会话名称": "Session name",
   "快照名称不能为空": "Snapshot name cannot be empty",
   "已重命名": "Renamed",
+  // 会话显示名称（重命名 / 新建会话）相关文案。显示名称只存在本机，不动后端 thread 名。
+  "重命名会话": "Rename session",
+  "会话显示名称": "Session display name",
+  "会话显示名称不能为空": "Session display name cannot be empty",
+  "会话实际名称": "Actual session name",
+  "会话名称不能为空": "Session name cannot be empty",
+  "创建": "Create",
+  "创建后会以同名显示在会话列表里；之后可用「重命名」修改显示名称，实际名称与历史数据不会被改动。": "It will be shown under the same name in the session list; you can later change the display name with 'Rename' — the actual name and history stay untouched.",
+  "命名冲突": "Naming conflict",
+  "实际名称": "actual name",
+  "实际名称：{name}": "Actual name: {name}",
+  "实际名称（后端会话名）：": "Actual name (backend session name): ",
+  "重命名只改显示名称，不会改动会话历史与后端 thread 名。": "Renaming only changes the display name; the conversation history and the backend thread name are untouched.",
+  "修改会话的显示名称（不会改动后端会话名与历史）": "Change the session's display name (the backend session name and history are untouched)",
+  "名称「{name}」已经是一个已有会话的实际名称（后端 thread 名），那个会话现在也显示为「{name}」。": "The name '{name}' is already the actual name (backend thread name) of an existing session, and that session is displayed as '{name}' too.",
+  "名称「{name}」已经是一个已有会话的实际名称（后端 thread 名），那个会话现在显示为「{shown}」。": "The name '{name}' is already the actual name (backend thread name) of an existing session, which is currently displayed as '{shown}'.",
+  "名称「{name}」已经被另一个会话用作显示名称，它对应的实际名称是「{act}」。": "The name '{name}' is already used as the display name of another session, whose actual name is '{act}'.",
+  "命名冲突：显示名称「{name}」已经被另一个会话占用（那个会话的实际名称是「{act}」）。": "Naming conflict: the display name '{name}' is already taken by another session (whose actual name is '{act}').",
+  "显示重命名按钮": "Show rename button",
+  "开启后，会话列表里每个会话的「隐藏」按钮左侧会显示「重命名」按钮，可修改该会话的显示名称；显示名称只存在本机，不会改动后端 thread 名与历史数据。关闭后该按钮不再显示（已改好的显示名称仍然保留）。": "When enabled, a 'Rename' button appears to the left of 'Hide' for every session in the session list, letting you change that session's display name; display names are stored locally only and never change the backend thread name or history. When disabled, the button is hidden (display names you already set are kept).",
+  "重命名按钮颜色": "Rename button color",
+  "会话列表里「重命名」按钮的边框与文字颜色（底色固定为白色）。点击色块可自定义，默认黑色。仅在上面的「显示重命名按钮」开启时可见。": "Border and text color of the 'Rename' button in the session list (the background stays white). Click the swatch to customize; black by default. Only visible when 'Show rename button' above is enabled.",
   "等待确认…": "Awaiting confirmation…",
   "历史消息任意时间可编辑": "Edit any historical message",
   "开启编辑模式": "Enable edit mode",
@@ -1966,16 +1987,31 @@ function normalizeHexColor(v) {
 function applyExitEditColor(color) {
   document.documentElement.style.setProperty("--exit-edit-color", normalizeHexColor(color));
 }
+/* 会话列表「重命名」按钮的颜色（默认黑框黑字，白底固定）。
+   与上面的「退出编辑模式按钮颜色」同构：颜色存后端设置（进阶设置可调），这里写进 CSS 变量。 */
+const THREAD_RENAME_DEFAULT_COLOR = "#111111";
+function normalizeThreadRenameColor(v) {
+  const s = String(v || "").trim();
+  return /^#[0-9a-fA-F]{6}$/.test(s) ? s.toLowerCase() : THREAD_RENAME_DEFAULT_COLOR;
+}
+function applyThreadRenameColor(color) {
+  document.documentElement.style.setProperty(
+    "--thread-rename-color",
+    normalizeThreadRenameColor(color),
+  );
+}
 async function getSettings() {
   if (!settingsCache) {
     settingsCache = await api("/api/settings");
     applyExitEditColor(settingsCache.exit_edit_color);
+    applyThreadRenameColor(settingsCache.thread_rename_button_color);
   }
   return settingsCache;
 }
 async function saveSettings(s) {
   settingsCache = await api("/api/settings", { method: "PUT", body: JSON.stringify(s) });
   applyExitEditColor(settingsCache.exit_edit_color);
+  applyThreadRenameColor(settingsCache.thread_rename_button_color);
   return settingsCache;
 }
 
@@ -3398,7 +3434,7 @@ function updateSessionBallPanel() {
     const done = s.status === "completed";
     const statusText = done ? t("已经完工") : t("正在进行");
     return `<div class="session-ball-row ${done ? "done" : "running"}" data-a="${esc(s.agent_id)}" data-t="${esc(s.thread_id)}">
-      <span class="session-ball-row-name">@${esc(s.agent_name || s.agent_id)} - ${esc(s.thread_id)}</span>
+      <span class="session-ball-row-name">@${esc(s.agent_name || s.agent_id)} - ${esc(threadDisplayName(s.agent_id, s.thread_id))}</span>
       <span class="session-ball-row-state">${statusText}</span>
     </div>`;
   }).join("");
@@ -4817,6 +4853,14 @@ async function openAdvancedSettings() {
         <label class="toggle"><input type="checkbox" id="adv_msg_drawer_resize" ${s.msg_drawer_resizable !== false ? "checked" : ""}><span class="track"></span></label>
       </div>
       <div class="switch-row">
+        <span class="sw-label">✏️ ${t("显示重命名按钮")} <i class="info-icon">!<span class="tip">${t("开启后，会话列表里每个会话的「隐藏」按钮左侧会显示「重命名」按钮，可修改该会话的显示名称；显示名称只存在本机，不会改动后端 thread 名与历史数据。关闭后该按钮不再显示（已改好的显示名称仍然保留）。")}</span></i></span>
+        <label class="toggle"><input type="checkbox" id="adv_thread_rename" ${s.show_thread_rename_button !== false ? "checked" : ""}><span class="track"></span></label>
+      </div>
+      <div class="switch-row" id="adv_thread_rename_color_row" style="${s.show_thread_rename_button !== false ? "" : "display:none;"}">
+        <span class="sw-label">🎨 ${t("重命名按钮颜色")} <i class="info-icon">!<span class="tip">${t("会话列表里「重命名」按钮的边框与文字颜色（底色固定为白色）。点击色块可自定义，默认黑色。仅在上面的「显示重命名按钮」开启时可见。")}</span></i></span>
+        <span class="sw-inline"><input type="color" id="adv_thread_rename_color" value="${esc(normalizeThreadRenameColor(s.thread_rename_button_color))}"></span>
+      </div>
+      <div class="switch-row">
         <span class="sw-label">🎨 ${t("退出编辑模式按钮颜色")} <i class="info-icon">!<span class="tip">${t("进入编辑模式后，顶栏「退出编辑模式」按钮的边框与文字颜色（底色固定为白色）。点击色块可自定义，默认与编辑模式徽标一致的绿色。")}</span></i></span>
         <span class="sw-inline"><input type="color" id="adv_exit_edit_color" value="${esc(s.exit_edit_color || "#16a34a")}"></span>
       </div>
@@ -4839,6 +4883,14 @@ async function openAdvancedSettings() {
   mask.querySelector("#advCancel").onclick = () => { mask.remove(); openSettings(); };
   mask.querySelector("#advBrowserDelay").onclick = () => { mask.remove(); openBrowserDelaySettings(() => openAdvancedSettings()); };
   mask.querySelector("#advImportPrefs").onclick = async () => { mask.remove(); await importLocalPrefsFlow(); openAdvancedSettings(); };
+  // 「重命名按钮颜色」只在「显示重命名按钮」开启时才出现（关掉开关时不必配色）
+  const syncRenameColorRow = () => {
+    const on = mask.querySelector("#adv_thread_rename").checked;
+    const row = mask.querySelector("#adv_thread_rename_color_row");
+    if (row) row.style.display = on ? "" : "none";
+  };
+  mask.querySelector("#adv_thread_rename").addEventListener("change", syncRenameColorRow);
+  syncRenameColorRow();
   mask.querySelector("#advSave").onclick = async () => {
     try {
       const clamp01 = (v, def) => { const n = parseFloat(v); return Number.isFinite(n) ? Math.min(1, Math.max(0, n)) : def; };
@@ -4864,6 +4916,8 @@ async function openAdvancedSettings() {
         search_memory_threshold: clamp01(mask.querySelector("#adv_search_threshold").value, 0.5),
         attach_memory_threshold: clamp01(mask.querySelector("#adv_attach_threshold").value, 0.7),
         msg_drawer_resizable: mask.querySelector("#adv_msg_drawer_resize").checked,
+        show_thread_rename_button: mask.querySelector("#adv_thread_rename").checked,
+        thread_rename_button_color: normalizeThreadRenameColor(mask.querySelector("#adv_thread_rename_color").value),
         exit_edit_color: normalizeHexColor(mask.querySelector("#adv_exit_edit_color").value),
         common_prompt_preview_lines: clampInt(mask.querySelector("#adv_common_prompt_lines").value, 1, 50, 10),
       });
@@ -7255,6 +7309,146 @@ async function saveConfig(cfg, isNew, isDefault) {
   } catch (e) { toast(e.message, true); }
 }
 
+/* ================= 会话显示名称（每 multi-agent 一份「显示名称 → 实际名称」字典） =================
+   需求：给会话加重命名，但**不碰 checkpoint 数据库、也不动后端 thread 名**。
+   做法：每个 multi-agent 维护一份字典映射，存 localStorage（经 ui_prefs_bridge 落盘到
+   configs/ui_prefs.json，与「隐藏会话 / 卡片外观」同一条本机偏好通道）：
+       { "显示名称": "实际名称(thread_id)", ... }
+   约束（同一个 multi-agent 内）：
+     · 所有键（显示名称）不可重复 —— 字典本身的要求；
+     · 所有值（实际名称）不可重复 —— 后端 thread 名唯一；
+     · 键与值之间允许重名 —— {A: A} 合法，{A: B, B: D} 也合法。
+   没有登记过的会话（老会话 / 导入的会话）显示名称 = 实际名称（thread_id）。
+   新建会话时用户填的是「实际名称」，键自动跟值一致；重命名只改键。
+   任何冲突都用人话说明原因：用户只看得到显示名称，未必记得自己定义过的实际名称。 */
+const THREAD_ALIAS_PREFIX = "thread_alias_";
+
+function threadAliasKeyOf(agentId) { return THREAD_ALIAS_PREFIX + String(agentId || ""); }
+
+/** 读该 multi-agent 的映射（脏数据规整：键值都转字符串，空键 / 空值丢弃）。 */
+function threadAliasMap(agentId) {
+  const raw = loadJsonPref(threadAliasKeyOf(agentId), {});
+  const out = {};
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return out;
+  Object.keys(raw).forEach((disp) => {
+    const name = String(disp || "");
+    const act = String(raw[disp] == null ? "" : raw[disp]);
+    if (!name || !act) return;
+    out[name] = act;
+  });
+  return out;
+}
+
+/** 写该 multi-agent 的映射。属于关键状态，立即推一次后端（不等 250ms 防抖）。 */
+function saveThreadAliasMap(agentId, map) {
+  saveJsonPref(threadAliasKeyOf(agentId), map);
+  syncUiPrefNow(threadAliasKeyOf(agentId));
+}
+
+/** 丢掉「实际名称对应的会话已不存在」的条目（会话删除后释放名称）、重复的值（脏数据），
+    以及「显示名称与一个【未被改名】会话的实际名称撞车」的条目——后者只有一种来源：先改名
+    占用了某个名字，之后又导入了实际名称就叫这个名字的会话；这时列表里会出现两条同名会话。
+    注意不能一刀切：需求明确允许「键与值重名」，{A: B, B: D} 里键 B 就等于另一个条目的值 B，
+    但它对应的会话早已被改名成 A，列表里并不会出现两条同名会话，必须保留。
+    传 threads 全量列表（含隐藏会话）才清理；不传 = 只读取不清理。 */
+function pruneThreadAliasMap(agentId, threads) {
+  const map = threadAliasMap(agentId);
+  if (!Array.isArray(threads)) return map;
+  const ids = new Set(threads.map((th) => String(th.thread_id)));
+  const aliased = new Set(Object.values(map));   // 已有显示名称登记的会话（列表里不会用 thread_id 显示）
+  const seen = new Set();
+  const next = {};
+  let changed = false;
+  Object.keys(map).forEach((disp) => {
+    const act = map[disp];
+    // disp !== act：{A: A} 这种「显示名称 = 自己的实际名称」合法，不能被误删
+    const clashWithOtherActual = disp !== act && ids.has(disp) && !aliased.has(disp);
+    if (!ids.has(act) || seen.has(act) || clashWithOtherActual) { changed = true; return; }
+    seen.add(act);
+    next[disp] = act;
+  });
+  if (changed) saveThreadAliasMap(agentId, next);
+  return next;
+}
+
+/** 该会话的显示名称；没登记过就回退成实际名称（thread_id）本身。 */
+function threadDisplayName(agentId, threadId) {
+  const tid = String(threadId || "");
+  const map = threadAliasMap(agentId);
+  const hit = Object.keys(map).find((disp) => map[disp] === tid);
+  return hit || tid;
+}
+
+/** 列表渲染用的反查表 { 实际名称: 显示名称 }（一次读完，避免每行都读 localStorage）。 */
+function threadDisplayNameMap(agentId, threads) {
+  const map = pruneThreadAliasMap(agentId, threads);
+  const rev = {};
+  (threads || []).forEach((th) => { rev[String(th.thread_id)] = String(th.thread_id); });
+  Object.keys(map).forEach((disp) => { rev[map[disp]] = disp; });
+  return rev;
+}
+
+/** 登记一条映射（一个实际名称只保留一个显示名称：先摘掉旧键再写）。 */
+function threadAliasSet(agentId, display, actual) {
+  const map = threadAliasMap(agentId);
+  Object.keys(map).forEach((disp) => { if (map[disp] === actual) delete map[disp]; });
+  map[display] = actual;
+  saveThreadAliasMap(agentId, map);
+}
+
+/** 删除某会话的显示名称登记（会话被删除时调用，把名称释放出来）。 */
+function threadAliasRemove(agentId, actual) {
+  const map = threadAliasMap(agentId);
+  let changed = false;
+  Object.keys(map).forEach((disp) => {
+    if (map[disp] === actual) { delete map[disp]; changed = true; }
+  });
+  if (changed) saveThreadAliasMap(agentId, map);
+}
+
+/** 新建会话的命名校验：可用返回 ""，冲突返回人话原因（多行、只讲原因，不再带通用规则尾巴）。
+    新建时「键 = 值 = 用户输入」，所以输入既不能撞别人的显示名称，也不能撞别人的实际名称。 */
+function threadCreateConflict(agentId, name, threads) {
+  const map = pruneThreadAliasMap(agentId, threads);
+  const ids = new Set((threads || []).map((th) => String(th.thread_id)));
+  const actualTaken = ids.has(name);
+  const keyOwner = Object.prototype.hasOwnProperty.call(map, name) ? map[name] : null;
+  const shown = Object.keys(map).find((disp) => map[disp] === name) || name;
+
+  const reasons = [];
+  if (actualTaken) {
+    // 注意：这个句子里 {name} 出现两次，String.replace 只换第一处，必须全量替换
+    reasons.push(shown === name
+      ? t("名称「{name}」已经是一个已有会话的实际名称（后端 thread 名），那个会话现在也显示为「{name}」。").split("{name}").join(name)
+      : t("名称「{name}」已经是一个已有会话的实际名称（后端 thread 名），那个会话现在显示为「{shown}」。").replace("{name}", name).replace("{shown}", shown));
+  }
+  // 键冲突：这个字符串已经被别的会话用作显示名称（同一会话同时命中键与值时不重复说一遍）
+  if (keyOwner && !(actualTaken && keyOwner === name)) {
+    reasons.push(t("名称「{name}」已经被另一个会话用作显示名称，它对应的实际名称是「{act}」。").replace("{name}", name).replace("{act}", keyOwner));
+  }
+  return reasons.map((r) => "· " + r).join("\n");
+}
+
+/** 重命名的命名校验：只改显示名称（键），所以只检查「其它会话的显示名称」是否已占用。
+    重命名允许与某个会话的实际名称重名（这是需求明确允许的）。 */
+function threadRenameConflict(agentId, threadId, name, threads) {
+  const map = pruneThreadAliasMap(agentId, threads);
+  const tid = String(threadId || "");
+  const aliased = new Set(Object.values(map));
+  // 显示名称 → 实际名称：其它会话的显示名称（未登记的会话回退成自己的 thread_id）
+  const takenBy = new Map();
+  Object.keys(map).forEach((disp) => { if (map[disp] !== tid) takenBy.set(disp, map[disp]); });
+  (threads || []).forEach((th) => {
+    const id = String(th.thread_id);
+    if (id === tid || aliased.has(id) || takenBy.has(id)) return;
+    takenBy.set(id, id);
+  });
+  if (!takenBy.has(name)) return "";
+  const act = takenBy.get(name);
+  return t("命名冲突：显示名称「{name}」已经被另一个会话占用（那个会话的实际名称是「{act}」）。")
+    .replace("{name}", name).replace("{act}", act);
+}
+
 /* ================= 视图3：Thread 列表 ================= */
 // 渲染序号：每次进入 / 重绘会话列表都 +1。
 // 视图函数在 await 之后必须再用 alive() 确认一次——否则上一次（另一个 multi-agent）
@@ -7304,7 +7498,7 @@ async function renderThreadsView() {
         <div class="snapshot-list" id="snapshotList"><div class="muted">${t("加载中…")}</div></div>
       </div>
     </div>`;
-  $("#newThreadBtn").onclick = () => createNewThread();
+  $("#newThreadBtn").onclick = () => createNewThread(() => threads);
 
   // 加载会话列表。数据库服务可能还在启动（低配机器尤其慢），此时不要把一堆报错甩给用户，
   // 而是显示「正在启动，请稍候」并自动重试；就绪后无缝进入列表。
@@ -7357,8 +7551,14 @@ async function renderThreadsView() {
 
   // 导出会话：是否显示底部「导出会话」按钮由系统设置决定（默认开启）。
   // 选择态、已选会话都是**本视图的局部变量**：离开本页再进来自然回到普通界面（需求如此）。
+  // 同时读「是否显示会话重命名按钮」（进阶设置，默认开启）——它决定每行「隐藏」左边那个按钮。
   let exportOn = false;
-  try { const st = await getSettings(); exportOn = st.export_session_enabled !== false; }
+  let renameBtnOn = true;
+  try {
+    const st = await getSettings();
+    exportOn = st.export_session_enabled !== false;
+    renameBtnOn = st.show_thread_rename_button !== false;
+  }
   catch (e) { exportOn = false; }
   if (!alive()) return;
   let exportSelecting = false;
@@ -7475,11 +7675,13 @@ async function renderThreadsView() {
       return !hiddenSet.has(t.thread_id) || isSessionPending(info);
     });
     const hiddenCnt = threads.filter(t => hiddenSet.has(t.thread_id)).length;
+    // 每次重绘都重新读一次显示名称映射：重命名后原地重绘即可看到新名字。
+    const dispMap = threadDisplayNameMap(agentId, threads);
     updateThreadsFooter();
     if (!vis.length) {
       const msg = hiddenCnt ? t("所有会话均已隐藏") : t("暂无会话");
       $("#threadsBox").innerHTML = `<div class="empty"><div class="big">🧵</div>${msg}<br/><br/><button class="btn primary" id="nt2">+ ${t("新建会话")}</button></div>`;
-      const n = $("#nt2"); if (n) n.onclick = () => createNewThread();
+      const n = $("#nt2"); if (n) n.onclick = () => createNewThread(() => threads);
     } else {
       $("#threadsBox").innerHTML = `
         <div style="background:var(--surface);border-radius:var(--radius);overflow:hidden;box-shadow:var(--shadow);">
@@ -7509,14 +7711,25 @@ async function renderThreadsView() {
             const checkHtml = exportSelecting
               ? `<span class="export-check${picked ? " on" : ""}" role="checkbox" aria-checked="${picked ? "true" : "false"}">✓</span>`
               : "";
+            // 列表里显示的永远是「显示名称」（键）；实际名称（后端 thread 名）只在悬停提示里出现。
+            const dispName = dispMap[th.thread_id] || th.thread_id;
+            const actualTitle = dispName === th.thread_id
+              ? ""
+              : ` title="${esc(t("实际名称：{name}").replace("{name}", th.thread_id))}"`;
+            // 重命名按钮：黑框黑字白底，位置在「隐藏」左边（进阶设置里可整体隐藏）。
+            // 重命名只改本机显示名称、不碰后端，故会话运行中/待验收时也允许（不像隐藏/删除要置灰）。
+            const renameHtml = (!exportSelecting && renameBtnOn)
+              ? `<button class="btn card-btn card-btn-rename small" data-rename="${esc(th.thread_id)}" title="${t("修改会话的显示名称（不会改动后端会话名与历史）")}">${t("重命名")}</button>`
+              : "";
             const actionsHtml = exportSelecting ? "" : `
+              ${renameHtml}
               <button class="btn card-btn card-btn-hide small" data-hide="${esc(th.thread_id)}" ${locked ? "disabled" : ""} title="${lockTitle}">${hidden ? t("取消隐藏") : t("隐藏")}</button>
               <button class="btn card-btn card-btn-danger small" data-del="${esc(th.thread_id)}" ${locked ? "disabled" : ""} title="${lockTitle}">${t("删除")}</button>`;
             return `
             <div class="thread-row ${hidden ? "thread-hidden" : ""}${browserTheme ? " thread-browser-open" : ""}${exportSelecting ? " export-selecting" : ""}${picked ? " export-picked" : ""}" data-tid="${esc(th.thread_id)}"${browserTheme ? ` data-browser-open="1" data-browser-border="${browserBorder}" data-browser-accent="${browserAccent}"` : ""}${browserStyle ? ` style="${browserStyle}"` : ""}>
               ${checkHtml}
               ${browserTheme ? `<span class="thread-browser-dot" role="img" title="${esc(browserTitle)}" aria-label="${esc(browserTitle)}"></span>` : ""}
-              <span class="tid">${esc(th.thread_id)}</span>
+              <span class="tid"${actualTitle}>${esc(dispName)}</span>
               ${threadStateHtml(info)}
               <span class="meta"><small>${esc(cpText)}</small><small>${esc(th.last_updated || "")}</small>${hidden ? `<small class="hidden-tag">${t("已隐藏")}</small>` : ""}</span>
               ${actionsHtml}
@@ -7532,7 +7745,14 @@ async function renderThreadsView() {
         };
         const delBtn = row.querySelector("[data-del]");
         const hideBtn = row.querySelector("[data-hide]");
+        const renameBtn = row.querySelector("[data-rename]");
         if (delBtn && !delBtn.disabled) delBtn.onclick = (e) => { e.stopPropagation(); deleteThread(tid); };
+        if (renameBtn) renameBtn.onclick = (e) => {
+          e.stopPropagation();
+          openThreadRenameModal(agentId, tid, dispMap[tid] || tid, threads, () => {
+            if (alive()) drawThreadsBox();
+          });
+        };
         if (hideBtn && !hideBtn.disabled) hideBtn.onclick = (e) => {
           e.stopPropagation();
           if (hiddenSet.has(tid)) hiddenSet.delete(tid);
@@ -7694,23 +7914,196 @@ async function renderThreadsView() {
   };
   $("#snapshotClose").onclick = () => { snapPanel.style.display = "none"; };
 }
-async function createNewThread() {
-  const n = prompt(t("新会话名称："));
-  if (!n || !n.trim()) return;
-  const tid = n.trim();
-  // 先在后端登记会话，确保即使不发消息，退出后也仍在会话列表中
-  try {
-    await api(`/api/agents/${encodeURIComponent(S.agentId)}/threads`, {
-      method: "POST",
-      body: JSON.stringify({ thread_id: tid }),
+
+/* ── 新建会话：名称输入浮层 + 命名冲突浮层 ─────────────────────────────
+   需求：
+   · 新建会话填的是「实际名称」（后端 thread 名），显示名称随后自动跟值一致；
+   · 同一 multi-agent 下显示名称 / 实际名称都不可重复，冲突时只讲「为什么冲突」，不再附带通用规则；
+   · 冲突浮层两个按钮：「取消」（白底黑字）回到会话列表、「重试」（蓝底白字）关掉冲突浮层、
+     退回到名称输入浮层（名字留在输入框里）；
+   · 全程不用浏览器原生 prompt（原生弹窗会带上「127.0.0.1:8000」这种来源前缀，很莫名其妙）。 */
+
+/** 名称输入浮层：返回去除首尾空白的名称；用户取消返回 null。 */
+function askThreadName(prefill) {
+  return new Promise((resolve) => {
+    const mask = document.createElement("div");
+    mask.className = "modal-mask";
+    mask.innerHTML = `
+      <div class="modal" style="width:520px;" data-modal-key="threadCreate">
+        <h3>➕ ${t("新建会话")}</h3>
+        <div class="field full">
+          <label>${t("会话实际名称")}</label>
+          <input id="threadNameInput" type="text" maxlength="80" spellcheck="false" value="${esc(prefill || "")}">
+          <span class="hint">${t("创建后会以同名显示在会话列表里；之后可用「重命名」修改显示名称，实际名称与历史数据不会被改动。")}</span>
+        </div>
+        <div class="modal-actions">
+          <button class="btn" id="threadNameCancel">${t("取消")}</button>
+          <button class="btn primary" id="threadNameOk">${t("创建")}</button>
+        </div>
+      </div>`;
+    document.body.appendChild(mask);
+    const input = mask.querySelector("#threadNameInput");
+    let closed = false;
+    const done = (value) => {
+      if (closed) return;
+      closed = true;
+      mask.remove();
+      resolve(value);
+    };
+    const submit = () => {
+      const name = String(input.value || "").trim();
+      if (!name) { toast(t("会话名称不能为空"), true); return; }
+      done(name);
+    };
+    mask.querySelector("#threadNameCancel").onclick = () => done(null);
+    mask.querySelector("#threadNameOk").onclick = submit;
+    mask.addEventListener("click", (e) => { if (e.target === mask) done(null); });
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); submit(); }
+      else if (e.key === "Escape") { e.preventDefault(); done(null); }
     });
-  } catch (e) { toast(e.message, true); return; }
-  goChat(S.agentId, S.agentName, tid);
+    // 重试回来时把光标放到末尾（便于改一两个字符），首次打开则全选占位内容
+    requestAnimationFrame(() => {
+      try {
+        input.focus();
+        if (prefill) input.setSelectionRange(input.value.length, input.value.length);
+        else input.select();
+      } catch (e) { /* ignore */ }
+    });
+  });
+}
+
+/** 命名冲突浮层：只展示冲突原因。返回 "retry"（回到名称输入浮层）或 "cancel"（回到会话列表）。 */
+function askThreadNameConflict(reasonText) {
+  return new Promise((resolve) => {
+    const mask = document.createElement("div");
+    mask.className = "modal-mask";
+    mask.innerHTML = `
+      <div class="modal" style="width:520px;" data-modal-key="threadNameConflict">
+        <h3>⚠️ ${t("命名冲突")}</h3>
+        <div class="modal-body">${esc(reasonText)}</div>
+        <div class="modal-actions">
+          <button class="btn" id="threadConflictCancel">${t("取消")}</button>
+          <button class="btn primary" id="threadConflictRetry">${t("重试")}</button>
+        </div>
+      </div>`;
+    document.body.appendChild(mask);
+    let closed = false;
+    const done = (value) => {
+      if (closed) return;
+      closed = true;
+      mask.remove();
+      resolve(value);
+    };
+    mask.querySelector("#threadConflictCancel").onclick = () => done("cancel");
+    mask.querySelector("#threadConflictRetry").onclick = () => done("retry");
+    // 点浮层外的遮罩按「取消」处理（等价于回到会话列表）
+    mask.addEventListener("click", (e) => { if (e.target === mask) done("cancel"); });
+  });
+}
+
+/** 新建会话。
+ *  填入的是「实际名称」（后端 thread 名），显示名称（键）自动跟值一致；
+ *  冲突时弹「命名冲突」浮层：取消 → 回会话列表；重试 → 回到名称输入浮层。
+ *  getThreads：可选的取线程列表函数（会话列表视图里传自己已加载的列表，省一次请求）。 */
+async function createNewThread(getThreads) {
+  let prefill = "";
+  for (;;) {
+    const tid = await askThreadName(prefill);
+    if (!tid) return;               // 取消：留在会话列表界面
+    let threads = (typeof getThreads === "function") ? getThreads() : null;
+    if (!Array.isArray(threads)) {
+      try { threads = await api(`/api/agents/${encodeURIComponent(S.agentId)}/threads`); }
+      catch (e) { toast(e.message, true); return; }
+    }
+    const conflict = threadCreateConflict(S.agentId, tid, threads);
+    if (conflict) {
+      prefill = tid;                // 重试时把刚才的名字留在输入框里，便于改一两个字符
+      const choice = await askThreadNameConflict(conflict);
+      if (choice !== "retry") return;
+      continue;                     // 重试：关掉冲突浮层，退回名称输入浮层
+    }
+    // 先在后端登记会话，确保即使不发消息，退出后也仍在会话列表中
+    try {
+      await api(`/api/agents/${encodeURIComponent(S.agentId)}/threads`, {
+        method: "POST",
+        body: JSON.stringify({ thread_id: tid }),
+      });
+    } catch (e) { toast(e.message, true); return; }
+    // 键自动跟值一致：登记显示名称（新建会话一定满足 {值: 值}，不会和别的会话撞车）
+    threadAliasSet(S.agentId, tid, tid);
+    goChat(S.agentId, S.agentName, tid);
+    return;
+  }
 }
 async function deleteThread(tid) {
-  if (!confirm(`${t("确定删除会话")}「${tid}」？${t("此操作不可撤销。")}`)) return;
-  try { await api(`/api/agents/${encodeURIComponent(S.agentId)}/threads/${encodeURIComponent(tid)}`, { method: "DELETE" }); toast(t("已删除")); renderThreadsView(); }
+  const disp = threadDisplayName(S.agentId, tid);
+  const label = disp === tid ? tid : `${disp}（${t("实际名称")}：${tid}）`;
+  if (!confirm(`${t("确定删除会话")}「${label}」？${t("此操作不可撤销。")}`)) return;
+  try {
+    await api(`/api/agents/${encodeURIComponent(S.agentId)}/threads/${encodeURIComponent(tid)}`, { method: "DELETE" });
+    // 会话已删 → 释放它占用的显示名称（否则这个名字会被一条不存在的会话永久占着）
+    threadAliasRemove(S.agentId, tid);
+    toast(t("已删除"));
+    renderThreadsView();
+  }
   catch (e) { toast(e.message, true); }
+}
+
+/* ── 会话重命名弹窗 ───────────────────────────────────────────────
+   只改「显示名称」（本机映射的键），实际名称（后端 thread 名）与历史数据一律不动。
+   冲突说明直接显示在输入框下方，避免 toast 一闪而过看不清；保存后由调用方原地重绘列表。
+   threads 传会话列表（校验「显示名称是否已被别的会话占用」时用）。 */
+function openThreadRenameModal(agentId, threadId, currentDisplay, threads, after) {
+  const mask = document.createElement("div");
+  mask.className = "modal-mask";
+  mask.innerHTML = `
+    <div class="modal" style="width:520px;" data-modal-key="threadRename">
+      <h3>✏️ ${t("重命名会话")}</h3>
+      <div class="field full">
+        <label>${t("会话显示名称")}</label>
+        <input id="threadRenameInput" type="text" maxlength="80" spellcheck="false" value="${esc(currentDisplay)}">
+        <span class="hint">${t("实际名称（后端会话名）：")}<code>${esc(threadId)}</code></span>
+        <span class="hint">${t("重命名只改显示名称，不会改动会话历史与后端 thread 名。")}</span>
+        <div class="err-hint" id="threadRenameErr" style="display:none;"></div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn" id="threadRenameCancel">${t("取消")}</button>
+        <button class="btn primary" id="threadRenameSave">${t("保存")}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(mask);
+
+  const input = mask.querySelector("#threadRenameInput");
+  const errEl = mask.querySelector("#threadRenameErr");
+  const showErr = (text) => {
+    errEl.textContent = text;
+    errEl.style.display = text ? "" : "none";
+  };
+  let closed = false;
+  const close = () => { if (closed) return; closed = true; mask.remove(); };
+
+  mask.querySelector("#threadRenameCancel").onclick = close;
+  mask.addEventListener("click", (e) => { if (e.target === mask) close(); });
+
+  const save = () => {
+    const name = (input.value || "").trim();
+    if (!name) { showErr(t("会话显示名称不能为空")); return; }
+    if (name === currentDisplay) { close(); return; }
+    const conflict = threadRenameConflict(agentId, threadId, name, threads);
+    if (conflict) { showErr(conflict); return; }
+    threadAliasSet(agentId, name, threadId);
+    close();
+    toast(t("已重命名"));
+    if (after) after();
+  };
+  mask.querySelector("#threadRenameSave").onclick = save;
+  input.addEventListener("input", () => showErr(""));
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); save(); }
+    else if (e.key === "Escape") { e.preventDefault(); close(); }
+  });
+  requestAnimationFrame(() => { try { input.focus(); input.select(); } catch (e) { /* ignore */ } });
 }
 
 /* ================= 视图4：聊天 ================= */
@@ -9399,6 +9792,8 @@ function openAttachPicker() {
     if (!mask.isConnected || currentAgent !== agent) return;
     const hidden = hiddenThreads(agent.agent_id);
     const vis = threads.filter((th) => showHiddenThreads() || !hidden.has(th.thread_id));
+    // 会话名一律显示「显示名称」（重命名只改它；没登记过就是 thread_id 本身）
+    const dispMap = threadDisplayNameMap(agent.agent_id, threads);
     if (!vis.length) {
       bodyEl.innerHTML = `<div class="empty"><div class="big">🧵</div>${t("暂无会话")}</div>`;
       return;
@@ -9411,7 +9806,7 @@ function openAttachPicker() {
         const isCurrent = agent.agent_id === S.agentId && th.thread_id === S.threadId;
         const cpText = th.checkpoints ? `${th.checkpoints} checkpoints` : t("未发送消息");
         return `<div class="thread-row ${isHidden ? "thread-hidden" : ""}" data-tid="${esc(th.thread_id)}">
-          <span class="tid">${esc(th.thread_id)}</span>
+          <span class="tid">${esc(dispMap[th.thread_id] || th.thread_id)}</span>
           ${isCurrent ? `<span class="hidden-tag">${t("当前会话")}</span>` : ""}
           ${stateHtml}
           <span class="meta"><small>${esc(cpText)}</small><small>${esc(th.last_updated || "")}</small>${isHidden ? `<small class="hidden-tag">${t("已隐藏")}</small>` : ""}</span>
@@ -9528,7 +9923,7 @@ async function renderChatView() {
   view.innerHTML = `
     <div class="chat-head">
       <div class="chat-head-left">
-        <span class="thread-name">🧵 ${esc(S.threadId)}</span>
+        <span class="thread-name">🧵 ${esc(threadDisplayName(S.agentId, S.threadId))}</span>
         <span class="muted">（${esc(S.agentName)}）</span>
       </div>
       <div class="chat-head-right">
@@ -9701,7 +10096,7 @@ async function renderChatView() {
     const refAgentLabel = (refCfg && refCfg.name) || attachEntry.agentName || attachEntry.agentId;
     refHead.innerHTML = `
       <div class="split-head-left">
-        <span class="thread-name">🧵 ${esc(attachEntry.threadId)}</span>
+        <span class="thread-name">🧵 ${esc(threadDisplayName(attachEntry.agentId, attachEntry.threadId))}</span>
         <span class="muted">（${esc(refAgentLabel)}）</span>
       </div>
       <div class="split-head-right">

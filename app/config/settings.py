@@ -176,6 +176,14 @@ class Settings(BaseModel):
     # 前面补上固定长前缀（见 app/services/session_archive.py），因此**用户只需记住这个
     # 原始密码**，导入时输入同样的原文即可。
     export_session_password: str = ""
+    # 会话列表是否显示「重命名」按钮（默认开启）。开启后，每个会话的「隐藏」按钮左侧
+    # 多一个「重命名」按钮，用来修改该会话的**显示名称**——显示名称只存在本机
+    # （localStorage，经 ui_prefs_bridge 落盘到 configs/ui_prefs.json），不改数据库、
+    # 也不改后端 thread 名，故纯前端显示开关，不参与图编译，无需 invalidate_all。
+    show_thread_rename_button: bool = True
+    # 「重命名」按钮的边框与文字颜色（底色固定白色）。默认近黑色；纯前端样式设置，
+    # 不参与图编译，无需 invalidate_all。进阶设置里仅在「显示重命名按钮」开启时可见。
+    thread_rename_button_color: str = "#111111"
     # 历史消息编辑：总开关（默认开启）
     edit_mode_enabled: bool = True
     # 历史消息编辑：是否允许编辑任意久远的历史消息（默认只编辑最新一轮对话）
