@@ -3469,7 +3469,7 @@ function bindBack(cb) { const b = $("#backBtn"); if (b) b.onclick = cb; }
 /* ================= 视图调度 ================= */
 function render() {
   flushCurrentDraft();
-  if (findState.open) findClose();
+  findCloseAll();
   // 让尚未完成的 renderChatView（尤其是分屏双配置/历史请求）失效
   chatViewSeq++;
   flushChatScrollAnchors();
@@ -9435,7 +9435,7 @@ async function renderChatView() {
   let refColumnReady = false;
   const viewToken = ++chatViewSeq;
   // 直接重渲染（如切换子会话）也要先清掉列内查找栏/高亮，否则会残留在旧 DOM 的引用上。
-  if (findState.open) findClose();
+  findCloseAll();
   modalGeomScope = "";
 
   // 直接重渲染（如切换子会话）也要先解绑旧视图，避免 SessionStream 仍指向已被替换的 DOM。
@@ -9663,10 +9663,11 @@ async function renderChatView() {
     mainHead.addEventListener("pointerdown", () => { chatHoverSide = "main"; }, true);
     const mainHeadRight = document.createElement("div");
     mainHeadRight.className = "split-head-right";
-    ["msgDirBtn", "subgraphSel"].forEach((id) => {
-      const el = document.getElementById(id);
-      if (el) mainHeadRight.appendChild(el);
-    });
+    // 按钮顺序：主会话下拉 →（必要时）记忆库 → 删除全部历史 → 主动全量总结 → 消息目录。
+    // 「消息目录」必须留在按钮组最后：列被压窄、按钮换行后它仍落在最右边，
+    // 而消息目录抽屉的右缘正是以该按钮的右缘为锚点的。
+    const selHeadEl = document.getElementById("subgraphSel");
+    if (selHeadEl) mainHeadRight.appendChild(selHeadEl);
     // 记忆命名空间相同：记忆库按钮保持合并（留在顶栏）；不同：各列一个。
     if (!sameStoreNs) {
       const memBtn = $("#memoryStoreBtn");
@@ -9676,11 +9677,14 @@ async function renderChatView() {
       const el = document.getElementById(id);
       if (el) mainHeadRight.appendChild(el);
     });
+    const msgDirHeadEl = document.getElementById("msgDirBtn");
+    if (msgDirHeadEl) mainHeadRight.appendChild(msgDirHeadEl);
     mainHead.appendChild(mainHeadLeft);
     mainHead.appendChild(mainHeadRight);
     splitEl.appendChild(mainHead);
 
-    // 参考会话分裂按钮栏
+    // 参考会话分裂按钮栏。注意：「✏️ 编辑模式」绿色徽标只在合并栏里出现一份
+    // （由 updateSplitEditBar 统一刷新），这里不再重复显示，避免破坏左右对称。
     const refHead = document.createElement("div");
     refHead.className = "split-head";
     refHead.dataset.side = "ref";
@@ -9692,10 +9696,9 @@ async function renderChatView() {
       </div>
       <div class="split-head-right">
         <span class="status-indicator" id="refStatusInd"></span>
-        <span class="edit-mode-badge" id="refEditModeBadge" style="display:none;">✏️ ${t("编辑模式")}</span>
-        <button class="btn small" id="refMsgDirBtn" style="position:relative;">☰ ${t("消息目录")}</button>
         <select id="refSubgraphSel" class="btn small" style="max-width:220px;${refHasSubs ? "" : "display:none;"}"><option value="">${t("主会话")}</option></select>
         ${!sameStoreNs ? `<button class="btn small" id="refMemoryStoreBtn" title="${t("查看/编辑记忆库")}">🧠 ${t("查看/编辑记忆库")}</button>` : ""}
+        <button class="btn small" id="refMsgDirBtn" style="position:relative;">☰ ${t("消息目录")}</button>
       </div>`;
     refHead.addEventListener("mouseover", () => { chatHoverSide = "ref"; });
     refHead.addEventListener("pointerdown", () => { chatHoverSide = "ref"; }, true);
@@ -10586,7 +10589,8 @@ async function renderChatView() {
     refEditor = createHistoryEditor({
       historyEl: refHistoryEl,
       editBtn: null,
-      badgeEl: $("#refEditModeBadge"),
+      // 编辑模式徽标只在合并栏出现一份（updateSplitEditBar 统一刷新），参考列不再自带。
+      badgeEl: null,
       scopeKey: () => `chat:${refThreadId}`,
       getSettings: () => settingsCache || {},
       fetchMessages: fetchRefRawMessagesForEdit,
@@ -12386,41 +12390,67 @@ document.addEventListener("click", (e) => {
 /* ================= Ctrl+F 页内查找（WebView2 无原生查找栏，自建） =================
    套进 WebView2 后浏览器自带的 Ctrl+F 查找栏没有了，这里用 CSS Custom Highlight
    API 实现页内查找：不修改 DOM（对 SPA/流式内容安全），只加高亮层。 */
-const findState = { open: false, matches: [], idx: -1, input: null, count: null, bar: null, scopeEl: null };
+/* 分屏下左右两列各自持有一条**独立**查找栏：在一列里开始查找不会关掉另一列的
+   查找栏，两列可以同时保持不同的搜索词；关闭只由各自查找栏上的 ×（或 Esc /
+   切视图）触发。单会话模式沿用原来的「整页查找」一条。 */
+const FIND_STATE_KEYS = ["single", "main", "ref"];
+function newFindState(key) {
+  return { key, open: false, matches: [], idx: -1, input: null, count: null, bar: null, scopeEl: null };
+}
+const findStates = {
+  single: newFindState("single"),
+  main: newFindState("main"),
+  ref: newFindState("ref"),
+};
+// 最近一次交互的查找栏：橙色「当前命中」只画在这一栏。
+let findActiveKey = null;
+function findStateByInput(el) {
+  if (!el) return null;
+  return FIND_STATE_KEYS.map((k) => findStates[k]).find((st) => st.open && st.input === el) || null;
+}
+function findStateByBar(el) {
+  if (!el) return null;
+  return FIND_STATE_KEYS.map((k) => findStates[k]).find((st) => st.open && st.bar && st.bar.contains(el)) || null;
+}
 
-function findEnsureBar(scopeEl) {
+function findEnsureBar(st, scopeEl) {
   // 分屏时查找栏必须挂在某一列内部（不越过中间分隔线）；单会话仍挂 body。
-  if (findState.bar && findState.bar.parentElement === (scopeEl || document.body)) return;
-  if (findState.bar) {
-    try { findState.bar.remove(); } catch (e) { /* ignore */ }
-    findState.bar = null;
-    findState.input = null;
-    findState.count = null;
+  const parent = scopeEl || document.body;
+  if (st.bar && st.bar.parentElement === parent) return st;
+  if (st.bar) {
+    try { st.bar.remove(); } catch (e) { /* ignore */ }
+    st.bar = null;
+    st.input = null;
+    st.count = null;
   }
   const bar = document.createElement("div");
-  bar.id = "findBar";
+  bar.id = st.key === "single" ? "findBar" : `findBar-${st.key}`;
   bar.className = "find-bar" + (scopeEl ? " find-bar-scoped" : "");
+  bar.dataset.findScope = st.key;
   bar.style.display = "none";
   bar.innerHTML = `
-    <input id="findInput" class="find-input" type="text" placeholder="${esc(t("查找"))}" />
-    <span id="findCount" class="find-count"></span>
-    <button id="findPrev" class="find-btn" title="${esc(t("上一个"))}" aria-label="${esc(t("上一个"))}">↑</button>
-    <button id="findNext" class="find-btn" title="${esc(t("下一个"))}" aria-label="${esc(t("下一个"))}">↓</button>
-    <button id="findClose" class="find-btn" title="${esc(t("关闭"))}" aria-label="${esc(t("关闭"))}">×</button>`;
-  (scopeEl || document.body).appendChild(bar);
-  const input = bar.querySelector("#findInput");
-  findState.bar = bar;
-  findState.scopeEl = scopeEl || null;
-  findState.input = input;
-  findState.count = bar.querySelector("#findCount");
-  bar.querySelector("#findPrev").onclick = () => findMove(-1);
-  bar.querySelector("#findNext").onclick = () => findMove(1);
-  bar.querySelector("#findClose").onclick = () => findClose();
-  input.oninput = () => findSearchReset();
+    <input class="find-input" type="text" placeholder="${esc(t("查找"))}" />
+    <span class="find-count"></span>
+    <button type="button" class="find-btn find-prev" title="${esc(t("上一个"))}" aria-label="${esc(t("上一个"))}">↑</button>
+    <button type="button" class="find-btn find-next" title="${esc(t("下一个"))}" aria-label="${esc(t("下一个"))}">↓</button>
+    <button type="button" class="find-btn find-close" title="${esc(t("关闭"))}" aria-label="${esc(t("关闭"))}">×</button>`;
+  parent.appendChild(bar);
+  const input = bar.querySelector(".find-input");
+  st.bar = bar;
+  st.scopeEl = scopeEl || null;
+  st.input = input;
+  st.count = bar.querySelector(".find-count");
+  if (st.key === "single") { input.id = "findInput"; st.count.id = "findCount"; }
+  bar.querySelector(".find-prev").onclick = () => { findActiveKey = st.key; findMove(st, -1); };
+  bar.querySelector(".find-next").onclick = () => { findActiveKey = st.key; findMove(st, 1); };
+  // 关闭只作用于本查找栏：另一列的查找栏与搜索词保持不变。
+  bar.querySelector(".find-close").onclick = () => findClose(st);
+  input.oninput = () => { findActiveKey = st.key; findSearchReset(st); };
   input.onkeydown = (e) => {
-    if (e.key === "Enter") { e.preventDefault(); findMove(e.shiftKey ? -1 : 1); }
-    else if (e.key === "Escape") { e.preventDefault(); findClose(); }
+    if (e.key === "Enter") { e.preventDefault(); findActiveKey = st.key; findMove(st, e.shiftKey ? -1 : 1); }
+    else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); findClose(st); }
   };
+  return st;
 }
 
 function findCollect(query, root) {
@@ -12433,7 +12463,7 @@ function findCollect(query, root) {
       const text = node.nodeValue;
       if (!text || !text.trim()) return NodeFilter.FILTER_REJECT;
       const p = node.parentElement;
-      if (!p || p.closest("#findBar") || p.closest("script,style,noscript")) return NodeFilter.FILTER_REJECT;
+      if (!p || p.closest(".find-bar") || p.closest("script,style,noscript")) return NodeFilter.FILTER_REJECT;
       // 排除"存在但不绘制"的文本，否则会成幽灵匹配——计数里有，却既不跳转也无高亮：
       //  - KaTeX 的 .katex-mathml 是 clip:rect(1px…)+绝对定位的隐藏注解（含原始 LaTeX）；
       //  - display:none 的文本没有布局盒（getClientRects 为空）；
@@ -12463,27 +12493,35 @@ function findCollect(query, root) {
 
 function findPaint() {
   if (typeof Highlight === "undefined" || !window.CSS || !CSS.highlights) return;
+  // 所有打开着的查找栏命中都高亮（两列可同时高亮不同搜索词）；
+  // 橙色「当前命中」只属于最近交互的那一栏。
   const all = new Highlight();
-  findState.matches.forEach((r) => all.add(r));
+  FIND_STATE_KEYS.forEach((k) => {
+    const st = findStates[k];
+    if (!st.open) return;
+    st.matches.forEach((r) => all.add(r));
+  });
   CSS.highlights.set("studio-find-match", all);
-  if (findState.idx >= 0 && findState.matches[findState.idx]) {
+  const curState = findActiveKey ? findStates[findActiveKey] : null;
+  const curRange = curState && curState.open ? curState.matches[curState.idx] : null;
+  if (curRange) {
     const cur = new Highlight();
-    cur.add(findState.matches[findState.idx]);
+    cur.add(curRange);
     CSS.highlights.set("studio-find-current", cur);
   } else if (CSS.highlights.has("studio-find-current")) {
     CSS.highlights.delete("studio-find-current");
   }
 }
 
-function findUpdateCount() {
-  if (!findState.count) return;
-  findState.count.textContent = findState.matches.length
-    ? (findState.idx + 1) + "/" + findState.matches.length
-    : (findState.input && findState.input.value ? t("无结果") : "");
+function findUpdateCount(st) {
+  if (!st.count) return;
+  st.count.textContent = st.matches.length
+    ? (st.idx + 1) + "/" + st.matches.length
+    : (st.input && st.input.value ? t("无结果") : "");
 }
 
-function findScrollToCurrent() {
-  const r = findState.matches[findState.idx];
+function findScrollToCurrent(st) {
+  const r = st.matches[st.idx];
   if (!r) return;
   try {
     const n = r.startContainer;
@@ -12526,67 +12564,105 @@ function findScrollToCurrent() {
   } catch (e) {}
 }
 
-function findSearchReset() {
-  findState.matches = findCollect(findState.input.value, findState.scopeEl);
-  findState.idx = findState.matches.length ? 0 : -1;
+function findSearchReset(st) {
+  st.matches = findCollect(st.input ? st.input.value : "", st.scopeEl);
+  st.idx = st.matches.length ? 0 : -1;
   findPaint();
-  if (findState.idx >= 0) findScrollToCurrent();
-  findUpdateCount();
+  if (st.idx >= 0) findScrollToCurrent(st);
+  findUpdateCount(st);
 }
 
-function findMove(step) {
-  findState.matches = findCollect(findState.input.value, findState.scopeEl);
-  if (!findState.matches.length) {
-    findState.idx = -1;
+function findMove(st, step) {
+  st.matches = findCollect(st.input ? st.input.value : "", st.scopeEl);
+  if (!st.matches.length) {
+    st.idx = -1;
     findPaint();
-    findUpdateCount();
+    findUpdateCount(st);
     return;
   }
-  if (findState.idx < 0 || findState.idx >= findState.matches.length) {
-    findState.idx = step > 0 ? 0 : findState.matches.length - 1;
+  if (st.idx < 0 || st.idx >= st.matches.length) {
+    st.idx = step > 0 ? 0 : st.matches.length - 1;
   } else {
-    findState.idx = (findState.idx + step + findState.matches.length) % findState.matches.length;
+    st.idx = (st.idx + step + st.matches.length) % st.matches.length;
   }
   findPaint();
-  findScrollToCurrent();
-  findUpdateCount();
+  findScrollToCurrent(st);
+  findUpdateCount(st);
 }
 
 function findOpen() {
   // 分屏时以「鼠标/光标当前停在哪一列」为查找范围（chatHoverSide 由列容器上的
-  // pointerdown/mouseover 维护）；单会话仍查找整个页面。
+  // pointerdown/mouseover 维护），每一列有自己的查找栏；单会话仍查找整个页面。
+  let key = "single";
   let scopeEl = null;
   if (chatSplitScopes) {
-    const sc = chatSplitScopes[chatHoverSide] || chatSplitScopes.main;
-    scopeEl = (sc && sc.rootEl) || null;
+    key = (chatHoverSide === "ref" && chatSplitScopes.ref) ? "ref" : "main";
+    scopeEl = (chatSplitScopes[key] && chatSplitScopes[key].rootEl) || null;
   }
-  findEnsureBar(scopeEl);
-  const bar = findState.bar;
+  const st = findEnsureBar(findStates[key], scopeEl);
+  const bar = st.bar;
   if (!bar) return;
   bar.style.display = "flex";
-  findState.open = true;
-  const sel = window.getSelection ? (window.getSelection().toString() || "") : "";
-  if (sel && sel.length <= 100) findState.input.value = sel.trim();
-  findState.input.focus();
-  findState.input.select();
-  findSearchReset();
+  st.open = true;
+  findActiveKey = key;
+  // 用选中文字预填（只认本列内的选区，避免把另一列选中的文字带过来）。
+  let selText = "";
+  try {
+    const selection = window.getSelection ? window.getSelection() : null;
+    const text = selection ? (selection.toString() || "") : "";
+    if (text && text.length <= 100) {
+      if (!scopeEl) {
+        selText = text.trim();
+      } else {
+        const node = selection.anchorNode;
+        const el = node && (node.nodeType === 1 ? node : node.parentElement);
+        if (el && scopeEl.contains(el)) selText = text.trim();
+      }
+    }
+  } catch (e) { selText = ""; }
+  if (selText) st.input.value = selText;
+  st.input.focus();
+  st.input.select();
+  findSearchReset(st);
 }
 
-function findClose() {
-  findState.open = false;
-  if (findState.bar) {
-    findState.bar.style.display = "none";
+function findClose(st) {
+  if (!st) return;
+  st.open = false;
+  if (st.bar) {
+    st.bar.style.display = "none";
     // 作用域查找栏挂在列里，切视图/关列后必须真正移除并清引用，否则下次会操作已脱离文档的输入框。
-    if (findState.scopeEl) {
-      try { findState.bar.remove(); } catch (e) { /* ignore */ }
-      findState.bar = null;
-      findState.input = null;
-      findState.count = null;
+    if (st.scopeEl) {
+      try { st.bar.remove(); } catch (e) { /* ignore */ }
+      st.bar = null;
+      st.input = null;
+      st.count = null;
     }
   }
-  findState.scopeEl = null;
-  findState.matches = [];
-  findState.idx = -1;
+  st.scopeEl = null;
+  st.matches = [];
+  st.idx = -1;
+  if (findActiveKey === st.key) {
+    // 橙色当前命中转交给另一条仍打开的查找栏（如果有）。
+    findActiveKey = FIND_STATE_KEYS.find((k) => k !== st.key && findStates[k].open) || null;
+  }
+  findPaint();
+}
+
+// 切视图 / 重渲染时一次清掉所有列的查找栏与高亮（旧 DOM 里的 Range 已失效）。
+function findCloseAll() {
+  findActiveKey = null;
+  FIND_STATE_KEYS.forEach((k) => {
+    const st = findStates[k];
+    st.open = false;
+    if (st.bar) { try { st.bar.remove(); } catch (e) { /* ignore */ } }
+    st.bar = null;
+    st.input = null;
+    st.count = null;
+    st.scopeEl = null;
+    st.matches = [];
+    st.idx = -1;
+  });
   if (window.CSS && CSS.highlights) {
     CSS.highlights.delete("studio-find-match");
     CSS.highlights.delete("studio-find-current");
@@ -12600,14 +12676,23 @@ document.addEventListener("keydown", (e) => {
     findOpen();
     return;
   }
-  if (e.key === "Escape" && findState.open) {
-    e.preventDefault();
-    findClose();
+  if (e.key === "Escape") {
+    // 先关掉「焦点所在」的那一条；焦点不在查找栏里时关掉最近交互的那一条。
+    const target = findStateByBar(document.activeElement)
+      || (findActiveKey ? findStates[findActiveKey] : null);
+    if (target && target.open) {
+      e.preventDefault();
+      findClose(target);
+    }
     return;
   }
-  if (findState.open && findState.input && document.activeElement === findState.input && e.key === "F3") {
-    e.preventDefault();
-    findMove(e.shiftKey ? -1 : 1);
+  if (e.key === "F3") {
+    const st = findStateByInput(document.activeElement);
+    if (st) {
+      e.preventDefault();
+      findActiveKey = st.key;
+      findMove(st, e.shiftKey ? -1 : 1);
+    }
   }
 });
 

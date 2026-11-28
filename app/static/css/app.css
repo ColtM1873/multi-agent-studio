@@ -1442,10 +1442,12 @@ body.msg-drawer-resizing-bottom { cursor: row-resize; }
 }
 .split-head .muted { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 180px; }
 /* 极窄列（分屏 2:8）下把「会话名」与按钮分成上下两行：
-   否则右侧按钮组的 flex-end 对齐会把超宽行向左溢到会话名上，产生重叠。 */
+   否则右侧按钮组的 flex-end 对齐会把超宽行向左溢到会话名上，产生重叠。
+   窄列里会话名保持左对齐，按钮组仍然右对齐——「消息目录」永远在按钮组最后，
+   这样按钮换行后它无论如何都落在最右边（消息目录抽屉的右缘以它为锚点）。 */
 .split-head.narrow { flex-wrap: wrap; align-items: flex-start; }
 .split-head.narrow .split-head-left { flex: 0 0 100%; }
-.split-head.narrow .split-head-right { flex: 1 1 100%; justify-content: flex-start; }
+.split-head.narrow .split-head-right { flex: 1 1 100%; justify-content: flex-end; }
 .split-head .status-indicator { font-size: 12px; }
 .split-divider {
   grid-column: 2; grid-row: 1 / 3; position: relative; z-index: 6;
