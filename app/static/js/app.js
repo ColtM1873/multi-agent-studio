@@ -160,6 +160,10 @@ const I18N_EN = {
   "取消": "Cancel",
   "返回": "Back",
   "本次Agent循环失败/被中断，是否将 原发送信息回填？": "This agent run failed or was interrupted. Restore the original sent message?",
+  // 失败回填气泡里的补充提醒。只有后端只读确认了「checkpoint 尾部就是那条还没被回复的
+  // 用户消息」时才会显示：此时直接重发原文是安全的——半截 AIMessage 从未落库，重发时
+  // 主图入口 we_dont_want_unresponded_human_msg 会自动削掉尾部连续未回复的旧 HumanMessage。
+  "可以考虑在网络稳定之后，直接原样重发。\n程序会自动清除 助手 发到一半被截断的消息，以及你之前发送的 没有被完整回复的消息。": "You can just resend the exact same message once your network is stable.\nThe program will automatically clear the assistant reply that was cut off halfway, and your earlier message that never got a complete reply.",
   "回填": "Restore",
   "丢弃": "Discard",
   "可增删": "Can add/remove",
@@ -8227,19 +8231,24 @@ window.addEventListener("visibilitychange", () => { if (document.visibilityState
    旧闭包 showFailBubble 显示的是新视图的气泡元素，而新视图按钮的 onclick 读的是
    新闭包里的 null —— 点 ✓ 会静默无效（真机故障：气泡弹出但回填不生效）。
    因此挂起项必须放模块级，并按「所属会话」绑定；取元素一律现查 DOM。 */
-let pendingFailMsg = null; // { agentId, threadId, text }
+let pendingFailMsg = null; // { agentId, threadId, text, resendSafe }
 
-function showFailBubble(msg, scope) {
+function showFailBubble(msg, scope, opts) {
   const text = msg == null ? "" : String(msg);
   const agentId = scope ? scope.agentId : S.agentId;
   const threadId = scope ? scope.threadId : S.threadId;
+  // resendSafe：后端只读确认过「checkpoint 尾部就是这条还没被回复的用户消息」。
+  // 只有这时才显示「可以直接原样重发、程序会自动去重」的补充说明，避免给出错误保证。
+  const resendSafe = !!(opts && opts.resendSafe);
   // 没有可回填的正文（例如只发了注入内容）：不要弹一个点了没反应的 ✓。
   if (!text.trim()) { hideFailBubble(); return; }
-  pendingFailMsg = { agentId, threadId, text };
+  pendingFailMsg = { agentId, threadId, text, resendSafe };
   const b = $("#failBubble");
   // 当前不在「出事的那条会话」里（切到了别的会话 / 别的视图）：先留着，
   // 等用户重新进入该会话时由 renderChatView 补显。
   if (!b || S.view !== "chat" || S.agentId !== agentId || S.threadId !== threadId) return;
+  const note = $("#failBubbleNote");
+  if (note) note.classList.toggle("show", resendSafe);
   const pane = $("#inputPane");
   b.style.bottom = (pane ? pane.offsetHeight + 10 : 160) + "px";
   b.style.display = "flex";
@@ -9585,6 +9594,7 @@ async function renderChatView() {
       <div id="doneBubble" class="done-bubble done-bubble-float" style="display:none;"></div>
       <div id="failBubble" class="fail-bubble fail-bubble-float" style="display:none;">
         <div class="fail-bubble-text">${t("本次Agent循环失败/被中断，是否将 原发送信息回填？")}</div>
+        <div class="fail-bubble-note" id="failBubbleNote">${t("可以考虑在网络稳定之后，直接原样重发。\n程序会自动清除 助手 发到一半被截断的消息，以及你之前发送的 没有被完整回复的消息。")}</div>
         <div class="fail-bubble-actions">
           <button type="button" class="fail-bubble-btn fail-bubble-cancel" id="failCancelBtn" title="${t("丢弃")}">✗</button>
           <button type="button" class="fail-bubble-btn fail-bubble-restore" id="failRestoreBtn" title="${t("回填")}">✓</button>
@@ -10934,7 +10944,10 @@ async function renderChatView() {
     } else {
       // 真正的失败（连接断开 / 后端 error）：气泡提示是否回填原发送信息。
       // 软取消不再走这里（会正常收到 done）。
-      showFailBubble(userText, sendScope);
+      // resendSafe 来自后端 error 事件（只读确认 checkpoint 尾部就是这条还没被回复的
+      // 用户消息）：为真时气泡里补一句「可以直接原样重发、程序会自动去重」，
+      // 免得用户怕消息重复而不敢重发。
+      showFailBubble(userText, sendScope, { resendSafe: stream.resendSafe });
     }
   }
 
@@ -11128,7 +11141,8 @@ async function renderChatView() {
   // 失败发生在别的视图里（用户切走又切回）：回到出事的那条会话时把气泡补显出来，
   // 否则这条「可回填」的提示会随着旧视图一起消失。
   if (pendingFailMsg && pendingFailMsg.agentId === S.agentId && pendingFailMsg.threadId === S.threadId) {
-    showFailBubble(pendingFailMsg.text, { agentId: S.agentId, threadId: S.threadId });
+    showFailBubble(pendingFailMsg.text, { agentId: S.agentId, threadId: S.threadId },
+      { resendSafe: pendingFailMsg.resendSafe });
   }
 
   // 把本会话的持久流绑定到当前 DOM：若它仍在后台运行，会在这里接回当前内容；
@@ -11555,6 +11569,9 @@ class SessionStream {
     this.endReason = "";
     this.accepted = true;
     this.backfill = false;
+    // 本轮 error 事件是否带 resend_safe（后端只读确认 checkpoint 尾部是未回复的用户消息）。
+    // 供 send() 的失败分支决定要不要在回填气泡里补「可以直接重发」的说明。
+    this.resendSafe = false;
     this.stopping = false;
     this.phase = "";
     this.historyMarkdown = "";
@@ -11633,6 +11650,7 @@ class SessionStream {
     this.endReason = "";
     this.accepted = false;
     this.backfill = false;
+    this.resendSafe = false;
     this.stopping = false;
     this.phase = "";
     this.historyMarkdown = "";
@@ -11801,6 +11819,8 @@ class SessionStream {
 
   async sendCommand(command) {
     this.lastCommandError = "";
+    // 上一轮的「可放心重发」标记不能漏到这一轮：等本轮 error 事件再重新置位。
+    this.resendSafe = false;
     this._commandPromise = new Promise((resolve) => { this._commandResolve = resolve; });
     this._startingCommand = true;
     const attached = await this.connect();
@@ -12115,6 +12135,10 @@ class SessionStream {
         // false，光靠流式区那行 ⚠️ 用户经常看不到（尤其接完手就清 DOM），
         // 失败原因不能就这么丢掉。
         this.lastCommandError = msg.message || t("未知错误");
+        // resend_safe：后端在运行失败时只读检查过 checkpoint，确认尾部就是那条还没
+        // 被回复的用户消息（半截 AIMessage 从未落库）。只有这时才告诉用户「直接原样
+        // 重发不会重复」——去重由主图入口自动完成，前端只负责按结果决定是否显示提示。
+        this.resendSafe = !!msg.resend_safe;
         this._pushMain("tool", `\n\n> ⚠️ ${brk(msg.message)}\n\n`);
         this._schedule();
         this._resolveCommand(false);

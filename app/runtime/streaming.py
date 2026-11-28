@@ -83,6 +83,33 @@ async def repair_tool_results(
     return removed
 
 
+async def has_unanswered_human_tail(
+    main_agent: CompiledStateGraph, thread_id_config: dict
+) -> bool:
+    """只读检查：checkpoint 尾部是否停在「用户消息已入库、还没得到任何回复」。
+
+    网络抖动 / 流式中断让本轮失败时，最典型的情形是用户消息已经写进 checkpoint
+    （`merge_human_message_with_memory` 那个超级步已提交），而 `call_main_llm` 的
+    AI 消息因为节点没跑完**根本没有提交**——于是历史尾部就是一条 HumanMessage。
+    这种情况下用户直接重发原文是安全的：
+
+    * 半截 AIMessage 从未落库，重发不会多出一条残缺回复；
+    * 重发时主图入口 `we_dont_want_unresponded_human_msg` 会把历史里那条连续
+      未回复的旧 HumanMessage 用 `RemoveMessage` 削掉，用户消息不会重复。
+
+    只做读取、不改任何状态；任何异常都按「不确定」返回 False——宁可不显示提示，
+    也不要给用户一个错误的保证。调用时机与 `repair_tool_results` 相同：上一轮 run
+    必须已经完全结束（同一 thread 不能并发跑两个 run）。
+    """
+    try:
+        snapshot = await main_agent.aget_state(thread_id_config)
+    except Exception:  # noqa: BLE001
+        logger.exception("读取 checkpoint 尾部消息失败（仅影响失败气泡里的重发提示）")
+        return False
+    messages = (snapshot.values or {}).get("messages") or []
+    return bool(messages) and isinstance(messages[-1], HumanMessage)
+
+
 async def run_agent_stream(
     main_agent: CompiledStateGraph,
     thread_id_config: dict,

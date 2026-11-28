@@ -11,6 +11,7 @@ from app.config.store import ConfigStore
 from app.config.models import MultiAgentConfig
 from app.runtime.graph_builder import build_world
 from app.runtime.persistence import build_persistence
+from app.runtime.streaming import has_unanswered_human_tail as run_graph_has_unanswered_human_tail
 from app.runtime.streaming import repair_tool_results as run_graph_tool_repair
 from app.runtime.streaming import run_agent_stream
 from app.services import threads as threads_service
@@ -144,6 +145,17 @@ class AgentRuntime:
         返回被削掉的尾部用户消息文本（空列表表示啥也没删）。
         """
         return await run_graph_tool_repair(
+            self.graph, {"configurable": {"thread_id": thread_id}}
+        )
+
+    async def can_resend_safely(self, thread_id: str) -> bool:
+        """只读判断：checkpoint 尾部是不是「用户消息已入库、还没有任何回复」。
+
+        只用于失败回填气泡里那句「可以直接重发、不会重复」的提示：返回 True 才提示。
+        不修改任何状态，也不影响后续重发（去重由主图入口 `we_dont_want_unresponded_human_msg`
+        自己完成，这里只负责「确认现在确实是那个状态」）。
+        """
+        return await run_graph_has_unanswered_human_tail(
             self.graph, {"configurable": {"thread_id": thread_id}}
         )
 

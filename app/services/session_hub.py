@@ -618,6 +618,22 @@ class SessionHub:
     # ------------------------------------------------------------------ #
     # 运行体
     # ------------------------------------------------------------------ #
+    async def _can_resend_safely(self, runtime, thread_id: str) -> bool:
+        """本轮失败时只读确认：checkpoint 尾部是否停在「用户消息已入库、还没有回复」。
+
+        只有为 True 时，前端才在失败回填气泡里补一句「可以直接重发、不会重复」。
+        这里**只读、不修**：真正的去重是主图入口 `we_dont_want_unresponded_human_msg`
+        在用户重发时自动削掉尾部连续 HumanMessage 完成的。
+        任何异常都当 False——宁可不提示，也不要给用户一个错误的保证。
+        """
+        try:
+            return await runtime.can_resend_safely(thread_id)
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "检查 checkpoint 尾部消息失败（仅影响失败气泡里的重发提示）"
+            )
+            return False
+
     async def _execute(
         self,
         rec: RunRecord,
@@ -830,6 +846,12 @@ class SessionHub:
                             {
                                 "type": "error",
                                 "message": _format_run_error(exc, _provider_label(runtime)),
+                                # 只读检验 checkpoint 尾部：因为用户消息已落库、AI 回复
+                                # 从未提交时，前端气泡会补一句「可以直接重发、不会重复」
+                                # （去重本身由主图入口自动完成，这里只负责确认状态）。
+                                "resend_safe": await self._can_resend_safely(
+                                    runtime, thread_id
+                                ),
                             },
                         )
                         end_reason = "error"
@@ -840,7 +862,12 @@ class SessionHub:
             logger.exception("会话运行异常 (agent_id=%s, thread_id=%s)", agent_id, thread_id)
             await self.emit(
                 rec,
-                {"type": "error", "message": _format_run_error(exc, _provider_label(runtime))},
+                {
+                    "type": "error",
+                    "message": _format_run_error(exc, _provider_label(runtime)),
+                    # 与外层运行期异常分支口径一致：确认尾部停在用户消息时才提示可重发。
+                    "resend_safe": await self._can_resend_safely(runtime, thread_id),
+                },
             )
             end_reason = "error"
         finally:
